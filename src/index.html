@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NEXUS CLUSTER CONTROL</title>
+    <style>
+        body { background: #050505; color: #00ff41; font-family: 'Courier New', monospace; padding: 20px; }
+        .cluster { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .node { border: 1px solid #00ff41; padding: 20px; background: rgba(0, 255, 65, 0.02); box-shadow: 0 0 10px rgba(0,255,65,0.1); }
+        .stat { margin: 15px 0; font-size: 1.1em; }
+        .bar { width: 100%; height: 12px; background: #111; border: 1px solid #333; margin-top: 5px; }
+        .fill { height: 100%; background: #00ff41; transition: width 0.5s ease-in-out; }
+        .status-online { color: #00ff41; text-shadow: 0 0 5px #00ff41; }
+        .status-offline { color: #ff3333; }
+        h1 { text-align: center; border-bottom: 2px solid #00ff41; padding-bottom: 10px; letter-spacing: 3px; }
+    </style>
+</head>
+<body>
+    <h1>>> NEXUS HYBRID SINGULARITY <<</h1>
+    <div class="cluster">
+        <div class="node">
+            <h2>MASTER [MOTO G]</h2>
+            <div id="m-status" class="status-offline">OFFLINE</div>
+            <div class="stat">CPU: <span id="m-cpu">0</span>% <div class="bar"><div id="m-cpu-bar" class="fill" style="width:0%"></div></div></div>
+            <div class="stat">RAM: <span id="m-ram">0</span>% <div class="bar"><div id="m-ram-bar" class="fill" style="width:0%"></div></div></div>
+        </div>
+        <div class="node">
+            <h2>WORKER [DUET 2]</h2>
+            <div id="w-status" class="status-offline">OFFLINE</div>
+            <div class="stat">CPU: <span id="w-cpu">0</span>% <div class="bar"><div id="w-cpu-bar" class="fill" style="width:0%"></div></div></div>
+            <div class="stat">RAM: <span id="w-ram">0</span>% <div class="bar"><div id="w-ram-bar" class="fill" style="width:0%"></div></div></div>
+        </div>
+    </div>
+    <script>
+        const nodes = [
+            { id: 'm', url: 'http://localhost:3000/api/vitals' },
+            { id: 'w', url: 'http://10.11.1.249:3000/api/vitals' }
+        ];
+        async function update() {
+            for (let node of nodes) {
+                try {
+                    const res = await fetch(node.url);
+                    const data = await res.json();
+                    document.getElementById(`${node.id}-status`).innerText = "SYSTEM ONLINE";
+                    document.getElementById(`${node.id}-status`).className = "status-online";
+                    document.getElementById(`${node.id}-cpu`).innerText = data.cpu_usage;
+                    document.getElementById(`${node.id}-cpu-bar`).style.width = data.cpu_usage + "%";
+                    document.getElementById(`${node.id}-ram`).innerText = data.ram_usage;
+                    document.getElementById(`${node.id}-ram-bar`).style.width = data.ram_usage + "%";
+                } catch (e) {
+                    document.getElementById(`${node.id}-status`).innerText = "LINK DISCONNECTED";
+                    document.getElementById(`${node.id}-status`).className = "status-offline";
+                }
+            }
+        }
+        setInterval(update, 1000);
+    </script>
+</body>
+</html>

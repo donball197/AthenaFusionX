@@ -1,0 +1,7 @@
+{
+  "concurrency_limit": 2,
+  "agents": [
+    { "id": "coder", "name": "Daedalus", "role": "Engineer", "directive": "Analyze and optimize." },
+    { "id": "writer", "name": "Calliope", "role": "Creative", "directive": "Draft content." }
+  ]
+}
