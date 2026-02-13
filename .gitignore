@@ -1,0 +1,7 @@
+target/
+**/*.rs.bk
+*.tmp
+src/*.tmp
+.env
+# Keep the mutation local to the Motorola
+src/hiram_core.rs

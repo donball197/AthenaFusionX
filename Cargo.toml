@@ -1,0 +1,23 @@
+[package]
+name = "nexus_singularity"
+version = "0.12.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1.0"
+dotenvy = "0.15"
+base64 = "0.21"
+chrono = "0.4"
+image = "0.24"
+
+# Hardware crates
+v4l = "0.14"
+nokhwa = { version = "0.10", features = ["input-native"] }
+
+[features]
+default = []
+mobile = []
