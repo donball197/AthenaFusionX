@@ -1,9 +1,5 @@
-[build]
-jobs = 1
-
 [profile.release]
-opt-level = "z"
+opt-level = "s" # Optimize for size to protect mobile RAM
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
