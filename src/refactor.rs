@@ -11,13 +11,13 @@ impl RefactorEngine {
     pub fn apply_patch(&self, path: &str, new_code: &str) -> Result<()> {
         let temp_path = format!("{}.tmp", path);
         
-        // Extract extension (e.g., "rs", "py", "js")
         let extension = Path::new(path)
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("txt");
 
-        if auditor::validate_patch(&temp_path, new_code, extension) {
+        // Convert Result to bool using .is_ok()
+        if auditor::validate_patch(&temp_path, new_code, extension).is_ok() {
             fs::write(path, new_code)?;
             let _ = fs::remove_file(temp_path);
             println!(">> [FORGE] Refactor successful: {}", path);

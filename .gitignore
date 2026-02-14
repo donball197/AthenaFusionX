@@ -2,8 +2,6 @@
 .env
 .env.*
 secrets/
-*.pem
-*.key
 
 # --- Rust/Cargo Artifacts ---
 target/
@@ -11,7 +9,7 @@ target/
 Cargo.lock
 
 # --- Nexus Operating Data ---
-# We ignore claims/ so nodes don't fight over old locks on different devices
+# We ignore the contents of claims so nodes don't clash on old data
 claims/*
 !claims/.gitkeep
 
@@ -19,4 +17,3 @@ claims/*
 .DS_Store
 .idea/
 .vscode/
-node_modules/
