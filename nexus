@@ -1,0 +1,59 @@
+#!/bin/bash
+
+SESSION_NAME="forge_session"
+
+get_stats() {
+    # 1. RAM Usage (Universal /proc/meminfo)
+    RAM=$(free -m | awk '/Mem:/ { printf "%d/%dMB (%.1f%%)", $3, $2, $3*100/$2 }')
+    
+    # 2. Universal Load Sentry (Health indicator)
+    # Reads the 1-minute load average. 
+    # Logic: If Load > Number of Cores, the device is "Hot"
+    LOAD=$(cat /proc/loadavg | awk '{print $1}')
+    CORES=$(nproc)
+    
+    # Simple color-coding for the status
+    if (( $(echo "$LOAD > $CORES" | bc -l) )); then
+        HEALTH="[STRESSED]"
+    else
+        HEALTH="[STABLE]"
+    fi
+    
+    echo "RAM: $RAM | LOAD: $LOAD ($HEALTH)"
+}
+
+case $1 in
+    start)
+        echo ">> [NEXUS] Launching Forge..."
+        tmux new-session -d -s $SESSION_NAME "cargo run"
+        ;;
+    status)
+        echo "--- FORGE HEALTH ---"
+        echo "Node: $(hostname)"
+        get_stats
+        echo "Status: $(tmux ls 2>/dev/null | grep $SESSION_NAME &>/dev/null && echo '[RUNNING]' || echo '[STOPPED]')"
+        echo -e "\n--- MISSIONS ---"
+        echo "Pending: $(ls missions/*.txt 2>/dev/null | wc -l)"
+        echo -e "\n--- RECENT ACTIVITY ---"
+        git log -n 3 --pretty=format:"%h - %s (%cr)"
+        echo -e "\n"
+        ;;
+    log)
+        tmux attach-session -t $SESSION_NAME
+        ;;
+    build)
+        mkdir -p missions
+        MISSION_FILE="missions/mission_$(date +%s).txt"
+        echo "${@:2}" > "$MISSION_FILE"
+        git add "$MISSION_FILE" && git commit -m "NEW MISSION: ${@:2}"
+        git pull --rebase origin main && git push origin main
+        ;;
+    clean)
+        git add . && git commit -m "Auto-sync"
+        git pull --rebase origin main && git push origin main
+        rm -rf claims/*.lock src/*.tmp
+        ;;
+    *)
+        echo "Usage: ./nexus [start|stop|log|build|status|clean]"
+        ;;
+esac

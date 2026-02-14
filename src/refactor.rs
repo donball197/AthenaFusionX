@@ -1,21 +1,30 @@
 use crate::auditor;
 use std::fs;
+use std::path::Path;
 use anyhow::{Result, anyhow};
 
 pub struct RefactorEngine;
 
 impl RefactorEngine {
     pub fn new() -> Self { Self }
+
     pub fn apply_patch(&self, path: &str, new_code: &str) -> Result<()> {
         let temp_path = format!("{}.tmp", path);
-        if auditor::validate_patch(&temp_path, new_code) {
+        
+        // Extract extension (e.g., "rs", "py", "js")
+        let extension = Path::new(path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("txt");
+
+        if auditor::validate_patch(&temp_path, new_code, extension) {
             fs::write(path, new_code)?;
             let _ = fs::remove_file(temp_path);
-            println!(">> [HIRAM] Refactor successful.");
+            println!(">> [FORGE] Refactor successful: {}", path);
             Ok(())
         } else {
             let _ = fs::remove_file(temp_path);
-            Err(anyhow!("Refactor aborted to prevent kernel panic."))
+            Err(anyhow!("Refactor aborted: Code failed [.{}] validation.", extension))
         }
     }
 }

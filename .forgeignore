@@ -1,0 +1,7 @@
+# FORBIDDEN ZONE
+tests/
+src/neural_agent.rs
+src/heartbeat.rs
+src/stats.rs
+.forge_stats.json
+.env
