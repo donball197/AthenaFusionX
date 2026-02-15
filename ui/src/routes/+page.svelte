@@ -10,15 +10,13 @@
   let isDirty = false;
   let activeTab = 'editor';
   
-  // Neural Link State
   let userPrompt = "";
   let neuralResponse = ">> WAITING FOR INPUT...";
   let neuralLatency = 0;
   let isThinking = false;
-  
-  // VOICE SAFETY PROTOCOLS
   let isListening = false; 
   let recognition;
+  let terminalInstance;
 
   let vitals = { status: "OFFLINE", cpu_usage: 0, ram_usage: "0MB", integrity: 100 };
   let agents = [{id: 1, target: "main.rs"}, {id: 2, target: "IDLE"}];
@@ -44,7 +42,7 @@
       isDirty = false;
   }
 
-  // --- TELEMETRY & HEALTH ---
+  // --- TELEMETRY ---
   async function updateVitals() {
       try {
           const res = await fetch('/api/vitals');
@@ -53,27 +51,26 @@
       } catch (e) { vitals.status = "OFFLINE"; }
   }
 
-  // --- SAFE VOICE TOGGLE ---
+  // --- VOICE ---
   function toggleVoice() {
       if (!recognition) return;
-      
       if (isListening) {
-          // HARD STOP: Mute immediately
           recognition.stop();
           isListening = false;
       } else {
-          // ACTIVATE: Open mic for one command only
           userPrompt = ""; 
-          try {
-              recognition.start();
-              isListening = true;
-          } catch (e) { console.error("Mic Error:", e); }
+          try { recognition.start(); isListening = true; } catch (e) { console.error(e); }
       }
   }
 
-  // --- NEURAL LINK (WITH SIGHT) ---
+  // --- NEURAL LINK (FIXED + VISUALS) ---
   async function sendNeuralPrompt() {
-      if (!userPrompt) return;
+      if (!userPrompt || isThinking) return;
+      
+      // FIX 1: Capture and clear immediately
+      const capturedPrompt = userPrompt;
+      userPrompt = ""; 
+      
       isThinking = true;
       neuralResponse = ">> UPLOADING CONTEXT TO GEMMA-3...";
       
@@ -81,13 +78,23 @@
           const res = await fetch('/api/prompt', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ prompt: userPrompt, context: code })
+              body: JSON.stringify({ prompt: capturedPrompt, context: code })
           });
           
           if (res.ok) {
               const data = await res.json();
               neuralResponse = data.response;
               neuralLatency = data.latency; 
+
+              // AGENT HANDS
+              const match = neuralResponse.match(/\[EXECUTE:\s*(.*?)\]/);
+              if (match && match[1]) {
+                  const command = match[1];
+                  activeTab = 'terminal';
+                  if (terminalInstance) {
+                      setTimeout(() => terminalInstance.triggerCommand(command), 500);
+                  }
+              }
           } else {
               neuralResponse = ">> NEURAL_LINK_FAILURE";
           }
@@ -95,7 +102,6 @@
           neuralResponse = ">> CRITICAL_ERROR: " + e.message;
       } finally {
           isThinking = false;
-          // Note: We do NOT clear userPrompt here so you can see what it heard.
       }
   }
 
@@ -104,24 +110,15 @@
     updateVitals();
     const i = setInterval(updateVitals, 2000);
 
-    // Initialize Web Speech API with STRICT SAFETY
     if ('webkitSpeechRecognition' in window) {
         // @ts-ignore
         recognition = new webkitSpeechRecognition();
-        recognition.continuous = false; // CRITICAL: Stop listening after one sentence
-        recognition.interimResults = true; // Show text as you speak
-        
+        recognition.continuous = false;
+        recognition.interimResults = true;
         recognition.onstart = () => { isListening = true; };
-        
-        // Safety Catch: Always revert to MUTED when silence is detected
         recognition.onend = () => { isListening = false; };
-        
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            userPrompt = transcript;
-        };
+        recognition.onresult = (event) => { userPrompt = event.results[0][0].transcript; };
     }
-
     return () => clearInterval(i);
   });
 </script>
@@ -136,22 +133,24 @@
             </div>
         </div>
 
-        <div class="flex-1 max-w-xl flex items-center gap-2">
+        <div class="flex-1 max-w-xl flex items-center gap-2 relative">
             <button on:click={toggleVoice} 
-                    class="text-[9px] font-bold px-2 py-0.5 rounded transition-colors w-24 flex justify-center items-center gap-2 
+                    class="z-10 text-[9px] font-bold px-2 py-0.5 rounded transition-colors w-24 flex justify-center items-center gap-2 
                     {isListening ? 'bg-red-600 text-white animate-pulse' : 'bg-[#1f242c] text-gray-500 border border-gray-700 hover:border-gray-500'}">
-                {#if isListening}
-                    <span>● LIVE</span>
-                {:else}
-                    <span>🔇 MUTED</span>
-                {/if}
+                {#if isListening}<span>● LIVE</span>{:else}<span>🔇 MUTED</span>{/if}
             </button>
             
-            <input class="flex-1 bg-[#0d1117] border border-purple-900 text-purple-200 px-2 py-0.5 text-[10px] rounded focus:border-purple-500 outline-none placeholder-purple-900" 
-                   placeholder="Toggle MUTE to speak..." 
-                   bind:value={userPrompt} 
-                   on:keydown={(e) => e.key === 'Enter' && sendNeuralPrompt()} 
-                   disabled={isThinking} />
+            <div class="flex-1 relative h-6 overflow-hidden rounded border border-purple-900 bg-[#0d1117]">
+                {#if isThinking}
+                    <div class="absolute inset-0 bg-gradient-to-r from-transparent via-purple-600 to-transparent animate-scan opacity-40"></div>
+                {/if}
+                
+                <input class="absolute inset-0 w-full bg-transparent text-purple-200 px-2 py-0.5 text-[10px] outline-none placeholder-purple-900" 
+                       placeholder={isThinking ? "GEMMA IS THINKING..." : "Type and hit Enter..."} 
+                       bind:value={userPrompt} 
+                       on:keydown={(e) => e.key === 'Enter' && sendNeuralPrompt()} 
+                       disabled={isThinking} />
+            </div>
         </div>
 
         <div class="flex items-center gap-4 hidden md:flex">
@@ -167,17 +166,15 @@
                 <div class="text-[10px] text-gray-500 mb-2 font-bold tracking-widest border-b border-[#30363d]">TELEMETRY</div>
                 <Vitals ram={vitals.ram_usage} status={vitals.status} />
             </div>
-            
             <div>
                 <div class="text-[10px] text-purple-500 mb-2 font-bold tracking-widest border-b border-purple-900 flex justify-between">
                     <span>NEURAL_RESPONSE</span>
-                    {#if isThinking}<span class="animate-pulse">READING CODE...</span>{/if}
+                    {#if isThinking}<span class="animate-pulse">THINKING...</span>{/if}
                 </div>
                 <div class="text-[9px] text-gray-400 whitespace-pre-wrap font-mono h-48 overflow-y-auto border border-[#30363d] p-2 bg-black">
                     {neuralResponse}
                 </div>
             </div>
-
             <div>
                 <div class="text-[10px] text-gray-500 mb-2 font-bold tracking-widest border-b border-[#30363d]">SWARM_RADAR</div>
                 <AgentMap swarm={agents} />
@@ -185,11 +182,12 @@
         </aside>
 
         <section class="flex-1 bg-black relative flex flex-col">
-            {#if activeTab === 'editor'}
+            <div class={activeTab === 'terminal' ? 'block h-full' : 'hidden h-full'}>
+                <Terminal bind:this={terminalInstance} />
+            </div>
+            <div class={activeTab === 'editor' ? 'block h-full' : 'hidden h-full'}>
                 <Editor bind:value={code} onChange={(val) => { code = val; isDirty = true; }} />
-            {:else}
-                <Terminal />
-            {/if}
+            </div>
         </section>
     </div>
 
@@ -197,17 +195,22 @@
         <div class="flex gap-6">
              <span class="flex items-center gap-1">CPU: <span class="text-white">{vitals.cpu_usage.toFixed(1)}%</span></span>
              <span class="flex items-center gap-1">INT: <span class="text-white">{vitals.integrity}%</span></span>
-             
              <span class="flex items-center gap-2 border-l border-gray-700 pl-4">
-                LATENCY: 
-                <span class={neuralLatency > 5000 ? 'text-yellow-500 font-bold animate-pulse' : 'text-[#58a6ff]'}>
-                    {neuralLatency}ms
-                </span>
-                {#if neuralLatency > 5000}
-                    <span class="text-[8px] bg-yellow-900 text-yellow-200 px-1 rounded">HIGH LOAD</span>
-                {/if}
+                LATENCY: <span class={neuralLatency > 5000 ? 'text-yellow-500 font-bold animate-pulse' : 'text-[#58a6ff]'}>{neuralLatency}ms</span>
              </span>
         </div>
-        <span>NEXUS.V.0.16.0_DEV // AUDIO SAFEGUARD: ACTIVE</span>
+        <span>NEXUS.V.0.18.0_DEV // VISUAL PULSE ACTIVE</span>
     </footer>
 </div>
+
+<style>
+    @keyframes scan {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    .animate-scan {
+        animation: scan 1.5s linear infinite;
+        width: 100%;
+        height: 100%;
+    }
+</style>

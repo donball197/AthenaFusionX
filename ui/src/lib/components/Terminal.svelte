@@ -1,48 +1,53 @@
 <script>
     import { onMount } from 'svelte';
-    let termElement;
-    let socket;
-    let output = [">> SECURE CHANNEL OPENED", ">> WAITING FOR KERNEL..."];
+    // CORRECT SCOPED PATH
+    import '@xterm/xterm/css/xterm.css';
 
-    onMount(() => {
+    let termContainer;
+    let socket;
+    let term;
+
+    export function triggerCommand(cmd) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(cmd + "\r");
+        }
+    }
+
+    onMount(async () => {
+        const { Terminal } = await import('@xterm/xterm');
+        const { FitAddon } = await import('@xterm/addon-fit');
+
+        term = new Terminal({
+            cursorBlink: true,
+            fontSize: 12,
+            fontFamily: '"JetBrains Mono", monospace',
+            theme: {
+                background: '#000000',
+                foreground: '#00ff00',
+                cursor: '#00ff00'
+            }
+        });
+
+        const fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(termContainer);
+        fitAddon.fit();
+
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${proto}//${window.location.host}/ws`);
 
         socket.onmessage = (event) => {
-            output = [...output, event.data];
-            if (output.length > 100) output = output.slice(-100);
-            scrollToBottom();
+            term.write(event.data);
         };
 
-        return () => socket.close();
+        term.onData((data) => {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(data);
+            }
+        });
+
+        window.addEventListener('resize', () => fitAddon.fit());
     });
-
-    function scrollToBottom() {
-        if (termElement) termElement.scrollTop = termElement.scrollHeight;
-    }
-
-    function handleInput(e) {
-        if (e.key === 'Enter') {
-            const cmd = e.target.value;
-            socket.send(cmd + '\n');
-            e.target.value = '';
-        }
-    }
 </script>
 
-<div class="h-full flex flex-col bg-black text-green-500 font-mono p-2 overflow-hidden">
-    <div class="flex-1 overflow-y-auto whitespace-pre-wrap" bind:this={termElement}>
-        {#each output as line}
-            <div>{line}</div>
-        {/each}
-    </div>
-    <div class="flex gap-2 mt-2 border-t border-gray-800 pt-2">
-        <span class="text-neon-green">root@nexus:~#</span>
-        <!-- svelte-ignore a11y-autofocus -->
-        <input 
-            class="flex-1 bg-transparent border-none outline-none text-white focus:ring-0" 
-            on:keydown={handleInput}
-            autofocus
-        />
-    </div>
-</div>
+<div class="h-full w-full bg-black p-2 overflow-hidden" bind:this={termContainer}></div>
