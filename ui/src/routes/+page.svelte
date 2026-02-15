@@ -15,6 +15,10 @@
   let neuralResponse = ">> WAITING FOR INPUT...";
   let neuralLatency = 0;
   let isThinking = false;
+  
+  // VOICE SAFETY PROTOCOLS
+  let isListening = false; 
+  let recognition;
 
   let vitals = { status: "OFFLINE", cpu_usage: 0, ram_usage: "0MB", integrity: 100 };
   let agents = [{id: 1, target: "main.rs"}, {id: 2, target: "IDLE"}];
@@ -49,6 +53,24 @@
       } catch (e) { vitals.status = "OFFLINE"; }
   }
 
+  // --- SAFE VOICE TOGGLE ---
+  function toggleVoice() {
+      if (!recognition) return;
+      
+      if (isListening) {
+          // HARD STOP: Mute immediately
+          recognition.stop();
+          isListening = false;
+      } else {
+          // ACTIVATE: Open mic for one command only
+          userPrompt = ""; 
+          try {
+              recognition.start();
+              isListening = true;
+          } catch (e) { console.error("Mic Error:", e); }
+      }
+  }
+
   // --- NEURAL LINK (WITH SIGHT) ---
   async function sendNeuralPrompt() {
       if (!userPrompt) return;
@@ -56,7 +78,6 @@
       neuralResponse = ">> UPLOADING CONTEXT TO GEMMA-3...";
       
       try {
-          // SYNC FIX: Sending 'context' to match server.rs
           const res = await fetch('/api/prompt', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
@@ -74,7 +95,7 @@
           neuralResponse = ">> CRITICAL_ERROR: " + e.message;
       } finally {
           isThinking = false;
-          userPrompt = ""; 
+          // Note: We do NOT clear userPrompt here so you can see what it heard.
       }
   }
 
@@ -82,6 +103,25 @@
     load();
     updateVitals();
     const i = setInterval(updateVitals, 2000);
+
+    // Initialize Web Speech API with STRICT SAFETY
+    if ('webkitSpeechRecognition' in window) {
+        // @ts-ignore
+        recognition = new webkitSpeechRecognition();
+        recognition.continuous = false; // CRITICAL: Stop listening after one sentence
+        recognition.interimResults = true; // Show text as you speak
+        
+        recognition.onstart = () => { isListening = true; };
+        
+        // Safety Catch: Always revert to MUTED when silence is detected
+        recognition.onend = () => { isListening = false; };
+        
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            userPrompt = transcript;
+        };
+    }
+
     return () => clearInterval(i);
   });
 </script>
@@ -97,9 +137,18 @@
         </div>
 
         <div class="flex-1 max-w-xl flex items-center gap-2">
-            <span class="text-[10px] text-purple-400 font-bold">GEMMA_LINK:</span>
+            <button on:click={toggleVoice} 
+                    class="text-[9px] font-bold px-2 py-0.5 rounded transition-colors w-24 flex justify-center items-center gap-2 
+                    {isListening ? 'bg-red-600 text-white animate-pulse' : 'bg-[#1f242c] text-gray-500 border border-gray-700 hover:border-gray-500'}">
+                {#if isListening}
+                    <span>● LIVE</span>
+                {:else}
+                    <span>🔇 MUTED</span>
+                {/if}
+            </button>
+            
             <input class="flex-1 bg-[#0d1117] border border-purple-900 text-purple-200 px-2 py-0.5 text-[10px] rounded focus:border-purple-500 outline-none placeholder-purple-900" 
-                   placeholder="Ask about your code..." 
+                   placeholder="Toggle MUTE to speak..." 
                    bind:value={userPrompt} 
                    on:keydown={(e) => e.key === 'Enter' && sendNeuralPrompt()} 
                    disabled={isThinking} />
@@ -159,6 +208,6 @@
                 {/if}
              </span>
         </div>
-        <span>NEXUS.V.0.15.0_BETA // NEURAL SIGHT ACTIVE</span>
+        <span>NEXUS.V.0.16.0_DEV // AUDIO SAFEGUARD: ACTIVE</span>
     </footer>
 </div>
