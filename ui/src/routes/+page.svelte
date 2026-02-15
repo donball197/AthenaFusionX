@@ -18,6 +18,10 @@
   let recognition;
   let terminalInstance;
 
+  // NEW: Patch State
+  let patchAvailable = false;
+  let patchContent = "";
+
   let vitals = { status: "OFFLINE", cpu_usage: 0, ram_usage: "0MB", integrity: 100 };
   let agents = [{id: 1, target: "main.rs"}, {id: 2, target: "IDLE"}];
 
@@ -42,7 +46,16 @@
       isDirty = false;
   }
 
-  // --- TELEMETRY ---
+  // --- NEW: APPLY PATCH FUNCTION ---
+  function applyPatch() {
+      if (patchContent) {
+          code = patchContent; // Update the editor immediately
+          isDirty = true;      // Mark as unsaved
+          patchAvailable = false; // Hide the button
+          activeTab = 'editor';   // Switch to editor to see the change
+      }
+  }
+
   async function updateVitals() {
       try {
           const res = await fetch('/api/vitals');
@@ -51,7 +64,6 @@
       } catch (e) { vitals.status = "OFFLINE"; }
   }
 
-  // --- VOICE ---
   function toggleVoice() {
       if (!recognition) return;
       if (isListening) {
@@ -63,22 +75,26 @@
       }
   }
 
-  // --- NEURAL LINK (FIXED + VISUALS) ---
   async function sendNeuralPrompt() {
       if (!userPrompt || isThinking) return;
       
-      // FIX 1: Capture and clear immediately
       const capturedPrompt = userPrompt;
       userPrompt = ""; 
-      
       isThinking = true;
-      neuralResponse = ">> UPLOADING CONTEXT TO GEMMA-3...";
+      patchAvailable = false; // Reset patch state
+      neuralResponse = ">> READING LOGS & UPLOADING TO GEMMA-3...";
       
+      const logs = terminalInstance ? terminalInstance.getLogs() : "";
+
       try {
           const res = await fetch('/api/prompt', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ prompt: capturedPrompt, context: code })
+              body: JSON.stringify({ 
+                  prompt: capturedPrompt, 
+                  context: code,
+                  terminal_context: logs
+              })
           });
           
           if (res.ok) {
@@ -86,10 +102,18 @@
               neuralResponse = data.response;
               neuralLatency = data.latency; 
 
-              // AGENT HANDS
-              const match = neuralResponse.match(/\[EXECUTE:\s*(.*?)\]/);
-              if (match && match[1]) {
-                  const command = match[1];
+              // 1. DETECT PATCH (Code Blocks)
+              const codeBlockRegex = /```rust\s*([\s\S]*?)```/;
+              const matchCode = neuralResponse.match(codeBlockRegex);
+              if (matchCode && matchCode[1]) {
+                  patchContent = matchCode[1].trim();
+                  patchAvailable = true;
+              }
+
+              // 2. DETECT AGENT HANDS (Terminal Commands)
+              const matchCmd = neuralResponse.match(/\[EXECUTE:\s*(.*?)\]/);
+              if (matchCmd && matchCmd[1]) {
+                  const command = matchCmd[1];
                   activeTab = 'terminal';
                   if (terminalInstance) {
                       setTimeout(() => terminalInstance.triggerCommand(command), 500);
@@ -144,9 +168,8 @@
                 {#if isThinking}
                     <div class="absolute inset-0 bg-gradient-to-r from-transparent via-purple-600 to-transparent animate-scan opacity-40"></div>
                 {/if}
-                
                 <input class="absolute inset-0 w-full bg-transparent text-purple-200 px-2 py-0.5 text-[10px] outline-none placeholder-purple-900" 
-                       placeholder={isThinking ? "GEMMA IS THINKING..." : "Type and hit Enter..."} 
+                       placeholder={isThinking ? "ANALYZING & GENERATING PATCH..." : "Type and hit Enter..."} 
                        bind:value={userPrompt} 
                        on:keydown={(e) => e.key === 'Enter' && sendNeuralPrompt()} 
                        disabled={isThinking} />
@@ -166,16 +189,23 @@
                 <div class="text-[10px] text-gray-500 mb-2 font-bold tracking-widest border-b border-[#30363d]">TELEMETRY</div>
                 <Vitals ram={vitals.ram_usage} status={vitals.status} />
             </div>
-            <div>
-                <div class="text-[10px] text-purple-500 mb-2 font-bold tracking-widest border-b border-purple-900 flex justify-between">
+            
+            <div class="flex flex-col gap-2">
+                <div class="text-[10px] text-purple-500 mb-1 font-bold tracking-widest border-b border-purple-900 flex justify-between">
                     <span>NEURAL_RESPONSE</span>
                     {#if isThinking}<span class="animate-pulse">THINKING...</span>{/if}
                 </div>
                 <div class="text-[9px] text-gray-400 whitespace-pre-wrap font-mono h-48 overflow-y-auto border border-[#30363d] p-2 bg-black">
                     {neuralResponse}
                 </div>
+                {#if patchAvailable}
+                    <button on:click={applyPatch} class="w-full bg-purple-700 hover:bg-purple-600 text-white text-[10px] font-bold py-1 px-2 rounded border border-purple-500 animate-pulse text-center">
+                        >> APPLY FIX TO EDITOR
+                    </button>
+                {/if}
             </div>
-            <div>
+
+            <div class="mt-4">
                 <div class="text-[10px] text-gray-500 mb-2 font-bold tracking-widest border-b border-[#30363d]">SWARM_RADAR</div>
                 <AgentMap swarm={agents} />
             </div>
@@ -199,7 +229,7 @@
                 LATENCY: <span class={neuralLatency > 5000 ? 'text-yellow-500 font-bold animate-pulse' : 'text-[#58a6ff]'}>{neuralLatency}ms</span>
              </span>
         </div>
-        <span>NEXUS.V.0.18.0_DEV // VISUAL PULSE ACTIVE</span>
+        <span>NEXUS.V.0.20.0_DEV // SELF-REPAIR ENABLED</span>
     </footer>
 </div>
 

@@ -7,6 +7,19 @@
     let socket;
     let term;
 
+    // NEW: Allow Nexus to "read" the terminal screen
+    export function getLogs() {
+        if (!term) return "";
+        // Grab the last 30 lines of the terminal buffer for context
+        const totalLines = term.buffer.active.length;
+        let logs = "";
+        for (let i = Math.max(0, totalLines - 30); i < totalLines; i++) {
+            const line = term.buffer.active.getLine(i);
+            if (line) logs += line.translateToString() + "\n";
+        }
+        return logs;
+    }
+
     export function triggerCommand(cmd) {
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(cmd + "\r");

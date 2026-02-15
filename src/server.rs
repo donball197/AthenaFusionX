@@ -29,9 +29,12 @@ pub struct FileParams { pub path: String }
 #[derive(Deserialize, Serialize)]
 pub struct FileContent { pub path: String, pub content: String }
 
-// UPDATED: Now includes optional context
 #[derive(Deserialize, Serialize)]
-pub struct PromptRequest { pub prompt: String, pub context: Option<String> }
+pub struct PromptRequest { 
+    pub prompt: String, 
+    pub context: Option<String>,
+    pub terminal_context: Option<String> 
+}
 
 #[derive(Deserialize, Serialize)]
 pub struct NeuralResponse { pub response: String, pub status: String, pub latency: u128 }
@@ -76,8 +79,21 @@ async fn handle_vitals(State(state): State<Arc<AppState>>) -> Json<Vitals> {
 }
 
 async fn handle_prompt(State(state): State<Arc<AppState>>, Json(payload): Json<PromptRequest>) -> Json<NeuralResponse> {
-    // PASS THE CONTEXT TO THE AGENT
-    match state.agent.prepare_and_run(&state.client, &state.api_key, &payload.prompt, payload.context).await {
+    // 1. Prepare the context (Code + Terminal Logs)
+    let mut final_context = payload.context.clone().unwrap_or_default();
+    
+    // Inject logs if they exist
+    if let Some(logs) = payload.terminal_context {
+        if !logs.is_empty() {
+            final_context.push_str("\n\n=== TERMINAL OUTPUT (LAST 30 LINES) ===\n");
+            final_context.push_str(&logs);
+            final_context.push_str("\n=======================================\n");
+            final_context.push_str("SYSTEM NOTE: Analyze the terminal output. If there is a code error, provide the FULL CORRECTED FILE CONTENT inside a ```rust code block so the user can apply the patch.\n");
+        }
+    }
+
+    // 2. Run the Agent
+    match state.agent.prepare_and_run(&state.client, &state.api_key, &payload.prompt, Some(final_context)).await {
         Ok((res, latency)) => {
             Json(NeuralResponse { response: res, status: "ok".to_string(), latency })
         },
@@ -85,7 +101,6 @@ async fn handle_prompt(State(state): State<Arc<AppState>>, Json(payload): Json<P
     }
 }
 
-// ... PTY Handlers (unchanged) ...
 async fn ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse { ws.on_upgrade(handle_socket) }
 async fn handle_socket(socket: WebSocket) {
     let pty_system = native_pty_system();
