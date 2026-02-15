@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub fn find_target_file() -> PathBuf {
@@ -51,7 +51,6 @@ pub fn get_manual_override() -> Option<PathBuf> {
     
     if message.contains("[FORCE:") {
         let start = message.find("[FORCE:").unwrap() + 7;
-        let end = message[start..].find(']').unwrap() + start;
         let target = message[start..].trim_end_matches(']').trim();
         let path = PathBuf::from(target);
         if path.exists() {

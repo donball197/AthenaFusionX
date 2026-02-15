@@ -1,18 +1,22 @@
-use std::collections::VecDeque;
-use serde::{Serialize, Deserialize};
+use crate::memory::NexusMemory;
 
-#[derive(Serialize, Deserialize, Clone)]
 pub struct NeuralNet {
-    pub memory: VecDeque<String>,
-    pub depth: usize,
+    pub memory: NexusMemory,
 }
 
 impl NeuralNet {
     pub fn new() -> Self {
-        Self { memory: VecDeque::new(), depth: 10 }
+        Self {
+            memory: NexusMemory::load(),
+        }
     }
+
     pub fn commit(&mut self, entry: String) {
-        if self.memory.len() >= self.depth { self.memory.pop_front(); }
-        self.memory.push_back(entry);
+        println!(">> [CORTEX] Committing to permanent storage: {}", entry);
+        self.memory.remember(entry);
+    }
+    
+    pub fn recall(&self) -> String {
+        self.memory.get_context_window()
     }
 }

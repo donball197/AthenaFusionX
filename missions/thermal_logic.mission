@@ -1,0 +1,2 @@
+Generate a Rust function named 'check_thermal_throttle' that returns a boolean. 
+It should read '/sys/class/thermal/thermal_zone0/temp' and return true if the value is above 75000.

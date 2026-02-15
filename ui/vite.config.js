@@ -1,10 +1,15 @@
-import { defineConfig } from 'vite'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [svelte()],
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true
-  }
-})
+	plugins: [sveltekit()],
+	server: {
+		proxy: {
+			'/api': 'http://localhost:3000',
+			'/ws': {
+				target: 'ws://localhost:3000',
+				ws: true
+			}
+		}
+	}
+});

@@ -1,27 +1,60 @@
 #!/bin/bash
-# Project Nexus v0.2.2 - Unit Maintenance Report
 
-echo "--- [ SWARM MAINTENANCE STATUS ] ---"
+# ==============================================================================
+# NEXUS MAINTENANCE PROTOCOL
+# TARGET: Lenovo Duet 2 (Low RAM Optimization)
+# ==============================================================================
 
-# Agent 1: Main Sector
-if grep -q "tokio::main" src/main.rs; then
-    echo "[Agent 1] Sector Main: LEVEL (1 1/2 Verified)"
+echo ">> [NEXUS] INITIATING MAINTENANCE SEQUENCE..."
+
+# 1. PULL LATEST CODE
+echo ">> [GIT] Pulling latest neural pathways..."
+if command -v git &> /dev/null; then
+    git pull
 else
-    echo "[Agent 1] Sector Main: DRIFT DETECTED"
+    echo ">> [WARN] Git not found. Skipping download."
 fi
 
-# Agent 2: Server Sector
-if [ -f "src/server.rs" ]; then
-    echo "[Agent 2] Sector Server: SEATED"
-else
-    echo "[Agent 2] Sector Server: MISSING"
+# 2. CHECK MEMORY SWAP (Critical for Compilation)
+SWAP_SIZE=$(free -m | grep Swap | awk '{print $2}')
+if [ "$SWAP_SIZE" -eq "0" ]; then
+    echo ">> [DANGER] No Swap detected! Compilation may crash."
+    echo "   Please run: sudo fallocate -l 2G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile"
+    read -p "   Continue anyway? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
 fi
 
-# Agent 3: Pulse Sector
-if grep -q "pulse_monitor" src/main.rs; then
-    echo "[Agent 3] Sector Lazarus: PULSING"
+# 3. REBUILD FRONTEND (UI)
+echo ">> [UI] Recompiling Interface..."
+cd ui
+if [ -f "package.json" ]; then
+    npm install
+    npm run build
+    if [ $? -eq 0 ]; then
+        echo ">> [UI] Build Successful."
+    else
+        echo ">> [UI] Build Failed. Check logs."
+        exit 1
+    fi
 else
-    echo "[Agent 3] Sector Lazarus: FLATLINE"
+    echo ">> [UI] No UI source detected. Skipping."
 fi
+cd ..
 
-echo "--- [ 65 Units Standing By ] ---"
+# 4. REBUILD BACKEND (RUST)
+echo ">> [CORE] Recompiling Singularity Engine..."
+# Force single-core build to prevent OOM (Out of Memory) kills on 4GB RAM
+export CARGO_BUILD_JOBS=1
+export RUSTFLAGS="-C codegen-units=1 -C debuginfo=0"
+
+cargo build --release
+
+if [ $? -eq 0 ]; then
+    echo ">> [SUCCESS] System Upgrade Complete."
+    echo ">> [INFO] Run ./status.sh to verify."
+else
+    echo ">> [FAIL] Core compilation failed."
+fi

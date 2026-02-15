@@ -1,0 +1,3 @@
+OBJECTIVE: Remove the unused function 'get_manual_override' from src/janitor.rs.
+REASON: It is causing a dead_code compiler warning.
+PROTOCOL: Return the updated code within a standard markdown code block.
