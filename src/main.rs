@@ -9,7 +9,7 @@ mod monitor;
 mod alloc;
 mod sentry;
 mod server;
-mod memory;
+mod memory; 
 mod brain;
 mod system_monitor;
 mod vision;
@@ -20,6 +20,7 @@ use tokio::time::{sleep, Duration};
 use std::{env, sync::Arc};
 use system_monitor::SystemMonitor;
 use neural_agent::MicroAgent;
+use memory::MemoryPalace;
 
 #[allow(unused_variables, unused_imports, dead_code)]
 #[tokio::main]
@@ -30,18 +31,18 @@ async fn main() -> anyhow::Result<()> {
     alloc::initialize_mnemnos_lean();
     
     let node_id = env::var("NODE_ID").unwrap_or_else(|_| "NEXUS_DUET".to_string());
-    
-    // 1. VERIFY CREDENTIALS
     let api_key = env::var("GEMMA_API_KEY").expect("GEMMA_API_KEY must be set in .env");
 
     println!(">> [FORGE] NODE [{}] ONLINE. MODEL: GEMMA-3-27B-IT", node_id);
+    println!(">> [MEMORY] Initializing Long-Term Vector Store...");
 
-    // 2. INJECT NEURAL LINK
+    // 2. INJECT NEURAL LINK - Simplified initialization
     let state = Arc::new(server::AppState {
         client: reqwest::Client::new(),
         brain_endpoint: "gemma-3-27b-it".to_string(),
         monitor: SystemMonitor::new(),
-        agent: MicroAgent::init()?, 
+        agent: MicroAgent::init()?,
+        memory: MemoryPalace::new(), // Directly initialized, no match needed
         api_key, 
     });
 

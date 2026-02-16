@@ -1,20 +1,40 @@
 <script>
-    export let swarm = [];
-    function getCoords(target) {
-        if (!target || target === "IDLE") return { x: 50, y: 50, active: false };
-        let hash = 0;
-        for (let i = 0; i < target.length; i++) hash = target.charCodeAt(i) + ((hash << 5) - hash);
-        return { x: Math.abs((hash % 80) + 10), y: Math.abs(((hash >> 8) % 80) + 10), active: true };
-    }
+  export let swarm = [];
 </script>
-<div class="relative h-[200px] bg-black border border-[#1a1a1a] overflow-hidden mb-4">
-    <div class="absolute inset-0 bg-[radial-gradient(#111_1px,transparent_1px)] [background-size:20px_20px]"></div>
-    <div class="absolute w-full h-[2px] bg-gradient-to-b from-transparent via-green-500 to-transparent opacity-10 animate-[scan_4s_linear_infinite]"></div>
-    {#each swarm as agent}
-        {@const pos = getCoords(agent.target)}
-        <div class="absolute w-1 h-1 bg-[#222] rounded-full transition-all duration-700" 
-             class:bg-neon-green={pos.active} 
-             class:shadow-[0_0_8px_#0f0]={pos.active}
-             style="left: {pos.x}%; top: {pos.y}%;"></div>
-    {/each}
+
+<div class="flex flex-col gap-3">
+  {#each swarm as agent}
+    <div class="flex items-center gap-3 p-2 border border-[#30363d] bg-black rounded relative overflow-hidden group">
+      {#if agent.target !== "IDLE"}
+        <div class="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 bg-neon-green rounded-full animate-ping opacity-75"></div>
+      {/if}
+      
+      <div class="w-2 h-2 rounded-full z-10 {agent.target === 'IDLE' ? 'bg-gray-700' : 'bg-neon-green shadow-[0_0_8px_#39FF14]'}"></div>
+      
+      <div class="flex-1">
+        <div class="text-[9px] text-gray-400 font-bold uppercase tracking-tighter flex justify-between">
+          <span>Agent_{agent.id.toString().padStart(2, '0')}</span>
+          <span class={agent.target === 'IDLE' ? 'text-gray-700' : 'text-neon-green'}>{agent.target}</span>
+        </div>
+        <div class="h-1 w-full bg-gray-900 rounded-full mt-1 overflow-hidden">
+          <div class="h-full bg-neon-green transition-all duration-1000" style="width: {agent.target === 'IDLE' ? '0%' : '100%'}"></div>
+        </div>
+      </div>
+    </div>
+  {/each}
 </div>
+
+<style>
+  @keyframes ping {
+    75%, 100% {
+      transform: scale(3.5);
+      opacity: 0;
+    }
+  }
+  .animate-ping {
+    animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+  .bg-neon-green {
+    background-color: #39FF14;
+  }
+</style>

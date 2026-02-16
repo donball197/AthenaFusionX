@@ -1,20 +1,30 @@
-# --- SECRETS (NEVER COMMIT) ---
-.env
-.env.*
-
-# --- RUST ---
+# --- RUST & BUILD ARTIFACTS ---
+# The heavy machinery. Never push this.
 /target
 **/*.rs.bk
-Cargo.lock
 
-# --- NODE / SVELTE ---
+# --- NODE.JS & UI ---
+# Dependencies and build outputs.
 node_modules/
 ui/node_modules/
-ui/.svelte-kit/
 ui/dist/
+ui/.svelte-kit/
 .npm
+pnpm-lock.yaml
+yarn.lock
+
+# --- SYSTEM & ENVIRONMENT ---
+# CRITICAL: Never leak your API keys.
+.env
+.env.local
 .DS_Store
 
-# --- PROJECT ARTIFACTS ---
-backups/
+# --- NEXUS MEMORY & LOGS ---
+# Keep your AI's thoughts and archives local.
+nexus_memories.json
+nexus_archive_*.json
 *.log
+
+# --- IDE SETTINGS ---
+.vscode/
+.idea/

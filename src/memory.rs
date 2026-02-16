@@ -1,55 +1,67 @@
-use serde::{Serialize, Deserialize};
-use std::collections::VecDeque;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use chrono::Utc;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NexusMemory {
-    pub short_term: VecDeque<String>,
-    pub long_term: Vec<String>,
-    pub experience_level: u32,
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Memory {
+    pub timestamp: String,
+    pub prompt: String,
+    pub solution_code: String,
 }
 
-impl NexusMemory {
-    pub fn load() -> Self {
-        if Path::new("nexus_memory.json").exists() {
-            let data = fs::read_to_string("nexus_memory.json").unwrap_or_default();
-            serde_json::from_str(&data).unwrap_or_else(|_| NexusMemory::new())
-        } else {
-            NexusMemory::new()
-        }
-    }
+pub struct MemoryPalace {
+    file_path: String,
+}
 
+impl MemoryPalace {
     pub fn new() -> Self {
-        Self {
-            short_term: VecDeque::with_capacity(10),
-            long_term: Vec::new(),
-            experience_level: 1,
+        let file_path = "nexus_memories.json".to_string();
+        if !Path::new(&file_path).exists() {
+            fs::write(&file_path, "[]").unwrap();
         }
+        Self { file_path }
     }
 
-    pub fn remember(&mut self, entry: String) {
-        // Add to short term
-        if self.short_term.len() >= 10 {
-            // Consolidation: Move oldest short-term to long-term if it was significant
-            let old = self.short_term.pop_front().unwrap();
-            if old.contains("SUCCESS") || old.contains("OPTIMIZED") {
-                self.long_term.push(old);
-            }
-        }
-        self.short_term.push_back(entry);
-        self.save();
+    pub fn remember(&self, prompt: String, code: String) {
+        let mut memories = self.load_all();
+        memories.push(Memory {
+            timestamp: Utc::now().to_string(),
+            prompt,
+            solution_code: code,
+        });
+        let json = serde_json::to_string_pretty(&memories).unwrap();
+        fs::write(&self.file_path, json).unwrap();
+        println!(">> [MEMORY] Solution stored in Long-Term Memory.");
     }
 
-    pub fn save(&self) {
-        if let Ok(data) = serde_json::to_string_pretty(self) {
-            let _ = fs::write("nexus_memory.json", data);
+    pub fn recall(&self) -> String {
+        let memories = self.load_all();
+        let recent = memories.iter().rev().take(3).collect::<Vec<_>>();
+        
+        if recent.is_empty() {
+            return String::new();
         }
+
+        let mut context = String::from("\n\n=== LONG-TERM MEMORY (PREVIOUS FIXES) ===\n");
+        for mem in recent {
+            context.push_str(&format!("User asked: '{}'\nWe wrote code corrections.\n", mem.prompt));
+        }
+        context.push_str("=========================================\n");
+        context
     }
 
-    // Returns a context string to feed into the AI
-    pub fn get_context_window(&self) -> String {
-        let recent = self.short_term.iter().cloned().collect::<Vec<String>>().join("\n");
-        format!("PREVIOUS ACTIONS:\n{}\nEXPERIENCE LEVEL: {}", recent, self.experience_level)
+    pub fn load_all(&self) -> Vec<Memory> {
+        let content = fs::read_to_string(&self.file_path).unwrap_or_else(|_| "[]".to_string());
+        serde_json::from_str(&content).unwrap_or_default()
+    }
+
+    // NEW: The missing purge method that was causing the error
+    pub fn purge(&self) {
+        if let Ok(_) = fs::write(&self.file_path, "[]") {
+            println!(">> [MEMORY] Long-Term Memory Purged Successfully.");
+        } else {
+            eprintln!(">> [ERROR] Failed to purge Memory Palace.");
+        }
     }
 }
