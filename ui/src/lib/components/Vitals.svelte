@@ -1,9 +1,12 @@
 <script>
-    export let ram = "0MB";
+    export let ram = "0GB / 0GB";
     export let status = "OFFLINE";
-    export let cpu = 0; // NEW: Passed from backend stats
+    export let cpu = 0; 
 
-    $: ramPercent = (parseInt(ram) || 0) / 2000 * 100;
+    // Extract numbers from "UsedGB / TotalGB" format
+    $: used = parseFloat(ram.split('/')[0]) || 0;
+    $: total = parseFloat(ram.split('/')[1]) || 1; // Avoid divide by zero
+    $: ramPercent = Math.min((used / total) * 100, 100);
 </script>
 
 <div class="bg-[#050505] border border-[#1a1a1a] p-4 font-mono text-[10px] flex flex-col gap-3">

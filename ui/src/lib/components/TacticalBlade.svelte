@@ -4,26 +4,23 @@
 
     export let open = false;
     export let onFileSelect;
-    
-    // DATA SOURCES
+
     let currentDirFiles = [];
     let globalIndex = [];
-    
+    let searchTerm = "";
+    let selectedIndex = 0;
+    let scrollContainer;
+    let x = 400; let y = 80;
+    let width = 320;
+    let isDragging = false;
+    let isResizing = false;
+
     // SYSTEM COMMANDS
     const systemCommands = [
         { name: 'Reload System', action: () => location.reload(), icon: '🔄', color: 'text-green-400' },
         { name: 'Flush Memories', action: async () => { await fetch('/api/memories/purge', { method: 'DELETE' }); location.reload(); }, icon: '🧠', color: 'text-red-400' },
-        { name: 'Save State', action: async () => { await fetch('/api/fs/write', { method: 'POST', body: JSON.stringify({path: 'nexus.state', content: 'SAVED'}) }); }, icon: '💾', color: 'text-blue-400' }
+        { name: 'Save State', action: async () => { await fetch('/api/fs/write', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: 'nexus.state', content: 'SAVED'}) }); }, icon: '💾', color: 'text-blue-400' }
     ];
-
-    let searchTerm = "";
-    let selectedIndex = 0;
-    let scrollContainer;
-    
-    let x = 400; let y = 80;
-    let width = 320; 
-    let isDragging = false;
-    let isResizing = false;
 
     function getFileMeta(name, is_dir) {
         if (is_dir) return { icon: '📂', color: 'text-blue-400' };
@@ -31,105 +28,87 @@
         if (name.endsWith('.svelte')) return { icon: '⚡', color: 'text-yellow-400' };
         if (name.endsWith('.js') || name.endsWith('.ts')) return { icon: '📜', color: 'text-yellow-200' };
         if (name.endsWith('.toml') || name.endsWith('.json')) return { icon: '⚙️', color: 'text-gray-400' };
-        if (name.endsWith('.lock')) return { icon: '🔒', color: 'text-red-400' };
-        if (name.endsWith('.md')) return { icon: '📝', color: 'text-purple-400' };
-        if (name.endsWith('.sh')) return { icon: '💻', color: 'text-green-400' };
         return { icon: '📄', color: 'text-gray-500' };
     }
 
-    async function buildGlobalIndex(path = ".", recursive = true) {
+    async function buildGlobalIndex() {
         try {
-            const res = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+            const res = await fetch(`/api/fs/list?path=.&recursive=true`);
             if (res.ok) {
-                const data = await res.json();
-                const newItems = data.filter(d => !globalIndex.find(g => g.path === d.path));
-                globalIndex = [...globalIndex, ...newItems];
-                if (recursive) {
-                    for (const item of data) {
-                        if (item.is_dir && !['node_modules', 'target', '.git'].some(bad => item.path.includes(bad))) {
-                            await buildGlobalIndex(item.path, true);
-                        }
-                    }
-                }
+                globalIndex = await res.json();
+                fetchDirectory(".");
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("Index Error", e); }
     }
 
     async function fetchDirectory(path) {
-        try {
-            const apiPath = path.endsWith('/') && path !== "./" ? path.slice(0, -1) : path;
-            const res = await fetch(`/api/fs/list?path=${encodeURIComponent(apiPath)}`);
-            if (res.ok) {
-                let data = await res.json();
-                data.sort((a, b) => b.is_dir - a.is_dir || a.name.localeCompare(b.name));
-                
-                if (path !== "." && path !== "./" && path !== "") {
-                    const parts = path.split('/').filter(p => p && p !== ".");
-                    const parent = parts.length > 1 ? parts.slice(0, -1).join('/') + "/" : "./";
-                    data = [{ name: "..", path: parent, is_dir: true, is_back: true }, ...data];
-                }
-                currentDirFiles = data;
-                selectedIndex = 0;
+        if (globalIndex.length > 0) {
+            const cleanPath = path === "./" ? "." : path;
+            const parts = cleanPath.split('/');
+            
+            // Direct Children Logic
+            currentDirFiles = globalIndex.filter(f => {
+                const fParts = f.path.split('/');
+                if (cleanPath === ".") return fParts.length === 1 || (fParts.length === 2 && fParts[0] === ".");
+                return f.path.startsWith(cleanPath + "/") && f.path.split('/').length === parts.length + 1;
+            });
+            
+            if (cleanPath !== "." && cleanPath !== "") {
+                const parent = parts.slice(0, -1).join('/') || ".";
+                currentDirFiles = [{ name: "..", path: parent, is_dir: true, is_back: true }, ...currentDirFiles];
             }
-        } catch (e) { console.error(e); }
+        }
     }
 
-    $: if (open) {
-        if (globalIndex.length === 0) buildGlobalIndex();
-        if (!searchTerm) fetchDirectory(".");
-    }
+    $: if (open && globalIndex.length === 0) buildGlobalIndex();
 
+    // --- OMNIBOX LOGIC ---
     $: displayList = (() => {
         const term = searchTerm.trim();
-        
-        // COMMAND MODE
         if (term.startsWith('>')) {
-            const cmd = term.slice(1).trim().toLowerCase();
-            return systemCommands.filter(c => c.name.toLowerCase().includes(cmd));
+            return systemCommands.filter(c => c.name.toLowerCase().includes(term.slice(1).trim().toLowerCase()));
         }
-
-        // BROWSE & SEARCH (Existing Logic)
-        if (!term || term.endsWith('/')) return currentDirFiles;
-        if (term.includes('/')) {
-            const lastSlash = term.lastIndexOf('/');
-            const query = term.slice(lastSlash + 1).toLowerCase();
-            return currentDirFiles.filter(f => f.name.toLowerCase().includes(query));
+        if (!term || (term.endsWith('/') && !term.includes('src/'))) { 
+             return currentDirFiles; 
         }
         return globalIndex
-            .filter(f => f.name.toLowerCase().includes(term.toLowerCase()))
-            .map(f => {
-                let score = 0;
-                if (f.name === term) score += 100;
-                if (f.name.startsWith(term)) score += 50;
-                return { ...f, score };
+            .filter(f => {
+                const lowerTerm = term.toLowerCase();
+                const lowerPath = f.path.toLowerCase();
+                const lowerName = f.name.toLowerCase();
+                if (lowerTerm.includes('/') || lowerTerm.startsWith('.')) {
+                    const normTerm = lowerTerm.replace(/^\.\//, '');
+                    return lowerPath.includes(normTerm);
+                }
+                return lowerName.includes(lowerTerm);
             })
-            .sort((a, b) => b.score - a.score)
+            .sort((a, b) => {
+                const aExact = a.path === term || a.name === term;
+                const bExact = b.path === term || b.name === term;
+                return bExact - aExact;
+            })
             .slice(0, 50);
     })();
 
-    $: if (selectedIndex !== undefined && scrollContainer) {
-        const el = scrollContainer.querySelector(`[data-index="${selectedIndex}"]`);
-        if (el) el.scrollIntoView({ block: 'nearest' });
+    async function handleSelect(item) {
+        if (item.action) { await item.action(); open = false; return; }
+        if (item.is_dir) {
+            const newPath = item.is_back ? item.path : item.path;
+            searchTerm = newPath === "." ? "" : newPath + "/";
+            fetchDirectory(newPath);
+        } else {
+            onFileSelect(item.path);
+            open = false;
+        }
     }
 
-    async function handleSelect(item) {
-        // COMMAND EXECUTION
-        if (item.action) {
-            SoundFx.processing();
-            await item.action();
-            open = false;
-            return;
+    // --- WINDOW MANAGEMENT ---
+    function handleGlobalKey(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            open = !open;
         }
-
-        // FILE NAVIGATION
-        if (item.is_dir) {
-            SoundFx.click();
-            let newPath = item.is_back ? item.path : (item.path.endsWith('/') ? item.path : item.path + "/");
-            searchTerm = newPath;
-            await fetchDirectory(newPath);
-        } else {
-            SoundFx.success();
-            onFileSelect(item.path);
+        if (e.key === 'Escape' && open) {
             open = false;
         }
     }
@@ -139,78 +118,65 @@
         const max = displayList.length;
         if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = (selectedIndex + 1) % max; }
         else if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = (selectedIndex - 1 + max) % max; }
-        else if (e.key === 'Enter') { e.preventDefault(); if (displayList[selectedIndex]) handleSelect(displayList[selectedIndex]); }
-        else if (e.key === 'Tab') {
-            e.preventDefault();
-            if (displayList[selectedIndex] && !displayList[selectedIndex].action) {
-                const file = displayList[selectedIndex];
-                if (file.is_dir) handleSelect(file);
-                else { searchTerm = file.path; SoundFx.click(); }
-            }
+        else if (e.key === 'Enter') { 
+            e.preventDefault(); 
+            if (displayList[selectedIndex]) handleSelect(displayList[selectedIndex]); 
         }
-        else if (e.key === 'Escape') open = false;
     }
 </script>
 
-<svelte:window on:mousemove={(e) => { if(isDragging) { x += e.movementX; y += e.movementY; } if(isResizing) { width += e.movementX; } }} 
-               on:mouseup={() => {isDragging = false; isResizing = false;}} />
+<svelte:window on:keydown={handleGlobalKey} 
+               on:mousemove={(e) => isDragging && (x += e.movementX, y += e.movementY)} 
+               on:mouseup={() => isDragging = false} />
 
 {#if open}
-<div class="absolute bg-[#050505] border border-blue-900/50 rounded-sm z-[1000] shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col font-mono"
-     style="left: {x}px; top: {y}px; width: {width}px; max-height: 480px;">
-    
-    <div class="h-6 shrink-0 bg-[#0a0a0a] border-b border-blue-900/30 flex justify-between items-center px-2 cursor-move select-none"
-         on:mousedown={() => isDragging = true}>
-        <span class="text-[9px] text-blue-500 font-bold tracking-widest uppercase">
-            NEXUS // {searchTerm.startsWith('>') ? 'COMMAND_MODE' : (searchTerm.includes('/') ? 'NAV' : 'FIND')}
-        </span>
-        <button on:click={() => open = false} class="text-blue-800 hover:text-red-500 text-[10px]">✕</button>
-    </div>
+    <div class="fixed inset-0 bg-black/20 backdrop-blur-[1px] z-[999]" on:click={() => open = false}></div>
 
-    <div class="p-2 bg-[#080808] shrink-0">
-        <input type="text" 
-               bind:value={searchTerm} 
-               on:keydown={handleKeyDown}
-               on:input={() => { if(searchTerm.endsWith('/')) fetchDirectory(searchTerm); }}
-               placeholder="> CMD or Navigate..."
-               autofocus
-               class="w-full bg-[#111] border border-blue-900/30 text-blue-100 text-[10px] px-2 py-1.5 rounded focus:border-blue-500 outline-none font-mono transition-all" />
-    </div>
-    
-    <div class="overflow-y-auto custom-scrollbar p-1 min-h-[50px]" bind:this={scrollContainer}>
-        {#each displayList as item, i}
-            {@const meta = item.action ? {icon: item.icon, color: item.color} : getFileMeta(item.name, item.is_dir)}
-            <button on:click={() => handleSelect(item)} 
-                    data-index={i}
-                    class="w-full text-left px-2 py-1.5 text-[10px] font-mono flex items-center justify-between group {i === selectedIndex ? 'bg-blue-900/20' : 'hover:bg-[#111]'}">
-                
-                <div class="flex items-center gap-2 overflow-hidden">
-                    <span class="{meta.color} {item.is_back ? 'text-blue-200' : ''}">
-                        {item.is_back ? '⤴' : meta.icon}
-                    </span>
-                    <span class="truncate {i === selectedIndex ? 'text-white' : 'text-gray-400'}">
-                        {item.name}
-                    </span>
-                </div>
-
-                {#if i === selectedIndex}
-                    <span class="text-[7px] uppercase tracking-wider text-blue-500 font-bold animate-pulse">
-                        {item.action ? 'EXEC' : (item.is_dir ? 'DRILL' : 'EDIT')}
-                    </span>
-                {/if}
-            </button>
-        {/each}
+    <div class="absolute bg-[#050505] border border-blue-900/50 rounded-sm z-[1000] shadow-[0_10px_40px_rgba(0,0,0,0.9)] flex flex-col font-mono transition-all duration-100 ease-out"
+         style="left: {x}px; top: {y}px; width: {width}px; max-height: 480px;">
         
-        {#if displayList.length === 0}
-            <div class="text-center py-4 text-[9px] text-gray-700 italic">VOID</div>
-        {/if}
-    </div>
+        <div class="h-6 bg-[#0a0a0a] border-b border-blue-900/30 flex justify-between items-center px-2 cursor-move"
+             on:mousedown={() => isDragging = true}>
+            <span class="text-[9px] text-blue-500 font-bold uppercase tracking-widest">
+                NEXUS // {searchTerm.startsWith('>') ? 'SYS_CMD' : 'OMNIBOX'}
+            </span>
+            <button on:click={() => open = false} class="text-blue-800 hover:text-red-500 text-[10px]">✕</button>
+        </div>
 
-    <div class="absolute bottom-0 right-0 w-3 h-3 cursor-ew-resize flex items-end justify-end p-0.5"
-         on:mousedown|stopPropagation={() => isResizing = true}>
-        <div class="w-1 h-1 border-r border-b border-blue-800"></div>
+        <div class="p-2 bg-[#080808]">
+            <input type="text" 
+                   bind:value={searchTerm} 
+                   on:keydown={handleKeyDown}
+                   placeholder="> CMD or search..." 
+                   autofocus
+                   class="w-full bg-[#111] border border-blue-900/30 text-blue-100 text-[10px] px-2 py-1.5 rounded outline-none focus:border-blue-500 transition-colors" />
+        </div>
+
+        <div class="overflow-y-auto p-1 min-h-[50px] custom-scrollbar" bind:this={scrollContainer}>
+            {#each displayList as item, i}
+                {@const meta = item.action ? {icon: item.icon, color: item.color} : getFileMeta(item.name, item.is_dir)}
+                <button on:click={() => handleSelect(item)}
+                        class="w-full text-left px-2 py-1.5 text-[10px] flex items-center gap-2 {i === selectedIndex ? 'bg-blue-900/30 text-white' : 'hover:bg-[#111] text-gray-400'}">
+                    <span class="{meta.color}">{item.is_back ? '⤴' : meta.icon}</span>
+                    <span class="truncate">
+                        {#if searchTerm.includes('/') && !item.action}
+                             {item.path}
+                        {:else}
+                             {item.name}
+                        {/if}
+                    </span>
+                </button>
+            {/each}
+            {#if displayList.length === 0}
+                <div class="px-2 py-2 text-[10px] text-gray-600 text-center italic">NO SIGNAL</div>
+            {/if}
+        </div>
+        
+        <div class="absolute bottom-0 right-0 w-4 h-4 cursor-ew-resize flex items-end justify-end p-1"
+             on:mousedown|stopPropagation={() => isResizing = true}>
+             <div class="w-1.5 h-1.5 border-r border-b border-blue-800/50"></div>
+        </div>
     </div>
-</div>
 {/if}
 
 <style>

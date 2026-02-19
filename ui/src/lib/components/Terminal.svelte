@@ -7,24 +7,24 @@
     let term;
     let fitAddon;
 
+    function syncSize() {
+        if (fitAddon && term && socket && socket.readyState === 1) {
+            fitAddon.fit();
+            if (term.rows > 0 && term.cols > 0) {
+                socket.send(`RESIZE:${term.rows}:${term.cols}`);
+            }
+        }
+    }
+
     export function getLogs() {
         if (!term) return "";
-        const totalLines = term.buffer.active.length;
+        const lines = term.buffer.active.length;
         let logs = "";
-        for (let i = Math.max(0, totalLines - 30); i < totalLines; i++) {
+        for (let i = Math.max(0, lines - 30); i < lines; i++) {
             const line = term.buffer.active.getLine(i);
             if (line) logs += line.translateToString() + "\n";
         }
         return logs;
-    }
-
-    export function fit() {
-        if (fitAddon && term) {
-            setTimeout(() => {
-                fitAddon.fit();
-                term.focus();
-            }, 50);
-        }
     }
 
     onMount(async () => {
@@ -32,36 +32,33 @@
         const { FitAddon } = await import('@xterm/addon-fit');
 
         term = new Terminal({
-            cursorBlink: true,
-            fontSize: 14, 
+            cursorBlink: true, 
+            fontSize: 14,
             fontFamily: '"JetBrains Mono", monospace',
             theme: { background: '#000000', foreground: '#00ff00', cursor: '#00ff00' },
-            rendererType: 'canvas'
+            // VITAL: DOM renderer is rock-solid on Chromebook ARM64
+            rendererType: 'dom' 
         });
 
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         term.open(termContainer);
-        term.element.style.padding = '0';
         fitAddon.fit();
-
-        termContainer.addEventListener('click', () => term.focus());
-        
-        // --- NATIVE MODE ---
-        // We removed ALL custom interceptors. 
-        // Right-Click now opens the browser's native Copy/Paste menu.
-        // This is 100% reliable.
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${proto}//${window.location.host}/ws`);
-        socket.onmessage = (event) => term.write(event.data);
+        
+        socket.onopen = () => syncSize();
+        socket.onmessage = (e) => term.write(e.data);
 
-        term.onData((data) => {
-            if (socket.readyState === WebSocket.OPEN) socket.send(data);
+        term.onData((d) => { if (socket.readyState === 1) socket.send(d); });
+
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+            syncSize();
         });
-
-        window.addEventListener('resize', () => fitAddon.fit());
-        setTimeout(() => { term.focus(); fitAddon.fit(); }, 500);
+        
+        setTimeout(() => { term.focus(); fitAddon.fit(); syncSize(); }, 500);
     });
 </script>
 

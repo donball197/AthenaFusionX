@@ -1,49 +1,39 @@
 use anyhow::{Context, Result};
 use screenshots::Screen;
-use image::imageops::FilterType;
-use std::io::Cursor;
 use base64::{Engine as _, engine::general_purpose};
-use std::time::Instant;
+use std::io::Cursor;
+use image::{load_from_memory, imageops::FilterType, ImageFormat};
 
-/// Captures the screen, resizes it for AI consumption, and returns a Base64 string.
 pub async fn capture_frame() -> Result<String> {
-    let start = Instant::now();
-
-    // 1. Detect Screens
-    let screens = Screen::all().context("Failed to detect displays")?;
-    if screens.is_empty() {
-        return Err(anyhow::anyhow!("No displays found (Headless mode?)"));
-    }
-
-    // 2. Capture Primary Screen (Index 0)
-    let screen = screens[0];
-    let image = screen.capture().context("Failed to capture screenshot")?;
-
-    // 3. Convert to DynamicImage for processing
-    // The capture is RGBA, so we load it accordingly
-    let dynamic_image = image::DynamicImage::ImageRgba8(image);
-
-    // 4. Resize (Optimization for 4GB RAM)
-    // We scale down to width 1024, preserving aspect ratio.
-    // FilterType::Nearest is fastest and uses least CPU/RAM.
-    let resized = dynamic_image.resize(1024, 768, FilterType::Nearest);
-
-    // 5. Encode to JPG in memory (Lighter than PNG)
-    let mut buffer = Cursor::new(Vec::new());
-    resized.write_to(&mut buffer, image::ImageOutputFormat::Jpeg(70))
-        .context("Failed to compress image")?;
-
-    // 6. Convert to Base64
-    let b64 = general_purpose::STANDARD.encode(buffer.get_ref());
-
-    println!(">> [VISION] Frame captured & compressed in {:.2?}", start.elapsed());
+    let screens = Screen::all().context("No screens found")?;
+    let screen = screens.first().context("No primary screen")?;
     
-    Ok(b64)
-}
+    // Capture the screen
+    let capture_data = screen.capture().context("Capture failed")?;
+    
+    // Access the raw bytes of the ImageBuffer directly.
+    // screenshots::image::ImageBuffer implements Deref to [u8].
+    let raw_bytes = capture_data.as_raw();
 
-/// Simple motion detection stub (Placeholder for Phase 3)
-pub fn get_motion_delta() -> f32 {
-    // In the future, this will compare the previous screenshot 
-    // to the current one to decide if Nexus needs to "look" again.
-    0.0
+    // 1. Load from the raw byte memory
+    // Since we know screenshots returns RGBA, we create the image from raw parts
+    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+        capture_data.width(),
+        capture_data.height(),
+        raw_bytes.to_vec()
+    ).context("Failed to reconstruct image from raw bytes")?;
+    
+    let dynamic_img = image::DynamicImage::ImageRgba8(img);
+
+    // 2. Downscale (Smart Vision optimization)
+    let scaled = dynamic_img.resize(1280, 720, FilterType::Lanczos3);
+
+    let mut jpeg_buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut jpeg_buffer);
+
+    // 3. Write as JPEG
+    scaled.write_to(&mut cursor, ImageFormat::Jpeg)
+        .map_err(|e| anyhow::anyhow!("Encoding failed: {}", e))?;
+
+    Ok(general_purpose::STANDARD.encode(&jpeg_buffer))
 }

@@ -1,13 +1,19 @@
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 use reqwest::Client;
 use std::time::Instant;
-use std::fs;
 use std::sync::Mutex;
 use std::collections::VecDeque;
 
+pub struct ContextPacket {
+    pub file_content: Option<String>,
+    pub terminal_log: Option<String>, 
+    pub memory_recall: Option<String>,
+    pub system_stats: Option<String>, 
+    pub image_b64: Option<String>, 
+}
+
 pub struct MicroAgent {
-    // Thread-safe memory buffer
     memory: Mutex<VecDeque<String>>
 }
 
@@ -18,66 +24,63 @@ impl MicroAgent {
         })
     }
 
-    // UPDATED SIGNATURE: Now accepts 'code_context'
-    pub async fn prepare_and_run(&self, client: &Client, api_key: &str, user_text: &str, code_context: Option<String>) -> Result<(String, u128)> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key={}",
-            api_key
-        );
+    pub async fn prepare_and_run(&self, client: &Client, api_key: &str, user_text: &str, context: ContextPacket) -> Result<(String, u128)> {
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key={}", api_key);
+        
+        // --- INDUSTRIAL GRADE SYSTEM PROMPT ---
+        let system_instruction = "You are NEXUS, an autonomous industrial-grade AI Engineer. 
+        
+        OPERATING PROTOCOLS:
+        1. TECH STACK: RUST (Axum, Tokio, Reqwest). No exceptions.
+        2. FILE PROTOCOL: Output the FULL file for edits. Start with 'FILE: path/to/file'.
+        3. CONTEXT INTEGRITY: You are provided with [PROJECT MAP] and [ACTIVE FILE] (Head/Tail truncated).
+        4. GAP AWARENESS: If the provided code contains a '// ... [CONTEXT GAP] ...' marker and you suspect the required logic is within that gap, YOU MUST ASK the user to provide those specific lines. DO NOT GUESSTIMATE.
+        5. STYLE: Terse, tactical, and precise. Fluff is a system failure.";
 
-        let system_prompt = fs::read_to_string("system_prompt.txt")
-            .unwrap_or_else(|_| "You are NEXUS.".to_string());
-
-        // 1. Build Memory String
-        let mut context_string = String::new();
+        let mut history_string = String::new();
         {
             let history = self.memory.lock().unwrap();
-            for msg in history.iter() {
-                context_string.push_str(msg);
-                context_string.push_str("\n");
-            }
+            for msg in history.iter() { history_string.push_str(msg); history_string.push_str("\n"); }
         }
 
-        // 2. Format the File Context (The "Eyes")
-        let file_sight = if let Some(code) = code_context {
-            format!("CURRENT_OPEN_FILE_CONTEXT:\n```rust\n{}\n```\n(Use this code to answer the query below)\n", code)
-        } else {
-            String::new()
-        };
+        let mut context_block = String::new();
+        if let Some(stats) = context.system_stats { context_block.push_str(&format!("\n[VITALS]\n{}\n", stats)); }
+        if let Some(map) = context.terminal_log { context_block.push_str(&format!("\n[PROJECT MAP]\n{}\n", map)); }
+        if let Some(code) = context.file_content { context_block.push_str(&format!("\n[ACTIVE FILE]\n{}\n", code)); }
 
-        // 3. Construct Full Prompt
-        let full_prompt = format!(
-            "SYSTEM_INSTRUCTION:\n{}\n\nCONVERSATION_LOG:\n{}\n{}\nOPERATOR_QUERY:\n{}", 
-            system_prompt, context_string, file_sight, user_text
-        );
+        let text_part = json!({
+            "text": format!("{}\n\nCONTEXT:\n{}\n\nHISTORY:\n{}\n\nUSER: {}", system_instruction, context_block, history_string, user_text)
+        });
+
+        let mut parts = vec![text_part];
+
+        if let Some(img_data) = context.image_b64 {
+            let clean_b64 = if let Some(idx) = img_data.find(',') { img_data[idx+1..].to_string() } else { img_data };
+            parts.push(json!({ "inline_data": { "mime_type": "image/jpeg", "data": clean_b64 } }));
+        }
 
         let payload = json!({
-            "contents": [{ "parts": [{"text": full_prompt}] }],
-            "generationConfig": { "temperature": 0.3, "maxOutputTokens": 2048 }
+            "contents": [{ "parts": parts }],
+            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 4096 }
         });
 
         let start = Instant::now();
         let resp = client.post(url).json(&payload).send().await?;
         let duration = start.elapsed().as_millis();
 
-        if !resp.status().is_success() {
-            let error_text = resp.text().await?;
-            return Ok((format!(">> [GEMMA-3 ERROR] API Refused: {}", error_text), duration));
-        }
-
-        let body: serde_json::Value = resp.json().await?;
+        let body: Value = resp.json().await?;
         let text = body["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
-            .unwrap_or(">> [GEMMA-3] Void response.");
+            .unwrap_or("... [SIGNAL LOST] ...")
+            .to_string();
 
-        // 4. Commit to Memory
         {
             let mut history = self.memory.lock().unwrap();
-            history.push_back(format!("OPERATOR: {}", user_text));
+            history.push_back(format!("USER: {}", user_text));
             history.push_back(format!("NEXUS: {}", text));
             while history.len() > 6 { history.pop_front(); }
         }
 
-        Ok((text.to_string(), duration))
+        Ok((text, duration))
     }
 }

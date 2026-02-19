@@ -1,20 +1,20 @@
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, Query},
+    extract::{State, Query},
     routing::{get, post, delete},
-    Json, Router, http::{StatusCode, Method},
+    Json, Router, http::StatusCode,
 };
 use std::sync::Arc;
 use std::fs;
-use std::net::SocketAddr;
+use std::path::Path;
+use std::process::Command;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use futures_util::{sink::SinkExt, stream::StreamExt};
 
+use crate::neural_agent::{MicroAgent, ContextPacket};
+use crate::memory::MemoryPalace;
 use crate::system_monitor::SystemMonitor;
-use crate::neural_agent::MicroAgent;
-use crate::memory::{MemoryPalace, Memory};
+use crate::vision;
 
 pub struct AppState {
     pub client: reqwest::Client,
@@ -25,172 +25,179 @@ pub struct AppState {
     pub api_key: String,
 }
 
-#[derive(Deserialize)]
-pub struct FileParams { pub path: String }
-#[derive(Deserialize, Serialize)]
-pub struct FileContent { pub path: String, pub content: String }
-#[derive(Serialize)]
-pub struct DirEntry { pub name: String, pub is_dir: bool, pub path: String }
-
-#[derive(Deserialize, Serialize)]
-pub struct PromptRequest { 
-    pub prompt: String, 
-    pub context: Option<String>,
-    pub terminal_context: Option<String> 
+#[derive(Deserialize)] pub struct FileParams { 
+    pub path: String, 
+    pub recursive: Option<bool>,
+    pub start_line: Option<usize>, 
+    pub end_line: Option<usize> 
 }
 
-#[derive(Deserialize)]
-pub struct MemoryRequest { pub prompt: String, pub code: String }
-#[derive(Deserialize)]
-pub struct PruneRequest { pub keep_keyword: String }
-#[derive(Deserialize, Serialize)]
-pub struct NeuralResponse { pub response: String, pub status: String, pub latency: u128 }
+#[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }
+#[derive(Serialize)] pub struct DirEntry { pub name: String, pub is_dir: bool, pub path: String }
+#[derive(Deserialize, Serialize)] pub struct PromptRequest { pub prompt: String, pub context: Option<String>, pub image: Option<String> }
+#[derive(Serialize)] pub struct NeuralResponse { pub response: String, pub status: String }
 
 #[derive(Serialize)]
-pub struct Vitals {
+pub struct VitalsResponse {
     pub status: String,
     pub cpu_usage: f32,
     pub ram_usage: String,
-    pub ram_percent: f32,
-    pub integrity: u32,
+}
+
+fn read_dir_recursive(path: &Path, entries: &mut Vec<DirEntry>) {
+    if let Ok(rd) = fs::read_dir(path) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let is_dir = p.is_dir();
+            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist" { continue; }
+            entries.push(DirEntry { name: name.clone(), is_dir, path: p.to_string_lossy().to_string() });
+            if is_dir { read_dir_recursive(&p, entries); }
+        }
+    }
+}
+
+fn generate_project_map() -> String {
+    let mut entries = Vec::new();
+    read_dir_recursive(Path::new("src"), &mut entries);
+    read_dir_recursive(Path::new("ui/src"), &mut entries);
+    entries.iter().filter(|e| !e.is_dir).map(|e| e.path.clone()).collect::<Vec<_>>().join("\n")
 }
 
 pub async fn start_server(state: Arc<AppState>) {
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods([Method::GET, Method::POST, Method::DELETE]).allow_headers(Any);
-
     let app = Router::new()
         .route("/api/vitals", get(handle_vitals))
+        .route("/api/vision/frame", post(handle_vision_frame))
         .route("/api/prompt", post(handle_prompt))
-        .route("/api/memory", post(handle_memory))
-        .route("/api/memories", get(handle_get_memories))
-        .route("/api/memories/purge", delete(handle_purge_memories))
-        .route("/api/memories/archive", post(handle_archive_memories))
-        .route("/api/memories/prune", post(handle_prune_memories))
         .route("/api/fs/read", get(handle_read_file))
-        .route("/api/fs/write", post(handle_write_file))
+        .route("/api/fs/write", post(handle_write_file)) 
         .route("/api/fs/list", get(handle_list_files))
-        .route("/ws", get(ws_handler))
+        .route("/api/fs/check", post(handle_compile_check)) 
         .fallback_service(ServeDir::new("ui/dist"))
-        .with_state(state).layer(cors);
+        .with_state(state)
+        .layer(CorsLayer::permissive());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    println!(">> [NEXUS] Sovereign Node Online: http://localhost:3000");
-    axum::Server::bind(&addr).serve(app.into_make_service()).await.unwrap();
-}
-
-async fn handle_vitals(State(state): State<Arc<AppState>>) -> Json<Vitals> {
-    let stats = state.monitor.get_stats();
-    let used_gb = stats.ram_used as f32 / 1_073_741_824.0;
-    let total_gb = stats.ram_total as f32 / 1_073_741_824.0;
-    Json(Vitals { status: "ONLINE".to_string(), cpu_usage: stats.cpu_usage, ram_usage: format!("{:.1}GB / {:.1}GB", used_gb, total_gb), ram_percent: stats.ram_usage, integrity: 100 })
-}
-
-async fn handle_memory(State(state): State<Arc<AppState>>, Json(payload): Json<MemoryRequest>) -> StatusCode {
-    state.memory.remember(payload.prompt, payload.code); StatusCode::OK
-}
-
-async fn handle_get_memories(State(state): State<Arc<AppState>>) -> Json<Vec<Memory>> { Json(state.memory.load_all()) }
-
-async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> StatusCode { 
-    state.memory.purge(); 
-    println!(">> [CORTEX] Memories purged.");
-    StatusCode::OK 
-}
-
-async fn handle_archive_memories(State(state): State<Arc<AppState>>) -> StatusCode {
-    let memories = state.memory.load_all();
-    let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let filename = format!("nexus_archive_{}.json", timestamp);
-    if let Ok(json) = serde_json::to_string_pretty(&memories) {
-        if fs::write(&filename, json).is_ok() { 
-            println!(">> [SYSTEM] ARCHIVE CREATED: {}", filename);
-            return StatusCode::OK; 
-        }
-    }
-    StatusCode::INTERNAL_SERVER_ERROR
-}
-
-async fn handle_prune_memories(State(state): State<Arc<AppState>>, Json(payload): Json<PruneRequest>) -> StatusCode {
-    let mut memories = state.memory.load_all();
-    memories.retain(|m| m.prompt.to_lowercase().contains(&payload.keep_keyword.to_lowercase()) || m.solution_code.to_lowercase().contains(&payload.keep_keyword.to_lowercase()));
-    if let Ok(json) = serde_json::to_string_pretty(&memories) {
-        let _ = fs::write("nexus_memories.json", json); return StatusCode::OK;
-    }
-    StatusCode::INTERNAL_SERVER_ERROR
-}
-
-async fn handle_prompt(State(state): State<Arc<AppState>>, Json(payload): Json<PromptRequest>) -> Json<NeuralResponse> {
-    let mut final_context = payload.context.clone().unwrap_or_default();
-    let is_swarm = payload.prompt.to_lowercase().contains("swarm");
-    let is_audit = payload.prompt.to_lowercase().contains("audit");
-    let mut actual_prompt = payload.prompt.clone();
-    if is_swarm { actual_prompt = format!("SWARM_ANALYSIS: Coordinate multi-vector review: {}", payload.prompt); }
-    else if is_audit { actual_prompt = "SELF_AUDIT: Summarize progress and suggest focus areas.".to_string(); }
-    let memory_context = state.memory.recall();
-    if !memory_context.is_empty() { final_context.push_str("\n\n=== RECALLED ===\n"); final_context.push_str(&memory_context); }
-    if let Some(logs) = payload.terminal_context { final_context.push_str("\n\n=== TERMINAL ===\n"); final_context.push_str(&logs); }
-    match state.agent.prepare_and_run(&state.client, &state.api_key, &actual_prompt, Some(final_context)).await {
-        Ok((res, latency)) => {
-            let prefix = if is_swarm { ">> [SWARM]\n" } else if is_audit { ">> [AUDIT]\n" } else { "" };
-            Json(NeuralResponse { response: format!("{}{}", prefix, res), status: "ok".to_string(), latency })
-        },
-        Err(e) => Json(NeuralResponse { response: format!("ERROR: {}", e), status: "fail".to_string(), latency: 0 })
-    }
-}
-
-async fn ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse { ws.on_upgrade(handle_socket) }
-
-async fn handle_socket(socket: WebSocket) {
-    let pty_system = native_pty_system();
-    let pair = pty_system.openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).expect("PTY error");
-    let cmd = CommandBuilder::new("/bin/bash");
-    let _child = pair.slave.spawn_command(cmd).unwrap();
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
-    let (mut ws_sender, mut ws_receiver) = socket.split();
-    let pty_to_ws = tokio::spawn(async move {
-        let mut buf = [0u8; 1024];
-        while let Ok(n) = std::io::Read::read(&mut reader, &mut buf) {
-            if n == 0 { break; }
-            let msg = String::from_utf8_lossy(&buf[..n]).to_string();
-            if ws_sender.send(Message::Text(msg)).await.is_err() { break; }
-        }
-    });
-    let ws_to_pty = tokio::spawn(async move {
-        while let Some(Ok(msg)) = ws_receiver.next().await {
-            if let Message::Text(text) = msg {
-                let _ = std::io::Write::write_all(&mut writer, text.as_bytes());
-                let _ = std::io::Write::flush(&mut writer);
-            }
-        }
-    });
-    tokio::select! { _ = pty_to_ws => {}, _ = ws_to_pty => {} }
+    let addr = "0.0.0.0:3000";
+    let listener = tokio::net::TcpListener::bind(addr).await.expect("CRITICAL: Port 3000 is blocked.");
+    println!("\n>> [NEXUS] INDUSTRIAL ENGINE ONLINE: http://localhost:3000\n");
+    axum::serve(listener, app).await.unwrap();
 }
 
 async fn handle_read_file(Query(params): Query<FileParams>) -> Result<Json<FileContent>, StatusCode> {
     let target = if params.path.is_empty() { "src/main.rs" } else { &params.path };
-    match fs::read_to_string(target) {
-        Ok(content) => Ok(Json(FileContent { path: target.to_string(), content })),
-        Err(_) => Err(StatusCode::NOT_FOUND),
+    let full_content = fs::read_to_string(target).map_err(|_| StatusCode::NOT_FOUND)?;
+    
+    let content = if let (Some(s), Some(e)) = (params.start_line, params.end_line) {
+        full_content.lines()
+            .skip(s.saturating_sub(1))
+            .take(e.saturating_sub(s).saturating_add(1))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        full_content
+    };
+
+    Ok(Json(FileContent { path: target.into(), content }))
+}
+
+async fn handle_prompt(State(state): State<Arc<AppState>>, Json(payload): Json<PromptRequest>) -> Json<NeuralResponse> {
+    let vitals = state.monitor.get_vital_signs();
+    let project_map = generate_project_map();
+    
+    let processed_context = payload.context.map(|c| {
+        let lines: Vec<&str> = c.lines().collect();
+        if lines.len() > 300 {
+            let head = lines[..50].join("\n");
+            let tail = lines[lines.len().saturating_sub(100)..].join("\n");
+            format!("{}\n\n// ... [LOGIC GAP: {} LINES HIDDEN] ...\n\n{}", head, lines.len().saturating_sub(150), tail)
+        } else {
+            c
+        }
+    });
+
+    let packet = ContextPacket {
+        file_content: processed_context,
+        terminal_log: Some(project_map), 
+        memory_recall: Some(state.memory.recall()),
+        system_stats: Some(vitals),
+        image_b64: payload.image,
+    };
+    match state.agent.prepare_and_run(&state.client, &state.api_key, &payload.prompt, packet).await {
+        Ok((res, _)) => Json(NeuralResponse { response: res, status: "ok".into() }),
+        Err(e) => Json(NeuralResponse { response: format!("AI ERROR: {}", e), status: "fail".into() }),
     }
 }
 
-async fn handle_write_file(Json(payload): Json<FileContent>) -> StatusCode {
-    if fs::write(&payload.path, &payload.content).is_ok() { StatusCode::OK } else { StatusCode::INTERNAL_SERVER_ERROR }
+async fn handle_vision_frame() -> Json<NeuralResponse> {
+    match vision::capture_frame().await {
+        Ok(frame) => Json(NeuralResponse { response: frame, status: "ok".into() }),
+        Err(e) => Json(NeuralResponse { response: format!("Capture Error: {}", e), status: "fail".into() }),
+    }
+}
+
+async fn handle_vitals(State(state): State<Arc<AppState>>) -> Json<VitalsResponse> {
+    let vitals_raw = state.monitor.get_vital_signs();
+    Json(VitalsResponse {
+        status: "ONLINE".into(),
+        cpu_usage: 0.0,
+        ram_usage: vitals_raw,
+    })
 }
 
 async fn handle_list_files(Query(params): Query<FileParams>) -> Json<Vec<DirEntry>> {
-    let path = if params.path.is_empty() { "." } else { &params.path };
+    let path_str = if params.path.is_empty() { "." } else { &params.path };
+    let path = Path::new(path_str);
     let mut entries = Vec::new();
-    if let Ok(rd) = fs::read_dir(path) {
-        for entry in rd.flatten() {
-            let is_dir = entry.path().is_dir();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                entries.push(DirEntry { name, is_dir, path: entry.path().to_string_lossy().to_string() });
+    if params.recursive.unwrap_or(false) { read_dir_recursive(path, &mut entries); }
+    else {
+        if let Ok(rd) = fs::read_dir(path) {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    entries.push(DirEntry { name, is_dir: entry.path().is_dir(), path: entry.path().to_string_lossy().into() });
+                }
             }
         }
     }
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
     Json(entries)
+}
+
+async fn handle_write_file(Json(payload): Json<FileContent>) -> StatusCode {
+    let clean_content = if payload.content.trim().starts_with("FILE:") {
+        payload.content.lines().skip(1).collect::<Vec<_>>().join("\n")
+    } else {
+        payload.content
+    };
+    if fs::write(&payload.path, &clean_content).is_ok() { StatusCode::OK } else { StatusCode::INTERNAL_SERVER_ERROR }
+}
+
+async fn handle_compile_check(Json(payload): Json<FileContent>) -> Json<NeuralResponse> {
+    let clean_content = if payload.content.trim().starts_with("FILE:") {
+        payload.content.lines().skip(1).collect::<Vec<_>>().join("\n")
+    } else {
+        payload.content
+    };
+    
+    let original_content = fs::read_to_string(&payload.path).unwrap_or_default();
+    if fs::write(&payload.path, &clean_content).is_err() {
+        return Json(NeuralResponse { response: "Write failure".into(), status: "error".into() });
+    }
+
+    let output = Command::new("cargo").arg("check").output();
+    let _ = fs::write(&payload.path, original_content);
+    
+    match output {
+        Ok(out) => {
+            if out.status.success() { 
+                Json(NeuralResponse { response: "PROJECT INTEGRITY OK".into(), status: "ok".into() }) 
+            } else { 
+                Json(NeuralResponse { 
+                    response: String::from_utf8_lossy(&out.stderr).to_string(), 
+                    status: "fail".into() 
+                }) 
+            }
+        },
+        Err(_) => Json(NeuralResponse { response: "CARGO NOT FOUND".into(), status: "error".into() })
+    }
 }
