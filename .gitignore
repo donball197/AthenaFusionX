@@ -1,30 +1,15 @@
-# --- RUST & BUILD ARTIFACTS ---
-# The heavy machinery. Never push this.
-/target
+# API Secrets
+.env
+
+# Rust Build Artifacts
+target/
 **/*.rs.bk
 
-# --- NODE.JS & UI ---
-# Dependencies and build outputs.
-node_modules/
+# Node/UI Artifacts
 ui/node_modules/
 ui/dist/
-ui/.svelte-kit/
-.npm
-pnpm-lock.yaml
-yarn.lock
+.svelte-kit/
 
-# --- SYSTEM & ENVIRONMENT ---
-# CRITICAL: Never leak your API keys.
-.env
-.env.local
+# System Files
 .DS_Store
-
-# --- NEXUS MEMORY & LOGS ---
-# Keep your AI's thoughts and archives local.
-nexus_memories.json
-nexus_archive_*.json
 *.log
-
-# --- IDE SETTINGS ---
-.vscode/
-.idea/
