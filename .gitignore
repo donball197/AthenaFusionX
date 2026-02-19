@@ -13,3 +13,4 @@ ui/dist/
 # System Files
 .DS_Store
 *.log
+node_modules/
