@@ -5,26 +5,27 @@
     let termContainer;
     let socket;
     let term;
-    let fitAddon;
 
-    function syncSize() {
-        if (fitAddon && term && socket && socket.readyState === 1) {
-            fitAddon.fit();
-            if (term.rows > 0 && term.cols > 0) {
-                socket.send(`RESIZE:${term.rows}:${term.cols}`);
+    // THE FIX: Safely exported getLogs function so the UI doesn't crash
+    export function getLogs() {
+        try {
+            if (!term || !term.buffer) return "";
+            const lines = term.buffer.active.length;
+            let logs = "";
+            for (let i = Math.max(0, lines - 30); i < lines; i++) {
+                const line = term.buffer.active.getLine(i);
+                if (line) logs += line.translateToString() + "\n";
             }
+            return logs;
+        } catch (e) {
+            return "";
         }
     }
 
-    export function getLogs() {
-        if (!term) return "";
-        const lines = term.buffer.active.length;
-        let logs = "";
-        for (let i = Math.max(0, lines - 30); i < lines; i++) {
-            const line = term.buffer.active.getLine(i);
-            if (line) logs += line.translateToString() + "\n";
+    export function triggerCommand(cmd) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(cmd + "\r");
         }
-        return logs;
     }
 
     onMount(async () => {
@@ -32,38 +33,28 @@
         const { FitAddon } = await import('@xterm/addon-fit');
 
         term = new Terminal({
-            cursorBlink: true, 
-            fontSize: 14,
+            cursorBlink: true,
+            fontSize: 12,
             fontFamily: '"JetBrains Mono", monospace',
-            theme: { background: '#000000', foreground: '#00ff00', cursor: '#00ff00' },
-            // VITAL: DOM renderer is rock-solid on Chromebook ARM64
-            rendererType: 'dom' 
+            theme: { background: '#000000', foreground: '#00ff00', cursor: '#00ff00' }
         });
 
-        fitAddon = new FitAddon();
+        const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         term.open(termContainer);
         fitAddon.fit();
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${proto}//${window.location.host}/ws`);
-        
-        socket.onopen = () => syncSize();
-        socket.onmessage = (e) => term.write(e.data);
 
-        term.onData((d) => { if (socket.readyState === 1) socket.send(d); });
+        socket.onmessage = (event) => { term.write(event.data); };
 
-        window.addEventListener('resize', () => {
-            fitAddon.fit();
-            syncSize();
+        term.onData((data) => {
+            if (socket.readyState === WebSocket.OPEN) socket.send(data);
         });
-        
-        setTimeout(() => { term.focus(); fitAddon.fit(); syncSize(); }, 500);
+
+        window.addEventListener('resize', () => fitAddon.fit());
     });
 </script>
 
-<div class="h-full w-full bg-black overflow-hidden cursor-text" bind:this={termContainer}></div>
-
-<style>
-    :global(.xterm) { height: 100%; width: 100%; }
-</style>
+<div class="h-full w-full bg-black p-2 overflow-hidden" bind:this={termContainer}></div>

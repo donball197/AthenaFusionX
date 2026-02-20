@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use screenshots::Screen;
 use base64::{Engine as _, engine::general_purpose};
 use std::io::Cursor;
-use image::{load_from_memory, imageops::FilterType, ImageFormat};
+use image::{imageops::FilterType, ImageFormat};
 
 pub async fn capture_frame() -> Result<String> {
     let screens = Screen::all().context("No screens found")?;

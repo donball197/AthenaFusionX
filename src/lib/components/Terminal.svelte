@@ -1,4 +1,5 @@
-<script>
+svelte
+FILE: src/lib/XTermComponent.svelte
     import { onMount } from 'svelte';
     // Direct scoped import to satisfy Vite/Rollup
     import '@xterm/xterm/css/xterm.css';
