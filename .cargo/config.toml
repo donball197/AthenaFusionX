@@ -1,5 +1,6 @@
-[profile.release]
-opt-level = "s" # Optimize for size to protect mobile RAM
-lto = true
-codegen-units = 1
-panic = "abort"
+[build]
+jobs = 2
+
+[target.aarch64-unknown-linux-gnu]
+linker = "gcc"
+rustflags = ["-C", "link-arg=-Wl,--as-needed"]

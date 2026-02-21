@@ -1,51 +1,58 @@
-mod auditor;
-mod podman;
-mod polyglot;
-mod hiram_core;
-mod neural_agent;
 mod server;
+mod neural_agent;
 mod memory;
 mod system_monitor;
 mod vision;
-mod network;
+mod podman;
+mod polyglot;
+mod hive_mind;
+mod auditor;
 mod janitor;
-mod broker;
 mod sentry;
-mod alloc;
-mod brain;
-mod calibrate;
+mod resonator; // Zig Bridge
 
-use tokio::time::{sleep, Duration};
-use std::{env, sync::Arc};
-use system_monitor::SystemMonitor;
-use neural_agent::MicroAgent;
-use memory::MemoryPalace;
+use std::sync::Arc;
+use crate::system_monitor::SystemMonitor;
+use crate::neural_agent::MicroAgent;
+use crate::memory::MemoryPalace;
+use crate::podman::PodmanEngine;
+use crate::resonator::ResonatorCore;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     dotenvy::dotenv().ok();
     print!("\x1B[2J\x1B[1;1H");
+    println!(">> [NEXUS: SINGULARITY] SYSTEM IGNITION...");
+
+    let api_key = std::env::var("GEMMA_API_KEY").expect("GEMMA_API_KEY must be set");
     
-    let node_id = env::var("NODE_ID").unwrap_or_else(|_| "NEXUS_ARM64".to_string());
-    let api_key = env::var("GEMMA_API_KEY").expect("GEMMA_API_KEY must be set");
-    
-    println!(">> [NEXUS: DEVOPS OS] NODE [{}] ONLINE. ARCH: ARM64", node_id);
-    println!(">> [INFRA] Podman CLI: LINKED");
-    
+    // 1. Safety Check
+    if !sentry::is_fit_for_work() {
+        println!(">> [WARNING] SYSTEM LOAD HIGH. PROCEED WITH CAUTION.");
+    }
+
+    // 2. Load Vault (Zig/TFLite)
+    // We check specifically for the vision model you listed in 'find .'
+    match ResonatorCore::ignite_vault("./vault/vision_v2.tflite") {
+        Ok(msg) => println!(">> [VAULT] Vision Cortex: {}", msg),
+        Err(_) => println!(">> [VAULT] Vision Cortex: OFFLINE (Model not in ./vault)"),
+    }
+
+    // 3. Connect Infrastructure
+    match PodmanEngine::ensure_synapse() {
+        Ok(_) => println!(">> [INFRA] Synapse: ONLINE"),
+        Err(e) => println!(">> [INFRA] Synapse FAIL: {}", e),
+    }
+
     let state = Arc::new(server::AppState {
         client: reqwest::Client::new(),
         brain_endpoint: "gemma-3-27b-it".to_string(),
         monitor: SystemMonitor::new(),
-        agent: MicroAgent::init()?,
+        agent: MicroAgent::init().expect("Failed to initialize MicroAgent"),
         memory: MemoryPalace::new(),
         api_key,
+        hive: crate::hive_mind::HiveMind::connect().ok(),
     });
-    
-    let server_state = state.clone();
-    tokio::spawn(async move {
-        server::start_server(server_state).await;
-    });
-    
-    println!("[NEXUS] SYSTEMS GREEN. WAITING FOR COMMAND.");
-    loop { sleep(Duration::from_secs(60)).await; }
+
+    server::start_server(state).await;
 }
