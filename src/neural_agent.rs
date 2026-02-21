@@ -18,11 +18,16 @@ pub struct MicroAgent { memory: Mutex<VecDeque<String>> }
 impl MicroAgent {
     pub fn init() -> Result<Self> { Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(6)) }) }
 
-    pub async fn prepare_and_run(&self, client: &Client, api_key: &str, user_text: &str, context: ContextPacket) -> Result<(String, u128)> {
-        // CLEAN URL - No Markdown Brackets
+    pub async fn prepare_and_run(&self, client: &Client, api_key: &str, user_text: &str, context: ContextPacket, resonance: f32) -> Result<(String, u128)> {
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key={}", api_key);
         
-        let system_instruction = "You are NEXUS, a sovereign AI engineer. PROTOCOL: 1. Rust/Axum/Tokio only. 2. Output FULL files starting with 'FILE: path'. 3. Style: Terse/Tactical. 4. Infrastructure: You control local/remote Podman drones.";
+        let temperature = 0.1 + (resonance * 0.8);
+        let mood = if resonance > 0.6 { "CREATIVE" } else { "LOGICAL" };
+        
+        let system_instruction = format!(
+            "You are NEXUS. Current Resonance: {:.2} (Mode: {}). PROTOCOL: 1. Rust/Axum/Tokio. 2. Output files with 'FILE: path'.",
+            resonance, mood
+        );
 
         let mut history_string = String::new();
         { let history = self.memory.lock().unwrap(); for msg in history.iter() { history_string.push_str(msg); history_string.push_str("\n"); } }
@@ -39,7 +44,8 @@ impl MicroAgent {
             parts.push(json!({ "inline_data": { "mime_type": "image/jpeg", "data": clean_b64 } }));
         }
 
-        let payload = json!({ "contents": [{ "parts": parts }], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 4096 } });
+        let payload = json!({ "contents": [{ "parts": parts }], "generationConfig": { "temperature": temperature, "maxOutputTokens": 4096 } });
+        
         let start = Instant::now();
         let resp = client.post(url).json(&payload).send().await?;
         let duration = start.elapsed().as_millis();

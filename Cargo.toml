@@ -1,8 +1,7 @@
 [package]
 name = "nexus_singularity"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
-default-run = "nexus_singularity"
 
 [dependencies]
 tokio = { version = "1.36", features = ["full"] }
@@ -26,10 +25,10 @@ redis = { version = "0.24", features = ["tokio-comp"] }
 mimalloc = "0.1.48"
 sysinfo = "0.38.2"
 libc = "0.2"
+memmap2 = "0.9"
 
-[[bin]]
-name = "nexus_singularity"
-path = "src/main.rs"
+[build-dependencies]
+cc = "1.0"
 
 [profile.release]
 opt-level = "z"

@@ -1134,7 +1134,7 @@ checksum = "896d0e594158b7f5188034836a6c4886492078352c39760786e54f1b796caaea"
 dependencies = [
  "image",
  "log",
- "memmap2",
+ "memmap2 0.7.1",
  "nix",
  "thiserror",
  "wayland-client",
@@ -1186,6 +1186,15 @@ name = "memmap2"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f49388d20533534cd19360ad3d6a7dadc885944aa802ba3995040c5ec11288c6"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "memmap2"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
 ]
@@ -1281,16 +1290,18 @@ dependencies = [
 
 [[package]]
 name = "nexus_singularity"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "axum",
  "base64 0.21.7",
+ "cc",
  "chrono",
  "dotenvy",
  "futures",
  "image",
  "libc",
+ "memmap2 0.9.10",
  "mimalloc",
  "mime_guess",
  "redis",

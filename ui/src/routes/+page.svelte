@@ -3,6 +3,7 @@
     import Editor from '$lib/components/Editor.svelte';
     import Terminal from '$lib/components/Terminal.svelte';
     import Vitals from '$lib/components/Vitals.svelte';
+    import Heartbeat from '$lib/components/Heartbeat.svelte'; 
     import TacticalBlade from '$lib/components/TacticalBlade.svelte';
     import Voice from '$lib/components/Voice.svelte';
     import History from '$lib/components/History.svelte';
@@ -30,7 +31,7 @@
     let targetPatchFile = ""; 
     let visionActive = false;
     let voiceMuted = false; 
-    let vitals = { status: "ONLINE", cpu_usage: 0, ram_usage: "0.0" };
+    let vitals = { status: "OFFLINE", cpu_usage: 0, ram_usage: "0.0", resonance: 0.0 }; 
     let ghostLogs = ""; 
 
     function toggleMute() { 
@@ -158,10 +159,7 @@
 
     function syncGhost() {
         if (terminalInstance) {
-            try {
-                // Mock logs logic for UI stability if terminal API isn't ready
-                // ghostLogs = terminalInstance.getLogs().slice(-200); 
-            } catch(e) {}
+            try { } catch(e) {}
         }
     }
 
@@ -206,13 +204,20 @@
     </header>
 
     <div class="flex-1 flex relative overflow-hidden">
-        <aside class="w-64 border-r border-[#30363d] bg-[#0d1117] p-4 flex flex-col gap-6 hidden md:flex shrink-0 z-40">
-            <Vitals ram={vitals.ram_usage} status={vitals.status} cpu={vitals.cpu_usage} />
-            <ResponseModule response={neuralResponse} {isThinking} {patchAvailable} onApplyPatch={applyPatch} />
+        <aside class="w-64 border-r border-[#30363d] bg-[#0d1117] p-4 flex flex-col hidden md:flex shrink-0 z-40 overflow-hidden">
+            <div class="shrink-0 space-y-4 mb-4">
+                <Vitals ram={vitals.ram_usage} status={vitals.status} cpu={vitals.cpu_usage} resonance={vitals.resonance} />
+                <Heartbeat resonance={vitals.resonance} />
+            </div>
+
+            <div class="flex-1 min-h-0 flex flex-col border-t border-[#30363d] pt-4 overflow-hidden">
+                <div class="flex-1 overflow-y-auto custom-scrollbar pb-10">
+                    <ResponseModule response={neuralResponse} {isThinking} {patchAvailable} onApplyPatch={applyPatch} />
+                </div>
+            </div>
         </aside>
 
         <main class="flex-1 flex flex-col bg-black relative">
-            
             {#if isAnalyzing}
                 <div class="absolute inset-0 z-50 bg-[#0d1117]/95 flex flex-col items-center justify-center p-8 backdrop-blur-sm">
                     <div class="text-green-500 font-mono text-xl mb-4 animate-pulse">>> INITIATING SEC-OPS DISSECTION...</div>
