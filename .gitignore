@@ -17,3 +17,4 @@ nexus_memories.json
 # System junk
 .DS_Store
 thumbs.db
+*.gguf
