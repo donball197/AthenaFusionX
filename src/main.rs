@@ -27,21 +27,13 @@ async fn main() {
     dotenvy::dotenv().ok();
     print!("\x1B[2J\x1B[1;1H");
     println!(">> [NEXUS: SINGULARITY] HYBRID CORE IGNITION...");
-
     let api_key = std::env::var("GEMMA_API_KEY").expect("GEMMA_API_KEY must be set");
-    if !sentry::is_fit_for_work() { println!(">> [WARNING] CPU LOAD CRITICAL."); }
-
-    let _ = PodmanEngine::ensure_synapse();
-
-    // SHARED ATOMIC RESONANCE (Layer 12)
+    
     let shared_resonance = Arc::new(AtomicU32::new(f32_to_atomic(0.0)));
     let monitor_resonance = shared_resonance.clone();
 
     tokio::spawn(async move {
-        let primary = "vault/gemma3n_e2b.gguf";
-        let secondary = "vault/gemma1b.gguf";
-        let target = if std::path::Path::new(primary).exists() { primary } else { secondary };
-
+        let target = "vault/gemma3n_e2b.gguf";
         loop {
             if std::path::Path::new(target).exists() {
                 if let Ok(energy) = ResonatorCore::scan_local_energy(target) {
@@ -62,6 +54,5 @@ async fn main() {
         hive: crate::hive_mind::HiveMind::connect().ok(),
         current_resonance: shared_resonance,
     });
-
     server::start_server(state).await;
 }

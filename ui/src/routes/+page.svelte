@@ -152,7 +152,7 @@
             }
             
             const fileMatch = neuralResponse.match(/FILE:\s*([^\n]+)/);
-            targetPatchFile = fileMatch ? fileMatch[1].trim() : currentFile;
+            targetPatchFile = fileMatch ? fileMatch[1].split(" ")[0].trim() : currentFile;
 
         } catch (e) { neuralResponse = ">> ERROR"; } finally { isThinking = false; isAnalyzing = false; if(poller) clearInterval(poller); }
     }

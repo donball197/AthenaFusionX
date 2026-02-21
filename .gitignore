@@ -1,20 +1,7 @@
-# Rust build artifacts
-target/
-**/*.rs.bk
-debug/
-
-# Node/Svelte artifacts
-node_modules/
-ui/dist/
-ui/.svelte-kit/
-ui/build/
-
-# Environment/Secrets (CRITICAL)
+/target
 .env
-*.session
-nexus_memories.json
-
-# System junk
+**/*.log
+node_modules/
 .DS_Store
-thumbs.db
-*.gguf
+vault/*.gguf
+ui/.svelte-kit/

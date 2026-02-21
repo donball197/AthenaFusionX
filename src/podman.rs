@@ -36,10 +36,20 @@ impl PodmanEngine {
             "industrial" => ("postgres:alpine", "nexus_industrial", Some("5432")),
             _ => return Err(anyhow::anyhow!("Unknown Drone Class")),
         };
+        
+        let pwd = std::env::current_dir().unwrap_or_default();
+        println!(">> SPAWNING SIGHTED DRONE AT: {}", pwd.display());
         let _ = Command::new("podman").args(&["rm", "-f", name]).output();
+        
         let mut cmd = Command::new("podman");
-        cmd.arg("run").arg("-d").arg("--name").arg(name).arg("--network").arg("slirp4netns:allow_host_loopback=true");
+        cmd.arg("run")
+           .arg("-d")
+           .arg("--name").arg(name)
+           .arg("-v").arg(format!("{}:/workspace:Z", pwd.display()))
+           .arg("--network").arg("slirp4netns:allow_host_loopback=true");
+           
         if let Some(p) = ports { cmd.arg("-p").arg(format!("{}:{}", p, p)); }
+        
         cmd.arg(image).arg("sleep").arg("infinity");
         let res = cmd.output()?;
         Ok(String::from_utf8_lossy(&res.stdout).trim().to_string())
