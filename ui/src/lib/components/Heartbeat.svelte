@@ -1,37 +1,39 @@
 <script>
     export let resonance = 0.0;
     
-    // Dynamic Animation based on Entropy
-    // High Resonance = Fast Pulse, High Opacity
-    $: pulseDuration = Math.max(0.5, 2 - (resonance * 1.5)); 
-    $: intensity = Math.min(1.0, 0.2 + (resonance * 0.8));
+    // Calculate pulse speed based on resonance (higher resonance = faster pulse)
+    $: pulseDuration = resonance > 0.5 ? '0.8s' : '2s';
+    $: glowIntensity = resonance * 20;
 </script>
 
-<div class="flex flex-col items-center justify-center p-4 border-t border-[#1a1a1a] mt-4">
-    <div 
-        class="relative w-12 h-12 rounded-full bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)] flex items-center justify-center transition-all duration-500"
-        style="
-            animation: pulse {pulseDuration}s infinite ease-in-out;
-            opacity: {intensity};
-        "
-    >
-        <div class="absolute inset-0 rounded-full border border-green-300 animate-ping opacity-75"></div>
-        <span class="text-black font-bold text-[8px] z-10 font-mono">GGUF</span>
+<div class="flex flex-col gap-2 p-2 bg-black/40 border border-green-900/20 rounded shadow-inner">
+    <div class="flex justify-between items-center px-1">
+        <span class="text-[8px] text-green-700 tracking-tighter uppercase font-bold">Resonance Sync</span>
+        <span class="text-[9px] text-blue-400 font-mono">{(resonance * 100).toFixed(1)}%</span>
     </div>
     
-    <div class="flex flex-col items-center mt-3">
-        <span class="text-[9px] text-green-500 font-bold uppercase tracking-widest">
-            Resonance
-        </span>
-        <span class="text-[10px] font-mono text-white">
-            {(resonance * 100).toFixed(2)}%
-        </span>
+    <div class="h-12 w-full flex items-center justify-center relative overflow-hidden bg-[#050505] rounded-sm border border-green-900/10">
+        <svg viewBox="0 0 100 40" class="w-full h-full">
+            <path
+                d="M0 20 L30 20 L35 5 L45 35 L50 20 L100 20"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                class="text-green-500 transition-all duration-500"
+                style="filter: drop-shadow(0 0 {glowIntensity}px rgba(34, 197, 94, 0.8));"
+            />
+        </svg>
+
+        <div 
+            class="absolute inset-0 bg-gradient-to-r from-transparent via-green-500/20 to-transparent w-1/4 h-full"
+            style="animation: scan {pulseDuration} linear infinite;"
+        ></div>
     </div>
 </div>
 
 <style>
-    @keyframes pulse {
-        0%, 100% { transform: scale(0.95); box-shadow: 0 0 10px rgba(34,197,94,0.4); }
-        50% { transform: scale(1.1); box-shadow: 0 0 25px rgba(34,197,94,0.9); }
+    @keyframes scan {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(400%); }
     }
 </style>

@@ -1,14 +1,15 @@
 [package]
 name = "nexus_singularity"
-version = "0.8.0"
+version = "0.9.6"
 edition = "2021"
+default-run = "nexus_singularity"
 
 [dependencies]
 tokio = { version = "1.36", features = ["full"] }
 axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
-reqwest = { version = "0.11", features = ["json", "multipart"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = "0.15"
@@ -23,15 +24,18 @@ futures = "0.3"
 walkdir = "2.4"
 redis = { version = "0.24", features = ["tokio-comp"] }
 mimalloc = "0.1.48"
-sysinfo = "0.38.2"
+sysinfo = "0.30"
 libc = "0.2"
 memmap2 = "0.9"
+prometheus = "0.13"
 
-[build-dependencies]
-cc = "1.0"
+[[bin]]
+name = "nexus_singularity"
+path = "src/main.rs"
 
 [profile.release]
-opt-level = "z"
-lto = true
+opt-level = "s" # Optimize for size to save RAM
+lto = "thin"    # Faster linking than "fat"
 codegen-units = 1
 strip = true
+panic = "abort"

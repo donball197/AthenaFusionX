@@ -1,0 +1,6 @@
+dockerfile
+FROM alpine:latest
+
+RUN apk add --no-cache nmap curl
+
+CMD sleep infinity

@@ -1,0 +1,17 @@
+# Use a lightweight, sterile Python environment
+FROM docker.io/python:3.11-slim
+
+WORKDIR /app
+
+# Copy our script and requirements
+COPY requirements.txt .
+COPY scraper.py .
+
+# Install Flask
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose the port the Flask server uses
+EXPOSE 5000
+
+# Ignite the script
+CMD ["python", "scraper.py"]

@@ -1,32 +1,38 @@
 const std = @import("std");
 
-var loaded: bool = false;
+/// The 32-D Latent Space Proxy
+/// [0..7]   - Power/Thermal Intent (Throttle)
+/// [8..15]  - Neural Attention Priority
+/// [16..31] - Spatiotemporal Action Vectors
+var latent_intent = [_]f32{0.0} ** 32;
 
-export fn load_model(path: [*c]const u8) i32 {
-    if (path != null) { loaded = true; return 0; }
-    return 1;
+/// Push: Rust calls this to send the AI's "Imaginative" intent to the NPU
+export fn push_latent_intent(input_ptr: [*]const f32) void {
+    const data: [*]const f32 = input_ptr;
+    inline for (0..32) |i| {
+        latent_intent[i] = data[i];
+    }
 }
 
-export fn run_inference(input_ptr: [*c]const f32, len: usize) f32 {
-    // Explicitly discard unused parameters to appease the Zig compiler
-    _ = input_ptr;
-    _ = len;
-    
-    if (!loaded) return -1.0;
-    return 0.99; 
+/// Pull: Rust calls this to check the "Reflex" hardware status
+export fn get_latent_throttle() f32 {
+    var sum: f32 = 0.0;
+    // Calculate a safety floor based on the first 8 dimensions
+    for (latent_intent[0..8]) |val| {
+        sum += val;
+    }
+    return sum / 8.0;
 }
 
+/// Original Resonance Logic for Hardware Monitoring
 pub export fn calculate_resonance_e2b(mmap_ptr: [*]const u8, length: usize) f32 {
     var total_energy: f32 = 0.0;
     var i: usize = 0;
-    
-    // Sample every 64th byte to keep the Duet's CPU cool
     while (i < length) : (i += 64) {
         const byte = mmap_ptr[i];
         const val = (@as(f32, @floatFromInt(byte)) / 255.0);
         total_energy += (val * val);
     }
-    
     const count = @as(f32, @floatFromInt(length / 64));
     return if (count > 0) total_energy / count else 0.0;
 }

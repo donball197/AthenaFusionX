@@ -8,7 +8,6 @@ pub fn spawn_swarm(count: u32) -> Vec<SwarmUnit> {
     let mut swarm = Vec::new();
     
     for i in 1..=count {
-        // Assigning maintenance sectors based on the Numbered Hierarchy
         let sector = match i {
             1 => "Main/Alloc".to_string(),
             2 => "Server/Network".to_string(),
@@ -18,7 +17,7 @@ pub fn spawn_swarm(count: u32) -> Vec<SwarmUnit> {
 
         swarm.push(SwarmUnit {
             id: i,
-            sector: sector,
+            sector,
             active: true,
         });
     }

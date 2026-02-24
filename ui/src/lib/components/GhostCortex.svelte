@@ -1,7 +1,6 @@
 <script>
     import { fly, fade } from 'svelte/transition';
-    import { onDestroy } from 'svelte';
-    import SoundFx from '$lib/SoundFx.js';
+    import { onDestroy, onMount } from 'svelte';
 
     export let logs = "";
     export let response = "";
@@ -13,6 +12,8 @@
 
     let mode = "NEURAL"; 
     let input = "";
+    let ghostLogs = [];
+    let socket;
 
     let processingLogs = [];
     let interval;
@@ -23,6 +24,15 @@
         const hex = "0x" + Array(4).fill(0).map(() => hexChars[Math.floor(Math.random() * 16)]).join("");
         const task = systemTasks[Math.floor(Math.random() * systemTasks.length)];
         return `${hex} // ${task}...`;
+    }
+
+    function connectGhost() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        socket = new WebSocket(`${protocol}//${window.location.host}/ws/ghost`);
+        socket.onmessage = (event) => {
+            ghostLogs = [...ghostLogs.slice(-20), event.data]; // Keep last 20 drone logs
+        };
+        socket.onclose = () => { if (active) setTimeout(connectGhost, 5000); };
     }
 
     $: if (isThinking) {
@@ -44,7 +54,11 @@
         }
     }
 
-    onDestroy(() => { if (interval) clearInterval(interval); });
+    onMount(() => { connectGhost(); });
+    onDestroy(() => { 
+        if (interval) clearInterval(interval); 
+        if (socket) socket.close();
+    });
 </script>
 
 {#if active}
@@ -64,8 +78,13 @@
     <div class="display custom-scrollbar">
         {#if mode === "SYSTEM"}
             <div class="logs" in:fade>
-                <div class="version-tag">STDOUT // {version}</div>
-                {logs}
+                <div class="version-tag">DRONE_TELEMETRY // {version}</div>
+                {#each ghostLogs as log}
+                    <div class="ghost-line">{log}</div>
+                {/each}
+                {#if ghostLogs.length === 0}
+                    <div class="dim italic">Waiting for drone heartbeat...</div>
+                {/if}
             </div>
         {:else}
             <div class="neural-feed" in:fade>
@@ -102,31 +121,24 @@
     .tabs { display: flex; gap: 10px; }
     .tabs button { background: transparent; border: none; color: #484f58; font-size: 9px; font-weight: bold; cursor: pointer; }
     .tabs button.active { color: #a855f7; border-bottom: 1px solid #a855f7; }
-    
     .actions { display: flex; align-items: center; gap: 8px; }
-    .safety-valve { 
-        font-size: 8px; font-weight: bold; padding: 1px 4px; border-radius: 2px;
-        background-color: #21262d; color: #8b949e; border: 1px solid #30363d;
-    }
+    .safety-valve { font-size: 8px; font-weight: bold; padding: 1px 4px; border-radius: 2px; background-color: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .safety-valve.testing { color: #a855f7; border-color: #a855f7; animation: pulse 1s infinite; }
     .safety-valve.fail { color: #f85149; border-color: #f85149; background-color: rgba(248, 81, 73, 0.1); }
-    
     .file-btn { background-color: #000; border: 1px solid #30363d; color: #a855f7; font-size: 8px; cursor: pointer; }
     .led { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
     .led.idle { background-color: #238636; }
     .led.thinking { background-color: #a855f7; animation: pulse 1s infinite; }
-    
     .display { height: 100px; padding: 10px; overflow-y: auto; font-size: 10px; }
-    .logs { color: #39FF14; opacity: 0.6; white-space: pre-wrap; }
+    .logs { color: #39FF14; opacity: 0.8; white-space: pre-wrap; }
+    .ghost-line { margin-bottom: 2px; border-left: 1px solid rgba(57, 255, 20, 0.2); padding-left: 5px; }
     .response { color: #e6edf3; line-height: 1.4; }
     .thinking { color: #a855f7; opacity: 0.8; }
     .dim { color: #30363d; }
-    .version-tag { font-size: 8px; color: #30363d; margin-bottom: 4px; }
-
+    .version-tag { font-size: 8px; color: #58a6ff; margin-bottom: 6px; font-weight: bold; }
     .input-line { display: flex; align-items: center; padding: 8px 10px; background-color: #000; border-top: 1px solid #30363d; }
     .prompt { color: #a855f7; font-weight: bold; margin-right: 8px; }
     input { background: transparent; border: none; color: #fff; font-size: 11px; width: 100%; outline: none; }
-
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     .custom-scrollbar::-webkit-scrollbar { width: 2px; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #a855f7; }
