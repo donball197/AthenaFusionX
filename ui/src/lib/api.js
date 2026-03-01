@@ -1,8 +1,9 @@
-const API_URL = "http://localhost:3000/api";
+// Dynamic API Resolution for 4GB Duet Hybrid Environment
+const API_URL = `${window.location.origin}/api`;
 
 export async function readFile(path) {
     try {
-        const res = await fetch(`${API_URL}/fs/read?path=${path}`);
+        const res = await fetch(`${API_URL}/fs/read?path=${encodeURIComponent(path)}`);
         if (!res.ok) throw new Error("File not found");
         return await res.json();
     } catch (e) {

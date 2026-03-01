@@ -1,3 +1,4 @@
+// src/broker.rs
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +34,8 @@ pub struct KnowledgeBroker;
 
 impl KnowledgeBroker {
     pub async fn get_graph(state: Arc<crate::server::AppState>) -> NeuralGraph {
-        let memories = state.memory.load_all();
+        // FIX: Lock mutex
+        let memories = state.memory.lock().await.load_all();
         let mut nodes = Vec::new();
         let mut links = Vec::new();
 
@@ -70,7 +72,8 @@ impl KnowledgeBroker {
                 crate::neural_agent::ContextPacket { file_content: Some(content), ..Default::default() }, 
                 0.0
             ).await?;
-            state.memory.remember(format!("FOUNDATION: {}", path), summary, "INDEXED".into(), None);
+            // FIX: Lock mutex
+            state.memory.lock().await.remember(format!("FOUNDATION: {}", path), summary, "INDEXED".into(), None);
         }
         Ok("Deep Index Complete".into())
     }

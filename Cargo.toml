@@ -1,6 +1,6 @@
 [package]
 name = "nexus_singularity"
-version = "0.9.6"
+version = "0.9.9"
 edition = "2021"
 default-run = "nexus_singularity"
 
@@ -23,19 +23,28 @@ mime_guess = "2.0"
 futures = "0.3"
 walkdir = "2.4"
 redis = { version = "0.24", features = ["tokio-comp"] }
-mimalloc = "0.1.48"
+mimalloc = "0.1.48" # Critical for ARM64 Memory fragmentation handling
 sysinfo = "0.30"
 libc = "0.2"
 memmap2 = "0.9"
 prometheus = "0.13"
+blake3 = "1.8.3"
 
 [[bin]]
 name = "nexus_singularity"
 path = "src/main.rs"
 
+[[bin]]
+name = "sentry"
+path = "src/bin/sentry.rs"
+
+# LENOVO DUET 2 OPTIMIZATION PROFILE
 [profile.release]
-opt-level = "s" # Optimize for size to save RAM
-lto = "thin"    # Faster linking than "fat"
-codegen-units = 1
-strip = true
-panic = "abort"
+opt-level = "z"     # Optimize for SIZE (Smaller binary = Less RAM used to load it)
+lto = true          # Link Time Optimization (Removes unused code)
+codegen-units = 1   # CRITICAL: Prevents RAM explosion during compilation
+strip = true        # Strips symbols (Smaller binary)
+panic = "abort"     # Removes stack unwinding code (Smaller binary)
+
+[dev-dependencies]
+tempfile = "3.26.0"

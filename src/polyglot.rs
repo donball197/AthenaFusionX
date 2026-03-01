@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 use serde::Serialize;
+use walkdir::WalkDir;
 
 #[derive(Serialize)]
 pub struct BuildResult {
@@ -12,36 +13,54 @@ pub struct BuildResult {
 pub fn detect_and_build(path: &str) -> BuildResult {
     let p = Path::new(path);
     
+    // Auto-detect stack
     let (cmd, args, stack) = if p.join("Cargo.toml").exists() {
         ("cargo", vec!["build", "--release"], "RUST")
     } else if p.join("package.json").exists() {
         ("npm", vec!["run", "build"], "NODEJS")
     } else if p.join("requirements.txt").exists() {
         ("pip", vec!["install", "-r", "requirements.txt"], "PYTHON")
-    } else if p.join("go.mod").exists() {
-        ("go", vec!["build", "."], "GOLANG")
     } else if p.join("Makefile").exists() {
         ("make", vec![], "MAKEFILE")
     } else {
         return BuildResult { 
             success: false, 
-            log: ">> NO BUILD SYSTEM DETECTED (Cargo.toml, package.json, etc missing)".to_string(), 
+            log: ">> UNKNOWN STACK".to_string(), 
             detected_stack: "UNKNOWN".into() 
         };
     };
 
-    println!(">> [POLYGLOT] Building {} project in {}", stack, path);
-
+    println!(">> [POLYGLOT] Building {} project...", stack);
     let output = Command::new(cmd).args(&args).current_dir(path).output();
 
     match output {
         Ok(out) => {
-            let combined_log = format!("STDOUT:\n{}\nSTDERR:\n{}", 
+            let log = format!("STDOUT:\n{}\nSTDERR:\n{}", 
                 String::from_utf8_lossy(&out.stdout), 
                 String::from_utf8_lossy(&out.stderr)
             );
-            BuildResult { success: out.status.success(), log: combined_log, detected_stack: stack.into() }
+            BuildResult { success: out.status.success(), log, detected_stack: stack.into() }
         },
-        Err(e) => BuildResult { success: false, log: format!("Execution Error: {}", e), detected_stack: stack.into() }
+        Err(e) => BuildResult { success: false, log: e.to_string(), detected_stack: stack.into() }
     }
+}
+
+// NEW: Generates a visual tree of the project for the AI
+pub fn generate_project_tree() -> String {
+    let mut tree = String::from("PROJECT STRUCTURE:\n");
+    
+    for entry in WalkDir::new(".").max_depth(2).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let display = path.display().to_string();
+        
+        // Filter noise
+        if display.contains("/target") || display.contains("/.git") || display.contains("/node_modules") {
+            continue;
+        }
+        
+        let depth = display.matches('/').count();
+        let indent = "  ".repeat(depth);
+        tree.push_str(&format!("{}{}\n", indent, path.file_name().unwrap_or_default().to_string_lossy()));
+    }
+    tree
 }

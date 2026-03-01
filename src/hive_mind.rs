@@ -3,7 +3,7 @@ use anyhow::Result;
 use serde_json::json;
 
 pub struct HiveMind {
-    pub client: Client, // Added pub so it is read
+    pub client: Client,
 }
 
 impl HiveMind {
@@ -13,7 +13,9 @@ impl HiveMind {
     }
 
     pub async fn dispatch_task(&self, drone: &str, task: &str, params: &str) -> Result<()> {
-        let mut con = self.client.get_connection()?;
+        // PERF FIX: Asynchronous connection mapping
+        let mut con = self.client.get_async_connection().await?;
+        
         let payload = json!({
             "drone": drone,
             "task": task,
@@ -21,11 +23,12 @@ impl HiveMind {
             "timestamp": chrono::Utc::now().to_string()
         });
         
-        // FIX: Added ::<()> to specify the return type explicitly
+        // PERF FIX: Yields to Tokio runtime, saving ARM64 CPU cycles
         redis::cmd("PUBLISH")
             .arg("hive_bus")
             .arg(payload.to_string())
-            .query::<()>(&mut con)?;
+            .query_async::<_, ()>(&mut con)
+            .await?;
             
         Ok(())
     }

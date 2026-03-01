@@ -1,30 +1,35 @@
-use std::process::Command;
 use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    println!("cargo:rerun-if-changed=resonator.zig");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let obj_path = format!("{}/resonator.o", out_dir.display());
 
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let dest_path = PathBuf::from(&out_dir);
-
-    // Tell Zig to build a static library for ARM64
-    let status = Command::new("zig")
+    // 1. Forge a RAW OBJECT FILE instead of an archive
+    let status = std::process::Command::new("zig")
         .args(&[
-            "build-lib",
-            "resonator.zig",
-            "-target", "aarch64-linux",
+            "build-obj", 
+            "src/resonator.zig", 
+            "-lc", 
             "-O", "ReleaseFast",
-            "-lc",
-            &format!("-femit-bin={}/libresonator.a", dest_path.display()),
+            &format!("-femit-bin={}", obj_path)
         ])
         .status()
-        .expect("Failed to execute zig compiler. Ensure Zig is in your PATH.");
+        .expect("Zig forge failed.");
 
     if !status.success() {
-        panic!("Zig compilation failed");
+        panic!("ZIG_COMPILE_ERROR");
     }
 
-    println!("cargo:rustc-link-search=native={}", dest_path.display());
-    println!("cargo:rustc-link-lib=static=resonator");
+    // 2. FORCE the object file directly into the linker
+    println!("cargo:rustc-link-arg={}", obj_path);
+
+    // 3. Link llama.cpp and C++ libs
+    println!("cargo:rustc-link-search=native=./vendor/llama.cpp/build/src");
+    println!("cargo:rustc-link-search=native=./vendor/llama.cpp/build/ggml/src");
+    println!("cargo:rustc-link-lib=static=llama");
+    println!("cargo:rustc-link-lib=static=ggml");
+    println!("cargo:rustc-link-lib=dylib=stdc++");
+
+    println!("cargo:rerun-if-changed=src/resonator.zig");
 }

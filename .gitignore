@@ -1,7 +1,22 @@
-/target
+# Secrets and Keys
 .env
-**/*.log
-node_modules/
-.DS_Store
-vault/*.gguf
+.env.*
+secrets.json
+.bashrc
+.bash_history
+
+# Build Artifacts
+target/
+ui/node_modules/
+ui/dist/
 ui/.svelte-kit/
+vendor/
+
+# System / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Local Dev
+dummy.json
+.nexus_heal.json

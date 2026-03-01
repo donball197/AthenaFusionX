@@ -1,24 +1,28 @@
 use anyhow::Result;
 
+extern "C" {
+    fn resonator_ignite(path: *const u8, len: usize) -> i32;
+    fn scan_entropy() -> f32;
+}
+
 pub struct ResonatorCore;
 
 impl ResonatorCore {
     pub fn ignite_vault(path: &str) -> Result<String> {
-        Ok(format!("Vault {} initialized via Zig-bridge", path))
+        unsafe {
+            if resonator_ignite(path.as_ptr(), path.len()) == 0 {
+                Ok("ZIG_RESONATOR: MMAP_ACTIVE".into())
+            } else {
+                Err(anyhow::anyhow!("HARDWARE_BIND_FAIL"))
+            }
+        }
     }
 
-    pub fn scan_local_energy(path: &str) -> Result<f32> {
-        // Placeholder for Zig-driven entropy scanning
-        Ok(0.85)
+    pub fn scan_local_energy(_path: &str) -> Result<f32> {
+        unsafe { Ok(scan_entropy()) }
     }
 
-    pub fn sync_latent_action(intent: &[f32; 32]) {
-        // Push intent to hardware/Zig layer
-    }
-
-    // LAYER 13: Added for IndustrialDrone throttle control
     pub fn read_throttle() -> f32 {
-        // Returns the current resonance factor to regulate drone speed
-        0.5 
+        0.5
     }
 }

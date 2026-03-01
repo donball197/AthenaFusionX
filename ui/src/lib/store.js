@@ -8,3 +8,4 @@ export const activeTab = writable(null);
 
 // Trigger to refresh file tree (increment to force reload)
 export const fileTreeTrigger = writable(0);
+export const secopsLog = writable([]);

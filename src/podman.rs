@@ -11,7 +11,7 @@ pub struct PodmanEngine;
 
 impl PodmanEngine {
     fn get_resource_limits() -> (String, String) {
-        let mem = env::var("NEXUS_DRONE_MEM").unwrap_or_else(|_| "256m".to_string());
+        let mem = env::var("NEXUS_DRONE_MEM").unwrap_or_else(|_| "128m".to_string());
         let cpu = env::var("NEXUS_DRONE_CPU").unwrap_or_else(|_| "0.5".to_string());
         (mem, cpu)
     }
@@ -39,24 +39,36 @@ impl PodmanEngine {
 
     pub fn spawn_drone(drone_type: &str) -> Result<String> {
         let (mem_limit, cpu_limit) = Self::get_resource_limits();
+        let custom_name_string; 
+        
         let (image, name, ports) = match drone_type {
-            "secops" => ("nexus_secops_alpine", "nexus_secops".to_string(), None),
-            "devops" => ("node:18-alpine", "nexus_devops".to_string(), None),
-            "industrial" => ("postgres:alpine", "nexus_industrial".to_string(), Some("5432")),
-            custom => (custom, format!("nexus_{}", custom), None),
+            "secops" => ("alpine:latest", "nexus_secops", None),
+            "devops" => ("node:18-alpine", "nexus_devops", None),
+            "industrial" => ("postgres:alpine", "nexus_industrial", Some("5432")),
+            custom => {
+                custom_name_string = format!("nexus_{}", custom);
+                ("alpine:latest", custom_name_string.as_str(), None)
+            }
         };
         
-        let _ = Command::new("podman").args(&["rm", "-f", &name]).output();
+        let _ = Command::new("podman").args(&["rm", "-f", name]).output();
+        
         let mut cmd = Command::new("podman");
-        cmd.arg("run").arg("-d")
-           .arg("--name").arg(&name)
-           .arg("--init")
-           .arg(format!("--memory={}", mem_limit))
-           .arg(format!("--cpus={}", cpu_limit))
+        cmd.arg("run").arg("-d").arg("--name").arg(name).arg("--init")
+           .arg(format!("--memory={}", mem_limit)).arg(format!("--cpus={}", cpu_limit))
            .arg("--network").arg("slirp4netns:allow_host_loopback=true");
 
+        if drone_type == "secops" {
+            if let Ok(cwd) = std::env::current_dir() {
+                cmd.arg("-v").arg(format!("{}/targets:/workspace", cwd.display()));
+            }
+            cmd.arg(image).arg("sh").arg("-c").arg("apk add --no-cache nmap curl bind-tools && sleep infinity");
+        } else {
+            cmd.arg(image).arg("sleep").arg("infinity");
+        }
+
         if let Some(p) = ports { cmd.arg("-p").arg(format!("{}:{}", p, p)); }
-        cmd.arg(image).arg("sleep").arg("infinity");
+        
         let res = cmd.output()?;
         Ok(String::from_utf8_lossy(&res.stdout).trim().to_string())
     }
@@ -65,11 +77,10 @@ impl PodmanEngine {
         let build_dir = format!("hives/{}", name);
         fs::create_dir_all(&build_dir)?;
         fs::write(format!("{}/Dockerfile", build_dir), dockerfile)?;
-        let output = Command::new("podman").args(&["build", "-t", name, &build_dir]).output()?;
         
-        // Auto-cleanup build artifacts to preserve Shared DNA storage
         let _ = Command::new("podman").args(&["image", "prune", "-f"]).output();
-
+        
+        let output = Command::new("podman").args(&["build", "-t", name, &build_dir]).output()?;
         if output.status.success() { Ok(format!("Forged {}", name)) } else { Err(anyhow::anyhow!("Forge Failed")) }
     }
 
@@ -77,17 +88,15 @@ impl PodmanEngine {
         for c in Self::list() { 
             if c.names != "nexus_synapse" { 
                 let _ = Command::new("podman").args(&["stop", &c.id]).output(); 
-                let _ = Command::new("podman").args(&["rm", &c.id]).output(); 
             } 
         }
         Ok(())
     }
 
     pub fn deploy(image: &str, port: &str) -> Result<String> {
-        let (mem_limit, _) = Self::get_resource_limits();
-        let res = Command::new("podman").args(&["run", "-d", format!("--memory={}", mem_limit).as_str(), "-p", &format!("{}:{}", port, port), image]).output()?;
+        let res = Command::new("podman").args(&["run", "-d", "--memory=256m", "-p", &format!("{}:{}", port, port), image]).output()?;
         Ok(String::from_utf8_lossy(&res.stdout).trim().to_string())
     }
-
+    
     pub fn nuke(id: &str) -> Result<()> { let _ = Command::new("podman").args(&["rm", "-f", id]).output(); Ok(()) }
 }

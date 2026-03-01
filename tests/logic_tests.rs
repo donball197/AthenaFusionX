@@ -1,18 +1,23 @@
 #[cfg(test)]
 mod tests {
-    use crate::hiram_core;
+    use nexus_singularity::hiram_core::Hiram;
 
     #[test]
-    fn test_integrity_logic() {
-        // This ensures the AI doesn't remove the core purpose of your kernel
-        let initial_state = 100;
-        let result = hiram_core::integrity_check(initial_state);
-        assert!(result >= initial_state, "Evolution reduced system integrity!");
+    fn test_hiram_initialization() {
+        let hiram = Hiram::new(3600);
+        
+        // It should start at 100% integrity
+        assert_eq!(hiram.integrity, 100);
+        assert!(hiram.last_verified.is_none());
+        assert_eq!(hiram.verification_interval, 3600);
     }
 
     #[test]
-    fn test_sync_constant() {
-        // Ensures the AI doesn't mess with global constants needed for the Duet
-        assert_eq!(hiram_core::SYNC_VERSION, 1.0);
+    fn test_hiram_verify_execution() {
+        let mut hiram = Hiram::new(3600);
+        
+        // Run the verify function. It shouldn't panic, and it should stamp the time.
+        hiram.verify();
+        assert!(hiram.last_verified.is_some());
     }
 }

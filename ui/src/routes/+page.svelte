@@ -1,5 +1,6 @@
 <script>
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
+    import SecOps from '$lib/components/SecOps.svelte';
     import Editor from '$lib/components/Editor.svelte';
     import Terminal from '$lib/components/Terminal.svelte';
     import Vitals from '$lib/components/Vitals.svelte';
@@ -7,10 +8,10 @@
     import TacticalBlade from '$lib/components/TacticalBlade.svelte';
     import ResponseModule from '$lib/components/ResponseModule.svelte';
     import GhostCortex from "$lib/components/GhostCortex.svelte";
-    import MergeGate from '$lib/components/MergeGate.svelte'; 
     import SwarmMap from '$lib/components/SwarmMap.svelte';
+    import Voice from '$lib/components/Voice.svelte';
     import SoundFx from '$lib/SoundFx.js'; 
-    import { openTabs, activeTab } from '$lib/store.js';
+    import { openTabs, activeTab, secopsLog } from '$lib/store.js';
 
     let tabs = [];
     let activeTabType = 'editor';
@@ -19,22 +20,18 @@
     let isThinking = false;
     let terminalInstance;
     let bladeOpen = false; 
-    let patchAvailable = false;
-    let patchContent = "";
-    let targetPatchFile = ""; 
     let visionActive = false;
-    let voiceMuted = false; 
     let vimMode = false;
     let vitals = { status: "OFFLINE", cpu_usage: 0, ram_usage: "0.0", resonance: 0.0 }; 
     let ghostLogs = ""; 
     let buildOutput = "";
+    let isListening = false;
 
     openTabs.subscribe(t => tabs = t);
 
     $: currentCode = tabs.find(t => t.path === $activeTab)?.content || "// Use Ctrl+K to open a file";
     $: currentPath = $activeTab || "NO_FILE_LOADED";
 
-    function toggleMute() { voiceMuted = !voiceMuted; SoundFx.click(); }
     function toggleVim() { vimMode = !vimMode; SoundFx.success(); }
 
     async function openFile(path) {
@@ -47,6 +44,15 @@
         }
         activeTab.set(path);
         activeTabType = 'editor';
+    }
+
+    async function reloadCurrentFile() {
+        if (!$activeTab) return;
+        const res = await fetch(`/api/fs/read?path=${encodeURIComponent($activeTab)}`);
+        if (res.ok) {
+            const data = await res.json();
+            openTabs.update(ts => ts.map(t => t.path === $activeTab ? { ...t, content: data.content, isDirty: false } : t));
+        }
     }
 
     function closeTab(path) {
@@ -66,27 +72,31 @@
             SoundFx.success();
         }
     }
-    
-    async function applyPatch() {
-        if (!patchContent || !targetPatchFile) return;
-        await fetch('/api/fs/write', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: targetPatchFile, content: patchContent}) });
-        patchAvailable = false;
-        SoundFx.success();
-        openTabs.update(ts => ts.map(t => t.path === targetPatchFile ? { ...t, content: patchContent, isDirty: false } : t));
-    }
 
     async function triggerBuild() {
         await save();
         activeTabType = 'hive';
         buildOutput = ">> COMPILING...";
-        const res = await fetch('/api/devops/build', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ path: ".", content: "" }) });
+        
+        const activeFilePath = $activeTab || "src/main.rs";
+
+        // We pass the active file path to the backend so the AutoHealer knows what to target
+        const res = await fetch('/api/devops/build', { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ path: ".", content: activeFilePath }) 
+        });
+        
         const result = await res.json();
         buildOutput = result.log;
         
         if (!result.success) {
             SoundFx.error();
-            userPrompt = `FIX_ERROR in ${currentPath}: ${buildOutput}\nCODE:\n${currentCode}`;
-            setTimeout(executeAction, 500); 
+            // If the backend AutoHealer saved the day, automatically reload the UI to show the fix
+            if (buildOutput.includes("SYSTEM HEALED")) {
+                SoundFx.success();
+                await reloadCurrentFile();
+            }
         } else {
             SoundFx.success();
         }
@@ -96,19 +106,14 @@
         if (!userPrompt.trim() || isThinking) return;
         isThinking = true; SoundFx.processing();
         const p = userPrompt; userPrompt = "";
+        
         try {
-            const res = await fetch('/api/prompt', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ prompt: p, context: currentCode, use_vision: visionActive }) });
+            const res = await fetch('/api/prompt', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ prompt: p, context: currentCode, terminal_context: buildOutput, use_vision: visionActive }) });
             const data = await res.json();
             neuralResponse = data.response;
 
-            if (neuralResponse.includes("```")) {
-                const match = neuralResponse.match(/```(?:rust|js|json)?\s*([\s\S]*?)\`\`\`/i);
-                if (match) {
-                    patchContent = match[1].trim();
-                    const fileMatch = neuralResponse.match(/FILE:\s*([^\s\n]+)/);
-                    targetPatchFile = fileMatch ? fileMatch[1].trim() : $activeTab;
-                    patchAvailable = true; 
-                }
+            if (neuralResponse.toLowerCase().includes("updated") || neuralResponse.toLowerCase().includes("patched")) {
+                await reloadCurrentFile();
             }
         } catch (e) { neuralResponse = ">> ERROR: " + e.message; } finally { isThinking = false; }
     }
@@ -117,40 +122,51 @@
         openFile("src/main.rs"); 
         const interval = setInterval(() => { 
             fetch('/api/vitals').then(r => r.ok ? r.json() : null).then(v => { if(v) vitals = v; }); 
-        }, 3000); 
+        }, 5000); 
         return () => clearInterval(interval);
     });
 </script>
 
 <div class="flex flex-col h-screen w-screen bg-black text-green-500 font-mono overflow-hidden relative">
-    <header class="h-10 shrink-0 bg-[#161b22] border-b border-[#30363d] flex items-center px-4 justify-between z-50">
+    
+    <header class="h-12 shrink-0 bg-[#161b22] border-b border-[#30363d] flex items-center px-4 justify-between z-[9999] relative pointer-events-auto">
         <div class="flex items-center gap-4">
-            <span class="text-[#58a6ff] font-bold text-[10px] tracking-widest uppercase">Nexus // Full_Cortex</span>
-            <button on:click={toggleMute} class="text-xs">{voiceMuted ? '🔇' : '🔊'}</button>
+            <Voice bind:userPrompt={userPrompt} bind:isListening={isListening} />
+            <span class="text-[#58a6ff] ml-6 font-bold text-[10px] tracking-widest uppercase">Nexus // Core</span>
         </div>
+        
         <div class="flex gap-2 ml-4">
-            <button on:click={() => activeTabType = 'editor'} class="text-[9px] px-3 py-1 border {activeTabType === 'editor' ? 'border-green-500 text-white' : 'border-[#30363d] text-gray-500'}">CODE</button>
-            <button on:click={() => activeTabType = 'hive'} class="text-[9px] px-3 py-1 border {activeTabType === 'hive' ? 'border-green-500 text-white' : 'border-[#30363d] text-gray-500'}">HIVE</button>
-            <button on:click={() => activeTabType = 'terminal'} class="text-[9px] px-3 py-1 border {activeTabType === 'terminal' ? 'border-green-500 text-white' : 'border-[#30363d] text-gray-500'}">TERM</button>
+            <button on:click={() => activeTabType = 'editor'} class="text-[9px] px-3 py-1.5 border {activeTabType === 'editor' ? 'border-green-500 text-white bg-green-900/20' : 'border-[#30363d] text-gray-500 hover:text-white'}">CODE</button>
+            <button on:click={() => activeTabType = 'hive'} class="text-[9px] px-3 py-1.5 border {activeTabType === 'hive' ? 'border-green-500 text-white bg-green-900/20' : 'border-[#30363d] text-gray-500 hover:text-white'}">HIVE</button>
+            <button on:click={() => activeTabType = 'terminal'} class="text-[9px] px-3 py-1.5 border {activeTabType === 'terminal' ? 'border-green-500 text-white bg-green-900/20' : 'border-[#30363d] text-gray-500 hover:text-white'}">TERM</button>
         </div>
-        <div class="flex-1 max-w-xl px-4">
-            <input class="w-full bg-[#0d1117] border border-[#30363d] text-white px-3 py-1 text-[10px] outline-none focus:border-blue-500" placeholder="Ask Nexus..." bind:value={userPrompt} on:keydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); executeAction(); } }} />
+
+        <div class="flex-1 max-w-2xl px-6 relative z-[10000]">
+            <input 
+                class="w-full bg-[#0d1117] border border-[#30363d] text-white px-4 py-2 text-[11px] outline-none focus:border-[#58a6ff] transition-all pointer-events-auto rounded-sm disabled:opacity-50" 
+                placeholder={isThinking ? ">> Nexus is analyzing..." : "Ask Nexus (Press Enter)..."} 
+                bind:value={userPrompt} 
+                disabled={isThinking || isListening}
+                on:keydown={(e) => { if (e.key === 'Enter' && !isThinking) { e.preventDefault(); tick().then(() => executeAction()); } }} 
+            />
         </div>
+
         <div class="flex gap-2">
-            <button class="bg-blue-600 text-white font-bold px-3 py-1 text-[9px] rounded hover:bg-blue-500" on:click={() => triggerBuild()}>BUILD</button>
-            <button class="bg-green-600 text-black font-bold px-3 py-1 text-[9px] rounded hover:bg-green-500" on:click={save}>SAVE</button>
+            <button class="bg-blue-600 text-white font-bold px-4 py-1.5 text-[9px] rounded hover:bg-blue-500 transition-colors" on:click={triggerBuild}>BUILD</button>
+            <button class="bg-green-600 text-black font-bold px-4 py-1.5 text-[9px] rounded hover:bg-green-500 transition-colors" on:click={save}>SAVE</button>
         </div>
     </header>
 
-    <div class="flex-1 flex relative overflow-hidden">
-        <aside class="w-56 border-r border-[#30363d] bg-[#0d1117] p-4 flex flex-col hidden md:flex shrink-0">
+    <div class="flex-1 flex relative overflow-hidden z-0">
+        <aside class="w-64 border-r border-[#30363d] bg-[#0d1117] p-4 flex flex-col hidden md:flex shrink-0">
             <Vitals ram={vitals.ram_usage} status={vitals.status} cpu={vitals.cpu_usage} resonance={vitals.resonance} />
             <Heartbeat resonance={vitals.resonance} />
             <div class="mt-4 flex-1 overflow-y-auto">
-                <ResponseModule response={neuralResponse} {isThinking} {patchAvailable} onApplyPatch={applyPatch} />
+                <ResponseModule response={neuralResponse} {isThinking} patchAvailable={false} onApplyPatch={()=>{}} />
             </div>
         </aside>
 
+        {#key activeTabType}
         <main class="flex-1 flex flex-col bg-black relative">
             {#if activeTabType === 'editor'}
                 <div class="absolute inset-0 flex flex-col">
@@ -163,9 +179,11 @@
                             </button>
                         {/each}
                     </div>
-                    <Editor bind:value={currentCode} bind:path={currentPath} {vimMode} onChange={updateCode} />
-                    <TacticalBlade bind:open={bladeOpen} onFileSelect={openFile} onToggleVim={toggleVim} />
-                    <GhostCortex logs={ghostLogs} active={true} {isThinking} response={neuralResponse} onCommand={(cmd) => {userPrompt = cmd; setTimeout(executeAction, 50);}} onToggleFiles={() => bladeOpen = !bladeOpen} />
+                    <div class="flex-1 relative overflow-hidden">
+                        <Editor bind:value={currentCode} bind:path={currentPath} {vimMode} onChange={updateCode} />
+                        <TacticalBlade bind:open={bladeOpen} onFileSelect={openFile} onToggleVim={toggleVim} />
+                        <GhostCortex logs={ghostLogs} active={true} {isThinking} response={neuralResponse} onCommand={(cmd) => {userPrompt = cmd; setTimeout(executeAction, 50);}} onToggleFiles={() => bladeOpen = !bladeOpen} />
+                    </div>
                 </div>
             {/if}
 
@@ -178,17 +196,18 @@
                 </div>
             {/if}
             
+            {#if activeTabType === 'secops'}
+                <div class="absolute inset-0 p-6 bg-[#0d1117]">
+                    <SecOps />
+                </div>
+            {/if}
+
             {#if activeTabType === 'terminal'}
                 <div class="absolute inset-0 bg-black">
                     <Terminal bind:this={terminalInstance} />
                 </div>
             {/if}
         </main>
+        {/key}
     </div>
-
-    {#if patchAvailable}
-    <div class="fixed bottom-10 right-10 z-[200]">
-        <MergeGate active={true} path={targetPatchFile} on:apply={applyPatch} on:reject={() => patchAvailable = false} />
-    </div>
-    {/if}
 </div>
