@@ -1,0 +1,41 @@
+{
+  "test.rs": [
+    {
+      "hash": "",
+      "strat": "clippy",
+      "ok": false,
+      "err": "borrow error",
+      "ts": "2026-03-01T18:05:29.846352379+00:00"
+    }
+  ],
+  "src/main.rs": [
+    {
+      "hash": "0c85cc7bd390c02536370ed1c52fb25a61f8ead0da9c2f6c706432df11d3e219",
+      "strat": "clippy",
+      "ok": false,
+      "err": "STDOUT:\n\nSTDERR:\nwarning: unused import: `Context`\n --> src/auto_healer.rs:1:14\n  |\n1 | use anyhow::{Context, Result};\n  |              ^^^^^^^\n  |\n  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `nexus_singularity` (lib) generated 1 warnin",
+      "ts": "2026-03-01T19:07:37.194924678+00:00"
+    },
+    {
+      "hash": "0c85cc7bd390c02536370ed1c52fb25a61f8ead0da9c2f6c706432df11d3e219",
+      "strat": "fmt",
+      "ok": false,
+      "err": "STDOUT:\n\nSTDERR:\nwarning: unused import: `Context`\n --> src/auto_healer.rs:1:14\n  |\n1 | use anyhow::{Context, Result};\n  |              ^^^^^^^\n  |\n  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `nexus_singularity` (lib) generated 1 warnin",
+      "ts": "2026-03-01T19:07:38.527759601+00:00"
+    },
+    {
+      "hash": "0c85cc7bd390c02536370ed1c52fb25a61f8ead0da9c2f6c706432df11d3e219",
+      "strat": "llm",
+      "ok": false,
+      "err": "STDOUT:\n\nSTDERR:\nwarning: unused import: `Context`\n --> src/auto_healer.rs:1:14\n  |\n1 | use anyhow::{Context, Result};\n  |              ^^^^^^^\n  |\n  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `nexus_singularity` (lib) generated 1 warnin",
+      "ts": "2026-03-01T19:07:39.147261985+00:00"
+    },
+    {
+      "hash": "cc034a6e8b302fecfa85cfab22dbe3b994978ad525d2d4a497ff54d896f65057",
+      "strat": "revert",
+      "ok": true,
+      "err": "STDOUT:\n\nSTDERR:\nwarning: unused import: `Context`\n --> src/auto_healer.rs:1:14\n  |\n1 | use anyhow::{Context, Result};\n  |              ^^^^^^^\n  |\n  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `nexus_singularity` (lib) generated 1 warnin",
+      "ts": "2026-03-01T19:07:39.313506293+00:00"
+    }
+  ]
+}
