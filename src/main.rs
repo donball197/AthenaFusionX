@@ -82,7 +82,7 @@ async fn main() {
 
     // 4. START JANITOR DREAM CYCLE
     let janitor_state = state.clone();
-    crate::janitor::Janitor::start_background_maintenance(janitor_state).await;
+    tokio::spawn(crate::janitor::Janitor::start_background_maintenance(janitor_state));
 
     // 5. LAUNCH
     println!(">> [HIVE QUEEN] Control interface online.");

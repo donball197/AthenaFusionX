@@ -127,7 +127,7 @@ impl AutoHealer {
 
     async fn fmt_check(&self, p: &str) -> Result<bool> {
         let _ = Command::new("rustfmt").arg(p).status().await;
-        Ok(Command::new("cargo").args(["check","--fix","--allow-dirty","-q"]).status().await?.success())
+        Ok(Command::new("cargo").args(["check", "-q"]).status().await?.success())
     }
 
     async fn llm(&self, state: &Arc<AppState>, p: &str, log: &str) -> Result<(bool,String)> {
