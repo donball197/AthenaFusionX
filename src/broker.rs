@@ -1,8 +1,8 @@
 // src/broker.rs
+use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use serde::Serialize;
 
 #[derive(Debug)]
 pub struct Mission {
@@ -39,9 +39,16 @@ impl KnowledgeBroker {
         let mut nodes = Vec::new();
         let mut links = Vec::new();
 
-        for mem in memories.iter().filter(|m| m.prompt.starts_with("FOUNDATION:")) {
+        for mem in memories
+            .iter()
+            .filter(|m| m.prompt.starts_with("FOUNDATION:"))
+        {
             let path = mem.prompt.replace("FOUNDATION: ", "");
-            let group = if path.ends_with(".rs") { "rust" } else { "svelte" };
+            let group = if path.ends_with(".rs") {
+                "rust"
+            } else {
+                "svelte"
+            };
             let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(500);
 
             nodes.push(GraphNode {
@@ -52,7 +59,10 @@ impl KnowledgeBroker {
             });
 
             if path != "src/main.rs" && group == "rust" {
-                links.push(GraphLink { source: "src/main.rs".into(), target: path.clone() });
+                links.push(GraphLink {
+                    source: "src/main.rs".into(),
+                    target: path.clone(),
+                });
             }
         }
         NeuralGraph { nodes, links }
@@ -65,15 +75,26 @@ impl KnowledgeBroker {
 
         for path in entries {
             let content = fs::read_to_string(&path)?;
-            let (summary, _) = state.agent.prepare_and_run(
-                &state.client, 
-                &state.api_key, 
-                &format!("Summarize purpose of {}", path), 
-                crate::neural_agent::ContextPacket { file_content: Some(content), ..Default::default() }, 
-                0.0
-            ).await?;
+            let (summary, _) = state
+                .agent
+                .prepare_and_run(
+                    &state.client,
+                    &state.api_key,
+                    &format!("Summarize purpose of {}", path),
+                    crate::neural_agent::ContextPacket {
+                        file_content: Some(content),
+                        ..Default::default()
+                    },
+                    0.0,
+                )
+                .await?;
             // FIX: Lock mutex
-            state.memory.lock().await.remember(format!("FOUNDATION: {}", path), summary, "INDEXED".into(), None);
+            state.memory.lock().await.remember(
+                format!("FOUNDATION: {}", path),
+                summary,
+                "INDEXED".into(),
+                None,
+            );
         }
         Ok("Deep Index Complete".into())
     }
@@ -84,10 +105,13 @@ impl KnowledgeBroker {
                 let p = entry.path();
                 if p.is_dir() {
                     let name = p.file_name().unwrap().to_string_lossy();
-                    if name != "target" && name != "node_modules" && name != "dist" { 
-                        Self::read_src(&p, entries); 
+                    if name != "target" && name != "node_modules" && name != "dist" {
+                        Self::read_src(&p, entries);
                     }
-                } else if p.extension().map_or(false, |ext| ext == "rs" || ext == "svelte") {
+                } else if p
+                    .extension()
+                    .map_or(false, |ext| ext == "rs" || ext == "svelte")
+                {
                     entries.push(p.to_string_lossy().to_string());
                 }
             }
@@ -98,7 +122,9 @@ impl KnowledgeBroker {
         let missions = fs::read_dir("missions").ok()?;
         for entry in missions.flatten() {
             let path = entry.path();
-            if path.is_dir() { continue; }
+            if path.is_dir() {
+                continue;
+            }
             let file_name = path.file_name()?.to_str()?;
             let claim_path = format!("claims/{}.lock", file_name);
             if !Path::new(&claim_path).exists() {
