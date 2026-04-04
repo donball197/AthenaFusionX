@@ -1,0 +1,569 @@
+{
+  "entries": [
+    {
+      "name": "nexus_vmo_clone",
+      "kind": "function",
+      "path": "src/kernel/memory.rs",
+      "signature": "pub fn nexus_vmo_clone"
+    },
+    {
+      "name": "nexus_vmar_map",
+      "kind": "function",
+      "path": "src/kernel/memory.rs",
+      "signature": "pub fn nexus_vmar_map"
+    },
+    {
+      "name": "seat_model",
+      "kind": "function",
+      "path": "src/kernel/memory.rs",
+      "signature": "pub fn seat_model"
+    },
+    {
+      "name": "apply",
+      "kind": "function",
+      "path": "src/diff.rs",
+      "signature": "pub fn apply"
+    },
+    {
+      "name": "unified_diff",
+      "kind": "function",
+      "path": "src/diff.rs",
+      "signature": "pub fn unified_diff"
+    },
+    {
+      "name": "extract_actions",
+      "kind": "function",
+      "path": "src/json_parser.rs",
+      "signature": "pub fn extract_actions"
+    },
+    {
+      "name": "execute",
+      "kind": "function",
+      "path": "src/executor.rs",
+      "signature": "pub async fn execute"
+    },
+    {
+      "name": "execute_allowed_command",
+      "kind": "function",
+      "path": "src/command_executor.rs",
+      "signature": "pub async fn execute_allowed_command"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/orchestrator.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "run_autonomous_loop",
+      "kind": "function",
+      "path": "src/orchestrator.rs",
+      "signature": "pub async fn run_autonomous_loop"
+    },
+    {
+      "name": "ignite",
+      "kind": "function",
+      "path": "src/scheduler.rs",
+      "signature": "pub fn ignite"
+    },
+    {
+      "name": "terminal_command",
+      "kind": "function",
+      "path": "src/server_terminal.rs",
+      "signature": "pub async fn terminal_command"
+    },
+    {
+      "name": "init",
+      "kind": "function",
+      "path": "src/lazarus_vault.rs",
+      "signature": "pub fn init"
+    },
+    {
+      "name": "seal_patch",
+      "kind": "function",
+      "path": "src/lazarus_vault.rs",
+      "signature": "pub fn seal_patch"
+    },
+    {
+      "name": "list_snapshots",
+      "kind": "function",
+      "path": "src/lazarus_vault.rs",
+      "signature": "pub fn list_snapshots"
+    },
+    {
+      "name": "restore_snapshot",
+      "kind": "function",
+      "path": "src/lazarus_vault.rs",
+      "signature": "pub fn restore_snapshot"
+    },
+    {
+      "name": "spawn_swarm",
+      "kind": "function",
+      "path": "src/agents.rs",
+      "signature": "pub fn spawn_swarm"
+    },
+    {
+      "name": "initialize_mnemnos_lean",
+      "kind": "function",
+      "path": "src/alloc.rs",
+      "signature": "pub fn initialize_mnemnos_lean"
+    },
+    {
+      "name": "validate_safety",
+      "kind": "function",
+      "path": "src/auditor.rs",
+      "signature": "pub fn validate_safety"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/auto_healer.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "attempt_auto_repair",
+      "kind": "function",
+      "path": "src/auto_healer.rs",
+      "signature": "pub async fn attempt_auto_repair"
+    },
+    {
+      "name": "background_heal_loop",
+      "kind": "function",
+      "path": "src/auto_healer.rs",
+      "signature": "pub async fn background_heal_loop"
+    },
+    {
+      "name": "refresh_atlas",
+      "kind": "function",
+      "path": "src/broker.rs",
+      "signature": "pub async fn refresh_atlas"
+    },
+    {
+      "name": "get_atlas",
+      "kind": "function",
+      "path": "src/broker.rs",
+      "signature": "pub async fn get_atlas"
+    },
+    {
+      "name": "get_compressed_context",
+      "kind": "function",
+      "path": "src/broker.rs",
+      "signature": "pub async fn get_compressed_context"
+    },
+    {
+      "name": "run_calibration",
+      "kind": "function",
+      "path": "src/calibrate.rs",
+      "signature": "pub fn run_calibration"
+    },
+    {
+      "name": "get_system_vitals",
+      "kind": "function",
+      "path": "src/context.rs",
+      "signature": "pub fn get_system_vitals"
+    },
+    {
+      "name": "run_background_check",
+      "kind": "function",
+      "path": "src/devops.rs",
+      "signature": "pub fn run_background_check"
+    },
+    {
+      "name": "example",
+      "kind": "function",
+      "path": "src/filename.rs",
+      "signature": "pub fn example"
+    },
+    {
+      "name": "check_cluster_sync",
+      "kind": "function",
+      "path": "src/heartbeat.rs",
+      "signature": "pub fn check_cluster_sync"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/hiram_core.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "verify",
+      "kind": "function",
+      "path": "src/hiram_core.rs",
+      "signature": "pub fn verify"
+    },
+    {
+      "name": "connect",
+      "kind": "function",
+      "path": "src/hive_mind.rs",
+      "signature": "pub fn connect"
+    },
+    {
+      "name": "dispatch_task",
+      "kind": "function",
+      "path": "src/hive_mind.rs",
+      "signature": "pub async fn dispatch_task"
+    },
+    {
+      "name": "archive_file",
+      "kind": "function",
+      "path": "src/industrial.rs",
+      "signature": "pub fn archive_file"
+    },
+    {
+      "name": "auto_throttle",
+      "kind": "function",
+      "path": "src/industrial.rs",
+      "signature": "pub async fn auto_throttle"
+    },
+    {
+      "name": "native_port_scan",
+      "kind": "function",
+      "path": "src/inquisitor.rs",
+      "signature": "pub async fn native_port_scan"
+    },
+    {
+      "name": "execute_tactical",
+      "kind": "function",
+      "path": "src/inquisitor.rs",
+      "signature": "pub fn execute_tactical"
+    },
+    {
+      "name": "start_background_maintenance",
+      "kind": "function",
+      "path": "src/janitor.rs",
+      "signature": "pub async fn start_background_maintenance"
+    },
+    {
+      "name": "heartbeat",
+      "kind": "function",
+      "path": "src/lazarus.rs",
+      "signature": "pub fn heartbeat"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/memory.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "load_all",
+      "kind": "function",
+      "path": "src/memory.rs",
+      "signature": "pub fn load_all"
+    },
+    {
+      "name": "remember",
+      "kind": "function",
+      "path": "src/memory.rs",
+      "signature": "pub fn remember"
+    },
+    {
+      "name": "purge_to_archive",
+      "kind": "function",
+      "path": "src/memory.rs",
+      "signature": "pub fn purge_to_archive"
+    },
+    {
+      "name": "expose_metrics",
+      "kind": "function",
+      "path": "src/metrics.rs",
+      "signature": "pub async fn expose_metrics"
+    },
+    {
+      "name": "get_active_directives",
+      "kind": "function",
+      "path": "src/mission_control.rs",
+      "signature": "pub fn get_active_directives"
+    },
+    {
+      "name": "check_system_health",
+      "kind": "function",
+      "path": "src/monitor.rs",
+      "signature": "pub fn check_system_health"
+    },
+    {
+      "name": "inject",
+      "kind": "function",
+      "path": "src/nano_agent.rs",
+      "signature": "pub fn inject"
+    },
+    {
+      "name": "run_cycle",
+      "kind": "function",
+      "path": "src/nano_agent.rs",
+      "signature": "pub async fn run_cycle"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/nano_swarm.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "get_roster",
+      "kind": "function",
+      "path": "src/nano_swarm.rs",
+      "signature": "pub fn get_roster"
+    },
+    {
+      "name": "trigger_diagnostics",
+      "kind": "function",
+      "path": "src/nano_swarm.rs",
+      "signature": "pub fn trigger_diagnostics"
+    },
+    {
+      "name": "init",
+      "kind": "function",
+      "path": "src/native_agent_manager.rs",
+      "signature": "pub fn init"
+    },
+    {
+      "name": "ignite_agent",
+      "kind": "function",
+      "path": "src/native_agent_manager.rs",
+      "signature": "pub async fn ignite_agent"
+    },
+    {
+      "name": "start_duet_listener",
+      "kind": "function",
+      "path": "src/network.rs",
+      "signature": "pub fn start_duet_listener"
+    },
+    {
+      "name": "ensure_synapse",
+      "kind": "function",
+      "path": "src/podman.rs",
+      "signature": "pub fn ensure_synapse"
+    },
+    {
+      "name": "spawn_drone",
+      "kind": "function",
+      "path": "src/podman.rs",
+      "signature": "pub fn spawn_drone"
+    },
+    {
+      "name": "calculate_vitals",
+      "kind": "function",
+      "path": "src/poison.rs",
+      "signature": "pub fn calculate_vitals"
+    },
+    {
+      "name": "detect_and_build",
+      "kind": "function",
+      "path": "src/polyglot.rs",
+      "signature": "pub fn detect_and_build"
+    },
+    {
+      "name": "generate_project_tree",
+      "kind": "function",
+      "path": "src/polyglot.rs",
+      "signature": "pub fn generate_project_tree"
+    },
+    {
+      "name": "init",
+      "kind": "function",
+      "path": "src/python_reactor.rs",
+      "signature": "pub fn init"
+    },
+    {
+      "name": "run",
+      "kind": "function",
+      "path": "src/python_reactor.rs",
+      "signature": "pub async fn run"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/refuel.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "directive",
+      "kind": "function",
+      "path": "src/refuel.rs",
+      "signature": "pub fn directive"
+    },
+    {
+      "name": "ignite_vault",
+      "kind": "function",
+      "path": "src/resonator.rs",
+      "signature": "pub fn ignite_vault"
+    },
+    {
+      "name": "scan_local_energy",
+      "kind": "function",
+      "path": "src/resonator.rs",
+      "signature": "pub fn scan_local_energy"
+    },
+    {
+      "name": "read_throttle",
+      "kind": "function",
+      "path": "src/resonator.rs",
+      "signature": "pub fn read_throttle"
+    },
+    {
+      "name": "engage_safety_valve",
+      "kind": "function",
+      "path": "src/safety_valve.rs",
+      "signature": "pub fn engage_safety_valve"
+    },
+    {
+      "name": "is_fit_for_work",
+      "kind": "function",
+      "path": "src/sentry.rs",
+      "signature": "pub fn is_fit_for_work"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/shadow_core.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "verify",
+      "kind": "function",
+      "path": "src/shadow_core.rs",
+      "signature": "pub fn verify"
+    },
+    {
+      "name": "load",
+      "kind": "function",
+      "path": "src/stats.rs",
+      "signature": "pub fn load"
+    },
+    {
+      "name": "save",
+      "kind": "function",
+      "path": "src/stats.rs",
+      "signature": "pub fn save"
+    },
+    {
+      "name": "record",
+      "kind": "function",
+      "path": "src/stats.rs",
+      "signature": "pub fn record"
+    },
+    {
+      "name": "get_success_rate",
+      "kind": "function",
+      "path": "src/stats.rs",
+      "signature": "pub fn get_success_rate"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/system_monitor.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "get_vitals",
+      "kind": "function",
+      "path": "src/system_monitor.rs",
+      "signature": "pub fn get_vitals"
+    },
+    {
+      "name": "get_vital_signs_string",
+      "kind": "function",
+      "path": "src/system_monitor.rs",
+      "signature": "pub fn get_vital_signs_string"
+    },
+    {
+      "name": "twitch",
+      "kind": "function",
+      "path": "src/test_nerve.rs",
+      "signature": "pub fn twitch"
+    },
+    {
+      "name": "run_vision_sentry",
+      "kind": "function",
+      "path": "src/tflite_bridge.rs",
+      "signature": "pub fn run_vision_sentry"
+    },
+    {
+      "name": "run_local_reflex",
+      "kind": "function",
+      "path": "src/tflite_bridge.rs",
+      "signature": "pub fn run_local_reflex"
+    },
+    {
+      "name": "ignite_agent",
+      "kind": "function",
+      "path": "src/tflite_bridge.rs",
+      "signature": "pub fn ignite_agent"
+    },
+    {
+      "name": "capture_frame",
+      "kind": "function",
+      "path": "src/vision.rs",
+      "signature": "pub async fn capture_frame"
+    },
+    {
+      "name": "scan_local_image",
+      "kind": "function",
+      "path": "src/vision.rs",
+      "signature": "pub fn scan_local_image"
+    },
+    {
+      "name": "capture_and_analyze",
+      "kind": "function",
+      "path": "src/vision.rs",
+      "signature": "pub async fn capture_and_analyze"
+    },
+    {
+      "name": "perform_auto_tune",
+      "kind": "function",
+      "path": "src/watcher.rs",
+      "signature": "pub async fn perform_auto_tune"
+    },
+    {
+      "name": "init",
+      "kind": "function",
+      "path": "src/neural_agent.rs",
+      "signature": "pub fn init"
+    },
+    {
+      "name": "prepare_and_run",
+      "kind": "function",
+      "path": "src/neural_agent.rs",
+      "signature": "pub async fn prepare_and_run"
+    },
+    {
+      "name": "start_server",
+      "kind": "function",
+      "path": "src/server.rs",
+      "signature": "pub async fn start_server"
+    },
+    {
+      "name": "new",
+      "kind": "function",
+      "path": "src/thermal_governor.rs",
+      "signature": "pub fn new"
+    },
+    {
+      "name": "read_temp",
+      "kind": "function",
+      "path": "src/thermal_governor.rs",
+      "signature": "pub fn read_temp"
+    },
+    {
+      "name": "get_state",
+      "kind": "function",
+      "path": "src/thermal_governor.rs",
+      "signature": "pub fn get_state"
+    },
+    {
+      "name": "apply_cooldown",
+      "kind": "function",
+      "path": "src/thermal_governor.rs",
+      "signature": "pub async fn apply_cooldown"
+    },
+    {
+      "name": "inject_thermal_constraints",
+      "kind": "function",
+      "path": "src/thermal_governor.rs",
+      "signature": "pub fn inject_thermal_constraints"
+    }
+  ],
+  "timestamp": 1774641682
+}

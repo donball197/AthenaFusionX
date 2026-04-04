@@ -1,29 +1,31 @@
-// Project Nexus Singularity v0.2.2
-// "Real Robotic Kernel" - Zircon-to-Zig Bridge
-// Optimized for ARM64 (Motorola/Chromebook)
+const std = @import("std");
 
-const zx = @import("zircon_types.zig");
-
-pub export fn nexus_vmo_clone(handle: u32, options: u32, offset: u64, size: u64, out: *u32) i32 {
-    return @extern(i32, "zx_vmo_clone", .{handle, options, offset, size, out});
+/// Simulates zx_vmo_clone by generating a mock handle
+export fn nexus_vmo_clone(handle: u32, options: u32, offset: u64, size: u64, out: *u32) i32 {
+    _ = handle; _ = options; _ = offset; _ = size;
+    out.* = 42; // Simulated Neural Region Handle
+    return 0; // ZX_OK
 }
 
-pub export fn nexus_vmar_map(
-    handle: u32,
-    options: u32,
-    vmar_offset: u64,
-    vmo: u32,
-    vmo_offset: u64,
-    len: u64,
-    mapped_addr: *usize,
-) i32 {
-    return @extern(i32, "zx_vmar_map", .{handle, options, vmar_offset, vmo, vmo_offset, len, mapped_addr});
+/// Simulates zx_vmar_map by allocating actual memory via Linux mmap (Page Allocator)
+export fn nexus_vmar_map(handle: u32, options: u32, v_off: u64, vmo: u32, v_off_vmo: u64, len: u64, addr: *usize) i32 {
+    _ = handle; _ = options; _ = v_off; _ = vmo; _ = v_off_vmo;
+    
+    // Actually allocate memory so the Rust kernel doesn't segfault when reading/writing
+    const slice = std.heap.page_allocator.alloc(u8, len) catch return -1; // ZX_ERR_NO_MEMORY
+    
+    addr.* = @intFromPtr(slice.ptr);
+    return 0; // ZX_OK
 }
 
-pub export fn nexus_vmar_protect(handle: u32, options: u32, addr: usize, len: u64) i32 {
-    return @extern(i32, "zx_vmar_protect", .{handle, options, addr, len});
+/// Simulates zx_vmar_protect (No-op on our Linux shim for now)
+export fn nexus_vmar_protect(handle: u32, options: u32, addr: usize, len: u64) i32 {
+    _ = handle; _ = options; _ = addr; _ = len;
+    return 0; // ZX_OK
 }
 
-pub export fn nexus_vmar_destroy(handle: u32) i32 {
-    return @extern(i32, "zx_vmar_destroy", .{handle});
+/// Simulates zx_vmar_destroy
+export fn nexus_vmar_destroy(handle: u32) i32 {
+    _ = handle;
+    return 0; // ZX_OK
 }

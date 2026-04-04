@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 
 # ==============================================================================
 # NEXUS UI: AUTONOMOUS IGNITION SEQUENCE v0.14.0

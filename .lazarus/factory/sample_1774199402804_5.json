@@ -1,0 +1,13 @@
+```json
+[
+  {
+    \action\ \Message\
+    \message\ \Analyzing codebase to generate a technical archetype. The system exhibits a highly distributed, self-healing, and monitoring-focused architecture. It leverages a blend of core kernel functionality, advanced AI/ML components (TFLite bridge, neural agents), and robust orchestration/scheduling. The UI suggests a strong emphasis on visualization and real-time data analysis.\
+  },
+  {
+    \action\ \WriteFile\
+    \path\ \archetype.json\
+    \content\ \ \\\problem\\\ \\\Building and maintaining highly resilient, self-managing distributed systems that require real-time monitoring, automated remediation, and intelligent decision-making.  Specifically, the need to handle complex dependencies, dynamic scaling, and potential failures without significant human intervention.\\\ \\\solution\\\ \\\A 'Autonomous Cortex' archetype. This architecture employs a microservice-based design with a central 'Hive Mind' orchestrator, supported by specialized agents (Auto-Healer, Inquisitor, Janitor) for proactive maintenance and fault tolerance.  A 'System Monitor' provides comprehensive observability, feeding data to a 'Neural Agent' for predictive analysis and automated responses.  The 'Lazarus Vault' ensures data persistence and recovery.  The UI (GhostCortex, SwarmMap, VisualCortex) provides a unified view of system health and activity, enabling rapid diagnosis and intervention when necessary.  Containerization (Podman) and a robust 'Broker' facilitate communication and data exchange between components.  The 'Server' component exposes a REST API with extensive routing capabilities for external interaction.\\\ }\
+  }
+]
+```

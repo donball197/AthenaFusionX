@@ -1,0 +1,719 @@
+OCAL ERROR] Runner binary missing. Fallback failed.".to_string());
+        }
+
+        // We shell out to the local binary. 
+        // This is RAM-efficient because the memory is freed as soon as the process ends.
+        let output = Command::new(runner_path)
+            .arg(model_path)
+            .arg(input)
+            .output()
+            .await?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            let err = String::from_utf8_lossy(&output.stderr);
+            Ok(format!(">> [LOCAL ERROR] Brain Fault: {}", err.trim()))
+        }
+    }
+}
+
+==> src/vision.rs <==
+use anyhow::{Context, Result};
+use base64::{engine::general_purpose, Engine as _};
+use image::{imageops::FilterType, ImageFormat};
+use screenshots::Screen;
+use std::io::Cursor;
+use std::process::Command;
+
+pub async fn capture_frame() -> Result<String> {
+    let screens = Screen::all().context("No screens found")?;
+    let screen = screens.first().context("No primary screen")?;
+
+    let capture_data = screen.capture().context("Capture failed")?;
+    let raw_bytes = capture_data.as_raw();
+
+    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+        capture_data.width(),
+        capture_data.height(),
+        raw_bytes.to_vec(),
+    )
+    .context("Failed to reconstruct image from raw bytes")?;
+
+    let dynamic_img = image::DynamicImage::ImageRgba8(img);
+    let scaled = dynamic_img.resize(1280, 720, FilterType::Lanczos3);
+
+    let mut jpeg_buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut jpeg_buffer);
+    scaled
+        .write_to(&mut cursor, ImageFormat::Jpeg)
+        .map_err(|e| anyhow::anyhow!("Encoding failed: {}", e))?;
+
+    Ok(general_purpose::STANDARD.encode(&jpeg_buffer))
+}
+
+pub fn scan_local_image(filename: &str) -> Result<String> {
+    if filename.contains("..") || filename.contains('/') {
+        return Err(anyhow::anyhow!("Security Block: Invalid filename."));
+    }
+
+    let target_path = format!("/workspace/{}", filename);
+
+    // Call the CLI directly instead of using the heavy SDK library
+    let output = Command::new("podman")
+        .args(["exec", "nexus_secops", "identify", &target_path])
+        .output()
+        .context("Failed to communicate with SecOps drone")?;
+
+    if output.status.success() {
+        let report = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(report)
+    } else {
+        let error = String::from_utf8_lossy(&output.stderr).to_string();
+        Err(anyhow::anyhow!("Drone Vision Error: {}", error))
+    }
+}
+pub async fn capture_and_analyze() -> anyhow::Result<String> {
+    Ok("Vision analysis active".into())
+}
+
+==> src/vision_proc.zig <==
+const std = @import("std");
+
+/// The 32-D Latent Space Proxy
+/// [0..7]   - Power/Thermal Intent (Throttle)
+/// [8..15]  - Neural Attention Priority
+/// [16..31] - Spatiotemporal Action Vectors
+var latent_intent = [_]f32{0.0} ** 32;
+
+/// Push: Rust calls this to send the AI's "Imaginative" intent to the NPU
+export fn push_latent_intent(input_ptr: [*]const f32) void {
+    const data: [*]const f32 = input_ptr;
+    inline for (0..32) |i| {
+        latent_intent[i] = data[i];
+    }
+}
+
+/// Pull: Rust calls this to check the "Reflex" hardware status
+export fn get_latent_throttle() f32 {
+    var sum: f32 = 0.0;
+    // Calculate a safety floor based on the first 8 dimensions
+    for (latent_intent[0..8]) |val| {
+        sum += val;
+    }
+    return sum / 8.0;
+}
+
+/// Original Resonance Logic for Hardware Monitoring
+pub export fn calculate_resonance_e2b(mmap_ptr: [*]const u8, length: usize) f32 {
+    var total_energy: f32 = 0.0;
+    var i: usize = 0;
+    while (i < length) : (i += 64) {
+        const byte = mmap_ptr[i];
+        const val = (@as(f32, @floatFromInt(byte)) / 255.0);
+        total_energy += (val * val);
+    }
+    const count = @as(f32, @floatFromInt(length / 64));
+    return if (count > 0) total_energy / count else 0.0;
+}
+
+==> src/watcher.rs <==
+use chrono;
+use serde::{Deserialize, Serialize};
+use std::fs;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct OptimizationProfile {
+    pub flags: String,
+    pub target_arch: String,
+    pub last_updated: String,
+}
+
+pub async fn perform_auto_tune() -> Result<OptimizationProfile, Box<dyn std::error::Error>> {
+    println!(">> [WATCHER] AUTO-TUNE STARTED (Simulated for 4GB RAM safety)...");
+
+    // Default safe flags for ARM64
+    let flags = "-C target-cpu=native".to_string();
+
+    let profile = OptimizationProfile {
+        flags: flags.clone(),
+        target_arch: "aarch64".to_string(),
+        last_updated: chrono::Utc::now().to_rfc3339(),
+    };
+
+    // Ensure vault exists
+    let _ = fs::create_dir_all("vault");
+    fs::write("vault/forge_profile.env", format!("FLAGS='{}'", flags))?;
+
+    Ok(profile)
+}
+
+==> src/cli.rs <==
+use clap::{Parser, Subcommand};
+
+#[derive(Parser, Debug)]
+#[command(name = "nexus", about = "NEXUS SINGULARITY CLI — v1.0.0", disable_help_subcommand = true)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    Build { #[arg(default_value = ".")] path: String },
+    Heal { #[arg(required = true)] file: String },
+    Open { #[arg(required = true)] file: String },
+    Status,
+    Diff { #[arg(required = true)] original: String, #[arg(required = true)] against: String },
+    Restore { #[arg(required = true)] hash: String },
+}
+
+==> src/diff.rs <==
+use std::fs;
+
+pub fn unified_diff(original_path: &str, against_path: &str) -> String {
+    let original = match fs::read_to_string(original_path) {
+        Ok(c) => c,
+        Err(e) => return format!(">> Cannot read original {}: {}", original_path, e),
+    };
+
+    let against = match fs::read_to_string(against_path) {
+        Ok(c) => c,
+        Err(e) => return format!(">> Cannot read draft {}: {}", against_path, e),
+    };
+
+    let orig_lines: Vec<&str> = original.lines().collect();
+    let new_lines: Vec<&str> = against.lines().collect();
+
+    let mut result = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
+
+    result.push(format!("--- {}", original_path));
+    result.push(format!("+++ {}", against_path));
+    result.push("@@ -1,+1 @@".to_string());
+
+    while i < orig_lines.len() || j < new_lines.len() {
+        if i < orig_lines.len() && j < new_lines.len() && orig_lines[i] == new_lines[j] {
+            result.push(format!(" {}", orig_lines[i]));
+            i += 1;
+            j += 1;
+        } else {
+            while i < orig_lines.len() && (j >= new_lines.len() || orig_lines[i] != new_lines[j]) {
+                result.push(format!("-\x1b[31m{}\x1b[0m", orig_lines[i]));
+                i += 1;
+            }
+            while j < new_lines.len() && (i >= orig_lines.len() || orig_lines[i] != new_lines[j]) {
+                result.push(format!("+\x1b[32m{}\x1b[0m", new_lines[j]));
+                j += 1;
+            }
+        }
+    }
+
+    if result.len() <= 3 {
+        ">> No differences detected.".to_string()
+    } else {
+        result.join("\n")
+    }
+}
+
+==> src/lazarus_vault.rs <==
+use anyhow::Result;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+use blake3::Hasher;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct VaultEntry {
+    pub timestamp: String,
+    pub path: String,
+    pub hash: String,
+    pub author: String,
+}
+
+pub struct LazarusVault;
+
+impl LazarusVault {
+    pub fn init() -> Result<()> {
+        fs::create_dir_all(".lazarus/snapshots")?;
+        if !Path::new(".lazarus/ledger.json").exists() {
+            fs::write(".lazarus/ledger.json", "[]")?;
+        }
+        Ok(())
+    }
+
+    // This is what server.rs calls to secure a file before/during a write
+    pub fn seal_patch(target_path: &str, content: &str, author: &str) -> Result<String> {
+        let mut hasher = Hasher::new();
+        hasher.update(content.as_bytes());
+        let hash = hasher.finalize().to_hex().to_string();
+
+        let snapshot_path = format!(".lazarus/snapshots/{}.bak", hash);
+        fs::write(snapshot_path, content)?;
+
+        let mut ledger = Self::list_snapshots().unwrap_or_default();
+        ledger.push(VaultEntry {
+            timestamp: Utc::now().to_rfc3339(),
+            path: target_path.to_string(),
+            hash: hash.clone(),
+            author: author.to_string(),
+        });
+
+        // Keep ledger lean for Duet RAM/Storage
+        if ledger.len() > 100 { ledger.remove(0); }
+
+        fs::write(".lazarus/ledger.json", serde_json::to_string_pretty(&ledger)?)?;
+        Ok(hash)
+    }
+
+    pub fn list_snapshots() -> Result<Vec<VaultEntry>> {
+        let content = fs::read_to_string(".lazarus/ledger.json")?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    pub fn restore_from_vault(hash: &str) -> Result<String> {
+        let ledger = Self::list_snapshots()?;
+        let entry = ledger.iter().find(|e| e.hash.starts_with(hash))
+            .ok_or_else(|| anyhow::anyhow!("Hash not found in Lazarus Vault."))?;
+
+        let snapshot_path = format!(".lazarus/snapshots/{}.bak", entry.hash);
+        let content = fs::read_to_string(snapshot_path)?;
+        fs::write(&entry.path, content)?;
+        
+        Ok(entry.path.clone())
+    }
+}
+
+==> src/agent_protocol.rs <==
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "action")]
+pub enum AgentAction {
+    WriteFile { path: String, content: String },
+    PatchFile { path: String, diff: String },
+    RunCommand { command: String },
+    Message { message: String },
+}
+
+==> src/json_parser.rs <==
+use crate::agent_protocol::AgentAction;
+use anyhow::{anyhow, Result};
+use serde_json::Value;
+
+pub struct NeuralParser;
+
+impl NeuralParser {
+    pub fn extract_actions(raw_llm_output: &str) -> Result<Vec<AgentAction>> {
+        let mut cleaned = raw_llm_output.trim();
+        if cleaned.starts_with("```json") { cleaned = &cleaned[7..]; } 
+        else if cleaned.starts_with("```") { cleaned = &cleaned[3..]; }
+        if cleaned.ends_with("```") { cleaned = &cleaned[..cleaned.len() - 3]; }
+        cleaned = cleaned.trim();
+
+        let json_payload = if let (Some(start), Some(end)) = (cleaned.find('['), cleaned.rfind(']')) {
+            &cleaned[start..=end]
+        } else if let (Some(start), Some(end)) = (cleaned.find('{'), cleaned.rfind('}')) {
+            &cleaned[start..=end]
+        } else {
+            return Err(anyhow!("No JSON structure found."));
+        };
+
+        let parsed_value: Value = serde_json::from_str(json_payload)?;
+        if parsed_value.is_array() {
+            Ok(serde_json::from_value(parsed_value)?)
+        } else {
+            Ok(vec![serde_json::from_value(parsed_value)?])
+        }
+    }
+}
+
+==> src/executor.rs <==
+use crate::agent_protocol::AgentAction;
+use anyhow::Result;
+
+pub struct Executor;
+
+impl Executor {
+    pub async fn execute(actions: Vec<AgentAction>) -> Result<Vec<String>> {
+        let mut results = vec![];
+        for action in actions {
+            match action {
+                AgentAction::WriteFile { path, content } => {
+                    // 1. ENFORCE SENTINEL
+                    if let Err(e) = crate::auditor::SyntaxSentinel::validate_safety(&path, &content) {
+                        results.push(format!("REJECTED: Safety Block on {}: {}", path, e));
+                        continue;
+                    }
+
+                    // 2. ENFORCE LAZARUS SEAL
+                    let _ = crate::lazarus_vault::LazarusVault::seal_patch(&path, &content, "SWARM_AUTO");
+
+                    // 3. ATOMIC COMMIT
+                    if std::fs::write(&path, &content).is_ok() {
+                        results.push(format!("SUCCESS: Commited and Indexed {}", path));
+                        // 4. HOT ATLAS REFRESH
+                        tokio::spawn(async move {
+                            let _ = crate::broker::KnowledgeBroker::refresh_atlas().await;
+                        });
+                    } else {
+                        results.push(format!("ERR: Disk write failed for {}", path));
+                    }
+                }
+                AgentAction::Message { message } => {
+                    results.push(format!("MSG_LOGGED: {}", message));
+                }
+                _ => { results.push("ACTION_PENDING_IMPLEMENTATION".into()); }
+            }
+        }
+        Ok(results)
+    }
+}
+
+==> src/server_export_handler.rs <==
+use tokio_util::io::ReaderStream;
+
+async fn handle_factory_export() -> impl IntoResponse {
+    let folder = ".lazarus/factory";
+    let output_zip = "nexus_factory_export.zip";
+
+    // Create the zip using system process
+    let _ = std::process::Command::new("zip")
+        .args(["-r", "-j", output_zip, folder])
+        .status();
+
+    let file = match tokio::fs::File::open(output_zip).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Export Failed").into_response(),
+    };
+
+    // RECOMMENDATION: STREAMING BODY (RAM SAFE)
+    let stream = ReaderStream::new(file);
+    let body = axum::body::Body::from_stream(stream);
+
+    Response::builder()
+        .header("Content-Type", "application/zip")
+        .header("Content-Disposition", "attachment; filename=\"nexus_swarm_factory.zip\"")
+        .body(body)
+        .unwrap()
+}
+
+==> src/podman.rs <==
+// src/podman.rs
+// ──────────────────────────────────────────────────────────────
+// Podman container management module (aka "Drone" system)
+// Optimized for 4 GB RAM devices — very low limits + safety checks
+
+use anyhow::{anyhow, Result};
+use serde::Serialize;
+use std::env;
+use std::fs;
+use std::process::Command;
+use sysinfo::System;
+
+#[derive(Serialize, Debug, Clone)]
+pub struct Container {
+    pub id: String,
+    pub image: String,
+    pub status: String,
+    pub names: String,
+}
+
+pub struct PodmanEngine;
+
+impl PodmanEngine {
+    // Very conservative defaults for 4 GB reality
+    fn get_resource_limits() -> (String, String) {
+        let mem = env::var("NEXUS_DRONE_MEM").unwrap_or_else(|_| "48m".to_string());
+        let cpu = env::var("NEXUS_DRONE_CPU").unwrap_or_else(|_| "0.15".to_string());
+        (mem, cpu)
+    }
+
+    // Quick check if we have enough free RAM before starting anything heavy
+    fn has_enough_ram(min_free_mb: u64) -> bool {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+        let free_mb = sys.available_memory() / 1_024 / 1_024;
+        println!(">> [PODMAN] Free RAM check: {} MB available (need >= {} MB)", free_mb, min_free_mb);
+        free_mb >= min_free_mb
+    }
+
+    pub fn ensure_synapse() -> Result<()> {
+        let check = Command::new("podman")
+            .args(["ps", "-q", "-f", "name=nexus_synapse"])
+            .output()?;
+
+        if check.stdout.is_empty() {
+            if !Self::has_enough_ram(280) {
+                return Err(anyhow!("Not enough free RAM to start redis synapse (~280 MB needed)"));
+            }
+
+            let output = Command::new("podman")
+                .args([
+                    "run", "-d",
+                    "--name", "nexus_synapse",
+                    "--memory=48m",
+                    "--cpus=0.15",
+                    "-p", "6379:6379",
+                    "--restart", "always",
+                    "redis:alpine",
+                ])
+                .output()?;
+
+            if !output.status.success() {
+                return Err(anyhow!("Failed to start synapse: {}", String::from_utf8_lossy(&output.stderr)));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn list() -> Vec<Container> {
+        let output = Command::new("podman")
+            .args([
+                "ps", "-a",
+                "--format", "{{.ID}}|{{.Image}}|{{.Status}}|{{.Names}}",
+            ])
+            .output();
+
+        if let Ok(out) = output {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            raw.lines()
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 4 {
+                        Some(Container {
+                            id: parts[0].to_string(),
+                            image: parts[1].to_string(),
+                            status: parts[2].to_string(),
+                            names: parts[3].to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn spawn_drone(drone_type: &str) -> Result<String> {
+        if !Self::has_enough_ram(380) {
+            return Err(anyhow!("Low memory — refusing to spawn drone (need ~380 MB free)"));
+        }
+
+        let (mem_limit, cpu_limit) = Self::get_resource_limits();
+        let _custom_name = format!("nexus_{}", drone_type.replace(" ", "_"));
+
+        let (image, name, ports, command) = match drone_type {
+            "secops" => (
+                "alpine:latest",
+                "nexus_secops",
+                None,
+                Some(vec![
+                    "sh", "-c",
+                    "apk add --no-cache nmap curl bind-tools && sleep infinity",
+                ]),
+            ),
+            "devops" => ("node:18-alpine", "nexus_devops", None, Some(vec!["sleep", "infinity"])),
+            "industrial" => (
+                "postgres:alpine",
+                "nexus_industrial",
+                Some("5432"),
+                Some(vec!["sleep", "infinity"]),
+            ),
+            _ => return Err(anyhow!("Unknown drone type: {}", drone_type)),
+        };
+
+        // Clean up old container with same name
+        let _ = Command::new("podman").args(["rm", "-f", &name]).output();
+
+        let mut cmd = Command::new("podman");
+        cmd.arg("run")
+            .arg("-d")
+            .arg("--name").arg(&name)
+            .arg("--init")
+            .arg(format!("--memory={}", mem_limit))
+            .arg(format!("--cpus={}", cpu_limit))
+            .arg("--network").arg("slirp4netns:allow_host_loopback=true");
+
+        if drone_type == "secops" {
+            // SECURITY: read-only mount only
+            if let Ok(cwd) = std::env::current_dir() {
+                cmd.arg("-v").arg(format!("{}:/workspace:ro", cwd.display()));
+            }
+            cmd.arg(image);
+            if let Some(args) = command {
+                cmd.args(args);
+            }
+        } else {
+            cmd.arg(image).args(command.unwrap_or(vec!["sleep", "infinity"]));
+        }
+
+        if let Some(port) = ports {
+            cmd.arg("-p").arg(format!("{}:{}", port, port));
+        }
+
+        let res = cmd.output()?;
+        if !res.status.success() {
+            return Err(anyhow!("Podman spawn failed: {}", String::from_utf8_lossy(&res.stderr)));
+        }
+
+        let container_id = String::from_utf8_lossy(&res.stdout).trim().to_string();
+        println!(">> [PODMAN] Spawned {} ({} MB, {} CPU)", name, mem_limit, cpu_limit);
+        Ok(container_id)
+    }
+
+    pub fn forge_drone(name: &str, dockerfile: &str) -> Result<String> {
+        let build_dir = format!("hives/{}", name);
+        fs::create_dir_all(&build_dir)?;
+        fs::write(format!("{}/Dockerfile", build_dir), dockerfile)?;
+
+        let _ = Command::new("podman").args(["image", "prune", "-f"]).output();
+
+        let output = Command::new("podman")
+            .args(["build", "-t", name, &build_dir])
+            .output()?;
+
+        if output.status.success() {
+            Ok(format!("Forged image: {}", name))
+        } else {
+            Err(anyhow!("Forge failed: {}", String::from_utf8_lossy(&output.stderr)))
+        }
+    }
+
+    pub fn kill_all() -> Result<()> {
+        for c in Self::list() {
+            if c.names != "nexus_synapse" {
+                let _ = Command::new("podman").args(["stop", &c.id]).output();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn deploy(image: &str, port: &str) -> Result<String> {
+        let res = Command::new("podman")
+            .args([
+                "run",
+                "-d",
+                "--memory=96m",           // lowered from 256m
+                "-p",
+                &format!("{}:{}", port, port),
+                image,
+            ])
+            .output()?;
+        Ok(String::from_utf8_lossy(&res.stdout).trim().to_string())
+    }
+
+    pub fn nuke(id: &str) -> Result<()> {
+        let _ = Command::new("podman").args(["rm", "-f", id]).output();
+        Ok(())
+    }
+}
+
+==> src/broker.rs <==
+use serde::{Serialize, Deserialize};
+use std::fs;
+use std::sync::Arc;
+use anyhow::Result;
+use regex::Regex;
+use walkdir::WalkDir;
+use crate::server::AppState;
+use crate::memory::Memory;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AtlasEntry { pub name: String, pub kind: String, pub path: String, pub signature: String }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ProjectAtlas { pub entries: Vec<AtlasEntry>, pub timestamp: String }
+
+pub struct KnowledgeBroker;
+
+impl KnowledgeBroker {
+    pub async fn refresh_atlas() -> Result<String> {
+        let mut entries = Vec::new();
+        let rust_fn = Regex::new(r"pub\s+(?:async\s+)?fn\s+([a-zA-Z0-9_]+)[^{;]+")?;
+        for entry in WalkDir::new("src") {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "rs") {
+                let content = fs::read_to_string(path)?;
+                for cap in rust_fn.captures_iter(&content) {
+                    entries.push(AtlasEntry { name: cap[1].to_string(), kind: "fn".into(), path: path.to_string_lossy().into(), signature: cap[0].trim().into() });
+                }
+            }
+        }
+        let atlas = ProjectAtlas { entries, timestamp: chrono::Utc::now().to_rfc3339() };
+        fs::write(".lazarus/atlas.json", serde_json::to_string_pretty(&atlas)?)?;
+        Ok("Atlas Index Updated".into())
+    }
+
+    pub fn load_atlas() -> ProjectAtlas {
+        let content = fs::read_to_string(".lazarus/atlas.json").unwrap_or_default();
+        serde_json::from_str(&content).unwrap_or_default()
+    }
+
+    pub async fn get_graph(state: Arc<AppState>) -> crate::broker::NeuralGraph {
+        // FIXED: Inline loading removes the need for explicit type annotation on the MutexGuard
+        let memories: Vec<Memory> = state.memory.lock().await.load_all();
+        
+        let mut nodes = Vec::new();
+        let mut links = Vec::new();
+        
+        for mem in memories.iter().filter(|m| m.prompt.starts_with("FOUNDATION:")) {
+            let path = mem.prompt.replace("FOUNDATION: ", "");
+            let group = if path.ends_with(".rs") { "rust" } else { "svelte" };
+            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(500);
+            nodes.push(GraphNode { id: path.clone(), group: group.to_string(), summary: mem.solution_code.clone(), size });
+            if path != "src/main.rs" && group == "rust" { links.push(GraphLink { source: "src/main.rs".into(), target: path.clone() }); }
+        }
+        crate::broker::NeuralGraph { nodes, links }
+    }
+}
+
+#[derive(Serialize)] pub struct NeuralGraph { pub nodes: Vec<GraphNode>, pub links: Vec<GraphLink> }
+#[derive(Serialize)] pub struct GraphNode { pub id: String, pub group: String, pub summary: String, pub size: u64 }
+#[derive(Serialize)] pub struct GraphLink { pub source: String, pub target: String }
+
+==> src/janitor.rs <==
+use crate::neural_agent::ContextPacket;
+use crate::server::AppState;
+use crate::scheduler::{Domain, TaskPriority, ask_swarm};
+use crate::memory::Memory;
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+
+pub struct Janitor;
+
+impl Janitor {
+    pub async fn start_background_maintenance(state: Arc<AppState>) {
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(300)).await;
+                let v = state.monitor.get_vitals();
+                
+                // Only archive when the system is idle to save Duet CPU
+                if v.cpu_load < 10.0 {
+                    // FIXED: Inlined to prevent MutexGuard type inference errors
+                    let memories: Vec<Memory> = state.memory.lock().await.load_all();
+                    
+                    if memories.len() > 20 {
+                        println!(">> [JANITOR] Compressing memory strands...");
+                        let summary = ask_swarm(
+                            &state.scheduler_tx, 
+                            Domain::Code, 
+                            TaskPriority::Low, 
+                            "Summarize the technical progress in these memories into a single ARCHETYPE log.".into(), 
+                            ContextPacket::default()
+                        ).await.unwrap_or_else(|_| "Archival failed".into());
+                        
+                        state.memory.lock().await.purge_to_archive(summary);
+                    }
+                }
+                
+                // Cleanup incremental build artifacts
+                let _ = std::process::Command::new("cargo")
+                    .args(["clean", "--target-dir", "target/debug/incremental"])
+              

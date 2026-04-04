@@ -1,25 +1,21 @@
 #!/bin/bash
-# NEXUS SINGULARITY v1.9.0 — DEV BRANCH SYNC (Hardened)
-# Purpose: Ensure DNA is physically pushed before reporting success.
+# NEXUS SINGULARITY v1.9.0 — FULL DNA ALIGNMENT
+# Synchronizing local evolution with GitHub (Branch: dev)
 
-echo ">> [SYNC] Preparing Nexus DNA for Uplink..."
+echo ">> [SYNC] Staging Evolutionary Changes..."
 
-# 1. Credentials Configuration (Run this once to cache your token)
-git config --global credential.helper store
+# 1. Capture all changes, including deletions and new files
+git add -A
 
-# 2. Stage core logic and glass
-git add .gitignore src/ ui/src/ ui/*.js ui/*.json Cargo.toml Cargo.lock audits/ *.sh
-git add .lazarus/ledger.json 2>/dev/null
+# 2. Commit with the Singularity tag
+COMMIT_MSG="Nexus v1.9.0: Evolutionary Leap.
+- Bio-Dome Podman Shield Fully Wired.
+- Zero-Warning standard achieved in Executor.
+- UI/Backend organism synchronized.
+- System DNA pruned of legacy artifacts."
 
-# 3. Commit (Allowing empty if no changes since last failed attempt)
-COMMIT_MSG="Nexus v1.9.0: Singularity Baseline (Retry Auth)"
-git commit -m "$COMMIT_MSG" || echo ">> [SYNC] No new local changes to commit."
+git commit -m "$COMMIT_MSG"
 
-# 4. Push with Verification
-echo ">> [SYNC] Pushing DNA to GitHub (Branch: dev)..."
-if git push origin dev; then
-    echo ">> [SYNC] Evolution archived. Shared DNA is now live on origin/dev."
-else
-    echo "!! [SYNC] UPLINK FAILED. Check your GitHub Token."
-    exit 1
-fi
+# 3. Push to Uplink
+echo ">> [SYNC] Pushing to origin dev..."
+git push origin dev

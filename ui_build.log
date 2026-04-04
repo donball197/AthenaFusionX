@@ -1,0 +1,167 @@
+
+> nexus-ui@1.0.0 build
+> vite build
+
+vite v5.4.21 building SSR bundle for production...
+transforming...
+
+src/routes/+layout.svelte
+`export const prerender` will be ignored — move it to +layout(.server).js/ts instead. See https://svelte.dev/docs/kit/page-options for more information.
+3:34:27 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:49:4 Unused CSS selector ".added"
+47: 
+48: <style>
+49:     .added { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+        ^
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+3:34:30 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:50:4 Unused CSS selector ".removed"
+48: <style>
+49:     .added { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+        ^
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+3:34:30 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:51:4 Unused CSS selector ".word-added"
+49:     .added { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+        ^
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+3:34:30 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:52:4 Unused CSS selector ".word-removed"
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+        ^
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+54:     .header { color: #a5b4fc; }
+3:34:30 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:53:4 Unused CSS selector ".hunk"
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+        ^
+54:     .header { color: #a5b4fc; }
+55:     .context { color: #71717a; }
+3:34:30 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:54:4 Unused CSS selector ".header"
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+54:     .header { color: #a5b4fc; }
+        ^
+55:     .context { color: #71717a; }
+56:     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+3:34:30 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:55:4 Unused CSS selector ".context"
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+54:     .header { color: #a5b4fc; }
+55:     .context { color: #71717a; }
+        ^
+56:     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+57:     .custom-scrollbar::-webkit-scrollbar-thumb { background: #22d3ee; border-radius: 3px; }
+node_modules/@sveltejs/kit/src/runtime/client/client.js (6:23): "untrack" is not exported by "node_modules/svelte/src/runtime/ssr.js", imported by "node_modules/@sveltejs/kit/src/runtime/client/client.js".
+node_modules/@sveltejs/kit/src/runtime/client/client.js (336:26): "fork" is not exported by "node_modules/svelte/src/runtime/ssr.js", imported by "node_modules/@sveltejs/kit/src/runtime/client/client.js".
+node_modules/@sveltejs/kit/src/runtime/client/client.js (1243:30): "settled" is not exported by "node_modules/svelte/src/runtime/ssr.js", imported by "node_modules/@sveltejs/kit/src/runtime/client/client.js".
+✓ 123 modules transformed.
+rendering chunks...
+vite v5.4.21 building for production...
+transforming...
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:49:4 Unused CSS selector ".added"
+47: 
+48: <style>
+49:     .added { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+        ^
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:50:4 Unused CSS selector ".removed"
+48: <style>
+49:     .added { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+        ^
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:51:4 Unused CSS selector ".word-added"
+49:     .added { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+        ^
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:52:4 Unused CSS selector ".word-removed"
+50:     .removed { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+        ^
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+54:     .header { color: #a5b4fc; }
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:53:4 Unused CSS selector ".hunk"
+51:     .word-added { background: rgba(74, 222, 128, 0.3); padding: 1px 2px; border-radius: 2px; }
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+        ^
+54:     .header { color: #a5b4fc; }
+55:     .context { color: #71717a; }
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:54:4 Unused CSS selector ".header"
+52:     .word-removed { background: rgba(248, 113, 113, 0.3); padding: 1px 2px; border-radius: 2px; }
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+54:     .header { color: #a5b4fc; }
+        ^
+55:     .context { color: #71717a; }
+56:     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+3:35:29 PM [vite-plugin-svelte] /home/donball197/nexus_singularity-dev/ui/src/lib/components/DiffModal.svelte:55:4 Unused CSS selector ".context"
+53:     .hunk { color: #67e8f9; font-weight: 600; }
+54:     .header { color: #a5b4fc; }
+55:     .context { color: #71717a; }
+        ^
+56:     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+57:     .custom-scrollbar::-webkit-scrollbar-thumb { background: #22d3ee; border-radius: 3px; }
+node_modules/@sveltejs/kit/src/runtime/client/client.js (5:23): "untrack" is not exported by "node_modules/svelte/src/runtime/index.js", imported by "node_modules/@sveltejs/kit/src/runtime/client/client.js".
+node_modules/@sveltejs/kit/src/runtime/client/client.js (335:26): "fork" is not exported by "node_modules/svelte/src/runtime/index.js", imported by "node_modules/@sveltejs/kit/src/runtime/client/client.js".
+node_modules/@sveltejs/kit/src/runtime/client/client.js (1242:30): "settled" is not exported by "node_modules/svelte/src/runtime/index.js", imported by "node_modules/@sveltejs/kit/src/runtime/client/client.js".
+✓ 115 modules transformed.
+rendering chunks...
+computing gzip size...
+.svelte-kit/output/client/_app/version.json                         0.03 kB │ gzip:   0.05 kB
+.svelte-kit/output/client/.vite/manifest.json                       2.43 kB │ gzip:   0.49 kB
+.svelte-kit/output/client/_app/immutable/assets/2.CLQPL8C2.css      0.89 kB │ gzip:   0.33 kB
+.svelte-kit/output/client/_app/immutable/assets/0.YveLBJvh.css     23.02 kB │ gzip:   5.33 kB
+.svelte-kit/output/client/_app/immutable/entry/start.BOwYYnkJ.js    0.08 kB │ gzip:   0.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/DTfV_oYB.js         0.44 kB │ gzip:   0.31 kB
+.svelte-kit/output/client/_app/immutable/nodes/1.PHAvGkMn.js        0.95 kB │ gzip:   0.55 kB
+.svelte-kit/output/client/_app/immutable/chunks/CTNYj6xV.js         2.10 kB │ gzip:   1.08 kB
+.svelte-kit/output/client/_app/immutable/nodes/0.DMFb2rlt.js        2.76 kB │ gzip:   1.40 kB
+.svelte-kit/output/client/_app/immutable/entry/app.DxpPyG_v.js      6.50 kB │ gzip:   2.62 kB
+.svelte-kit/output/client/_app/immutable/chunks/D5bstuv5.js         7.01 kB │ gzip:   2.77 kB
+.svelte-kit/output/client/_app/immutable/chunks/LYp47C5H.js        25.45 kB │ gzip:  10.03 kB
+.svelte-kit/output/client/_app/immutable/nodes/2.B06sXJA8.js      655.54 kB │ gzip: 215.22 kB
+✓ built in 1m 13s
+vite v5.4.21 building for production...
+transforming...
+✓ 1 modules transformed.
+rendering chunks...
+computing gzip size...
+.svelte-kit/output/client/service-worker.mjs  0.27 kB │ gzip: 0.18 kB
+✓ built in 144ms
+.svelte-kit/output/server/.vite/manifest.json                          2.84 kB
+.svelte-kit/output/server/_app/immutable/assets/_page.CLQPL8C2.css     0.89 kB
+.svelte-kit/output/server/_app/immutable/assets/_layout.YveLBJvh.css  23.02 kB
+.svelte-kit/output/server/entries/pages/_layout.js                     0.05 kB
+.svelte-kit/output/server/chunks/ssr2.js                               0.05 kB
+.svelte-kit/output/server/chunks/environment.js                        0.26 kB
+.svelte-kit/output/server/internal.js                                  0.31 kB
+.svelte-kit/output/server/chunks/index.js                              0.49 kB
+.svelte-kit/output/server/chunks/utils.js                              0.62 kB
+.svelte-kit/output/server/entries/fallbacks/error.svelte.js            0.65 kB
+.svelte-kit/output/server/entries/pages/_layout.svelte.js              2.12 kB
+.svelte-kit/output/server/chunks/ssr.js                                2.23 kB
+.svelte-kit/output/server/chunks/exports.js                            2.56 kB
+.svelte-kit/output/server/chunks/internal.js                           3.78 kB
+.svelte-kit/output/server/remote-entry.js                              8.50 kB
+.svelte-kit/output/server/chunks/shared.js                            11.85 kB
+.svelte-kit/output/server/entries/pages/_page.svelte.js               40.35 kB
+.svelte-kit/output/server/index.js                                    55.00 kB
+✓ built in 3m 16s
+
+Run npm run preview to preview your production build locally.
+
+> Using @sveltejs/adapter-static
+Overwriting dist/index.html with fallback page. Consider using a different name for the fallback.
+  Wrote site to "dist"
+  ✔ done

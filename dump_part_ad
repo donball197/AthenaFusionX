@@ -1,0 +1,572 @@
+ in
+        auth_token: "".into(),
+        orchestrator: shared_orchestrator,
+    });
+
+    lazarus_vault::LazarusVault::init().ok();
+    broker::KnowledgeBroker::refresh_atlas().await.ok();
+    server::start_server(state, bind_addr).await;
+}
+
+==> src/server.rs <==
+use axum::{
+    extract::{State, Query, Request, ws::{Message, WebSocket, WebSocketUpgrade}},
+    http::StatusCode,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router, body::Bytes,
+};
+use std::sync::Arc;
+use tokio::sync::{Mutex, oneshot, broadcast}; 
+use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use std::fs;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
+use chrono::Utc;
+use tokio_util::io::ReaderStream;
+
+use crate::neural_agent::ContextPacket;
+use crate::memory::MemoryPalace;
+use crate::system_monitor::SystemMonitor;
+use crate::hiram_core::Hiram;
+use crate::scheduler::{NexusTask, Domain, TaskPriority};
+use crate::broker::KnowledgeBroker;
+
+fn atomic_to_f32(val: u32) -> f32 { f32::from_bits(val) }
+
+pub struct AppState {
+    pub client: reqwest::Client,
+    pub brain_endpoint: String,
+    pub monitor: SystemMonitor,
+    pub memory: Arc<Mutex<MemoryPalace>>,
+    pub api_key: String,
+    pub current_resonance: Arc<AtomicU32>,
+    pub hiram: Arc<Mutex<Hiram>>,
+    pub tx: broadcast::Sender<String>,
+    pub auto_apply: Arc<AtomicBool>,
+    pub scheduler_tx: tokio::sync::mpsc::Sender<NexusTask>,
+    pub auth_token: String,
+    pub orchestrator: Arc<crate::orchestrator::Orchestrator>,
+}
+
+#[derive(Deserialize, Serialize, Default)]
+pub struct PromptRequest { 
+    #[serde(default)] pub prompt: String, 
+    pub context: Option<String>, 
+    pub terminal_context: Option<String> 
+}
+
+#[derive(Serialize)] pub struct NeuralResponse { pub response: String, pub status: String }
+#[derive(Serialize)] pub struct VitalsResponse { pub status: String, pub cpu_usage: f32, pub ram_usage: String, pub resonance: f32 }
+#[derive(Deserialize)] pub struct FileParams { pub q: Option<String>, pub path: Option<String> }
+#[derive(Serialize, Deserialize)] pub struct FileContent { pub path: String, pub content: String, pub author: Option<String> }
+
+pub async fn start_server(state: Arc<AppState>, bind_addr: String) {
+    let serve_dir = ServeDir::new("ui/dist").not_found_service(ServeFile::new("ui/dist/index.html"));
+    let protected_routes = Router::new()
+        .route("/api/terminal", post(crate::server_terminal::terminal_command))
+        .route("/api/prompt", post(handle_prompt))
+        .route("/api/vitals", get(handle_vitals))
+        .route("/api/fs/search", get(handle_fs_search))
+        .route("/api/fs/read", get(handle_read_file))
+        .route("/api/fs/write", post(handle_write_file))
+        .route("/api/healer/toggle", post(toggle_auto_apply))
+        .route("/api/security/audit", get(handle_audit_status))
+        .route("/api/lazarus/history", get(handle_lazarus_history))
+        .route("/api/factory/export", get(handle_factory_export))
+        .route("/api/command/execute", post(handle_command_execute))
+        .route("/ws/ghost", get(ws_ghost_handler))
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth_guard));
+
+    let app = Router::new().merge(protected_routes).fallback_service(serve_dir)
+        .route("/api/resonance/feedback", post(resonance_feedback))
+        .layer(CorsLayer::permissive()).with_state(state);
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
+    tracing::info!(">> [NEXUS] CONTROL ONLINE: http://{}", bind_addr);
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn handle_fs_search(Query(params): Query<FileParams>) -> Json<serde_json::Value> {
+    let query = params.q.unwrap_or_default().to_lowercase();
+    let atlas = KnowledgeBroker::load_atlas();
+    let results: Vec<_> = atlas.entries.iter()
+        .filter(|e| e.name.to_lowercase().contains(&query) || e.path.to_lowercase().contains(&query))
+        .take(15).collect();
+    Json(json!({ "results": results }))
+}
+
+async fn handle_write_file(State(_state): State<Arc<AppState>>, Json(payload): Json<FileContent>) -> impl IntoResponse {
+    if payload.content.len() > 1_048_576 { return (StatusCode::PAYLOAD_TOO_LARGE, "Limit 1MB").into_response(); }
+    if let Err(e) = crate::auditor::SyntaxSentinel::validate_safety(&payload.path, &payload.content) {
+        return (StatusCode::BAD_REQUEST, format!("SAFETY_BLOCK: {}", e)).into_response();
+    }
+    let author = payload.author.unwrap_or_else(|| "ARCHITECT".to_string());
+    let _ = crate::lazarus_vault::LazarusVault::seal_patch(&payload.path, &payload.content, &author);
+
+    match fs::write(&payload.path, &payload.content) {
+        Ok(_) => {
+            tokio::spawn(async move { let _ = crate::broker::KnowledgeBroker::refresh_atlas().await; });
+            StatusCode::OK.into_response()
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+    }
+}
+
+async fn handle_prompt(State(state): State<Arc<AppState>>, body: Bytes) -> Json<NeuralResponse> {
+    let payload: PromptRequest = serde_json::from_slice(&body).unwrap_or_default();
+    let lower_prompt = payload.prompt.trim().to_lowercase();
+
+    // --- COMMAND INTERCEPTORS ---
+    if lower_prompt.starts_with("/factory start") {
+        let s_clone = state.clone();
+        tokio::spawn(async move { 
+            let _ = s_clone.orchestrator.run_data_factory(&s_clone.client, &s_clone.api_key, 3, &s_clone.tx).await; 
+        });
+        return Json(NeuralResponse { response: "[ { \"action\": \"Message\", \"message\": \"Kaggle Factory Engaged. Initializing Swarm...\" } ]".into(), status: "200".into() });
+    }
+
+    if lower_prompt.contains("reindex") || lower_prompt.contains("refresh atlas") {
+        let msg = crate::broker::KnowledgeBroker::refresh_atlas().await.unwrap_or_else(|e| format!("Error: {}", e));
+        let safe_msg = msg.replace("\"", "\\\"");
+        return Json(NeuralResponse { 
+            response: format!("[ {{ \"action\": \"Message\", \"message\": \"Atlas Synchronized.\\n{}\" }} ]", safe_msg), 
+            status: "200".into() 
+        });
+    }
+
+    if lower_prompt.contains("project tree") || lower_prompt.contains("show tree") || lower_prompt.contains("file tree") {
+        let tree = crate::polyglot::generate_project_tree();
+        let safe_tree = tree.replace("\"", "\\\"").replace("\n", "\\n");
+        return Json(NeuralResponse { 
+            response: format!("[ {{ \"action\": \"Message\", \"message\": \"Current Project Structure:\\n\\n{}\" }} ]", safe_tree), 
+            status: "200".into() 
+        });
+    }
+    
+    if lower_prompt.contains("system status") {
+        let vitals = state.monitor.get_vital_signs_string();
+        let safe_vitals = vitals.replace("\"", "\\\"");
+        return Json(NeuralResponse { 
+            response: format!("[ {{ \"action\": \"Message\", \"message\": \"System Status:\\n{}\" }} ]", safe_vitals), 
+            status: "200".into() 
+        });
+    }
+
+    let history = crate::lazarus_vault::LazarusVault::list_snapshots().unwrap_or_default();
+    let recent = history.iter().rev().take(5).map(|e| format!("[{}] {} by {}", e.timestamp, e.path, e.author)).collect::<Vec<_>>().join("\n");
+
+    let ctx = ContextPacket { 
+        system_stats: Some(state.monitor.get_vital_signs_string()), 
+        file_content: payload.context, 
+        memory_recall: Some(format!("RECENT_HISTORY:\n{}", recent)),
+        ..Default::default() 
+    };
+    
+    let (tx, rx) = oneshot::channel();
+    let task = NexusTask { id: format!("PROMPT_{}", Utc::now().timestamp()), domain: Domain::Code, priority: TaskPriority::High, payload: payload.prompt, attempt_count: 0, response_tx: Some(tx), context: ctx };
+    
+    if state.scheduler_tx.send(task).await.is_err() {
+        return Json(NeuralResponse { response: "[ { \"action\": \"Message\", \"message\": \"Swarm queue disconnected.\" } ]".into(), status: "fail".into() });
+    }
+    
+    match rx.await {
+        Ok(response) => Json(NeuralResponse { response, status: "ok".into() }),
+        Err(_) => Json(NeuralResponse { response: "[ { \"action\": \"Message\", \"message\": \"Agent timeout.\" } ]".into(), status: "fail".into() })
+    }
+}
+
+async fn handle_vitals(State(state): State<Arc<AppState>>) -> Json<VitalsResponse> {
+    let v = state.monitor.get_vitals();
+    Json(VitalsResponse { status: v.status, cpu_usage: v.cpu_load, ram_usage: format!("{:.2}GB", v.ram_used_gb), resonance: atomic_to_f32(state.current_resonance.load(Ordering::Relaxed)) })
+}
+
+async fn handle_read_file(Query(params): Query<FileParams>) -> impl IntoResponse {
+    let p = params.path.unwrap_or_default();
+    match fs::read_to_string(&p) { 
+        Ok(c) => (StatusCode::OK, Json(json!({ "path": p, "content": c }))).into_response(), 
+        Err(_) => (StatusCode::NOT_FOUND, "Not found").into_response() 
+    }
+}
+
+async fn handle_lazarus_history() -> Json<serde_json::Value> {
+    let history = crate::lazarus_vault::LazarusVault::list_snapshots().unwrap_or_default();
+    Json(json!({ "status": "ok", "history": history }))
+}
+
+async fn handle_factory_export() -> impl IntoResponse {
+    let output_zip = "nexus_factory_export.zip";
+    let _ = std::process::Command::new("zip").args(["-r", "-j", output_zip, ".lazarus/factory"]).status();
+    let file = match tokio::fs::File::open(output_zip).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Export Failed").into_response(),
+    };
+    let cleanup_path = output_zip.to_string();
+    tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_secs(60)).await; let _ = tokio::fs::remove_file(cleanup_path).await; });
+    Response::builder()
+        .header("Content-Type", "application/zip")
+        .header("Content-Disposition", "attachment; filename=\"factory_data.zip\"")
+        .body(axum::body::Body::from_stream(ReaderStream::new(file))).unwrap()
+}
+
+async fn handle_command_execute(State(state): State<Arc<AppState>>, Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+    let cmd = payload["command"].as_str().unwrap_or_default();
+    match crate::command_executor::execute_allowed_command(&state.monitor, cmd).await {
+        Ok(res) => Json(res).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
+}
+
+async fn auth_guard(State(_state): State<Arc<AppState>>, req: Request, next: Next) -> Result<Response, StatusCode> { Ok(next.run(req).await) }
+
+async fn ws_ghost_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ghost_socket(socket, state))
+}
+
+async fn handle_ghost_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    let mut rx = state.tx.subscribe();
+    while let Ok(msg) = rx.recv().await { if socket.send(Message::Text(msg)).await.is_err() { break; } }
+}
+
+pub async fn adjust_resonance(state: &Arc<AppState>, delta: f32, reason: &str) {
+    let current = f32::from_bits(state.current_resonance.load(Ordering::Relaxed));
+    let new_res = (current + delta).clamp(0.1, 1.0);
+    state.current_resonance.store(new_res.to_bits(), Ordering::Relaxed);
+    let _ = state.tx.send(json!({"type":"vitals","resonance":new_res,"reason":reason}).to_string());
+}
+
+pub async fn resonance_feedback(State(state): State<Arc<AppState>>, Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let prompt = payload["prompt"].as_str().unwrap_or("");
+    let delta = if prompt.contains("SUCCESS") { 0.06 } else { -0.06 };
+    adjust_resonance(&state, delta, "feedback").await;
+    Json(json!({ "status": "ok" }))
+}
+
+async fn toggle_auto_apply(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let current = state.auto_apply.load(Ordering::Relaxed);
+    state.auto_apply.store(!current, Ordering::Relaxed);
+    Json(json!({ "auto_apply": !current }))
+}
+
+async fn handle_audit_status(State(_state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(json!({ "status": "clean" }))
+}
+
+==> ui/src/lib/XTermComponent.svelte <==
+<script>
+    import { onMount, onDestroy } from 'svelte';
+    import '@xterm/xterm/css/xterm.css';
+
+    let termContainer;
+    let socket;
+    let term;
+    let fitAddon;
+
+    onMount(async () => {
+        const { Terminal } = await import('@xterm/xterm');
+        const { FitAddon } = await import('@xterm/addon-fit');
+
+        term = new Terminal({
+            convertEol: true, // This maps \n to \r\n automatically
+            cursorBlink: true,
+            fontSize: 12,
+            fontFamily: '"JetBrains Mono", monospace',
+            theme: { background: '#000000', foreground: '#00ff00' }
+        });
+
+        fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(termContainer);
+        setTimeout(() => fitAddon.fit(), 100);
+
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        socket = new WebSocket(`${proto}//${window.location.host}/ws`);
+
+        socket.onmessage = (e) => term.write(e.data);
+        term.onData((data) => socket.readyState === 1 && socket.send(data));
+        window.addEventListener('resize', () => fitAddon.fit());
+    });
+
+    onDestroy(() => {
+        if (socket) socket.close();
+        if (term) term.dispose();
+    });
+</script>
+
+<div class="h-full w-full bg-black p-2" bind:this={termContainer}></div>
+
+==> ui/src/lib/components/Explorer.svelte <==
+<script>
+    export let open = false;
+    export let onFileSelect;
+    
+    let files = [];
+    let currentDir = ".";
+
+    async function fetchFiles(path = ".") {
+        try {
+            const res = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+            if (res.ok) {
+                files = await res.json();
+                currentDir = path;
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    $: if (open && files.length === 0) fetchFiles();
+
+    function handleBack() {
+        fetchFiles(".");
+    }
+</script>
+
+<aside class="bg-[#0d1117] border-r border-green-900/30 transition-all duration-300 overflow-x-hidden flex-shrink-0 h-full {open ? 'w-64' : 'w-0'}">
+    <div class="w-64 p-4 flex flex-col h-full">
+        <div class="text-[10px] text-green-700 mb-4 border-b border-green-900/20 pb-1 flex justify-between items-center shrink-0">
+            <span class="tracking-widest uppercase font-bold">Filesystem</span>
+            <button on:click={handleBack} class="text-[8px] text-green-500 hover:text-white transition-colors cursor-pointer">ROOT</button>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto flex flex-col gap-1 custom-scrollbar">
+            {#each files as file}
+                <button on:click={() => file.is_dir ? fetchFiles(file.path) : onFileSelect(file.path)} 
+                        class="text-left text-[11px] p-2 rounded hover:bg-green-900/20 truncate group flex items-center gap-2 transition-colors cursor-pointer">
+                    <span class="opacity-50 group-hover:opacity-100">{file.is_dir ? '📂' : '📄'}</span>
+                    <span class={file.is_dir ? 'text-green-500 font-bold' : 'text-gray-400 group-hover:text-white'}>{file.name}</span>
+                </button>
+            {/each}
+        </div>
+    </div>
+</aside>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar { width: 2px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #064e3b; }
+</style>
+
+==> ui/src/lib/components/GhostCortex.svelte <==
+<script>
+    import { onDestroy, onMount, createEventDispatcher } from 'svelte';
+    import { fade } from 'svelte/transition';
+
+    const dispatch = createEventDispatcher();
+
+    export let logs = "";
+    export let isThinking = false;
+    export let active = false;
+    export let onCommand = (cmd) => {};
+    export let version = "v1.0.0 // SWARM_ACTIVE";
+
+    let mode = "NEURAL"; 
+    let input = "";
+    let ghostLogs = [];            
+    let socket;
+    
+    let liveStreamText = "";
+    let isStreaming = false;
+
+    function connectGhost() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        socket = new WebSocket(`${protocol}//${window.location.host}/ws/ghost`);
+
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === "STREAM_START") {
+                    isStreaming = true;
+                    liveStreamText = "";
+                } else if (data.type === "NEURAL_CHUNK") {
+                    liveStreamText += data.token;
+                } else if (data.type === "STREAM_END") {
+                    isStreaming = false;
+                } else if (data.type === "SYSTEM_LOG") {
+                    ghostLogs = [...ghostLogs, data.token.trim()].slice(-20);
+                }
+            } catch (e) {
+                ghostLogs = [...ghostLogs, event.data.trim()].slice(-20);
+            }
+        };
+
+        socket.onclose = () => {
+            if (active) setTimeout(connectGhost, 5000); 
+        };
+    }
+
+    function handleKey(e) {
+        if (e.key === 'Enter' && input.trim() && !isThinking) {
+            onCommand(input.trim());
+            input = "";
+            mode = "NEURAL";
+            liveStreamText = ""; 
+        }
+    }
+
+    function handleFilesClick() { dispatch('toggleFiles'); }
+
+    onMount(() => { if (active) connectGhost(); });
+    onDestroy(() => { if (socket) socket.close(); });
+</script>
+
+{#if active}
+<div class="w-full h-full flex flex-col bg-[#050505] font-mono text-[10px]">
+    <div class="flex items-center justify-between px-4 py-1.5 bg-[#0a0a0a] border-b border-[#222]">
+        <div class="flex gap-6">
+            <button class="{mode === 'NEURAL' ? 'text-purple-400 font-bold border-b border-purple-500' : 'text-gray-600'} uppercase tracking-widest transition-colors" on:click={() => mode = "NEURAL"}>NEURAL</button>
+            <button class="{mode === 'SYSTEM' ? 'text-green-400 font-bold border-b border-green-500' : 'text-gray-600'} uppercase tracking-widest transition-colors" on:click={() => mode = "SYSTEM"}>SYSTEM</button>
+        </div>
+        <div class="flex items-center gap-4">
+            <button class="text-gray-400 hover:text-white transition-colors uppercase tracking-widest flex items-center gap-2" on:click|stopPropagation={handleFilesClick}>
+                <span class="text-blue-500">❖</span> TOGGLE FILES
+            </button>
+            <div class="flex items-center gap-2 text-gray-500">
+                <div class="w-2 h-2 rounded-full {isStreaming ? 'bg-purple-500 animate-pulse shadow-[0_0_8px_#a855f7]' : 'bg-green-500 shadow-[0_0_8px_#22c55e]'}"></div>
+                {version}
+            </div>
+        </div>
+    </div>
+
+    <div class="flex-1 p-3 overflow-y-auto custom-scrollbar flex flex-col-reverse">
+        {#if mode === "SYSTEM"}
+            <div class="text-green-600/80 leading-relaxed" in:fade={{ duration: 150 }}>
+                {#each ghostLogs as log}
+                    <div class="border-l-2 border-green-900/40 pl-2 mb-1 hover:bg-green-900/10 hover:text-green-400 transition-colors">{log}</div>
+                {/each}
+            </div>
+        {:else}
+            <div class="text-gray-300 leading-relaxed whitespace-pre-wrap" in:fade={{ duration: 150 }}>
+                {#if isStreaming || liveStreamText.length > 0}
+                    <span class="text-purple-300">{liveStreamText}</span>
+                    {#if isStreaming}<span class="animate-pulse bg-purple-500 w-2 h-3 inline-block ml-1 align-middle"></span>{/if}
+                {:else if isThinking}
+                    <div class="text-purple-400 animate-pulse">>> SWARM PROCESSING...</div>
+                {:else}
+                    <div class="text-gray-600 italic">>> SWARM STABLE. AWAITING COMMAND.</div>
+                {/if}
+            </div>
+        {/if}
+    </div>
+
+    <div class="flex items-center px-4 py-2 bg-[#080808] border-t border-[#222]">
+        <span class="text-purple-500 font-bold mr-3">❯</span>
+        <input bind:value={input} on:keydown={handleKey} placeholder={isStreaming ? "Swarm is executing..." : "Command the Swarm..."} disabled={isStreaming} class="flex-1 bg-transparent outline-none text-white placeholder-gray-700 text-[11px]" spellcheck="false" autocomplete="off" />
+    </div>
+</div>
+{/if}
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #a855f7; }
+</style>
+
+==> ui/src/lib/components/HeadsUpDisplay.svelte <==
+<script>
+    import { onMount } from 'svelte';
+
+    export let ramUsage = "0.0";
+    $: ramNum = parseFloat(ramUsage) || 0;
+    $: isCritical = ramNum > 2.8;           // warn earlier — safer on 4GB devices
+
+    // Only show background when not critical (saves rendering cost)
+    $: showBackground = !isCritical;
+</script>
+
+{#if showBackground}
+<div class="fixed inset-0 pointer-events-none z-0 flex items-center justify-center font-mono opacity-5">
+    <div class="relative w-400 h-400 animate-[spin_90s_linear_infinite]">
+        <div class="absolute inset-0 border border-cyan-500/15 rounded-full"></div>
+    </div>
+</div>
+{/if}
+
+{#if isCritical}
+<div class="fixed top-0 left-0 right-0 h-5 bg-red-700/85 text-white text-[9px] font-bold flex items-center justify-center z-[9999] animate-pulse">
+    ⚠ CRITICAL RAM ({ramNum.toFixed(1)} GB) – CLOSE TABS / RESTART NOW ⚠
+</div>
+{/if}
+
+<style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+==> ui/src/lib/components/Heartbeat.svelte <==
+<script>
+    export let resonance = 0.0;
+    $: pulseDuration = resonance > 0.8 ? '0.6s' : resonance > 0.5 ? '1.4s' : '3.2s';
+    $: glow = Math.min(resonance * 15, 20);
+    $: colorClass = resonance > 0.8 ? 'text-blue-400' : resonance > 0.5 ? 'text-green-500' : 'text-green-900';
+    $: shadowColor = resonance > 0.8 ? 'rgba(59,130,246,0.6)' : 'rgba(34,197,94,0.35)';
+</script>
+
+<div class="flex flex-col gap-1 p-1.5 bg-black/30 border {resonance > 0.8 ? 'border-blue-900/30' : 'border-green-900/25'} rounded transition-colors duration-1000">
+    <div class="flex justify-between items-center text-[7px] {resonance > 0.8 ? 'text-blue-400' : 'text-green-800'} uppercase tracking-tight">
+        <span>Resonance Sync</span>
+        <span class="font-mono">{ (resonance * 100).toFixed(0) }%</span>
+    </div>
+
+    <div class="h-8 w-full relative bg-[#020202] rounded-sm border border-gray-900/30 overflow-hidden">
+        <svg viewBox="0 0 100 20" class="w-full h-full">
+            <path
+                d="M0 10 L25 10 L30 3 L40 17 L50 10 L100 10"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                class="{colorClass} transition-all duration-300"
+                style="filter: drop-shadow(0 0 {glow}px {shadowColor});"
+            />
+        </svg>
+        <div class="absolute inset-0 bg-gradient-to-r from-transparent {resonance > 0.8 ? 'via-blue-500/20' : 'via-green-500/12'} to-transparent w-1/5 h-full" style="animation: scan {pulseDuration} linear infinite;"></div>
+    </div>
+</div>
+
+<style>
+    @keyframes scan { from { transform: translateX(-150%); } to { transform: translateX(550%); } }
+</style>
+
+==> ui/src/lib/components/MergeGate.svelte <==
+<script>
+    import { createEventDispatcher } from 'svelte';
+    export let active = false;
+    export let patches = []; // [{path, content, plan: []}]
+    const dispatch = createEventDispatcher();
+</script>
+
+{#if active}
+<div class="fixed bottom-24 right-8 w-80 bg-black border border-cyan-500 p-4 font-mono shadow-2xl z-[100]">
+    <div class="text-cyan-500 text-[10px] font-bold mb-2 uppercase tracking-widest border-b border-cyan-900 pb-1">Neural_Plan_Preview</div>
+    
+    <div class="space-y-1 mb-4">
+        {#each patches as patch}
+            <div class="text-[9px] flex items-center gap-2">
+                <span class="text-green-500">[✓]</span>
+                <span class="text-zinc-400 truncate">PATCH: {patch.path}</span>
+            </div>
+        {/each}
+        <div class="text-[9px] flex items-center gap-2">
+            <span class="text-cyan-500 animate-pulse">[>]</span>
+            <span class="text-zinc-200">EXECUTE: cargo check</span>
+        </div>
+    </div>
+
+    <button on:click={() => dispatch('applyAll', patches)} class="w-full bg-cyan-600 text-black py-2 font-bold text-[10px] hover:bg-cyan-400 transition-all mb-2">ENGAGE_MERGE</button>
+    <button on:click={() => dispatch('applied')} class="w-full text-zinc-600 text-[8px] uppercase">Abort_Streams</button>
+</div>
+{/if}
+
+==> ui/src/lib/components/SwarmMap.svelte <==
+<script>
+    import { createEventDispatcher, onMount } from 'svelte';
+    const dispatch = createEventDispatcher();
+    export let resonance = 0.0;
+    
+    let nodes = [];
+    
+    // Mock Data for Visuals (Until /api/graph is live)
+    // In production, this fetches from KnowledgeBroker
+    onMount(async () => {
+        try {
+            const res = await fetch('/api/graph');
+            if (res.ok) {
+                const data = await res.json()

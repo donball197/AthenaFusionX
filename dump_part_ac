@@ -1,0 +1,656 @@
+      .status();
+            }
+        });
+    }
+}
+
+==> src/server_terminal.rs <==
+use axum::{extract::{State, Json}, Json as AxumJson};
+use serde_json::json;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use clap::Parser;
+
+use crate::cli::{Cli, Commands};
+use crate::auto_healer::{AutoHealer, get_compile_error_for_file};
+use crate::diff::unified_diff;
+use crate::server::AppState;
+use crate::lazarus_vault::LazarusVault;
+
+pub async fn adjust_resonance(state: &Arc<AppState>, delta: f32, reason: &str) {
+    let mut res = f32::from_bits(state.current_resonance.load(Ordering::Relaxed));
+    let _old = res;
+    res = (res + delta).clamp(0.1, 1.0);
+    state.current_resonance.store(res.to_bits(), Ordering::SeqCst);
+    let payload = json!({ "type": "RESONANCE_UPDATE", "resonance": res, "reason": reason, "delta": delta });
+    let _ = state.tx.send(payload.to_string());
+}
+
+pub async fn terminal_command(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> AxumJson<serde_json::Value> {
+    let cmd_str = payload["command"].as_str().unwrap_or_default().trim();
+    if cmd_str.is_empty() { return AxumJson(json!({ "output": ">> Empty command." })); }
+
+    let args: Vec<&str> = std::iter::once("nexus").chain(cmd_str.split_whitespace()).collect();
+
+    match Cli::try_parse_from(args) {
+        Ok(cli) => match cli.command {
+            Commands::Build { path } => AxumJson(json!({ "output": format!(">> BUILD_START: {}", path) })),
+            Commands::Heal { file } => {
+                let err_log: String = get_compile_error_for_file(&file).await;
+                if err_log.contains("No compile errors detected") { return AxumJson(json!({ "output": ">> File is clean." })); }
+                match AutoHealer::attempt_auto_repair(&state, &file, &err_log).await {
+                    Ok((true, msg)) => AxumJson(json!({ "output": format!(">> Heal Success:\n{}", msg), "action": "HEAL_COMPLETE", "file": file })),
+                    _ => AxumJson(json!({ "output": ">> Heal failed." }))
+                }
+            },
+            Commands::Open { file } => AxumJson(json!({ "output": format!(">> Opening {}", file), "action": "OPEN_FILE", "file": file })),
+            Commands::Status => {
+                let res = f32::from_bits(state.current_resonance.load(Ordering::Relaxed));
+                AxumJson(json!({ "output": format!(">> SWARM_STATUS: ACTIVE\nRESONANCE: {:.2}", res) }))
+            },
+            Commands::Diff { original, against } => AxumJson(json!({ "output": unified_diff(&original, &against) })),
+            Commands::Restore { hash } => {
+                match LazarusVault::restore_from_vault(&hash) {
+                    Ok(path) => AxumJson(json!({ "output": format!(">> LAZARUS_SUCCESS: Restored {}", path) })),
+                    Err(e) => AxumJson(json!({ "output": format!(">> RESTORE_FAIL: {}", e) }))
+                }
+            }
+        },
+        Err(e) => AxumJson(json!({ "output": format!("{}", e) })),
+    }
+}
+
+==> src/auto_healer.rs <==
+use anyhow::Result;
+use std::sync::Arc;
+use tokio::process::Command;
+use crate::neural_agent::ContextPacket;
+use crate::server::{AppState, adjust_resonance};
+use crate::scheduler::{Domain, TaskPriority, ask_swarm};
+
+pub struct AutoHealer;
+
+impl AutoHealer {
+    pub async fn attempt_auto_repair(state: &Arc<AppState>, path: &str, err_log: &str) -> Result<(bool, String)> {
+        let mut rep = String::from("\n>> [HEALER] adaptive sequence start...\n");
+        let output = Command::new("cargo").args(["clippy", "--fix", "--allow-dirty"]).output().await?;
+        
+        if output.status.success() {
+            adjust_resonance(state, 0.02, "clippy_fix").await;
+            rep.push_str("   [SUCCESS] clippy auto-repair applied.\n");
+            return Ok((true, rep));
+        }
+
+        let code = std::fs::read_to_string(path).unwrap_or_default();
+        let prompt = format!("FIX_ERROR FILE:{} ERROR:{}", path, err_log);
+        let ctx = ContextPacket { file_content: Some(code), ..Default::default() };
+        
+        match ask_swarm(&state.scheduler_tx, Domain::Code, TaskPriority::Critical, prompt, ctx).await {
+            Ok(_) => {
+                rep.push_str("   [SUCCESS] swarm patch generated.\n");
+                Ok((true, rep))
+            },
+            Err(e) => Ok((false, format!("Repair failed: {}", e)))
+        }
+    }
+
+    pub async fn cargo_audit_check(&self) -> Result<String> {
+        let output = Command::new("cargo").args(["audit", "--quiet"]).output().await?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+}
+
+pub async fn get_compile_error_for_file(_path: &str) -> String {
+    let output = Command::new("cargo").args(["check", "-q"]).output().await.unwrap();
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+==> src/scheduler.rs <==
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use std::collections::BinaryHeap;
+use std::cmp::Ordering as CmpOrdering;
+use tokio::time::{sleep, Duration};
+use tokio::sync::broadcast;
+use sysinfo::System;
+use crate::neural_agent::ContextPacket;
+use crate::orchestrator::Orchestrator;
+use crate::system_monitor::SystemMonitor;
+use std::sync::atomic::AtomicU32;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Domain { UI, Code, Build, Security }
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority { Low, Normal, High, Critical }
+
+#[derive(Debug)]
+pub struct NexusTask {
+    pub id: String,
+    pub domain: Domain,
+    pub priority: TaskPriority,
+    pub payload: String,
+    pub context: ContextPacket,
+    pub attempt_count: u8,
+    pub response_tx: Option<oneshot::Sender<String>>,
+}
+
+impl PartialEq for NexusTask { fn eq(&self, other: &Self) -> bool { self.priority == other.priority } }
+impl Eq for NexusTask {}
+impl PartialOrd for NexusTask { fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> { Some(self.cmp(other)) } }
+impl Ord for NexusTask { fn cmp(&self, other: &Self) -> CmpOrdering { self.priority.cmp(&other.priority) } }
+
+pub struct WorkerAgent { 
+    pub id: u32, 
+    pub domain: Domain, 
+    pub monitor: SystemMonitor,
+    pub resonance: Arc<AtomicU32> 
+}
+
+impl WorkerAgent {
+    pub async fn run(
+        self,
+        rx: Arc<Mutex<mpsc::Receiver<NexusTask>>>,
+        b_tx: broadcast::Sender<String>,
+        client: reqwest::Client,
+        api_key: String,
+        orchestrator: Arc<Orchestrator>,
+    ) {
+        loop {
+            let task_opt = {
+                let mut rx_guard = rx.lock().await;
+                rx_guard.recv().await
+            };
+
+            if let Some(task) = task_opt {
+                let response_text = match orchestrator.run_autonomous_loop(
+                    task.payload, task.context, &client, &api_key, &b_tx, &self.monitor
+                ).await {
+                    Ok(r) => r,
+                    Err(e) => format!("Neural Link Error: {}", e),
+                };
+
+                if let Some(tx) = task.response_tx {
+                    let _ = tx.send(response_text);
+                }
+            } else { break; }
+        }
+    }
+}
+
+pub struct MasterSupervisor;
+
+impl MasterSupervisor {
+    pub fn ignite(
+        b_tx: broadcast::Sender<String>,
+        client: reqwest::Client,
+        api_key: String,
+        orchestrator: Arc<Orchestrator>,
+        monitor: SystemMonitor,
+        resonance: Arc<AtomicU32>
+    ) -> mpsc::Sender<NexusTask> {
+        let (global_tx, mut global_rx) = mpsc::channel::<NexusTask>(64);
+
+        let ui_tx = DomainCoordinator::spawn(Domain::UI, 1, b_tx.clone(), client.clone(), api_key.clone(), orchestrator.clone(), monitor.clone(), resonance.clone());
+        let code_tx = DomainCoordinator::spawn(Domain::Code, 1, b_tx.clone(), client.clone(), api_key.clone(), orchestrator.clone(), monitor.clone(), resonance.clone());
+        
+        tokio::spawn(async move {
+            let heap = Arc::new(Mutex::new(BinaryHeap::new()));
+            let mut sys = System::new_all();
+            loop {
+                while let Ok(task) = global_rx.try_recv() { heap.lock().await.push(task); }
+                sys.refresh_memory();
+                if (sys.available_memory() as f32 / 1_073_741_824.0) < 0.5 {
+                    sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+                let mut q = heap.lock().await;
+                if let Some(task) = q.pop() {
+                    let tx = if task.domain == Domain::UI { &ui_tx } else { &code_tx };
+                    let _ = tx.try_send(task);
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        });
+        global_tx
+    }
+}
+
+pub struct DomainCoordinator;
+impl DomainCoordinator {
+    pub fn spawn(domain: Domain, workers: usize, b_tx: broadcast::Sender<String>, client: reqwest::Client, api_key: String, orchestrator: Arc<Orchestrator>, monitor: SystemMonitor, resonance: Arc<AtomicU32>) -> mpsc::Sender<NexusTask> {
+        let (tx, rx) = mpsc::channel::<NexusTask>(10);
+        let shared_rx = Arc::new(Mutex::new(rx));
+        for i in 0..workers {
+            let agent = WorkerAgent { id: i as u32, domain: domain.clone(), monitor: monitor.clone(), resonance: resonance.clone() };
+            let rx_c = shared_rx.clone();
+            let b_tx_c = b_tx.clone();
+            let c_c = client.clone();
+            let ak_c = api_key.clone();
+            let orch_c = orchestrator.clone();
+            tokio::spawn(async move { agent.run(rx_c, b_tx_c, c_c, ak_c, orch_c).await; });
+        }
+        tx
+    }
+}
+
+pub async fn ask_swarm(
+    tx: &tokio::sync::mpsc::Sender<NexusTask>,
+    domain: Domain,
+    priority: TaskPriority,
+    payload: String,
+    context: ContextPacket,
+) -> anyhow::Result<String> {
+    let (res_tx, res_rx) = tokio::sync::oneshot::channel();
+    let task = NexusTask {
+        id: format!("SYS_{}", chrono::Utc::now().timestamp_subsec_nanos()),
+        domain, priority, payload, attempt_count: 0, response_tx: Some(res_tx), context,
+    };
+    tx.send(task).await.map_err(|_| anyhow::anyhow!("Queue Closed"))?;
+    res_rx.await.map_err(|_| anyhow::anyhow!("Task Dropped"))
+}
+
+==> src/command_executor.rs <==
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::time::timeout;
+use crate::system_monitor::SystemMonitor;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CommandResult {
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub command: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AllowedCommand {
+    pub binary: &'static str,
+    pub allowed_args: &'static [&'static str],
+    pub max_duration_secs: u64,
+}
+
+const COMMAND_WHITELIST: &[AllowedCommand] = &[
+    AllowedCommand {
+        binary: "cargo",
+        allowed_args: &["check", "clippy", "fmt", "audit", "--quiet", "--message-format=short"],
+        max_duration_secs: 60,
+    },
+    AllowedCommand {
+        binary: "ls",
+        allowed_args: &["-la", "src", "ui/src", "."],
+        max_duration_secs: 5,
+    },
+    AllowedCommand {
+        binary: "git",
+        allowed_args: &["status", "diff", "--oneline"],
+        max_duration_secs: 10,
+    },
+];
+
+pub async fn execute_allowed_command(monitor: &SystemMonitor, raw_cmd: &str) -> Result<CommandResult> {
+    let parts: Vec<&str> = raw_cmd.trim().split_whitespace().collect();
+    if parts.is_empty() { return Err(anyhow::anyhow!("Empty command")); }
+    let binary = parts[0];
+    let args = &parts[1..];
+
+    let allowed = COMMAND_WHITELIST.iter().find(|c| c.binary == binary)
+        .ok_or_else(|| anyhow::anyhow!("Command Not Permitted: {}", binary))?;
+
+    for arg in args {
+        if arg.contains(&[';', '&', '|', '`', '$', '(', ')', '<', '>'][..]) {
+            return Err(anyhow::anyhow!("Injection Attempt Blocked: {}", arg));
+        }
+    }
+
+    let v = monitor.get_vitals();
+    if v.cpu_load > 90.0 { return Err(anyhow::anyhow!("CPU_CRITICAL")); }
+
+    let cmd_future = async {
+        let child = Command::new(binary)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn command")?;
+
+        let output = child.wait_with_output().await?;
+        Ok(CommandResult {
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            command: raw_cmd.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        })
+    };
+
+    match timeout(Duration::from_secs(allowed.max_duration_secs), cmd_future).await {
+        Ok(res) => res,
+        Err(_) => Err(anyhow::anyhow!("Command Timed Out")),
+    }
+}
+
+==> src/lib.rs <==
+pub mod agent_protocol;
+pub mod auditor;
+pub mod auto_healer;
+pub mod broker;
+pub mod cli;
+pub mod command_executor;
+pub mod devops;
+pub mod diff;
+pub mod executor;
+pub mod hiram_core;
+pub mod hive_mind;
+pub mod industrial;
+pub mod inquisitor;
+pub mod janitor;
+pub mod json_parser;
+pub mod lazarus_vault;
+pub mod memory;
+pub mod neural_agent;
+pub mod orchestrator;
+pub mod podman;
+pub mod polyglot;
+pub mod resonator;
+pub mod scheduler;
+pub mod sentry;
+pub mod server;
+pub mod server_terminal;
+pub mod system_monitor;
+pub mod tflite_bridge;
+pub mod vision;
+pub mod watcher;
+
+==> src/gemini.rs <==
+use reqwest::Client;
+use serde_json::{json, Value};
+use anyhow::Result;
+use tokio::time::{sleep, Duration};
+use tokio::sync::broadcast;
+use sysinfo::System;
+use crate::tflite_bridge::TFLiteBridge;
+use crate::resonator::ResonatorCore;
+
+pub struct GeminiClient {
+    client: Client,
+    api_key: String,
+}
+
+impl GeminiClient {
+    pub fn new(api_key: String) -> Self {
+        Self { client: Client::new(), api_key }
+    }
+
+    fn base_url(&self) -> String {
+        format!("https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key={}", self.api_key.trim())
+    }
+
+    fn stream_url(&self) -> String {
+        format!("https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:streamGenerateContent?key={}", self.api_key.trim())
+    }
+
+    pub async fn send(&self, payload: Value, is_stream: bool, tx: Option<&broadcast::Sender<String>>) -> Result<String> {
+        if !self.should_call_api().await {
+            println!(">> [GEMINI] Hardware Critical — Falling back to Local Reflex");
+            return self.local_fallback(&payload).await;
+        }
+
+        let url = if is_stream { self.stream_url() } else { self.base_url() };
+
+        for attempt in 1..=3 {
+            match self.client.post(&url).json(&payload).send().await {
+                Ok(res) if res.status().is_success() => {
+                    if is_stream {
+                        return self.parse_stream(res, tx.expect("Stream requires tx")).await;
+                    } else {
+                        let body: Value = res.json().await?;
+                        return Ok(body.pointer("/candidates/0/content/parts/0/text")
+                            .and_then(|v| v.as_str()).unwrap_or_default().trim().to_string());
+                    }
+                }
+                _ => sleep(Duration::from_secs(attempt as u64 * 2)).await,
+            }
+        }
+        self.local_fallback(&payload).await
+    }
+
+    async fn should_call_api(&self) -> bool {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+        let free_gb = sys.available_memory() as f32 / 1_073_741_824.0;
+        if free_gb < 0.6 { return false; }
+        if let Ok(throttle) = ResonatorCore::scan_energy() {
+            if throttle < 0.3 { return false; }
+        }
+        true
+    }
+
+    async fn parse_stream(&self, res: reqwest::Response, tx: &broadcast::Sender<String>) -> Result<String> {
+        use futures_util::StreamExt;
+        let mut stream = res.bytes_stream();
+        let mut final_text = String::new();
+        let _ = tx.send(json!({"type": "STREAM_START"}).to_string());
+        while let Some(chunk) = stream.next().await {
+            if let Ok(bytes) = chunk {
+                let text = String::from_utf8_lossy(&bytes);
+                if let Some(s) = text.find("\"text\": \"") {
+                    if let Some(e) = text[s + 9..].find("\"") {
+                        let token = text[s + 9..s + 9 + e].replace("\\n", "\n").replace("\\\"", "\"");
+                        final_text.push_str(&token);
+                        let _ = tx.send(json!({"type": "NEURAL_CHUNK", "token": token}).to_string());
+                    }
+                }
+            }
+        }
+        let _ = tx.send(json!({"type": "STREAM_END"}).to_string());
+        Ok(final_text.trim().to_string())
+    }
+
+    async fn local_fallback(&self, _payload: &Value) -> Result<String> {
+        TFLiteBridge::run_logic("Local reflex activated").await
+            .map_err(|e| anyhow::anyhow!("Fallback failed: {}", e))
+    }
+}
+
+==> src/neural_agent.rs <==
+use crate::agent_protocol::AgentAction;
+use crate::json_parser::NeuralParser;
+use anyhow::Result;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::time::Instant;
+use futures_util::StreamExt;
+use tokio::sync::broadcast;
+
+const MAX_HISTORY_TURNS: usize = 12;
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct ContextPacket {
+    pub file_content: Option<String>,
+    pub terminal_log: Option<String>,
+    pub memory_recall: Option<String>,
+    pub system_stats: Option<String>,
+}
+
+pub struct MicroAgent { memory: Mutex<VecDeque<Value>> }
+
+impl MicroAgent {
+    pub fn init() -> Result<Self> { Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)) }) }
+
+    pub async fn run_cognition(
+        &self, client: &Client, api_key: &str, user_text: &str, 
+        context: ContextPacket, tx: &broadcast::Sender<String>
+    ) -> Result<(Vec<AgentAction>, u128, String)> {
+        let start = Instant::now();
+        let prompt_lower = user_text.to_lowercase();
+        let mission_profile = if ["hunt", "scan"].iter().any(|&k| prompt_lower.contains(k)) { "NEXUS SECOPS" } else { "NEXUS DEVOPS" };
+
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:streamGenerateContent?key={}", api_key.trim());
+        let atlas = crate::broker::KnowledgeBroker::load_atlas();
+        let atlas_summary = atlas.entries.iter().map(|e| format!("[{}] {}", e.kind, e.path)).collect::<Vec<_>>().join("\n");
+
+        let system_instruction = format!(
+            "{}\nRespond ONLY with a JSON array of actions.\nSchema: [ {{ \"action\": \"Message\", \"message\": \"...\" }}, {{ \"action\": \"WriteFile\", \"path\": \"...\", \"content\": \"...\" }} ]\nATLAS:\n{}", 
+            mission_profile, atlas_summary
+        );
+
+        let mut history: Vec<Value> = self.memory.lock().unwrap().iter().cloned().collect();
+        let mut prompt = format!("{}\n\nUSER REQUEST: {}", system_instruction, user_text);
+        
+        if let Some(code) = &context.file_content { prompt += &format!("\n\nFILE:\n{}", code); }
+
+        history.push(json!({"role": "user", "parts": [{"text": prompt}]}));
+        let payload = json!({ "contents": history, "generationConfig": { "maxOutputTokens": 4096, "temperature": 0.1 } });
+
+        let resp = client.post(&url).json(&payload).send().await?;
+        let mut stream = resp.bytes_stream();
+        let mut final_response = String::new();
+        
+        let _ = tx.send(json!({"type": "STREAM_START"}).to_string());
+        while let Some(chunk) = stream.next().await {
+            if let Ok(bytes) = chunk {
+                let text = String::from_utf8_lossy(&bytes);
+                if let Some(s) = text.find("\"text\": \"") {
+                    if let Some(e) = text[s + 9..].find("\"") {
+                        let token = text[s + 9..s + 9 + e].replace("\\n", "\n").replace("\\\"", "\"");
+                        final_response.push_str(&token);
+                        let _ = tx.send(json!({"type": "NEURAL_CHUNK", "token": token}).to_string());
+                    }
+                }
+            }
+        }
+        let _ = tx.send(json!({"type": "STREAM_END"}).to_string());
+
+        let cleaned = final_response.replace("\\\\", "\\").replace("\\\"", "\"").replace("\\n", "\n").trim().to_string();
+
+        match NeuralParser::extract_actions(&cleaned) {
+            Ok(actions) => Ok((actions, start.elapsed().as_millis(), cleaned)),
+            Err(_) => Ok((vec![AgentAction::Message { message: cleaned.clone() }], start.elapsed().as_millis(), cleaned))
+        }
+    }
+}
+
+==> src/orchestrator.rs <==
+use crate::neural_agent::{MicroAgent, ContextPacket};
+use crate::executor::Executor;
+use crate::command_executor;
+use crate::agent_protocol::AgentAction;
+use crate::system_monitor::SystemMonitor;
+use anyhow::Result;
+use reqwest::Client;
+use tokio::sync::broadcast;
+use serde_json::json;
+use std::fs;
+use chrono::Utc;
+
+pub struct Orchestrator { pub agent: std::sync::Arc<MicroAgent> }
+
+impl Orchestrator {
+    pub fn new(agent: std::sync::Arc<MicroAgent>) -> Self { Self { agent } }
+
+    pub async fn run_autonomous_loop(
+        &self, 
+        initial_input: String, 
+        context: ContextPacket, 
+        client: &Client, 
+        api_key: &str, 
+        tx: &broadcast::Sender<String>,
+        monitor: &SystemMonitor
+    ) -> Result<String> {
+        let mut iterations = 0;
+        let mut current_input = initial_input;
+        let mut final_raw_response;
+
+        loop {
+            let _ = tx.send(json!({"type": "SYSTEM_LOG", "token": format!(">> [SWARM] Cognitive Loop Turn {}\n", iterations + 1)}).to_string());
+            let (actions, _, raw_text) = self.agent.run_cognition(client, api_key, &current_input, context.clone(), tx).await?;
+            final_raw_response = raw_text; 
+            let _ = Executor::execute(actions.clone()).await?;
+            let mut command_feedback = String::new();
+            for action in &actions {
+                if let AgentAction::RunCommand { command } = action {
+                    if let Ok(res) = command_executor::execute_allowed_command(monitor, command).await {
+                        if !res.success {
+                            command_feedback.push_str(&format!("\nError in {}:\n{}", command, res.stderr));
+                        }
+                    }
+                }
+            }
+            if command_feedback.is_empty() || iterations >= 2 { break; }
+            current_input = format!("Fix these errors:\n{}", command_feedback);
+            iterations += 1;
+        }
+        Ok(final_raw_response)
+    }
+
+    pub async fn run_data_factory(&self, client: &Client, api_key: &str, target: usize, tx: &broadcast::Sender<String>) -> Result<()> {
+        let factory_dir = ".lazarus/factory";
+        let _ = fs::create_dir_all(factory_dir);
+        for i in 1..=target {
+            let prompt = "Generate Rust Technical Archetype JSON: { 'problem': '...', 'solution': '...' }";
+            if let Ok((_, _, raw_json)) = self.agent.run_cognition(client, api_key, prompt, ContextPacket::default(), tx).await {
+                let path = format!("{}/sample_{}_{}.json", factory_dir, Utc::now().timestamp_millis(), i);
+                let _ = fs::write(path, raw_json);
+            }
+        }
+        Ok(())
+    }
+}
+
+==> src/main.rs <==
+use nexus_singularity::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32};
+use tokio::sync::Mutex;
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+    dotenvy::dotenv().ok();
+
+    #[cfg(target_os = "linux")]
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, 1); }
+
+    let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY missing");
+    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+
+    let shared_resonance = Arc::new(AtomicU32::new(1065353216)); // 1.0f32
+    let (tx, _) = tokio::sync::broadcast::channel(100);
+    
+    let req_client = reqwest::Client::new();
+    let shared_brain = Arc::new(neural_agent::MicroAgent::init().unwrap());
+    let shared_orchestrator = Arc::new(orchestrator::Orchestrator::new(shared_brain.clone()));
+    
+    let monitor = system_monitor::SystemMonitor::new(Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())));
+
+    // IGNITE SUPERVISOR FIRST - Getting the real transmission line
+    let scheduler_tx = scheduler::MasterSupervisor::ignite(
+        tx.clone(), req_client.clone(), api_key.clone(), shared_orchestrator.clone(), monitor.clone(), shared_resonance.clone()
+    );
+
+    // WIRE THE STATE
+    let state = Arc::new(server::AppState {
+        client: req_client,
+        brain_endpoint: "gemma-3-27b-it".to_string(),
+        monitor,
+        memory: Arc::new(Mutex::new(memory::MemoryPalace::new())),
+        api_key,
+        current_resonance: shared_resonance,
+        hiram: Arc::new(Mutex::new(hiram_core::Hiram::new(60))),
+        tx,
+        auto_apply: Arc::new(AtomicBool::new(false)),
+        scheduler_tx, // The real channel is now plugged

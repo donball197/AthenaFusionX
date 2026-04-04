@@ -1,9 +1,8 @@
-use std::sync::Arc;
 use crate::nexus_error::NexusError;
 use crate::agent_protocol::AgentAction;
 use crate::component_runner::{AgentHandle, Capabilities};
 use crate::lazarus_vault::LazarusVault;
-use crate::podman::PodmanShield; // INJECTING THE SHIELD
+use crate::podman::PodmanShield;
 use std::fs;
 
 pub struct Executor;
@@ -46,8 +45,6 @@ impl Executor {
                         continue;
                     }
                     
-                    // === THE SOVEREIGN BIO-DOME SUTURE ===
-                    // Instead of running on host, we run in the Podman Shield
                     let workspace = std::env::current_dir().unwrap().to_string_lossy().to_string();
                     match PodmanShield::execute_isolated(&command, &workspace).await {
                         Ok(val) => results.push(format!(">> [SHIELDED_EXEC]: {}", val)),

@@ -1,0 +1,23 @@
+
+>> [AUDIT REPORT]:
+```
+CVSS v3.1 Scores & Severities:
+
+KernelError::SecurityViolation: CVSS score determined by 'cvss' field. Severity based on CVSS value.
+KernelError::VmarMapFailed: CVSS: 7.5, Severity: HIGH
+KernelError::VmoCloneFailed: CVSS: 7.5, Severity: HIGH
+KernelError::AlignmentAnomaly: CVSS: 5.3, Severity: MEDIUM
+KernelError::InvalidHandle: CVSS: 4.3, Severity: MEDIUM
+
+RealignmentEngine::check_alignment_fast:
+    - CVSS: 4.6, Severity: MEDIUM
+    - Remediation: While the function itself is relatively benign, the potential for information leakage due to misaligned access exists.  Ensure all data structures and access patterns are carefully reviewed to prevent unintended exposure of sensitive data.  Consider adding runtime checks for alignment before accessing memory, especially if the address originates from user space or an untrusted source.
+
+Vmo::clone:
+    - CVSS: 7.5, Severity: HIGH (due to potential for handle exhaustion or resource starvation if cloning fails repeatedly)
+    - Remediation: Implement robust error handling and resource limits to prevent denial-of-service scenarios.  Consider adding rate limiting to the cloning operation.
+
+Vmar::map:
+    - CVSS: 7.5, Severity: HIGH (due to potential for memory corruption if mapping fails or returns an invalid address)
+    - Remediation: Thoroughly validate the returned address from `nexus_vmar_map` before use. Implement checks to ensure the mapped region does not overlap with existing mappings.  Consider using a memory protection mechanism to prevent unauthorized access to the mapped region.
+```

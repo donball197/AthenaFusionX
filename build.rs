@@ -7,12 +7,13 @@ fn main() {
 
     // 1. Forge a RAW OBJECT FILE instead of an archive
     let status = std::process::Command::new("zig")
-        .args(&[
-            "build-obj", 
-            "src/resonator.zig", 
-            "-lc", 
-            "-O", "ReleaseFast",
-            &format!("-femit-bin={}", obj_path)
+        .args([
+            "build-obj",
+            "src/resonator.zig",
+            "-lc",
+            "-O",
+            "ReleaseFast",
+            &format!("-femit-bin={}", obj_path),
         ])
         .status()
         .expect("Zig forge failed.");

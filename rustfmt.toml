@@ -1,0 +1,13 @@
+# Project Nexus Singularity v0.2.2 - Format Style
+# Inheriting baseline heuristics from Fuchsia OS
+
+edition = "2024"
+
+# Prevents aggressive line splitting in complex Micro-Agent definitions
+use_small_heuristics = "Max"
+
+# Enforce Unix newlines for Zero Fragmentation across ARM64 DNA
+newline_style = "Unix"
+
+# Group imports by module for cleaner file headers in src/
+imports_granularity = "Module"
