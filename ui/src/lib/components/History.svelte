@@ -6,30 +6,35 @@
 
     async function purge() {
         if (!confirm("WIPE ALL NEURAL MEMORIES?")) return;
-        SoundFx.click();
+        SoundFx.click?.();
         await fetch('/api/memories/purge', { method: 'DELETE' });
         onRefresh();
     }
 
     async function exportMem() {
-        SoundFx.click();
+        SoundFx.click?.();
         const res = await fetch('/api/memories/archive', { method: 'POST' });
-        if (res.ok) alert("ARCHIVE SECURED ON DISK");
+        if (res.ok) alert("ARCHIVE SECURED");
     }
 </script>
 
-<div class="flex flex-col gap-2">
-    <div class="text-[10px] text-[#58a6ff] border-b border-[#30363d] flex justify-between uppercase mb-2 tracking-widest font-bold">
-        <span>Memories</span>
-        <div class="flex gap-2">
-            <button on:click={exportMem} class="text-[8px] text-gray-500 hover:text-green-400 uppercase">Export</button>
-            <button on:click={purge} class="text-[8px] text-gray-500 hover:text-red-400 uppercase">Purge</button>
+<div>
+    <div class="text-[#58a6ff] text-xs border-b border-[#30363d] pb-2 mb-3 flex justify-between uppercase tracking-widest font-bold">
+        <span>NEURAL MEMORIES</span>
+        <div class="flex gap-4 text-[9px]">
+            <button on:click={exportMem} class="hover:text-green-400">EXPORT</button>
+            <button on:click={purge} class="hover:text-red-400">PURGE</button>
         </div>
     </div>
-    <div class="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar">
+
+    <div class="max-h-44 overflow-y-auto custom-scrollbar space-y-2">
         {#each memories.slice().reverse() as mem}
-            <button on:click={() => onReplay(mem)} class="text-left p-2 border border-[#30363d] bg-black rounded hover:border-[#58a6ff] transition-all group">
-                <div class="text-[9px] text-gray-500 italic line-clamp-1 group-hover:text-white transition-colors">"{mem.prompt}"</div>
+            <button 
+                on:click={() => onReplay(mem)}
+                class="w-full text-left p-3 border border-[#30363d] hover:border-[#58a6ff] bg-black rounded transition-all group">
+                <div class="text-xs text-gray-400 italic line-clamp-2 group-hover:text-gray-200">
+                    "{mem.prompt}"
+                </div>
             </button>
         {/each}
     </div>

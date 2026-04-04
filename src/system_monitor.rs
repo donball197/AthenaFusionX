@@ -1,13 +1,15 @@
 use sysinfo::System;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct VitalsSnapshot {
     pub status: String,
-    pub cpu_load: f32,
-    pub ram_used_gb: f32,
-    pub ram_total_gb: f32,
+    pub cpu_usage: f32,    // Matches Legacy UI
+    pub cpu_load: f32,     // Matches Dev Logic
+    pub ram_usage: String, // Matches Legacy UI "1.2GB / 4.0GB"
+    pub ram_used_gb: f32,  // Matches Dev Logic
     pub resonance: f32,
+    pub temperature: f32,
 }
 
 #[derive(Clone)]
@@ -16,37 +18,31 @@ pub struct SystemMonitor {
 }
 
 impl SystemMonitor {
-    pub fn new(existing_sys: Arc<Mutex<System>>) -> Self {
-        SystemMonitor { sys: existing_sys }
+    pub fn new() -> Self {
+        SystemMonitor { sys: Arc::new(Mutex::new(System::new_all())) }
     }
 
     pub fn get_vitals(&self) -> VitalsSnapshot {
         let mut sys = self.sys.lock().unwrap();
-        
-        sys.refresh_cpu_usage();
-        sys.refresh_memory();
-
-        let cpus = sys.cpus();
-        let count = cpus.len() as f32;
-        let total_usage: f32 = cpus.iter().map(|c| c.cpu_usage()).sum();
-        let cpu_load = if count > 0.0 { total_usage / count } else { 0.0 };
-        
-        let ram_used = sys.used_memory() as f32 / 1_073_741_824.0;
-        let ram_total = sys.total_memory() as f32 / 1_073_741_824.0;
-
-        let status = if ram_used > 3.5 { "CRITICAL" } else { "ONLINE" };
+        sys.refresh_all();
+        let used = sys.used_memory() as f32 / 1024.0 / 1024.0 / 1024.0;
+        let total = sys.total_memory() as f32 / 1024.0 / 1024.0 / 1024.0;
+        let cpu = sys.global_cpu_info().cpu_usage();
 
         VitalsSnapshot {
-            status: status.to_string(),
-            cpu_load,
-            ram_used_gb: ram_used,
-            ram_total_gb: ram_total,
+            status: if used > (total * 0.9) { "CRITICAL" } else { "ONLINE" }.into(),
+            cpu_usage: cpu,
+            cpu_load: cpu,
+            ram_usage: format!("{:.2}GB / {:.1}GB", used, total),
+            ram_used_gb: used,
             resonance: 0.98,
+            temperature: crate::thermal_governor::ThermalGovernor::read_temp(),
         }
     }
-    
+
     pub fn get_vital_signs_string(&self) -> String {
         let v = self.get_vitals();
-        format!("CPU: {:.1}% | RAM: {:.2}GB", v.cpu_load, v.ram_used_gb)
+        format!("CPU: {:.1}% | RAM: {}", v.cpu_usage, v.ram_usage)
     }
 }
+impl Default for SystemMonitor { fn default() -> Self { Self::new() } }

@@ -1,0 +1,80 @@
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use std::sync::atomic::AtomicU32;
+use tokio::signal;
+use std::path::PathBuf;
+use nexus_singularity::{
+    system_monitor::SystemMonitor,
+    memory::MemoryPalace,
+    orchestrator::Orchestrator,
+    neural_agent::MicroAgent,
+    local_llm::LocalLLM,
+    scheduler, server,
+    alloc::initialize_mnemnos_lean,
+    auto_healer::background_heal_loop,
+    arbiter_agent::ArbiterAgent,
+};
+const VERSION: &str = "v1.6.5"
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+async fn main() -> anyhow::Result<()> {
+    println!("\x1b[38;2;0;255;255m>> [KERNEL] NEXUS SINGULARITY v1.5.0 ONLINE (2026)\x1b[0m");
+    dotenvy::dotenv().ok();
+// // // println!("Hello, world!");
+println!("NEXUS v1.6.5 Initialized.");
+println!("NEXUS v1.6.5 Initialized.");
+    #[cfg(target_os = "linux")]
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, 1); }
+
+    initialize_mnemnos_lean();
+
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .expect("\x1b[31m!! [FATAL] GEMINI_API_KEY missing from .env\x1b[0m");
+
+    let (tx, _) = broadcast::channel::<String>(128);
+    let shared_resonance = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let monitor = SystemMonitor::new();
+    let local_llm = Arc::new(LocalLLM::new());
+    
+    let agent = Arc::new(MicroAgent::init(tx.clone()).expect("Neural Uplink Failure"));
+    let orchestrator = Arc::new(Orchestrator::new(agent.clone()));
+    let arbiter = Arc::new(ArbiterAgent::new(agent.clone(), Some(orchestrator.clone())));
+
+    let scheduler_tx = scheduler::MasterSupervisor::ignite(
+        tx.clone(),
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build()?,
+        api_key.clone(),
+        orchestrator.clone(),
+        shared_resonance.clone(),
+        monitor.clone(),
+    );
+
+    // SECTOR SHIELD ANCHOR: Establish the root boundary for the workspace
+    let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let state = Arc::new(server::AppState {
+        client: reqwest::Client::new(),
+        monitor: monitor.clone(),
+        agent,
+        orchestrator,
+        local_llm,
+        arbiter,
+        memory: Arc::new(tokio::sync::Mutex::new(MemoryPalace::new())),
+        api_key,
+        current_resonance: shared_resonance,
+        tx: tx.clone(),
+        scheduler_tx,
+        workspace_root,
+    });
+
+    let heal_state = state.clone();
+    tokio::spawn(async move { background_heal_loop(heal_state).await; });
+
+    // Ignition: Bind the Axum server and watch for Ctrl+C interrupts
+    tokio::select! {
+        _ = server::start_server(state) => { println!("!! [KERNEL] Server unexpected stall."); }
+        _ = signal::ctrl_c() => { println!("\n>> [KERNEL] SIGINT detected. Purging volatile strands..."); }
+    }
+
+    println!(">> [KERNEL] Shutdown complete. Zero Fragmentation maintained.");
+    Ok(())
+}

@@ -1,28 +1,23 @@
 <script>
-    import { onMount } from 'svelte';
-
-    export let ramUsage = "0.0";
-    $: ramNum = parseFloat(ramUsage) || 0;
-    $: isCritical = ramNum > 2.8;           // warn earlier — safer on 4GB devices
-
-    // Only show background when not critical (saves rendering cost)
-    $: showBackground = !isCritical;
 </script>
 
-{#if showBackground}
-<div class="fixed inset-0 pointer-events-none z-0 flex items-center justify-center font-mono opacity-5">
-    <div class="relative w-400 h-400 animate-[spin_90s_linear_infinite]">
-        <div class="absolute inset-0 border border-cyan-500/15 rounded-full"></div>
+<div class="fixed inset-0 pointer-events-none z-0 overflow-hidden flex items-center justify-center opacity-10">
+    <div class="relative w-[820px] h-[820px] animate-[spin_28s_linear_infinite]">
+        <div class="absolute inset-0 border border-cyan-400/30 rounded-full border-dashed"></div>
+        <div class="absolute inset-12 border border-cyan-500/20 rounded-full"></div>
+        <div class="absolute inset-28 border border-cyan-600/10 rounded-full"></div>
     </div>
+    
+    <!-- Corner brackets -->
+    <div class="absolute top-8 left-8 w-8 h-8 border-l border-t border-cyan-400/60"></div>
+    <div class="absolute top-8 right-8 w-8 h-8 border-r border-t border-cyan-400/60"></div>
+    <div class="absolute bottom-8 left-8 w-8 h-8 border-l border-b border-cyan-400/60"></div>
+    <div class="absolute bottom-8 right-8 w-8 h-8 border-r border-b border-cyan-400/60"></div>
 </div>
-{/if}
-
-{#if isCritical}
-<div class="fixed top-0 left-0 right-0 h-5 bg-red-700/85 text-white text-[9px] font-bold flex items-center justify-center z-[9999] animate-pulse">
-    ⚠ CRITICAL RAM ({ramNum.toFixed(1)} GB) – CLOSE TABS / RESTART NOW ⚠
-</div>
-{/if}
 
 <style>
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
 </style>

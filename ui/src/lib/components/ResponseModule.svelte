@@ -1,32 +1,29 @@
 <script>
     import Response from './Response.svelte';
-    export let response = "";
-    export let isThinking = false;
-    export let patchAvailable = false;
-    export let onApplyPatch;
+
+    let { response = "", isThinking = false, patchAvailable = false, onApplyPatch } = $props();
 </script>
 
-<div class="flex flex-col min-h-[200px] max-h-[400px] bg-[#050505] border border-blue-900/30 p-0 rounded shadow-2xl relative overflow-hidden group">
-    <!-- Header -->
-    <div class="bg-[#0a0a0a] border-b border-blue-900/20 px-3 py-1 flex justify-between items-center">
-        <span class="text-[9px] font-bold text-blue-500 uppercase tracking-widest">Neural Link</span>
+<div class="h-full flex flex-col bg-[#050505] border border-blue-900/30 rounded relative overflow-hidden">
+    <div class="bg-[#0a0a0a] border-b border-blue-900/30 px-4 py-2 flex justify-between items-center">
+        <span class="text-blue-400 text-xs font-bold uppercase tracking-widest">NEURAL LINK</span>
         {#if isThinking}
-            <div class="w-2 h-2 rounded-full bg-blue-500 animate-ping"></div>
+            <div class="flex items-center gap-1.5 text-blue-500">
+                <div class="w-2 h-2 bg-blue-500 rounded-full animate-ping"></div>
+                <span class="text-[9px]">PROCESSING</span>
+            </div>
         {/if}
     </div>
-
-    <!-- Content -->
-    <div class="flex-1 overflow-y-auto p-3">
-        <Response {response} {isThinking} patchAvailable={false} />
+    
+    <div class="flex-1 p-4 overflow-hidden">
+        <Response {response} {isThinking} {patchAvailable} {onApplyPatch} />
     </div>
 
-    <!-- ACTION GATE -->
     {#if patchAvailable}
-        <div class="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black to-transparent">
+        <div class="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black via-black/90 to-transparent">
             <button 
-                on:click={onApplyPatch}
-                class="w-full bg-green-600 hover:bg-green-500 text-black font-bold py-2 text-xs rounded uppercase tracking-widest shadow-[0_0_15px_rgba(34,197,94,0.4)] animate-pulse"
-            >
+                onclick={onApplyPatch}
+                class="w-full py-3 bg-green-600 hover:bg-green-500 text-black font-bold text-xs tracking-widest shadow-[0_0_20px_rgba(74,222,128,0.5)] transition-all">
                 [ APPLY PATCH ]
             </button>
         </div>

@@ -1,35 +1,34 @@
-use redis::Client;
 use anyhow::Result;
 use serde_json::json;
+use tokio::sync::broadcast;
 
+/// HiveMind now uses the existing tokio broadcast bus instead of Redis.
+/// Saves ~50MB RAM and removes the Redis process dependency entirely.
 pub struct HiveMind {
-    pub client: Client,
+    tx: broadcast::Sender<String>,
 }
 
 impl HiveMind {
-    pub fn connect() -> Result<Self> {
-        let client = Client::open("redis://127.0.0.1/")?;
-        Ok(Self { client })
+    pub fn new(tx: broadcast::Sender<String>) -> Self {
+        Self { tx }
     }
 
     pub async fn dispatch_task(&self, drone: &str, task: &str, params: &str) -> Result<()> {
-        // PERF FIX: Asynchronous connection mapping
-        let mut con = self.client.get_async_connection().await?;
-        
         let payload = json!({
+            "type": "HIVE_DISPATCH",
             "drone": drone,
             "task": task,
             "params": params,
-            "timestamp": chrono::Utc::now().to_string()
+            "timestamp": chrono::Utc::now().to_rfc3339()
         });
-        
-        // PERF FIX: Yields to Tokio runtime, saving ARM64 CPU cycles
-        redis::cmd("PUBLISH")
-            .arg("hive_bus")
-            .arg(payload.to_string())
-            .query_async::<_, ()>(&mut con)
-            .await?;
-            
+
+        self.tx.send(payload.to_string())
+            .map_err(|e| anyhow::anyhow!("Broadcast send failed: {}", e))?;
+
         Ok(())
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+        self.tx.subscribe()
     }
 }

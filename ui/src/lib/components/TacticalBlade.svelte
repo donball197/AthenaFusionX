@@ -1,56 +1,35 @@
 <script>
-    import { onMount } from 'svelte';
-    import TreeItem from './TreeItem.svelte';
+    import { createEventDispatcher } from 'svelte';
+    const dispatch = createEventDispatcher();
 
-    export let open = false;
-    export let onFileSelect = () => {};
-    export let onToggleVim = () => {};
+    export let files = [];
+    export let activePath = "";
 
-    let files = [];
-    let loading = false;
-
-    async function fetchTree() {
-        if (loading) return;
-        loading = true;
-        try {
-            const res = await fetch('/api/fs/tree');
-            if (res.ok) files = await res.json();
-        } catch (e) { console.error("Tree Error", e); }
-        finally { loading = false; }
-    }
-
-    $: if (open && files.length === 0) fetchTree();
-
-    function handleSelect(e) {
-        onFileSelect(e.detail);
+    function handleSelect(path) {
+        dispatch('select', { path });
     }
 </script>
 
-<aside 
-    class="absolute left-0 top-0 bottom-0 bg-[#0d1117] border-r border-green-900/30 z-[100] transition-all duration-300 pointer-events-auto flex flex-col"
-    class:w-64={open}
-    class:w-0={!open}
-    style="overflow-x: hidden;"
->
-    <div class="p-3 border-b border-green-900/25 flex justify-between items-center shrink-0">
-        <span class="text-[9px] tracking-wider uppercase font-bold text-green-600">TACTICAL BLADE</span>
-        <div class="flex gap-2">
-            <button on:click={fetchTree} class="text-[9px] text-gray-500 hover:text-white" title="Refresh">↻</button>
-            <button on:click={onToggleVim} class="text-[9px] text-gray-500 hover:text-white" title="Vim Mode">VIM</button>
-        </div>
+<div class="flex flex-col h-full bg-[#0d1117]">
+    <div class="px-5 py-4 border-b border-[#30363d] text-xs text-gray-500 tracking-widest uppercase">
+        SECTOR INDEX
     </div>
-
-    <div class="flex-1 overflow-y-auto custom-scrollbar py-2">
+    <div class="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
         {#each files as file}
-            <TreeItem entry={file} on:select={handleSelect} />
+            <button
+                on:click={() => handleSelect(file.path)}
+                class="w-full text-left px-4 py-3 rounded text-xs transition-all flex items-center gap-3
+                {activePath === file.path 
+                    ? 'bg-blue-900/30 text-blue-400 border-l-2 border-blue-500' 
+                    : 'text-gray-400 hover:bg-zinc-900 hover:text-gray-200'}">
+                <span>{file.is_dir ? '📁' : '📄'}</span>
+                <span class="truncate">{file.name}</span>
+            </button>
         {/each}
-        {#if files.length === 0 && !loading}
-             <div class="p-4 text-center text-gray-600 text-[9px] italic">Offline / No Files</div>
-        {/if}
     </div>
-</aside>
+</div>
 
 <style>
-    .custom-scrollbar::-webkit-scrollbar { width: 2px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #064e3b; }
+    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #27272a; }
 </style>

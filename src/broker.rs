@@ -1,139 +1,76 @@
-// src/broker.rs
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use walkdir::WalkDir;
+use regex::Regex;
+use tokio::sync::RwLock;
+use once_cell::sync::Lazy;
+use chrono;
 
-#[derive(Debug)]
-pub struct Mission {
-    pub path: PathBuf,
-    pub objective: String,
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AtlasEntry {
+    pub name: String,
+    pub kind: String,
+    pub path: String,
+    pub signature: String,
 }
 
-#[derive(Serialize)]
-pub struct GraphNode {
-    pub id: String,
-    pub group: String,
-    pub summary: String,
-    pub size: u64,
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct ProjectAtlas {
+    pub entries: Vec<AtlasEntry>,
+    pub timestamp: i64,
 }
 
-#[derive(Serialize)]
-pub struct GraphLink {
-    pub source: String,
-    pub target: String,
-}
-
-#[derive(Serialize)]
-pub struct NeuralGraph {
-    pub nodes: Vec<GraphNode>,
-    pub links: Vec<GraphLink>,
-}
+static CACHED_ATLAS: Lazy<Arc<RwLock<ProjectAtlas>>> =
+    Lazy::new(|| Arc::new(RwLock::new(ProjectAtlas::default())));
 
 pub struct KnowledgeBroker;
 
 impl KnowledgeBroker {
-    pub async fn get_graph(state: Arc<crate::server::AppState>) -> NeuralGraph {
-        // FIX: Lock mutex
-        let memories = state.memory.lock().await.load_all();
-        let mut nodes = Vec::new();
-        let mut links = Vec::new();
-
-        for mem in memories
-            .iter()
-            .filter(|m| m.prompt.starts_with("FOUNDATION:"))
-        {
-            let path = mem.prompt.replace("FOUNDATION: ", "");
-            let group = if path.ends_with(".rs") {
-                "rust"
-            } else {
-                "svelte"
-            };
-            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(500);
-
-            nodes.push(GraphNode {
-                id: path.clone(),
-                group: group.to_string(),
-                summary: mem.solution_code.clone(),
-                size,
-            });
-
-            if path != "src/main.rs" && group == "rust" {
-                links.push(GraphLink {
-                    source: "src/main.rs".into(),
-                    target: path.clone(),
-                });
-            }
-        }
-        NeuralGraph { nodes, links }
-    }
-
-    pub async fn deep_index(state: Arc<crate::server::AppState>) -> anyhow::Result<String> {
+    pub async fn refresh_atlas() {
         let mut entries = Vec::new();
-        Self::read_src(Path::new("src"), &mut entries);
-        Self::read_src(Path::new("ui/src"), &mut entries);
+        let re_fn = Regex::new(r"pub (?:async )?fn ([a-zA-Z0-9_]+)").unwrap();
 
-        for path in entries {
-            let content = fs::read_to_string(&path)?;
-            let (summary, _) = state
-                .agent
-                .prepare_and_run(
-                    &state.client,
-                    &state.api_key,
-                    &format!("Summarize purpose of {}", path),
-                    crate::neural_agent::ContextPacket {
-                        file_content: Some(content),
-                        ..Default::default()
-                    },
-                    0.0,
-                )
-                .await?;
-            // FIX: Lock mutex
-            state.memory.lock().await.remember(
-                format!("FOUNDATION: {}", path),
-                summary,
-                "INDEXED".into(),
-                None,
-            );
-        }
-        Ok("Deep Index Complete".into())
-    }
-
-    fn read_src(path: &Path, entries: &mut Vec<String>) {
-        if let Ok(rd) = fs::read_dir(path) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let name = p.file_name().unwrap().to_string_lossy();
-                    if name != "target" && name != "node_modules" && name != "dist" {
-                        Self::read_src(&p, entries);
+        if let Ok(it) = WalkDir::new("src")
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+        {
+            for entry in it
+                .into_iter()
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+            {
+                let path = entry.path().to_string_lossy().to_string();
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    for cap in re_fn.captures_iter(&content) {
+                        entries.push(AtlasEntry {
+                            name: cap[1].to_string(),
+                            kind: "function".into(),
+                            path: path.clone(),
+                            signature: cap[0].to_string(),
+                        });
                     }
-                } else if p
-                    .extension()
-                    .map_or(false, |ext| ext == "rs" || ext == "svelte")
-                {
-                    entries.push(p.to_string_lossy().to_string());
                 }
             }
         }
+
+        let mut cache = CACHED_ATLAS.write().await;
+        *cache = ProjectAtlas {
+            entries,
+            timestamp: chrono::Utc::now().timestamp(),
+        };
     }
 
-    pub fn get_unclaimed_mission(node_id: &str) -> Option<Mission> {
-        let missions = fs::read_dir("missions").ok()?;
-        for entry in missions.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                continue;
-            }
-            let file_name = path.file_name()?.to_str()?;
-            let claim_path = format!("claims/{}.lock", file_name);
-            if !Path::new(&claim_path).exists() {
-                if fs::write(&claim_path, node_id).is_ok() {
-                    let objective = fs::read_to_string(&path).unwrap_or_default();
-                    return Some(Mission { path, objective });
-                }
-            }
+    pub async fn get_atlas() -> ProjectAtlas {
+        let cache = CACHED_ATLAS.read().await;
+        (*cache).clone()
+    }
+
+    pub async fn get_compressed_context() -> String {
+        let cache = CACHED_ATLAS.read().await;
+        let mut summary = String::from("PROJECT_ATLAS:\n");
+        for e in cache.entries.iter().take(30) {
+            summary.push_str(&format!("[{}] {} in {}\n", e.kind, e.name, e.path));
         }
-        None
+        summary
     }
 }

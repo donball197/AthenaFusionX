@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Manually load .env file into the process environment
     dotenvy::dotenv().ok();
     
-    let api_key = env::var("GEMMA_API_KEY").expect("CRITICAL: GEMMA_API_KEY not found in .env");
+    let api_key = env::var("GEMINI_API_KEY").expect("CRITICAL: GEMINI_API_KEY not found in .env");
     let client = Client::new();
 
     let args: Vec<String> = env::args().collect();

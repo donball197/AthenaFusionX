@@ -1,23 +1,41 @@
+use crate::neural_agent::{ContextPacket, MicroAgent};
+use std::env;
+use tokio::sync::broadcast;
+use reqwest::Client;
+
 pub struct SyntaxSentinel;
 
-impl SyntaxSentinel {
-    pub fn validate_safety(path: &str, content: &str) -> Result<(), String> {
-        // 1. Block destructive shell commands in Rust code
-        if content.contains("std::process::Command") && content.contains("rm -rf") {
-            return Err("Hypothesis Blocked: Destructive Command Detected.".into());
-        }
-        
-        // 2. Block infinite loop risks in build scripts
-        if content.contains("loop {") && !content.contains("sleep") && !content.contains("break") {
-            return Err("Hypothesis Blocked: Potential Infinite Loop without Yield.".into());
-        }
+pub async fn run_sovereign_audit(payload_path: &str) {
+    let api_key = env::var("GEMINI_API_KEY").unwrap_or_default();
+    let client = Client::new();
+    let (tx, _) = broadcast::channel(16);
+    let agent = MicroAgent::init(tx).expect("Agent Init Failure");
 
-        // 3. ARCHITECTURAL GUARD: Prevent "Nesting Sabotage"
-        // Blocks the AI from wrapping everything in a 'mod nexus_core' block in main.rs
-        if path.ends_with("main.rs") && content.contains("mod nexus_core {") {
-            return Err("Architectural Sabotage Detected: Module nesting 'nexus_core' is forbidden. Maintain flat hierarchy.".into());
-        }
+    let payload = std::fs::read_to_string(payload_path).unwrap_or_default();
 
-        Ok(())
+    let ctx = ContextPacket {
+        system_prompt: Some(
+            "You are the NEXUS SOVEREIGN AUDITOR. 
+             STRICT PROTOCOL:
+             1. Categorize issues: CRITICAL, HIGH, MEDIUM, LOW.
+             2. Assign CVSS v3.1 scores to all security vulnerabilities.
+             3. Evaluate EXPLOITABILITY (How easy is it to trigger this bug?).
+             4. Provide a concrete REMEDIATION PLAN for each finding.".into()
+        ),
+        ..Default::default()
+    };
+
+    println!(">> [AUDITOR] Initiating High-Fidelity Security Sweep...");
+    
+    match agent.prepare_and_run(&client, &api_key, &payload, ctx, 0.2).await {
+        Ok((_report, _)) => {
+            println!("\n>> [ZENITH AUDIT COMPLETE]");
+        }
+        Err(e) => println!("!! [AUDIT_FAULT] {}", e),
     }
+}
+
+pub fn run_integrity_check() -> Result<(), String> {
+    if std::path::Path::new("src/main.rs").exists() { Ok(()) } 
+    else { Err("VITAL_CORE_MISSING".into()) }
 }

@@ -1,1 +1,0 @@
-<div>SecOps Offline</div>

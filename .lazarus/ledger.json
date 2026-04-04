@@ -1,0 +1,177 @@
+[
+  {
+    "timestamp": "2026-03-27T18:59:36.935400832+00:00",
+    "path": "ui/src/lib/components/NetworkStatus.svelte",
+    "author": "Visor",
+    "hash": "be8b328a7810a3cb28d16ecc40e9bc24af10c0c0df6a4d32785c919008cb4d28",
+    "backup_path": ".lazarus/snapshots/20260327_185936_NetworkStatus.svelte"
+  },
+  {
+    "timestamp": "2026-03-27T19:04:38.103298235+00:00",
+    "path": "ui/src/lib/components/NetworkStatus.svelte",
+    "author": "Visor",
+    "hash": "be8b328a7810a3cb28d16ecc40e9bc24af10c0c0df6a4d32785c919008cb4d28",
+    "backup_path": ".lazarus/snapshots/20260327_190438_NetworkStatus.svelte"
+  },
+  {
+    "timestamp": "2026-03-27T19:07:45.235796553+00:00",
+    "path": "src/quantum_core.rs",
+    "author": "Visor",
+    "hash": "640b8f876324f97e723333801e464a05f7495a7e74e703dd3a7ce3a116f99111",
+    "backup_path": ".lazarus/snapshots/20260327_190745_quantum_core.rs"
+  },
+  {
+    "timestamp": "2026-03-27T19:08:36.414702018+00:00",
+    "path": "ui/src/routes/+page.svelte",
+    "author": "Surgical",
+    "hash": "59d2b36eb823a135f1fff23c26844bdf0556a1e0f5b74f4f3d82c7826e052f63",
+    "backup_path": ".lazarus/snapshots/20260327_190836_+page.svelte"
+  },
+  {
+    "timestamp": "2026-03-27T19:11:55.324547261+00:00",
+    "path": "ui/src/routes/+page.svelte",
+    "author": "Visor",
+    "hash": "4d7ca26f6e833c06575b27cc1545f99d21e6f30ceebb56982d797c3efa325aae",
+    "backup_path": ".lazarus/snapshots/20260327_191155_+page.svelte"
+  },
+  {
+    "timestamp": "2026-03-27T19:17:28.980634973+00:00",
+    "path": "src/quantum_core.rs",
+    "author": "SWARM_WRITE",
+    "hash": "640b8f876324f97e723333801e464a05f7495a7e74e703dd3a7ce3a116f99111",
+    "backup_path": ".lazarus/snapshots/20260327_191728_quantum_core.rs"
+  },
+  {
+    "timestamp": "2026-03-27T19:17:34.423045897+00:00",
+    "path": "src/quantum_core.rs",
+    "author": "Visor",
+    "hash": "640b8f876324f97e723333801e464a05f7495a7e74e703dd3a7ce3a116f99111",
+    "backup_path": ".lazarus/snapshots/20260327_191734_quantum_core.rs"
+  },
+  {
+    "timestamp": "2026-03-28T10:45:16.044891291+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "095eba73ad8de5f1edd073b8800326bbffa4ed1d4f02aacdccee131432f9f053",
+    "backup_path": ".lazarus/snapshots/20260328_104516_poison.rs"
+  },
+  {
+    "timestamp": "2026-03-28T12:10:44.706564365+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "095eba73ad8de5f1edd073b8800326bbffa4ed1d4f02aacdccee131432f9f053",
+    "backup_path": ".lazarus/snapshots/20260328_121044_poison.rs"
+  },
+  {
+    "timestamp": "2026-03-28T12:11:30.203247444+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "6917ce4fdc4207073685d75502acb6c0785b54d783850a4ea063ebc924388379",
+    "backup_path": ".lazarus/snapshots/20260328_121130_poison.rs"
+  },
+  {
+    "timestamp": "2026-03-28T12:11:38.970404906+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "095eba73ad8de5f1edd073b8800326bbffa4ed1d4f02aacdccee131432f9f053",
+    "backup_path": ".lazarus/snapshots/20260328_121138_poison.rs"
+  },
+  {
+    "timestamp": "2026-03-28T12:11:39.000152291+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "6917ce4fdc4207073685d75502acb6c0785b54d783850a4ea063ebc924388379",
+    "backup_path": ".lazarus/snapshots/20260328_121138_poison.rs"
+  },
+  {
+    "timestamp": "2026-03-28T12:12:05.266318600+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "6917ce4fdc4207073685d75502acb6c0785b54d783850a4ea063ebc924388379",
+    "backup_path": ".lazarus/snapshots/20260328_121205_poison.rs"
+  },
+  {
+    "timestamp": "2026-03-28T12:12:05.282392370+00:00",
+    "path": "src/poison.rs",
+    "author": "Visor",
+    "hash": "095eba73ad8de5f1edd073b8800326bbffa4ed1d4f02aacdccee131432f9f053",
+    "backup_path": ".lazarus/snapshots/20260328_121205_poison.rs"
+  },
+  {
+    "timestamp": "2026-04-03T21:41:13.376126944+00:00",
+    "path": "ui/src/lib/components/TerminalApp.svelte",
+    "author": "AUTO: Pre-AI Write",
+    "hash": "35b204f13511c7e78387629a4979f0806e9634487525b499e853c1dde6b04243",
+    "backup_path": ".lazarus/snapshots/1775252473376145.snap"
+  },
+  {
+    "timestamp": "2026-04-03T22:19:16.894210926+00:00",
+    "path": "src/command_executor.rs",
+    "author": "AUTO: Pre-AI Write",
+    "hash": "b902c52f7a18ff79f75a3470fbe8ebbe84316ecd7c8e6a36fa4442cf9da10931",
+    "backup_path": ".lazarus/snapshots/1775254756894227.snap"
+  },
+  {
+    "timestamp": "2026-04-03T22:19:16.905264234+00:00",
+    "path": "src/kernel/memory.rs",
+    "author": "AUTO: Pre-AI Write",
+    "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "backup_path": ".lazarus/snapshots/1775254756905282.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:18:22.884794389+00:00",
+    "path": "audits/system_audit.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "3c59bda215463f805c25197962968d0f0b3472b6baec2d5cf184d88e144ab706",
+    "backup_path": ".lazarus/snapshots/1775272702884803.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:18:48.285500083+00:00",
+    "path": "audits/system_audit.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "30b3ff3df1dab885f3aab4342816b5bb336683cbe986e6ac1ab24cd6a41a9c7c",
+    "backup_path": ".lazarus/snapshots/1775272728285513.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:19:19.554182854+00:00",
+    "path": "audits/system_audit.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "3fa1086273289198eccbec60d5ab3a90b54f7292ac52d310c2cede3371db6a09",
+    "backup_path": ".lazarus/snapshots/1775272759554191.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:19:38.671987394+00:00",
+    "path": "audits/system_audit.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "1fa0bdc26550b34918533e1c63b4b0c5df1030ad2f9d8e1e9886d1ee1babc9b3",
+    "backup_path": ".lazarus/snapshots/1775272778671994.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:19:58.733810087+00:00",
+    "path": "audits/system_audit.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "9da83480a4d7bafca13771e209f9a7eef0ffbaf0de82a8b302e690d900c1d818",
+    "backup_path": ".lazarus/snapshots/1775272798733816.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:22:25.374719019+00:00",
+    "path": "audits/system_audit.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "70412eaa36de4e277c5fb459f4644dc903bedddb1e2bd7e9be04b8e8388378e9",
+    "backup_path": ".lazarus/snapshots/1775272945374735.snap"
+  },
+  {
+    "timestamp": "2026-04-04T03:58:50.627602842+00:00",
+    "path": "audits/gemma4_manifesto.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "d73d296db16d8893ae4e9a696f5d2fd9d28de292d81e693a52a293be6385eff6",
+    "backup_path": ".lazarus/snapshots/1775275130627639.snap"
+  },
+  {
+    "timestamp": "2026-04-04T04:00:14.520241847+00:00",
+    "path": "audits/gemma4_manifesto.md",
+    "author": "AUTO: Pre-AI Overwrite",
+    "hash": "60c768d7341656a117eb43dda85dbd4684f317d4058c2ab7a5726cc9847b622a",
+    "backup_path": ".lazarus/snapshots/1775275214520250.snap"
+  }
+]

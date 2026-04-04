@@ -1,0 +1,28 @@
+<script>
+    export let latency = 23;
+    export let nodes = 47;
+    export let status = "STABLE";
+</script>
+
+<div class="bg-[#050505] border border-[#30363d] p-5 text-xs font-mono">
+    <div class="uppercase tracking-widest text-cyan-400 text-[10px] mb-4">NETWORK_STATUS</div>
+    
+    <div class="space-y-5">
+        <div class="flex justify-between">
+            <span class="text-gray-400">LATENCY</span>
+            <span class="text-cyan-400">{latency}ms</span>
+        </div>
+        <div class="flex justify-between">
+            <span class="text-gray-400">ACTIVE_NODES</span>
+            <span class="text-cyan-400">{nodes}</span>
+        </div>
+        <div class="flex justify-between">
+            <span class="text-gray-400">LINK_STATE</span>
+            <span class={status === 'STABLE' ? 'text-neon-green' : 'text-red-400'}>{status}</span>
+        </div>
+    </div>
+    
+    <div class="h-1.5 bg-[#1a1a1a] mt-6 rounded-full overflow-hidden">
+        <div class="h-full w-[87%] bg-cyan-400"></div>
+    </div>
+</div>

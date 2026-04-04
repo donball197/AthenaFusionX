@@ -1,14 +1,16 @@
 <script>
   import '../app.css';
-  import HeadsUpDisplay from '$lib/components/HeadsUpDisplay.svelte';
+  import { onMount } from 'svelte';
 
-  // Layout acts as the "Cockpit Frame". 
-  // Specific tools (Blade, Vitals, Editor) are delegated to the +page.svelte
-  // to maintain tighter state coupling with the file system.
+  onMount(() => {
+    console.log(">> [NEXUS] UI BOOT SEQUENCE INITIATED.");
+  });
 </script>
 
-<HeadsUpDisplay />
-
-<main class="relative z-10 w-full min-h-screen bg-black">
+<main class="relative w-full h-screen bg-black overflow-hidden">
     <slot />
 </main>
+
+<style>
+  :global(body) { margin: 0; background: black; color: #00ffcc; overflow: hidden; }
+</style>

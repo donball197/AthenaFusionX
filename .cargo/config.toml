@@ -1,6 +1,14 @@
 [build]
-jobs = 2
+target = "aarch64-unknown-linux-gnu"
 
 [target.aarch64-unknown-linux-gnu]
-linker = "gcc"
-rustflags = ["-C", "link-arg=-Wl,--as-needed"]
+rustflags = [
+    # Optimize explicitly for the MT8183 big cores (Cortex-A73)
+    "-C", "target-cpu=cortex-a73",
+    
+    # Strip dead code aggressively
+    "-C", "link-arg=-Wl,--gc-sections",
+    
+    # Enable specific hardware math features available on this chip
+    "-C", "target-feature=+neon,+crc"
+]

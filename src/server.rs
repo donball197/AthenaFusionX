@@ -1,207 +1,206 @@
 use axum::{
-    extract::{State, Query, ws::{Message, WebSocket, WebSocketUpgrade}},
+    extract::{Query, State, ws::{WebSocketUpgrade, WebSocket, Message}},
     http::{header, StatusCode, Uri},
     response::IntoResponse,
-    routing::{get, post},
-    Json, Router, body::Bytes,
+    routing::{delete, get, post},
+    Json, Router,
 };
 use rust_embed::RustEmbed;
-use std::sync::Arc;
-use tokio::sync::Mutex; 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::fs;
-use std::path::Path;
-use tokio::process::Command;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use std::process::Command as StdCommand;
-
-use crate::neural_agent::{MicroAgent, ContextPacket};
-use crate::memory::MemoryPalace;
-use crate::system_monitor::SystemMonitor;
-use crate::hive_mind::HiveMind;
-use crate::broker::KnowledgeBroker;
-use crate::hiram_core::Hiram;
+use walkdir::WalkDir;
+use crate::{task_manager, sandbox, nexus_error::NexusError};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
 struct Assets;
 
-fn atomic_to_f32(val: u32) -> f32 { f32::from_bits(val) }
-
 pub struct AppState {
     pub client: reqwest::Client,
-    pub brain_endpoint: String,
-    pub monitor: SystemMonitor,
-    pub agent: MicroAgent,
-    pub memory: Arc<Mutex<MemoryPalace>>,
+    pub monitor: crate::system_monitor::SystemMonitor,
+    pub agent: Arc<crate::neural_agent::MicroAgent>,
+    pub orchestrator: Arc<crate::orchestrator::Orchestrator>,
+    pub memory: Arc<tokio::sync::Mutex<crate::memory::MemoryPalace>>,
     pub api_key: String,
-    pub hive: Option<HiveMind>,
-    pub current_resonance: Arc<AtomicU32>,
-    pub hiram: Arc<Mutex<Hiram>>,
-    pub last_health_error: Arc<Mutex<Option<String>>>,
+    pub current_resonance: Arc<std::sync::atomic::AtomicU32>,
+    pub tx: tokio::sync::broadcast::Sender<String>,
+    pub scheduler_tx: tokio::sync::mpsc::Sender<crate::scheduler::NexusTask>,
+    pub arbiter: Arc<crate::arbiter_agent::ArbiterAgent>,
+    pub local_llm: Arc<crate::local_llm::LocalLLM>,
+    pub workspace_root: std::path::PathBuf,
 }
 
-#[derive(Deserialize, Serialize, Default)]
-pub struct PromptRequest { 
-    #[serde(default)] pub prompt: String, 
-    pub context: Option<String>,
-    pub terminal_context: Option<String>,
-    pub image: Option<String>,
-    pub use_vision: Option<bool>
-}
+impl IntoResponse for NexusError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, message): (StatusCode, String) = match &self {
+            NexusError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            NexusError::Patch(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            NexusError::KernelFault(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Kernel fault: {}", e)),
+            NexusError::NeuralLinkSevered(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
+            NexusError::SecurityViolation { message, cvss } => {
+                (StatusCode::FORBIDDEN, format!("Security violation (CVSS {:.1}): {}", cvss, message))
+            }
+            NexusError::Other(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+        };
 
-#[derive(Serialize)] pub struct NeuralResponse { pub response: String, pub status: String }
-#[derive(Serialize)] pub struct VitalsResponse { pub status: String, pub cpu_usage: f32, pub ram_usage: String, pub resonance: f32 }
-#[derive(Deserialize)] pub struct FileParams { pub path: String, pub recursive: Option<bool> }
-#[derive(Serialize, Deserialize)] pub struct FileContent { pub path: String, pub content: String }
-#[derive(Serialize)] pub struct DirEntry { pub name: String, pub is_dir: bool, pub path: String, pub children: Vec<DirEntry> }
-#[derive(Deserialize)] pub struct BuildReq { pub path: String, pub content: String }
+        let body = serde_json::json!({
+            "error": message,
+            "type": format!("{:?}", self),
+            "status": status.as_u16()
+        });
+
+        (status, Json(body)).into_response()
+    }
+}
 
 pub async fn start_server(state: Arc<AppState>) {
     let app = Router::new()
-        .route("/api/prompt", post(handle_prompt))
-        .route("/api/vitals", get(handle_vitals))
-        .route("/api/fs/list", get(handle_list_files))
-        .route("/api/fs/tree", get(handle_file_tree))
+        .route("/api/fs/list", get(handle_fs_list))
         .route("/api/fs/read", get(handle_read_file))
         .route("/api/fs/write", post(handle_write_file))
-        .route("/api/devops/build", post(handle_build))
-        .route("/ws", get(ws_shell_handler))
-        .route("/ws/ghost", get(ws_ghost_handler))
-        .route("/", get(index_handler))
+        .route("/api/fs/delete", delete(handle_delete_file))
+        .route("/api/task", post(handle_task)).route("/api/drone", post(handle_drone))
+        .route("/ws/nexus", get(ws_handler)) // <-- THE MISSING SUTURE
         .fallback(static_handler)
         .with_state(state)
         .layer(CorsLayer::permissive());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("\n>> [NEXUS] CONTROL ONLINE: http://localhost:3000\n");
-    axum::serve(listener, app).await.unwrap();
+    let addr = "0.0.0.0:3000";
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    println!("\x1b[36m>> [NEXUS SERVER] Neural Bridge Online → http://localhost:3000\x1b[0m");
+    axum::serve(listener, app.into_make_service()).await.unwrap();
 }
 
-// UPGRADED: The Build Endpoint now triggers the AutoHealer natively.
-async fn handle_build(State(state): State<Arc<AppState>>, Json(payload): Json<BuildReq>) -> Json<crate::polyglot::BuildResult> {
-    let mut build_res = crate::polyglot::detect_and_build(&payload.path);
-    
-    // If the build failed, trigger the backend AutoHealer
-    if !build_res.success && build_res.detected_stack == "RUST" {
-        // Use the active tab file sent from the UI, or default to main.rs
-        let active_file = if !payload.content.is_empty() { &payload.content } else { "src/main.rs" };
-        
-        if let Ok((healed, report)) = crate::auto_healer::AutoHealer::attempt_auto_repair(&state, active_file, &build_res.log).await {
-            build_res.log.push_str(&report);
-            if healed {
-                build_res.log.push_str("\n>> SYSTEM HEALED. REFRESHING UI...");
+// === WEBSOCKET MULTIPLEXER ===
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_socket(socket, state))
+}
+
+async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    let mut rx = state.tx.subscribe();
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
+
+    loop {
+        tokio::select! {
+            // Channel 1: The Swarm's Internal Monologue (Ghost Tokens)
+            Ok(msg) = rx.recv() => {
+                if socket.send(Message::Text(msg)).await.is_err() { break; }
+            }
+            // Channel 2: Hardware Vitals Pulse
+            _ = heartbeat.tick() => {
+                let vitals = state.monitor.get_vitals();
+                let payload = serde_json::json!({
+                    "type": "telemetry",
+                    "payload": vitals
+                });
+                if socket.send(Message::Text(payload.to_string())).await.is_err() { break; }
+            }
+            // Channel 3: Client Disconnect Detection
+            Some(msg) = socket.recv() => {
+                if msg.is_err() { break; }
             }
         }
     }
-    Json(build_res)
 }
 
-async fn handle_prompt(State(state): State<Arc<AppState>>, body: Bytes) -> Json<NeuralResponse> {
-    let payload: PromptRequest = serde_json::from_slice(&body).unwrap_or_else(|_| {
-        PromptRequest { prompt: String::from_utf8_lossy(&body).to_string(), ..Default::default() }
-    });
-
-    if payload.prompt.trim().to_lowercase() == "reindex" {
-        return match KnowledgeBroker::deep_index(state.clone()).await {
-            Ok(msg) => Json(NeuralResponse { response: msg, status: "indexed".into() }),
-            Err(e) => Json(NeuralResponse { response: format!("Fail: {}", e), status: "fail".into() }),
-        };
-    }
-
-    let vitals = state.monitor.get_vital_signs_string();
-    let resonance = atomic_to_f32(state.current_resonance.load(Ordering::Relaxed));
-    
-    let context_packet = ContextPacket { 
-        system_stats: Some(vitals), 
-        file_content: payload.context.clone(),
-        terminal_log: payload.terminal_context.clone(),
-        ..Default::default() 
-    };
-    
-    match state.agent.prepare_and_run(&state.client, &state.api_key, &payload.prompt, context_packet, resonance).await {
-        Ok((r, d)) => Json(NeuralResponse { response: r, status: format!("{}ms", d) }),
-        Err(e) => Json(NeuralResponse { response: format!("Backend Error: {}", e), status: "fail".into() })
-    }
+// === REST API ===
+async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
+    let result = task_manager::send_task(state.agent.clone(), &state.client, &state.api_key, &payload.directive).await;
+    Json(serde_json::json!({ "output": result }))
 }
 
-async fn handle_vitals(State(state): State<Arc<AppState>>) -> Json<VitalsResponse> {
-    let v = state.monitor.get_vitals();
-    Json(VitalsResponse { status: v.status, cpu_usage: v.cpu_load, ram_usage: format!("{:.2}GB", v.ram_used_gb), resonance: 0.98 })
-}
-
-fn build_tree(path: &Path) -> Vec<DirEntry> {
-    let mut entries = Vec::new();
-    if let Ok(rd) = fs::read_dir(path) {
-        for entry in rd.flatten() {
-            let p = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist" { continue; }
-            let is_dir = p.is_dir();
-            let children = if is_dir { build_tree(&p) } else { Vec::new() };
-            entries.push(DirEntry { name, is_dir, path: p.to_string_lossy().to_string(), children });
+async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
+    let path = p.path.as_deref().unwrap_or("src");
+    match sandbox::validate_path(path) {
+        Ok(safe_path) => {
+            let mut entries = Vec::new();
+            for entry in WalkDir::new(safe_path).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+                entries.push(FsEntry {
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    path: entry.path().to_string_lossy().to_string(),
+                    is_dir: entry.path().is_dir()
+                });
+            }
+            (StatusCode::OK, Json(entries)).into_response()
         }
+        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
     }
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
-    entries
 }
 
-async fn handle_file_tree() -> Json<Vec<DirEntry>> { Json(build_tree(Path::new("."))) }
-async fn handle_list_files(Query(params): Query<FileParams>) -> Json<Vec<DirEntry>> {
-    let target = if params.path.is_empty() { "." } else { &params.path };
-    Json(build_tree(Path::new(target)))
-}
-async fn handle_read_file(Query(params): Query<FileParams>) -> impl IntoResponse {
-    match fs::read_to_string(&params.path) {
-        Ok(c) => (StatusCode::OK, Json(FileContent { path: params.path, content: c })).into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+    match sandbox::validate_path(&p.path) {
+        Ok(safe) => match std::fs::read_to_string(safe) {
+            Ok(c) => (StatusCode::OK, Json(serde_json::json!({ "content": c }))).into_response(),
+            Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
+        },
+        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
     }
 }
+
 async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
-    if let Some(parent) = Path::new(&payload.path).parent() { let _ = fs::create_dir_all(parent); }
-    match fs::write(&payload.path, &payload.content) {
-        Ok(_) => {
-            if payload.path.ends_with(".rs") { let _ = StdCommand::new("rustfmt").arg(&payload.path).output(); }
-            StatusCode::OK.into_response()
+    match sandbox::validate_path(&payload.path) {
+        Ok(safe) => {
+            if let Some(p) = safe.parent() { let _ = std::fs::create_dir_all(p); }
+            match std::fs::write(safe, &payload.content) {
+                Ok(_) => StatusCode::OK.into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            }
         },
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
     }
 }
 
-async fn ws_shell_handler(ws: WebSocketUpgrade) -> impl IntoResponse { ws.on_upgrade(handle_shell_socket) }
-async fn handle_shell_socket(mut socket: WebSocket) {
-    while let Some(Ok(msg)) = socket.recv().await {
-        if let Message::Text(cmd) = msg {
-            let _ = socket.send(Message::Text(format!("$ {}\n", cmd))).await;
-            let output = Command::new("bash").arg("-c").arg(&cmd).output().await;
-            match output {
-                Ok(out) => {
-                    let combined = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-                    let _ = socket.send(Message::Text(combined)).await;
-                },
-                Err(e) => { let _ = socket.send(Message::Text(format!("Execution Fail: {}\n", e))).await; }
-            }
+async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+    match sandbox::validate_path(&p.path) {
+        Ok(safe) => match std::fs::remove_file(safe) {
+            Ok(_) => StatusCode::OK.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
+    }
+}
+
+async fn static_handler(uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/').to_string();
+    let final_path = if path.is_empty() { "index.html".to_string() } else { path };
+    match Assets::get(&final_path) {
+        Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(),
+        None => if !final_path.contains('.') {
+            ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data).into_response()
+        } else {
+            StatusCode::NOT_FOUND.into_response()
         }
     }
 }
 
-async fn ws_ghost_handler(ws: WebSocketUpgrade) -> impl IntoResponse { ws.on_upgrade(handle_ghost_socket) }
-async fn handle_ghost_socket(mut socket: WebSocket) {
-    while let Some(Ok(msg)) = socket.recv().await {
-        if let Message::Text(t) = msg { let _ = socket.send(Message::Text(format!("Echo: {}", t))).await; }
-    }
-}
+#[derive(Deserialize)] pub struct TaskRequest { pub directive: String }
+#[derive(Deserialize)] pub struct FileParams { pub path: String }
+#[derive(Deserialize)] pub struct ListParams { pub path: Option<String> }
+#[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }
+#[derive(Serialize)] pub struct FsEntry { pub name: String, pub path: String, pub is_dir: bool }
 
-async fn index_handler() -> impl IntoResponse { static_handler(Uri::from_static("/index.html")).await }
-async fn static_handler(uri: Uri) -> impl IntoResponse {
-    let mut path = uri.path().trim_start_matches('/').to_string();
-    if path.is_empty() { path = "index.html".to_string(); }
-    match Assets::get(&path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(&path).first_or_octet_stream();
-            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-        },
-        None => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
-    }
+// === BACKGROUND DRONE API ===
+#[derive(Deserialize)] pub struct DroneRequest { pub directive: String }
+
+async fn handle_drone(State(state): State<Arc<AppState>>, Json(payload): Json<DroneRequest>) -> impl IntoResponse {
+    let task_id = format!("DRONE-{}", chrono::Utc::now().timestamp());
+    
+    let task = crate::scheduler::NexusTask {
+        id: task_id.clone(),
+        domain: crate::scheduler::Domain::Code,
+        priority: crate::scheduler::TaskPriority::Normal,
+        payload: payload.directive.clone(),
+        context: crate::neural_agent::ContextPacket::default(),
+        response_tx: None,
+    };
+
+    // Dispatch to the background worker
+    let _ = state.scheduler_tx.send(task).await;
+    
+    // Alert the UI
+    let msg = format!("\x1b[38;2;255;0;255m>> [QUEUED] Drone Dispatched: {}\x1b[0m", payload.directive);
+    let _ = state.tx.send(serde_json::json!({ "type": "terminal", "payload": msg }).to_string());
+
+    StatusCode::ACCEPTED.into_response()
 }

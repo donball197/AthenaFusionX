@@ -1,0 +1,23 @@
+{
+  "short_name": "NEXUS",
+  "name": "NEXUS // VISOR v1.1.0",
+  "description": "Sovereign AI Infrastructure Architect Suite",
+  "icons": [
+    {
+      "src": "favicon.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/png"
+    },
+    {
+        "src": "favicon.png",
+        "sizes": "512x512",
+        "type": "image/png",
+        "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#000000",
+  "orientation": "any"
+}

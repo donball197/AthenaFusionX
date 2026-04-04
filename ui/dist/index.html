@@ -8,29 +8,33 @@
         <style>
             body { background: #050505; color: #00ff41; font-family: monospace; overflow: hidden; }
         </style>
-		<link href="/_app/immutable/entry/start.Dce6YkUk.js" rel="modulepreload">
-		<link href="/_app/immutable/chunks/CqBaMpxd.js" rel="modulepreload">
-		<link href="/_app/immutable/entry/app.rDI7jA8C.js" rel="modulepreload">
-		<link href="/_app/immutable/chunks/C1FmrZbK.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/start.DZcUwvYa.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/DdRIxQjE.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/app.D3KQmHMx.js" rel="modulepreload">
 		
-		<link href="/_app/immutable/assets/vendor.9CEnUXvW.css" rel="stylesheet">
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">
 			<script>
 				{
-					__sveltekit_aqaugh = {
+					__sveltekit_rv4gja = {
 						base: ""
 					};
 
 					const element = document.currentScript.parentElement;
 
 					Promise.all([
-						import("/_app/immutable/entry/start.Dce6YkUk.js"),
-						import("/_app/immutable/entry/app.rDI7jA8C.js")
+						import("/_app/immutable/entry/start.DZcUwvYa.js"),
+						import("/_app/immutable/entry/app.D3KQmHMx.js")
 					]).then(([kit, app]) => {
 						kit.start(app, element);
 					});
+
+					if ('serviceWorker' in navigator) {
+						addEventListener('load', function () {
+							navigator.serviceWorker.register('/service-worker.js');
+						});
+					}
 				}
 			</script>
 		</div>
