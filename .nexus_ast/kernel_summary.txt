@@ -1,23 +1,32 @@
 
 >> [AUDIT REPORT]:
-```
-CVSS v3.1 Scores & Severities:
+CVSS v3.1: 6.5 (MEDIUM)
+Severity: MEDIUM
+Remediation:
+*   The `SafeBuffer::write_safe` function implements a bounds check to prevent buffer overflows. Ensure this check is consistently applied to all write operations to the buffer.
+*   Consider using a more robust memory management strategy to avoid manual buffer size management.
 
-KernelError::SecurityViolation: CVSS score determined by 'cvss' field. Severity based on CVSS value.
-KernelError::VmarMapFailed: CVSS: 7.5, Severity: HIGH
-KernelError::VmoCloneFailed: CVSS: 7.5, Severity: HIGH
-KernelError::AlignmentAnomaly: CVSS: 5.3, Severity: MEDIUM
-KernelError::InvalidHandle: CVSS: 4.3, Severity: MEDIUM
+CVSS v3.1: 7.5 (HIGH)
+Severity: HIGH
+Remediation:
+*   The `KernelError` enum includes a `SecurityViolation` variant with a CVSS score. Ensure that all security-related errors are properly categorized and assigned appropriate CVSS scores.
+*   Implement comprehensive error handling and logging to capture and respond to kernel errors effectively.
 
-RealignmentEngine::check_alignment_fast:
-    - CVSS: 4.6, Severity: MEDIUM
-    - Remediation: While the function itself is relatively benign, the potential for information leakage due to misaligned access exists.  Ensure all data structures and access patterns are carefully reviewed to prevent unintended exposure of sensitive data.  Consider adding runtime checks for alignment before accessing memory, especially if the address originates from user space or an untrusted source.
+CVSS v3.1: 5.3 (MEDIUM)
+Severity: MEDIUM
+Remediation:
+*   The `RealignmentEngine::check_alignment_fast` function verifies 64-byte boundaries. Ensure that this check is performed before any memory access that requires alignment.
+*   The `debug_assert_eq!` macro provides a sanity check for the alignment mask. Consider adding more robust validation to ensure the mask is always valid.
 
-Vmo::clone:
-    - CVSS: 7.5, Severity: HIGH (due to potential for handle exhaustion or resource starvation if cloning fails repeatedly)
-    - Remediation: Implement robust error handling and resource limits to prevent denial-of-service scenarios.  Consider adding rate limiting to the cloning operation.
+CVSS v3.1: 7.5 (HIGH)
+Severity: HIGH
+Remediation:
+*   The `Vmo::clone` function checks for an invalid parent handle (0). Implement more comprehensive validation of input parameters to prevent potential vulnerabilities.
+*   Handle potential errors during VMO cloning and mapping gracefully to prevent application crashes or unexpected behavior.
 
-Vmar::map:
-    - CVSS: 7.5, Severity: HIGH (due to potential for memory corruption if mapping fails or returns an invalid address)
-    - Remediation: Thoroughly validate the returned address from `nexus_vmar_map` before use. Implement checks to ensure the mapped region does not overlap with existing mappings.  Consider using a memory protection mechanism to prevent unauthorized access to the mapped region.
-```
+CVSS v3.1: 7.5 (HIGH)
+Severity: HIGH
+Remediation:
+*   The `Vmar::map` function uses unsafe code to map a VMO into a VMAR handle. Carefully review the underlying FFI implementation to ensure it is secure and reliable.
+*   Implement robust error handling to catch and respond to potential mapping failures.
+*   Consider using a safer memory mapping API if available.

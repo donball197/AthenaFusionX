@@ -1,9 +1,9 @@
 <script>
-    export let open = false;
-    export let onFileSelect;
-
-    let files = [];
-    let currentDir = ".";
+    import { fileTreeTrigger } from '$lib/store';
+    
+    let { open = false, onFileSelect } = $props();
+    let files = $state([]);
+    let currentDir = $state(".");
 
     async function fetchFiles(path = ".") {
         try {
@@ -13,38 +13,36 @@
                 currentDir = path;
             }
         } catch (e) {
-            console.error("Filesystem error:", e);
+            console.error("FS_ERROR:", e);
         }
     }
 
-    $: if (open && files.length === 0) fetchFiles();
+    $effect(() => {
+        // Automatically refreshes when the UI opens or AI writes a file
+        if (open || $fileTreeTrigger) {
+            fetchFiles(currentDir);
+        }
+    });
 
-    function handleBack() {
-        fetchFiles(".");
-    }
+    function handleBack() { fetchFiles("."); }
 </script>
 
-<aside class="absolute left-0 top-0 bottom-0 bg-[#0d1117] border-r border-green-900/40 z-[110] transition-all duration-300 shadow-2xl {open ? 'w-72' : 'w-0 overflow-hidden'}">
-    <div class="w-72 p-5 flex flex-col h-full">
-        <div class="flex justify-between items-center border-b border-green-900/30 pb-3 mb-4">
-            <span class="text-green-600 text-xs uppercase tracking-widest font-bold">FILESYSTEM</span>
-            <button on:click={handleBack} class="text-[9px] text-green-500 hover:text-white">ROOT</button>
-        </div>
+<aside class="h-full bg-[#0d1117] flex flex-col border-r border-cyan-900/10 select-none">
+    <div class="p-3 flex flex-col h-full">
+        <header class="flex justify-between items-center border-b border-cyan-900/30 pb-2 mb-4">
+            <span class="text-cyan-600 text-[10px] font-black uppercase tracking-widest">DNA_FS</span>
+            <button onclick={handleBack} class="text-[9px] text-cyan-700 hover:text-white transition-colors">ROOT</button>
+        </header>
 
-        <div class="flex-1 overflow-y-auto custom-scrollbar space-y-0.5">
+        <div class="flex-1 overflow-y-auto space-y-0.5 custom-scrollbar">
             {#each files as file}
                 <button
-                    on:click={() => file.is_dir ? fetchFiles(file.path) : onFileSelect(file.path)}
-                    class="w-full text-left px-3 py-2.5 rounded hover:bg-green-900/20 flex items-center gap-3 text-sm transition-colors group">
-                    <span class="text-lg opacity-70 group-hover:opacity-100">{file.is_dir ? '📁' : '📄'}</span>
-                    <span class={file.is_dir ? 'text-green-500' : 'text-gray-300'}>{file.name}</span>
+                    onclick={() => file.is_dir ? fetchFiles(file.path) : onFileSelect(file.path)}
+                    class="w-full text-left px-2 py-1.5 rounded hover:bg-cyan-900/20 flex items-center gap-2 text-[11px] transition-all group">
+                    <span class="opacity-50">{file.is_dir ? '📁' : '📄'}</span>
+                    <span class={file.is_dir ? 'text-cyan-500' : 'text-gray-400 group-hover:text-cyan-200'}>{file.name}</span>
                 </button>
             {/each}
         </div>
     </div>
 </aside>
-
-<style>
-    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #0a3d2f; }
-</style>

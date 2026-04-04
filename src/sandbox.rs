@@ -1,40 +1,44 @@
-use std::path::PathBuf;
-use std::fs;
+use std::path::{Path, PathBuf};
+use anyhow::{Result, anyhow};
+use std::env;
 
-pub fn validate_path(user_input: &str) -> Result<PathBuf, String> {
-    let base = std::env::current_dir()
-        .map_err(|_| "Failed to get current dir")?;
+/// Validates that a requested path strictly resides within the Nexus workspace.
+/// Neutralizes directory traversal attacks (e.g., "../../../etc/shadow").
+pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
+    let workspace_root = env::current_dir()?;
+    let target_path = Path::new(requested_path);
     
-    // Join and Canonicalize (Resolves all ../ and symlinks)
-    let full_path = base.join(user_input);
-    
-    // If the file exists, we can canonicalize it directly. 
-    // If not, we validate the parent directory safely.
-    let absolute = if full_path.exists() {
-        full_path.canonicalize()
+    // Resolve to an absolute path first
+    let absolute_target = if target_path.is_absolute() {
+        target_path.to_path_buf()
     } else {
-        let parent = full_path.parent().ok_or("Invalid path structure")?;
-        if !parent.exists() { let _ = fs::create_dir_all(parent); }
-        
-        // SHIELD: Safe extraction to prevent unwrap() panic on malformed paths
-        let file_name = full_path.file_name()
-            .ok_or_else(|| "Invalid path: Missing target filename".to_string())?;
-            
-        parent.canonicalize().map(|p| p.join(file_name))
-    }.map_err(|e| format!("Path error: {}", e))?;
+        workspace_root.join(target_path)
+    };
 
-    // ENFORCE THE JAIL: Path MUST start with project root
-    if !absolute.starts_with(&base) {
-        return Err("SECURITY ALERT: Path Traversal Blocked".to_string());
-    }
-
-    // BLOCK SENSITIVE FILES
-    if let Some(name) = absolute.file_name() {
-        let n = name.to_string_lossy().to_lowercase();
-        if n == ".env" || n == "cargo.toml" || n.contains("audit") {
-            return Err("RESERVED FILE: Access Denied".to_string());
+    // To prevent symlink escapes and normalize ".." traversals, we must canonicalize.
+    // Canonicalization requires the path to exist. If creating a new file, we check the parent.
+    let mut check_path = absolute_target.clone();
+    if !check_path.exists() {
+        if let Some(parent) = check_path.parent() {
+            check_path = parent.to_path_buf();
+        } else {
+            return Err(anyhow!("Invalid path structure requested."));
         }
     }
 
-    Ok(absolute)
+    // Resolve the actual physical paths on the ARM64 disk
+    let canonical_target = check_path.canonicalize()
+        .map_err(|e| anyhow!("Sandbox resolution failed: {}", e))?;
+    let canonical_root = workspace_root.canonicalize()
+        .map_err(|e| anyhow!("Workspace root resolution failed: {}", e))?;
+
+    // The core security check: Does the target physically reside inside the root?
+    if canonical_target.starts_with(&canonical_root) {
+        Ok(absolute_target)
+    } else {
+        Err(anyhow!(
+            "[SECURITY VIOLATION] Agent attempted directory traversal outside workspace bounds: {}", 
+            requested_path
+        ))
+    }
 }

@@ -31,48 +31,34 @@ pub struct AppState {
     pub workspace_root: std::path::PathBuf,
 }
 
-impl IntoResponse for NexusError {
-    fn into_response(self) -> axum::response::Response {
-        let (status, message): (StatusCode, String) = match &self {
-            NexusError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            NexusError::Patch(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            NexusError::KernelFault(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Kernel fault: {}", e)),
-            NexusError::NeuralLinkSevered(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
-            NexusError::SecurityViolation { message, cvss } => {
-                (StatusCode::FORBIDDEN, format!("Security violation (CVSS {:.1}): {}", cvss, message))
-            }
-            NexusError::Other(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-        };
-
-        let body = serde_json::json!({
-            "error": message,
-            "type": format!("{:?}", self),
-            "status": status.as_u16()
-        });
-
-        (status, Json(body)).into_response()
-    }
-}
-
 pub async fn start_server(state: Arc<AppState>) {
     let app = Router::new()
         .route("/api/fs/list", get(handle_fs_list))
         .route("/api/fs/read", get(handle_read_file))
         .route("/api/fs/write", post(handle_write_file))
-        .route("/api/fs/delete", delete(handle_delete_file))
-        .route("/api/task", post(handle_task)).route("/api/drone", post(handle_drone))
-        .route("/ws/nexus", get(ws_handler)) // <-- THE MISSING SUTURE
+        .route("/api/memories", get(handle_get_memories)) // NEW
+        .route("/api/task", post(handle_task))
+        .route("/ws/nexus", get(ws_handler))
         .fallback(static_handler)
         .with_state(state)
         .layer(CorsLayer::permissive());
 
     let addr = "0.0.0.0:3000";
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    println!("\x1b[36m>> [NEXUS SERVER] Neural Bridge Online → http://localhost:3000\x1b[0m");
+    println!("\x1b[38;2;0;255;255m>> [NEXUS SERVER] UNIFIED UPLINK: http://localhost:3000\x1b[0m");
     axum::serve(listener, app.into_make_service()).await.unwrap();
 }
 
-// === WEBSOCKET MULTIPLEXER ===
+async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.fetch_all().await {
+        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+// ... [Keep other handle functions from previous consolidation] ...
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
@@ -80,31 +66,19 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.tx.subscribe();
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
-
     loop {
         tokio::select! {
-            // Channel 1: The Swarm's Internal Monologue (Ghost Tokens)
-            Ok(msg) = rx.recv() => {
-                if socket.send(Message::Text(msg)).await.is_err() { break; }
-            }
-            // Channel 2: Hardware Vitals Pulse
+            Ok(msg) = rx.recv() => { if socket.send(Message::Text(msg)).await.is_err() { break; } }
             _ = heartbeat.tick() => {
-                let vitals = state.monitor.get_vitals();
-                let payload = serde_json::json!({
-                    "type": "telemetry",
-                    "payload": vitals
-                });
+                let v = state.monitor.get_vitals();
+                let payload = serde_json::json!({ "type": "telemetry", "payload": v });
                 if socket.send(Message::Text(payload.to_string())).await.is_err() { break; }
             }
-            // Channel 3: Client Disconnect Detection
-            Some(msg) = socket.recv() => {
-                if msg.is_err() { break; }
-            }
+            Some(res) = socket.recv() => { if res.is_err() { break; } }
         }
     }
 }
 
-// === REST API ===
 async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
     let result = task_manager::send_task(state.agent.clone(), &state.client, &state.api_key, &payload.directive).await;
     Json(serde_json::json!({ "output": result }))
@@ -112,53 +86,36 @@ async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<Tas
 
 async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
     let path = p.path.as_deref().unwrap_or("src");
-    match sandbox::validate_path(path) {
-        Ok(safe_path) => {
-            let mut entries = Vec::new();
-            for entry in WalkDir::new(safe_path).max_depth(3).into_iter().filter_map(|e| e.ok()) {
-                entries.push(FsEntry {
-                    name: entry.file_name().to_string_lossy().to_string(),
-                    path: entry.path().to_string_lossy().to_string(),
-                    is_dir: entry.path().is_dir()
-                });
-            }
-            (StatusCode::OK, Json(entries)).into_response()
+    if let Ok(safe) = sandbox::validate_path(path) {
+        let mut entries = Vec::new();
+        for entry in WalkDir::new(safe).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+            entries.push(FsEntry { 
+                name: entry.file_name().to_string_lossy().to_string(), 
+                path: entry.path().to_string_lossy().to_string(), 
+                is_dir: entry.path().is_dir() 
+            });
         }
-        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
+        (StatusCode::OK, Json(entries)).into_response()
+    } else {
+        (StatusCode::FORBIDDEN, "Access Denied").into_response()
     }
 }
 
 async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
-    match sandbox::validate_path(&p.path) {
-        Ok(safe) => match std::fs::read_to_string(safe) {
-            Ok(c) => (StatusCode::OK, Json(serde_json::json!({ "content": c }))).into_response(),
-            Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
-        },
-        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
+    if let Ok(safe) = sandbox::validate_path(&p.path) {
+        if let Ok(c) = std::fs::read_to_string(safe) {
+            return (StatusCode::OK, Json(serde_json::json!({ "content": c }))).into_response();
+        }
     }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
-    match sandbox::validate_path(&payload.path) {
-        Ok(safe) => {
-            if let Some(p) = safe.parent() { let _ = std::fs::create_dir_all(p); }
-            match std::fs::write(safe, &payload.content) {
-                Ok(_) => StatusCode::OK.into_response(),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-            }
-        },
-        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
+    if let Ok(safe) = sandbox::validate_path(&payload.path) {
+        if let Some(p) = safe.parent() { let _ = std::fs::create_dir_all(p); }
+        if std::fs::write(safe, &payload.content).is_ok() { return StatusCode::OK.into_response(); }
     }
-}
-
-async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
-    match sandbox::validate_path(&p.path) {
-        Ok(safe) => match std::fs::remove_file(safe) {
-            Ok(_) => StatusCode::OK.into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        },
-        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
-    }
+    StatusCode::FORBIDDEN.into_response()
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
@@ -166,11 +123,8 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     let final_path = if path.is_empty() { "index.html".to_string() } else { path };
     match Assets::get(&final_path) {
         Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(),
-        None => if !final_path.contains('.') {
-            ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data).into_response()
-        } else {
-            StatusCode::NOT_FOUND.into_response()
-        }
+        None => if !final_path.contains('.') { ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data).into_response() } 
+                else { StatusCode::NOT_FOUND.into_response() }
     }
 }
 
@@ -179,28 +133,3 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 #[derive(Deserialize)] pub struct ListParams { pub path: Option<String> }
 #[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }
 #[derive(Serialize)] pub struct FsEntry { pub name: String, pub path: String, pub is_dir: bool }
-
-// === BACKGROUND DRONE API ===
-#[derive(Deserialize)] pub struct DroneRequest { pub directive: String }
-
-async fn handle_drone(State(state): State<Arc<AppState>>, Json(payload): Json<DroneRequest>) -> impl IntoResponse {
-    let task_id = format!("DRONE-{}", chrono::Utc::now().timestamp());
-    
-    let task = crate::scheduler::NexusTask {
-        id: task_id.clone(),
-        domain: crate::scheduler::Domain::Code,
-        priority: crate::scheduler::TaskPriority::Normal,
-        payload: payload.directive.clone(),
-        context: crate::neural_agent::ContextPacket::default(),
-        response_tx: None,
-    };
-
-    // Dispatch to the background worker
-    let _ = state.scheduler_tx.send(task).await;
-    
-    // Alert the UI
-    let msg = format!("\x1b[38;2;255;0;255m>> [QUEUED] Drone Dispatched: {}\x1b[0m", payload.directive);
-    let _ = state.tx.send(serde_json::json!({ "type": "terminal", "payload": msg }).to_string());
-
-    StatusCode::ACCEPTED.into_response()
-}

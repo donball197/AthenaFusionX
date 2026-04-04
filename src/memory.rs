@@ -1,5 +1,4 @@
 use serde::{Serialize, Deserialize};
-use std::path::PathBuf;
 use tokio_rusqlite::Connection;
 use std::sync::Arc;
 use anyhow::Result;

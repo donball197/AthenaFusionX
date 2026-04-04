@@ -1,73 +1,72 @@
 === UI DOMAIN SUMMARY ===
 
->> [AUDIT FAULT]: Invalid response from Conductor. Trace: Object {"error": Object {"code": Number(429), "details": Array [Object {"@type": String("type.googleapis.com/google.rpc.Help"), "links": Array [Object {"description": String("Learn more about Gemini API quotas"), "url": String("https://ai.google.dev/gemini-api/docs/rate-limits")}]}, Object {"@type": String("type.googleapis.com/google.rpc.QuotaFailure"), "violations": Array [Object {"quotaDimensions": Object {"location": String("global"), "model": String("gemma-3-27b")}, "quotaId": String("GenerateContentInputTokensPerModelPerMinute-FreeTier"), "quotaMetric": String("generativelanguage.googleapis.com/generate_content_free_tier_input_token_count"), "quotaValue": String("15000")}]}, Object {"@type": String("type.googleapis.com/google.rpc.RetryInfo"), "retryDelay": String("24s")}], "message": String("You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 15000, model: gemma-3-27b\nPlease retry in 24.585903299s."), "status": String("RESOURCE_EXHAUSTED")}}
+>> [AUDIT FAULT]: Invalid response from Conductor. Trace: Object {"error": Object {"code": Number(429), "details": Array [Object {"@type": String("type.googleapis.com/google.rpc.Help"), "links": Array [Object {"description": String("Learn more about Gemini API quotas"), "url": String("https://ai.google.dev/gemini-api/docs/rate-limits")}]}, Object {"@type": String("type.googleapis.com/google.rpc.QuotaFailure"), "violations": Array [Object {"quotaDimensions": Object {"location": String("global"), "model": String("gemma-3-27b")}, "quotaId": String("GenerateContentInputTokensPerModelPerMinute-FreeTier"), "quotaMetric": String("generativelanguage.googleapis.com/generate_content_free_tier_input_token_count"), "quotaValue": String("15000")}]}, Object {"@type": String("type.googleapis.com/google.rpc.RetryInfo"), "retryDelay": String("48s")}], "message": String("You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 15000, model: gemma-3-27b\nPlease retry in 48.609341971s."), "status": String("RESOURCE_EXHAUSTED")}}
 
 === KERNEL DOMAIN SUMMARY ===
 
 >> [AUDIT REPORT]:
-```
-CVSS v3.1 Scores & Severities:
+CVSS v3.1: 6.5 (MEDIUM)
+Severity: MEDIUM
+Remediation:
+*   The `SafeBuffer::write_safe` function implements a bounds check to prevent buffer overflows. Ensure this check is consistently applied to all write operations to the buffer.
+*   Consider using a more robust memory management strategy to avoid manual buffer size management.
 
-KernelError::SecurityViolation: CVSS score determined by 'cvss' field. Severity based on CVSS value.
-KernelError::VmarMapFailed: CVSS: 7.5, Severity: HIGH
-KernelError::VmoCloneFailed: CVSS: 7.5, Severity: HIGH
-KernelError::AlignmentAnomaly: CVSS: 5.3, Severity: MEDIUM
-KernelError::InvalidHandle: CVSS: 4.3, Severity: MEDIUM
+CVSS v3.1: 7.5 (HIGH)
+Severity: HIGH
+Remediation:
+*   The `KernelError` enum includes a `SecurityViolation` variant with a CVSS score. Ensure that all security-related errors are properly categorized and assigned appropriate CVSS scores.
+*   Implement comprehensive error handling and logging to capture and respond to kernel errors effectively.
 
-RealignmentEngine::check_alignment_fast:
-    - CVSS: 4.6, Severity: MEDIUM
-    - Remediation: While the function itself is relatively benign, the potential for information leakage due to misaligned access exists.  Ensure all data structures and access patterns are carefully reviewed to prevent unintended exposure of sensitive data.  Consider adding runtime checks for alignment before accessing memory, especially if the address originates from user space or an untrusted source.
+CVSS v3.1: 5.3 (MEDIUM)
+Severity: MEDIUM
+Remediation:
+*   The `RealignmentEngine::check_alignment_fast` function verifies 64-byte boundaries. Ensure that this check is performed before any memory access that requires alignment.
+*   The `debug_assert_eq!` macro provides a sanity check for the alignment mask. Consider adding more robust validation to ensure the mask is always valid.
 
-Vmo::clone:
-    - CVSS: 7.5, Severity: HIGH (due to potential for handle exhaustion or resource starvation if cloning fails repeatedly)
-    - Remediation: Implement robust error handling and resource limits to prevent denial-of-service scenarios.  Consider adding rate limiting to the cloning operation.
+CVSS v3.1: 7.5 (HIGH)
+Severity: HIGH
+Remediation:
+*   The `Vmo::clone` function checks for an invalid parent handle (0). Implement more comprehensive validation of input parameters to prevent potential vulnerabilities.
+*   Handle potential errors during VMO cloning and mapping gracefully to prevent application crashes or unexpected behavior.
 
-Vmar::map:
-    - CVSS: 7.5, Severity: HIGH (due to potential for memory corruption if mapping fails or returns an invalid address)
-    - Remediation: Thoroughly validate the returned address from `nexus_vmar_map` before use. Implement checks to ensure the mapped region does not overlap with existing mappings.  Consider using a memory protection mechanism to prevent unauthorized access to the mapped region.
-```
+CVSS v3.1: 7.5 (HIGH)
+Severity: HIGH
+Remediation:
+*   The `Vmar::map` function uses unsafe code to map a VMO into a VMAR handle. Carefully review the underlying FFI implementation to ensure it is secure and reliable.
+*   Implement robust error handling to catch and respond to potential mapping failures.
+*   Consider using a safer memory mapping API if available.
 
 === CORTEX DOMAIN SUMMARY ===
 
 >> [AUDIT REPORT]:
-```json
-[
-  {
-    "cvss_score": 3.7,
-    "severity": "LOW",
-    "remediation": "Input validation on `user_text` to prevent potential injection attacks. Sanitize the input before constructing the URL to avoid command injection or other exploits. Consider using parameterized queries or prepared statements when constructing the URL."
-  },
-  {
-    "cvss_score": 6.8,
-    "severity": "MEDIUM",
-    "remediation": "The code uses `serde_json::from_str::<Value>(&line[6..])` without strict schema validation. This can lead to denial of service if the JSON payload is malformed or unexpectedly large. Implement schema validation to ensure the JSON conforms to the expected structure. Limit the size of the JSON payload to prevent excessive memory consumption."
-  },
-  {
-    "cvss_score": 5.3,
-    "severity": "MEDIUM",
-    "remediation": "The code uses `String::from_utf8_lossy(&bytes)` which can lead to unexpected behavior if the bytes are not valid UTF-8. Consider using `String::from_utf8(bytes)` and handling the `Result` appropriately to ensure that only valid UTF-8 data is processed.  If lossy conversion is necessary, document the potential data corruption."
-  },
-  {
-    "cvss_score": 4.3,
-    "severity": "LOW",
-    "remediation": "The `spatial_map` variable is populated by the output of a shell command (`find`). This introduces a potential command injection vulnerability if the file paths contain malicious characters.  Sanitize the output of the `find` command before using it in the prompt. Consider using a safer alternative to `find` if possible."
-  },
-  {
-    "cvss_score": 7.5,
-    "severity": "HIGH",
-    "remediation": "The code constructs a prompt string that includes user-provided input (`directive`, `observation_log`). This can lead to prompt injection attacks, where a malicious user crafts input that manipulates the behavior of the LLM. Implement robust input validation and sanitization to prevent prompt injection. Consider using a prompt template with clear boundaries between user input and system instructions."
-  },
-  {
-    "cvss_score": 5.9,
-    "severity": "MEDIUM",
-    "remediation": "The code uses `serde_json::from_str` to parse JSON data from the response stream.  If the JSON is malformed, this can lead to a panic or other unexpected behavior. Implement error handling to gracefully handle invalid JSON data. Consider using a more robust JSON parsing library with better error reporting."
-  },
-  {
-    "cvss_score": 6.1,
-    "severity": "MEDIUM",
-    "remediation": "The `Executor::execute` function takes a vector of `AgentAction` objects and executes them.  If the actions are not properly validated, this can lead to arbitrary code execution or other security vulnerabilities. Implement strict validation of all `AgentAction` objects before executing them. Use a capability-based security model to limit the actions that the agent can perform."
-  }
-]
+```
+CVSS v3.1 Score: 6.8 (MEDIUM)
+Severity: MEDIUM
+Remediation Steps:
+1. **Input Validation:** Implement strict input validation for `user_text` and `directive` to prevent prompt injection attacks. Sanitize inputs to remove potentially malicious characters or commands.
+2. **API Key Management:** Securely store and manage the `api_key`. Avoid hardcoding it directly in the code. Use environment variables or a dedicated secrets management system.
+3. **Model Selection:** Restrict the allowed `target_model` values to a predefined whitelist to prevent unauthorized model usage.
+4. **Output Encoding:** Properly encode the output from the LLM (`full_text`) before displaying it to the user or using it in other parts of the application to prevent cross-site scripting (XSS) vulnerabilities.
+5. **Rate Limiting:** Implement rate limiting for API calls to prevent abuse and denial-of-service attacks.
+6. **Error Handling:** Improve error handling to provide more informative error messages without revealing sensitive information.
+7. **File Access Control:** Implement strict access control for file operations performed by the `Executor` and `AgentComponent`. Ensure that the agent only has access to the necessary files and directories.
+8. **Command Injection Prevention:** Sanitize the input to the `Command::new("sh")` call to prevent command injection vulnerabilities. Avoid using user-supplied input directly in shell commands.
+9. **Dependency Management:** Regularly update dependencies to address known vulnerabilities.
+10. **Least Privilege:** Run the application with the least privileges necessary to perform its functions.
+
+CVSS v3.1 Score: 5.3 (MEDIUM)
+Severity: MEDIUM
+Remediation Steps:
+1. **Broadcast Channel Security:** Evaluate the security implications of using a broadcast channel (`tokio::sync::broadcast`) for transmitting sensitive data like file paths. Consider using a more secure communication mechanism if necessary.
+2. **Data Serialization:** Review the serialization and deserialization of data using `serde` and `serde_json`. Ensure that the data is properly validated and sanitized to prevent deserialization attacks.
+3. **Context Handling:** Carefully review the `ContextPacket` structure and ensure that it does not contain any sensitive information that could be exposed to the LLM.
+4. **Memory Management:** Implement appropriate memory management for the `VecDeque` in the `MicroAgent` to prevent memory leaks or excessive memory consumption.
+
+CVSS v3.1 Score: 4.3 (LOW)
+Severity: LOW
+Remediation Steps:
+1. **Logging:** Review the logging practices to ensure that sensitive information is not being logged.
+2. **Thermal Monitoring:** Evaluate the security implications of using thermal temperature readings (`ResonatorCore::read_thermal_temp()`) to adjust application behavior.
 ```
 
 === INFRASTRUCTURE DOMAIN SUMMARY ===
@@ -77,56 +76,54 @@ Vmar::map:
 CVSS v3.1 Score: 6.5 (MEDIUM)
 Severity: MEDIUM
 Remediation Steps:
-1. Implement robust input validation for all file system operations (read, write, delete, list) to prevent path traversal vulnerabilities. Specifically, reject paths containing ".." or absolute paths.
-2. Sanitize user-provided input before using it in file system operations.
-3. Apply the principle of least privilege to file system access. Ensure the application only has the necessary permissions to access required files and directories.
-4. Implement proper error handling and logging for file system operations to detect and respond to potential attacks.
+1. Implement robust input validation and sanitization for all file paths to prevent path traversal vulnerabilities. Specifically, the `sandbox::validate_path` function needs thorough review and strengthening.
+2. Restrict file system access to the minimum necessary permissions.  The application grants excessive permissions, allowing read, write, and delete operations on potentially sensitive files.
+3. Implement stricter access controls to prevent unauthorized file access and modification.
+4. Review and harden the `sandbox::validate_path` function to prevent bypasses.
+5. Consider using a dedicated file access control library or framework.
 
 CVSS v3.1 Score: 7.5 (HIGH)
 Severity: HIGH
 Remediation Steps:
-1.  Implement strict input validation and sanitization for the 'path' parameter in `handle_read_file`, `handle_write_file`, and `handle_delete_file` to prevent path traversal attacks.  Specifically, disallow ".." in paths and ensure paths are not absolute.
-2.  Consider using a whitelist of allowed files/directories instead of relying on blacklisting.
-3.  Implement robust error handling and logging to detect and respond to potential attacks.
+1.  Implement robust input validation and sanitization for the `payload.directive` in the `handle_task` function to prevent command injection vulnerabilities.
+2.  Avoid direct execution of user-supplied commands.  Utilize parameterized queries or safe APIs instead.
+3.  Implement a strict allowlist of permitted commands or actions.
+4.  Review the `task_manager::send_task` function for potential vulnerabilities.
+
+CVSS v3.1 Score: 5.3 (MEDIUM)
+Severity: MEDIUM
+Remediation Steps:
+1. Implement proper error handling and logging for WebSocket connections to prevent information leakage and denial-of-service attacks.
+2. Validate and sanitize all data received over the WebSocket connection.
+3. Implement rate limiting to prevent abuse of the WebSocket endpoint.
+
+CVSS v3.1 Score: 6.5 (MEDIUM)
+Severity: MEDIUM
+Remediation Steps:
+1. Implement robust input validation and sanitization for the `p.path` parameter in `handle_read_file`, `handle_write_file`, and `handle_delete_file` to prevent path traversal vulnerabilities.
+2.  Ensure that the `sandbox::validate_path` function effectively prevents access to sensitive files and directories.
+3.  Implement appropriate access controls to restrict file system operations to authorized users and processes.
 
 CVSS v3.1 Score: 7.5 (HIGH)
 Severity: HIGH
 Remediation Steps:
-1. Implement robust input validation for the 'path' parameter in `handle_fs_list` to prevent path traversal vulnerabilities. Specifically, reject paths containing ".." or absolute paths.
-2.  Review the exclusion list (`.`, `target`, `node_modules`, `dist`) to ensure it adequately protects sensitive files and directories.
-3.  Implement proper error handling and logging for file system operations to detect and respond to potential attacks.
+1. Implement robust input validation and sanitization for the `payload.directive` in the `handle_drone` function to prevent command injection vulnerabilities.
+2.  Avoid direct execution of user-supplied commands.  Utilize parameterized queries or safe APIs instead.
+3.  Implement a strict allowlist of permitted commands or actions.
+4.  Review the scheduler and task execution pipeline for potential vulnerabilities.
 
-CVSS v3.1 Score: 6.5 (MEDIUM)
+CVSS v3.1 Score: 6.8 (MEDIUM)
 Severity: MEDIUM
 Remediation Steps:
-1. Implement input validation on the 'path' parameter to prevent path traversal vulnerabilities.
-2.  Ensure proper error handling and logging for file system operations.
+1. Implement robust input validation and sanitization for the `path` parameter in `handle_fs_list` to prevent path traversal vulnerabilities.
+2.  Ensure that the `sandbox::validate_path` function effectively prevents access to sensitive files and directories.
+3.  Limit the depth of directory traversal to prevent excessive resource consumption.
 
-CVSS v3.1 Score: 8.8 (HIGH)
+CVSS v3.1 Score: 7.8 (HIGH)
 Severity: HIGH
 Remediation Steps:
-1. Implement robust input validation and sanitization for the 'cmd' variable obtained from the WebSocket message.  This is critical to prevent command injection.
-2.  Consider restricting the commands that can be executed through the WebSocket interface.
-3.  Implement a secure mechanism for authenticating and authorizing users accessing the WebSocket endpoint.
-4.  Log all commands executed through the WebSocket interface for auditing purposes.
-
-CVSS v3.1 Score: 6.5 (MEDIUM)
-Severity: MEDIUM
-Remediation Steps:
-1. Implement input validation on the 'path' parameter to prevent path traversal vulnerabilities.
-2.  Ensure proper error handling and logging for file system operations.
-
-CVSS v3.1 Score: 7.5 (HIGH)
-Severity: HIGH
-Remediation Steps:
-1. Implement strict input validation for the 'path' parameter in `auto_snapshot` and `seal_patch` to prevent path traversal attacks.
-2.  Ensure the ".lazarus" directory has appropriate permissions to prevent unauthorized access.
-3.  Consider encrypting the snapshots stored in the ".lazarus" directory.
-4.  Implement robust error handling and logging to detect and respond to potential attacks.
-
-CVSS v3.1 Score: 6.5 (MEDIUM)
-Severity: MEDIUM
-Remediation Steps:
-1. Implement input validation on the 'target' parameter to prevent path traversal vulnerabilities.
-2.  Ensure proper error handling and logging for file system operations.
+1. Implement robust input validation and sanitization for the `path` parameter in `LazarusVault::seal_patch` and `LazarusVault::restore_snapshot` to prevent path traversal vulnerabilities.
+2.  Ensure that the snapshot directory is properly secured and access-controlled.
+3.  Implement integrity checks to verify the authenticity of snapshot files.
+4.  Review the snapshot restoration process to prevent accidental overwrites of critical files.
 ```

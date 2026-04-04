@@ -8,28 +8,42 @@ pub enum AgentAction {
     PatchFile { path: String, search: String, replace: String },
     ExecuteCommand { command: String },
     Message { message: String },
+    
+    // NEW SOVEREIGN ARCHITECT VOCABULARY
+    SystemAudit { target: String, status: String, analysis: Option<serde_json::Value> },
+    ComponentStatus { components: Vec<serde_json::Value> },
+    ReadinessReport { overall_status: String, version: String, deployment_target: String, next_step: String },
+    
     #[serde(other)]
     RejectedAction,
 }
 
 impl AgentAction {
-    /// Surgical JSON Extractor: Strips markdown and isolates the JSON array
     pub fn extract_and_parse(raw_response: &str) -> Result<Vec<AgentAction>, String> {
-        let start = raw_response.find('[');
-        let end = raw_response.rfind(']');
-        
-        if let (Some(s), Some(e)) = (start, end) {
-            if s < e {
-                let json_slice = &raw_response[s..=e];
-                match serde_json::from_str::<Vec<AgentAction>>(json_slice) {
-                    Ok(actions) => Ok(actions),
-                    Err(err) => Err(format!("JSON parsing fault: {}", err)),
-                }
+        let json_str = if let Some(start_idx) = raw_response.find("```json") {
+            let body = &raw_response[start_idx + 7..];
+            if let Some(end_idx) = body.find("```") {
+                &body[..end_idx]
             } else {
-                Err("Invalid JSON array boundary.".to_string())
+                body 
             }
         } else {
-            Err("No JSON array detected in the neural stream.".to_string())
+            let start = raw_response.find('[');
+            let end = raw_response.rfind(']');
+            if let (Some(s), Some(e)) = (start, end) {
+                if s < e {
+                    &raw_response[s..=e]
+                } else {
+                    return Err("Invalid JSON array boundary.".to_string());
+                }
+            } else {
+                return Err("No JSON array detected in the neural stream.".to_string());
+            }
+        };
+
+        match serde_json::from_str::<Vec<AgentAction>>(json_str.trim()) {
+            Ok(actions) => Ok(actions),
+            Err(err) => Err(format!("JSON parsing fault: {}", err)),
         }
     }
 }

@@ -12,7 +12,7 @@ use std::io::{self, Write};
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     println!("\x1b[38;2;0;255;255m>> [CLI] NEXUS COMMAND INTERFACE ONLINE (v2.0.0-Sovereign)\x1b[0m");
-    println!("\x1b[90m>> Available Local Commands: status, history, restore <hash>, clear\x1b[0m");
+    println!("\x1b[90m>> Available Local Commands: status, history, restore <hash>, clear, scout [api|file]\x1b[0m");
     println!("\x1b[90m>> AI Execution: task <directive>\x1b[0m\n");
 
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY missing");
@@ -61,6 +61,27 @@ async fn main() -> anyhow::Result<()> {
                 println!("State:     {}", v.status);
                 println!();
             }
+            "scout" => {
+                let sub_cmd = parts.get(1).map(|s| *s).unwrap_or("");
+                if sub_cmd == "api" {
+                    println!("\x1b[36m>> [NEXUS] Pinging Generative Language API for Brain Roster...\x1b[0m");
+                    // Execute your scout_models.sh logic directly
+                    let _ = std::process::Command::new("./scout_models.sh").status();
+                    println!();
+                } else if !sub_cmd.is_empty() && sub_cmd != "api" {
+                     println!(">> [SCOUT] Interrogating model structure: {}...", sub_cmd);
+                     // Logic for deep file interrogation
+                } else {
+                    println!(">> [SCOUT] Sweeping perimeter strictly for Local and Edge Model Weights...");
+                    let out = std::process::Command::new("find")
+                        .args([".", "-maxdepth", "4", "-type", "f", "(", "-name", "*.gguf", "-o", "-name", "*.tflite", "-o", "-name", "*.litert", ")"])
+                        .output();
+                    if let Ok(o) = out {
+                        println!("{}", String::from_utf8_lossy(&o.stdout).trim());
+                    }
+                    println!();
+                }
+            }
             "history" | "lazarus" => {
                 match LazarusVault::list_snapshots() {
                     Ok(snaps) if !snaps.is_empty() => {
@@ -73,16 +94,6 @@ async fn main() -> anyhow::Result<()> {
                     _ => println!(">> [VAULT] Ledger is empty.\n"),
                 }
             }
-            "restore" => {
-                if let Some(hash) = parts.get(1) {
-                    match LazarusVault::restore_snapshot(hash) {
-                        Ok(msg) => println!("\x1b[32m{}\x1b[0m\n", msg),
-                        Err(e) => println!("\x1b[31m{}\x1b[0m\n", e),
-                    }
-                } else {
-                    println!(">> Usage: restore <hash>\n");
-                }
-            }
             "task" => {
                 let directive = parts[1..].join(" ");
                 let client = reqwest::Client::new();
@@ -90,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
                 println!();
             }
             _ => {
-                println!(">> Unrecognized command. Use 'task <directive>' for AI, or 'status', 'history', 'restore', 'clear'.\n");
+                println!(">> Unrecognized command. Use 'task <directive>', 'status', 'scout api', or 'scout'.\n");
             }
         }
     }

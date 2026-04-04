@@ -226,6 +226,22 @@ export default {
 };
 const API_URL = "/api";
 
+export async function runTask(directive) {
+    try {
+        const res = await fetch(`${API_URL}/task`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ directive })
+        });
+        if (!res.ok) throw new Error("Zenith Task failed to initiate");
+        const data = await res.json();
+        return data.output; // Returns the full string session log
+    } catch (e) {
+        console.error(">> ZENITH_ERROR:", e);
+        return `!! [SYSTEM_FAULT]: ${e.message}`;
+    }
+}
+
 export async function readFile(path) {
     try {
         const res = await fetch(`${API_URL}/fs/read?path=${path}`);
@@ -244,6 +260,27 @@ export async function saveFile(path, content) {
         body: JSON.stringify({ path, content })
     });
     return res.ok;
+}
+
+export async function deleteFile(path) {
+    const res = await fetch(`${API_URL}/fs/delete?path=${path}`, {
+        method: "DELETE"
+    });
+    return res.ok;
+}
+
+export async function spawnDrone(directive) {
+    try {
+        const res = await fetch(`${API_URL}/drone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ directive })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error(">> DRONE_FAULT:", e);
+        return false;
+    }
 }
 <script>
   export let swarm = [];
@@ -992,73 +1029,6 @@ export async function saveFile(path, content) {
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #27272a; }
 </style>
 <script>
-    import { onMount, tick } from 'svelte';
-    import { terminalLogs, wsReady } from '$lib/store';
-    import { sendRaw, pushTermLine } from '$lib/components/NexusWS.js';
-
-    let termContainer;
-    let inputCmd = '';
-
-    $: if ($terminalLogs && termContainer) {
-        tick().then(() => {
-            termContainer.scrollTop = termContainer.scrollHeight;
-        });
-    }
-
-    function handleKey(e) {
-        if (e.key !== 'Enter') return;
-        const cmd = inputCmd.trim();
-        if (!cmd) return;
-        // Echo locally — text is user-typed so safe to escape+show
-        pushTermLine(`nexus_cli> ${cmd}`, 'ansi-gray');
-        sendRaw(cmd);
-        inputCmd = '';
-    }
-</script>
-
-<div class="h-full w-full bg-[#050505] p-2 flex flex-col font-mono text-[10px] sm:text-xs">
-    <!-- Connection badge -->
-    <div class="flex justify-between items-center mb-1 text-[9px] border-b border-cyan-900/20 pb-1 shrink-0">
-        <span class="text-zinc-600 tracking-widest uppercase">Terminal</span>
-        <span class="flex items-center gap-1 {$wsReady ? 'text-emerald-500' : 'text-yellow-500 animate-pulse'}">
-            <span class="w-1.5 h-1.5 rounded-full inline-block {$wsReady ? 'bg-emerald-500' : 'bg-yellow-500'}"></span>
-            {$wsReady ? 'LINKED' : 'RECONNECTING'}
-        </span>
-    </div>
-
-    <!-- Log lines — rendered via {@html} but ALL content is HTML-escaped first in NexusWS.js -->
-    <div bind:this={termContainer}
-         class="flex-1 overflow-y-auto scrollbar-hide break-all whitespace-pre-wrap leading-relaxed">
-        {#each $terminalLogs as line}
-            <!-- Safe: html field is always entity-escaped before ANSI span injection -->
-            <div class="mb-0.5 {line.cls ?? ''}">{@html line.html}</div>
-        {/each}
-    </div>
-
-    <!-- Input -->
-    <div class="flex mt-1 border-t border-cyan-900/30 pt-1 shrink-0">
-        <span class="mr-2 text-emerald-500">nexus_cli&gt;</span>
-        <input
-            class="flex-1 bg-transparent outline-none text-emerald-400 placeholder-zinc-700"
-            bind:value={inputCmd}
-            on:keydown={handleKey}
-            placeholder="[SYSTEM OVERRIDE]..."
-            autocomplete="off"
-            spellcheck="false"
-        />
-    </div>
-</div>
-
-<style>
-    /* ANSI color classes — used by ansiToHtml() in NexusWS.js */
-    :global(.ansi-red)       { color: #f87171; }
-    :global(.ansi-green)     { color: #34d399; }
-    :global(.ansi-yellow)    { color: #fbbf24; }
-    :global(.ansi-cyan)      { color: #22d3ee; }
-    :global(.ansi-gray)      { color: #6b7280; }
-    :global(.ansi-cyan-bold) { color: #67e8f9; font-weight: 700; }
-</style>
-<script>
     import { onMount, onDestroy } from 'svelte';
  
     export let active = false;
@@ -1486,28 +1456,30 @@ export async function saveFile(path, content) {
 {/if}
 import {
     terminalLogs, isGhostTyping, ghostBuffer,
-    systemVitals, openTabs, fileTreeTrigger, wsReady, pendingPatch,
-    activeTab
+    systemVitals, fileTreeTrigger, wsReady, pendingPatch,
+    activeTab, openTabs
 } from '$lib/store';
-import { get } from 'svelte/store';
+import { readFile } from '$lib/api';
 
 let socket = null;
-let reconnectTimer = null;
 let messageHandlers = [];
 
 function esc(str) {
+    if (!str) return "";
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function ansiToHtml(raw) {
+    if (!raw) return "";
     const safe = esc(raw);
     return safe
-        .replace(/\x1b\[31m/g,           '<span class="ansi-red">')
-        .replace(/\x1b\[32m/g,           '<span class="ansi-green">')
-        .replace(/\x1b\[33m/g,           '<span class="ansi-yellow">')
-        .replace(/\x1b\[36m/g,           '<span class="ansi-cyan">')
-        .replace(/\x1b\[90m/g,           '<span class="ansi-gray">')
-        .replace(/\x1b\[38;2;0;255;255m/g,'<span class="ansi-cyan-bold">')
+        .replace(/\n/g,                  '<br/>')
+        .replace(/\x1b\[31m/g,           '<span class="text-red-500">')
+        .replace(/\x1b\[32m/g,           '<span class="text-green-400">')
+        .replace(/\x1b\[33m/g,           '<span class="text-yellow-400">')
+        .replace(/\x1b\[35m/g,           '<span class="text-purple-400">')
+        .replace(/\x1b\[36m/g,           '<span class="text-cyan-400 font-bold">')
+        .replace(/\x1b\[90m/g,           '<span class="text-gray-500">')
         .replace(/\x1b\[0m/g,            '</span>');
 }
 
@@ -1515,7 +1487,7 @@ export function pushTermLine(rawText, cssClass = '') {
     const html = ansiToHtml(rawText);
     terminalLogs.update(logs => {
         const next = [...logs, { html, cls: cssClass }];
-        return next.length > 300 ? next.slice(next.length - 300) : next;
+        return next.length > 500 ? next.slice(next.length - 500) : next;
     });
 }
 
@@ -1526,6 +1498,25 @@ function handleMessage(event) {
 
     messageHandlers.forEach(h => h(data));
 
+    // === PERFECT SYNC SUTURE ===
+    if (data.type === 'file_opened' || data.type === 'file_written') {
+        const path = data.payload;
+        readFile(path).then(res => {
+            openTabs.update(tabs => {
+                if (!tabs.find(t => t.path === path)) {
+                    return [...tabs, { path, content: res.content, isDirty: false }];
+                }
+                return tabs;
+            });
+            activeTab.set(path);
+        });
+        
+        if (data.type === 'file_written') {
+            fileTreeTrigger.update(n => n + 1);
+        }
+    }
+    // ============================
+
     switch (data.type) {
         case 'telemetry':
             systemVitals.set(data.payload);
@@ -1535,13 +1526,10 @@ function handleMessage(event) {
             break;
         case 'ghost_start':
             isGhostTyping.set(true);
-            ghostBuffer.set(''); // Wipe the AI Panel for new mission
+            ghostBuffer.set('>> [NEURAL_UPLINK_ESTABLISHED]\n');
             break;
         case 'ghost_token':
-            const tok = data.payload;
-            // UPDATE: Only append to ghostBuffer (the AI panel), 
-            // NOT the editor. Editor content is handled by the Merge Gate.
-            ghostBuffer.update(b => b + tok);
+            ghostBuffer.update(b => b + data.payload);
             break;
         case 'ghost_end':
             isGhostTyping.set(false);
@@ -1558,19 +1546,18 @@ export const WS = {
         if (socket && socket.readyState <= WebSocket.OPEN) return;
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${proto}//${window.location.host}/ws/nexus`);
-
+        
         socket.onopen = () => {
             wsReady.set(true);
-            pushTermLine('[NEXUS] WebSocket link established.', 'ansi-green');
-            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            pushTermLine('\x1b[32m[NEXUS] WebSocket link established.\x1b[0m');
         };
 
         socket.onmessage = handleMessage;
 
         socket.onclose = () => {
             wsReady.set(false);
-            pushTermLine('[NEXUS] Link lost — reconnecting in 3s...', 'ansi-yellow');
-            reconnectTimer = setTimeout(() => this.connect(), 3000);
+            pushTermLine('\x1b[33m[NEXUS] Link lost — reconnecting...\x1b[0m');
+            setTimeout(() => this.connect(), 3000);
         };
     },
     send(data) {
@@ -1852,25 +1839,247 @@ export function onMessage(fn) {
     input[type=range] { width: 100px; accent-color: #58a6ff; }
     .status-dot.online { width: 6px; height: 6px; background: #238636; border-radius: 50%; box-shadow: 0 0 5px #238636; }
 </style>
+<script>
+  import { onMount } from 'svelte';
+
+  let currentTime = '';
+
+  onMount(() => {
+    const intervalId = setInterval(() => {
+      const now = new Date();
+      currentTime = now.toLocaleTimeString();
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  });
+</script>
+
+<div class="terminal-app">
+  <p style="color: #00FF00; font-family: monospace; font-size: 24px;">{currentTime}</p>
+</div>
+
+<style>
+  .terminal-app {
+    background-color: #000;
+    padding: 20px;
+    border-radius: 5px;
+    width: fit-content;
+    margin: 0 auto;
+  }
+</style><script>
+    import { afterUpdate } from 'svelte';
+    import { terminalLogs, systemVitals } from '$lib/store.js';
+    import { runTask, spawnDrone } from '$lib/api.js';
+    import { pushTermLine } from './NexusWS.js';
+
+    let logContainer;
+    let commandInput = '';
+    let isProcessing = false;
+
+    afterUpdate(() => {
+        if (logContainer) {
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+    });
+
+    async function handleCommand(e) {
+        if (e.key === 'Enter' && commandInput.trim()) {
+            const cmd = commandInput.trim();
+            commandInput = '';
+            
+            // Mirror input to terminal
+            pushTermLine(`\x1b[36mnexus_visor>\x1b[0m ${cmd}`);
+            
+            // ROUTE: Drone (Background) vs Task (Foreground)
+            if (cmd.toLowerCase().startsWith('drone ')) {
+                const directive = cmd.substring(6);
+                const ok = await spawnDrone(directive);
+                if (!ok) pushTermLine('!! [SYSTEM_FAULT]: Failed to dispatch drone.');
+                return;
+            }
+            
+            // Default: Foreground Task
+            isProcessing = true;
+            const result = await runTask(cmd);
+            pushTermLine(result);
+            isProcessing = false;
+        }
+    }
+</script>
+
+<div class="h-full flex flex-col bg-black font-mono text-sm border-t border-[#00FFFF]/30">
+    <div class="flex items-center justify-between px-3 py-1 bg-[#0A1A1F] border-b border-[#00FFFF]/20">
+        <span class="text-[#00FFFF] font-bold tracking-wider text-xs">NEXUS TERMINAL v2.0</span>
+        <div class="flex gap-4 text-[10px] text-cyan-400/70">
+            <span>CPU: {$systemVitals.cpu_usage.toFixed(1)}%</span>
+            <span>RAM: {$systemVitals.ram_usage}</span>
+            <span class={$systemVitals.temperature > 68 ? 'text-red-400 animate-pulse' : ''}>
+                TEMP: {$systemVitals.temperature.toFixed(1)}°C
+            </span>
+        </div>
+    </div>
+
+    <div bind:this={logContainer} class="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-cyan-900 scrollbar-track-black">
+        {#each $terminalLogs as log}
+            <div class="whitespace-pre-wrap leading-tight">{@html log.html}</div>
+        {/each}
+        {#if isProcessing}
+            <div class="text-yellow-400 animate-pulse">>> [NEURAL UPLINK ACTIVE] Processing...</div>
+        {/if}
+    </div>
+
+    <div class="flex items-center px-2 py-1 bg-[#050A0F]">
+        <span class="text-cyan-400 mr-2">nexus_visor></span>
+        <input 
+            type="text" 
+            bind:value={commandInput} 
+            on:keydown={handleCommand}
+            disabled={isProcessing}
+            class="flex-1 bg-transparent text-gray-300 focus:outline-none disabled:opacity-50"
+            placeholder={isProcessing ? "Awaiting neural response..." : "Enter system directive..."}
+        />
+    </div>
+</div>
 import { writable, derived } from 'svelte/store';
 
-// Initialize with a standard main.rs object
+// Core Navigation & Tabs
 export const openTabs = writable([{ path: 'src/main.rs', content: '// NEXUS_READY\n', isDirty: false }]);
 export const activeTab = writable('src/main.rs');
 export const activeTabObj = derived([openTabs, activeTab], ([$tabs, $path]) => $tabs.find(t => t.path === $path) ?? null);
 
+// Workspace Layout
 export const fileTree = writable([]);
 export const fileTreeTrigger = writable(0);
-export const layout = writable({ sidebarVisible: true, ghostPanelVisible: true, visionActive: false, editorWidth: 0.6, terminalHeight: 0.3 });
+export const layout = writable({ 
+    sidebarVisible: true, 
+    ghostPanelVisible: true, 
+    visionActive: false, 
+    editorWidth: 0.6, 
+    terminalHeight: 0.3 
+});
 
+// AI & Task State
 export const isGhostTyping = writable(false);
 export const ghostBuffer = writable('');
 export const ghostThinking = writable(false);
+export const currentMission = writable(''); // Tracks the active Zenith Directive
 
+// Hardware & System
 export const terminalLogs = writable([]);
 export const pendingPatch = writable(null);
-export const systemVitals = writable({ status: 'OFFLINE', cpu_usage: 0, ram_usage: '0/0', resonance: 1.0, temperature: 0 });
+export const systemVitals = writable({ 
+    status: 'OFFLINE', 
+    cpu_usage: 0, 
+    ram_usage: '0/0', 
+    resonance: 1.0, 
+    temperature: 0 
+});
 export const wsReady = writable(false);
+<script>
+    import { onMount } from 'svelte';
+    import { WS } from './components/NexusWS.js';
+    import { 
+        pendingPatch, isGhostTyping, ghostBuffer, 
+        terminalLogs, systemVitals, activeTab, layout 
+    } from '$lib/store';
+
+    import Editor         from './components/Editor.svelte';
+    import GhostCortex    from './components/GhostCortex.svelte';
+    import GhostTerminal  from './components/GhostTerminal.svelte';
+    import Heartbeat      from './components/Heartbeat.svelte';
+    import ResponseModule from './components/ResponseModule.svelte';
+    import Vitals         from './components/Vitals.svelte';
+    import VisualCortex   from './components/VisualCortex.svelte';
+    import Explorer       from './components/Explorer.svelte';
+    import Voice          from './components/Voice.svelte';
+
+    let userPrompt = "";
+    let neuralResponse = ">> SYSTEM_RES_NOMINAL";
+
+    async function executeAction() {
+        if (!userPrompt.trim() || $isGhostTyping) return;
+        // Global WS singleton send
+        WS.send({ type: 'directive', payload: userPrompt });
+        userPrompt = "";
+    }
+
+    async function handleApplyPatch() {
+        if (!$pendingPatch) return;
+        
+        try {
+            const res = await fetch('/api/fs/write', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ path: $pendingPatch.path, content: $pendingPatch.content })
+            });
+            if (!res.ok) throw new Error("Write failed");
+            
+            WS.send({ type: 'terminal', payload: `[NEXUS] Patch applied successfully to ${$pendingPatch.path}` });
+            pendingPatch.set(null);
+        } catch (e) {
+            WS.send({ type: 'terminal', payload: `!! [FAULT] Failed to apply patch: ${e.message}` });
+        }
+    }
+</script>
+
+<div class="h-screen w-screen bg-black text-neon-green font-mono grid grid-cols-12 grid-rows-12 gap-1 p-1 overflow-hidden">
+    <VisualCortex active={$layout.visionActive} />
+    
+    <header class="col-span-12 row-span-1 bg-[#0a0a0a] border-b border-[#30363d] flex items-center px-4 justify-between">
+        <span class="font-bold text-neon-green tracking-widest">NEXUS SINGULARITY v1.9.1</span>
+        <input 
+            bind:value={userPrompt} 
+            on:keydown={(e) => e.key === 'Enter' && executeAction()} 
+            class="bg-black border border-green-900 w-1/2 px-2 py-1 text-xs outline-none focus:border-neon-green" 
+            placeholder="INPUT DIRECTIVE..." 
+        />
+        <Voice bind:userPrompt isListening={$isGhostTyping} />
+    </header>
+
+    <div class="col-span-3 row-span-2">
+        <Vitals 
+            ram={$systemVitals.ram_usage} 
+            cpu={$systemVitals.cpu_usage} 
+            status={$systemVitals.status} 
+            resonance={$systemVitals.resonance} 
+        />
+    </div>
+
+    <div class="col-span-6 row-span-2 border border-blue-900/20">
+        <!-- FIXED: Wired to global $ghostBuffer -->
+        <GhostCortex response={$ghostBuffer} active={$isGhostTyping} />
+    </div>
+
+    <div class="col-span-3 row-span-2">
+        <Heartbeat resonance={$systemVitals.resonance} />
+    </div>
+
+    <div class="col-span-2 row-span-9 border border-white/5">
+        <Explorer open={$layout.sidebarVisible} onFileSelect={(p) => activeTab.set(p)} />
+    </div>
+
+    <div class="col-span-7 row-span-6">
+        <Editor path={$activeTab} />
+    </div>
+
+    <div class="col-span-3 row-span-6 border border-white/5">
+        <ResponseModule 
+            response={$ghostBuffer} 
+            isThinking={$isGhostTyping} 
+            patchAvailable={$pendingPatch !== null} 
+            onApplyPatch={handleApplyPatch} 
+        />
+    </div>
+
+    <div class="col-span-10 row-span-3">
+        <!-- FIXED: Wired to global $terminalLogs -->
+        <GhostTerminal logs={$terminalLogs} isThinking={$isGhostTyping} />
+    </div>
+</div>
+
+<style>
+    :global(body) { margin: 0; background: black; overflow: hidden; }
+</style>
 /**
  * Project Nexus Singularity - Secure Agent Pipeline v1.4.2
  * Standardized JSON ingestion with Error-Gating.
@@ -1908,82 +2117,10 @@ export function validateActions(actions) {
 
 export function isSafePatch(path) {
     // Whitelist check could go here, but keeping expanded Blacklist for stability
-    const forbidden = ['.env', 'target/', 'node_modules/', '.lazarus/ledger.json', '/etc/'];
+    const forbidden = [".env", "target/", "node_modules/", "ledger.json", "/etc/", "../", "~", ".ssh"];
     const normalized = path.toLowerCase();
     return !forbidden.some(f => normalized.includes(f));
 }
-<script>
-    import { onMount } from 'svelte';
-    import { WS, onMessage } from './components/NexusWS.js';
-    import { pendingPatch, isGhostTyping, systemVitals, activeTab, layout } from '$lib/store';
-
-    import Editor from './components/Editor.svelte';
-    import GhostCortex from './components/GhostCortex.svelte';
-    import GhostTerminal from './components/GhostTerminal.svelte';
-    import Heartbeat from './components/Heartbeat.svelte';
-    import ResponseModule from './components/ResponseModule.svelte';
-    import Vitals from './components/Vitals.svelte';
-    import VisualCortex from './components/VisualCortex.svelte';
-    import SwarmMap from './components/SwarmMap.svelte';
-    import Explorer from './components/Explorer.svelte';
-    import TacticalBlade from './components/TacticalBlade.svelte';
-    import Voice from './components/Voice.svelte';
-
-    let userPrompt = "";
-    let neuralResponse = ">> SYSTEM_RES_NOMINAL";
-    let cortexLogs = [];
-    let terminalLogs = [];
-
-    async function executeAction() {
-        if (!userPrompt.trim() || $isGhostTyping) return;
-        WS.send({ type: 'directive', payload: userPrompt });
-        userPrompt = "";
-    }
-
-    async function handleApplyPatch() {
-        if (!$pendingPatch) return;
-        
-        try {
-            await fetch('/api/fs/write', { 
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ path: $pendingPatch.path, content: $pendingPatch.content })
-            });
-            pendingPatch.set(null);
-            WS.sendRaw(`[NEXUS] Patch applied successfully to ${$pendingPatch.path}`);
-        } catch (e) {
-            WS.sendRaw(`!! [FAULT] Failed to apply patch: ${e.message}`);
-        }
-    }
-
-    onMount(() => {
-        WS.connect();
-        onMessage(data => {
-            if (data.type === 'ghost_token') {
-                cortexLogs = [...cortexLogs, data.payload];
-                // Keep memory clean
-                if (cortexLogs.length > 50) cortexLogs.shift();
-            }
-        });
-    });
-
-</script>
-
-<div class="h-screen w-screen bg-black text-neon-green font-mono grid grid-cols-12 grid-rows-12 gap-1 p-1 overflow-hidden">
-    <VisualCortex active={$layout.visionActive} />
-    <header class="col-span-12 row-span-1 bg-[#0a0a0a] border-b border-[#30363d] flex items-center px-4 justify-between">
-        <span class="font-bold text-neon-green tracking-widest">NEXUS SINGULARITY v1.9.0</span>
-        <input bind:value={userPrompt} on:keydown={(e) => e.key === 'Enter' && executeAction()} class="bg-black border border-green-900 w-1/2 px-2 py-1 text-xs outline-none" placeholder="INPUT DIRECTIVE..." />
-        <Voice bind:userPrompt isListening={$isGhostTyping} />
-    </header>
-    <div class="col-span-3 row-span-2"><Vitals ram={$systemVitals.ram_usage} cpu={$systemVitals.cpu_usage} status={$systemVitals.status} resonance={$systemVitals.resonance} /></div>
-    <div class="col-span-6 row-span-2 border border-blue-900/20"><GhostCortex logs={cortexLogs} response={neuralResponse} active={true} /></div>
-    <div class="col-span-3 row-span-2"><Heartbeat resonance={$systemVitals.resonance} /></div>
-    <div class="col-span-2 row-span-9 border border-white/5"><Explorer open={$layout.sidebarVisible} onFileSelect={(p) => activeTab.set(p)} /></div>
-    <div class="col-span-7 row-span-6"><Editor path={$activeTab} /></div>
-    <div class="col-span-3 row-span-6 border border-white/5"><ResponseModule response={neuralResponse} isThinking={$isGhostTyping} patchAvailable={$pendingPatch !== null} onApplyPatch={handleApplyPatch} /></div>
-    <div class="col-span-10 row-span-3"><GhostTerminal logs={terminalLogs} isThinking={$isGhostTyping} /></div>
-</div>
 <script>
   import '../app.css';
   import { onMount } from 'svelte';
@@ -2001,7 +2138,6 @@ export function isSafePatch(path) {
   :global(body) { margin: 0; background: black; color: #00ffcc; overflow: hidden; }
 </style>
 export const ssr = false;
-export const prerender = false;
 <script>
     import { onMount } from "svelte";
     import { WS } from "$lib/components/NexusWS";
@@ -2009,27 +2145,59 @@ export const prerender = false;
         activeTab, openTabs, layout, 
         ghostBuffer, isGhostTyping 
     } from "$lib/store";
+    import { fly } from 'svelte/transition';
     
-    import Editor     from "$lib/components/Editor.svelte";
-    import Terminal   from "$lib/components/Terminal.svelte";
-    import Ghost      from "$lib/components/GhostCortex.svelte";
-    import Sidebar    from "$lib/components/Sidebar.svelte";
-    import StatusBar  from "$lib/components/StatusBar.svelte";
-    import MergeGate  from "$lib/components/MergeGate.svelte";
+    import Editor      from "$lib/components/Editor.svelte";
+    import Terminal    from "$lib/components/Terminal.svelte";
+    import Ghost       from "$lib/components/GhostCortex.svelte";
+    import Sidebar     from "$lib/components/Sidebar.svelte";
+    import StatusBar   from "$lib/components/StatusBar.svelte";
+    import MergeGate   from "$lib/components/MergeGate.svelte";
 
     onMount(() => WS.connect());
+
+    function toggleSidebar() {
+        $layout.sidebarVisible = !$layout.sidebarVisible;
+    }
 </script>
 
 <div class="nexus-root">
-    <div class="nexus-main">
+    <div class="nexus-main relative">
+        
+        {#if !$layout.sidebarVisible}
+            <button 
+                class="toggle-btn open-btn" 
+                transition:fly={{ x: -20, duration: 200 }} 
+                on:click={toggleSidebar} 
+                title="Expand Sector Index"
+            >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
+                </svg>
+            </button>
+        {/if}
+
         {#if $layout.sidebarVisible}
-        <aside class="nexus-sidebar">
-            <Sidebar />
+        <aside 
+            class="nexus-sidebar"
+            transition:fly={{ x: -220, duration: 300, opacity: 1 }}
+        >
+            <div class="sidebar-header">
+                <span class="sidebar-title">SECTOR_INDEX</span>
+                <button class="toggle-btn" on:click={toggleSidebar} title="Retract Explorer">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="sidebar-content">
+                <Sidebar />
+            </div>
         </aside>
         {/if}
 
         <div class="nexus-ghost">
-            <!-- WIRING: We pass the store values so the Ghost Panel actually scrolls -->
             <Ghost 
                 response={$ghostBuffer} 
                 active={$isGhostTyping} 
@@ -2040,15 +2208,14 @@ export const prerender = false;
             <div class="nexus-editor">
                 <div class="tabs" role="tablist">
                     {#each $openTabs as t}
-                        <div 
+                        <button 
                             class="tab {t.path === $activeTab ? 'active' : ''}" 
                             on:click={() => activeTab.set(t.path)} 
-                            on:keydown={(e) => e.key === 'Enter' && activeTab.set(t.path)} 
-                            tabindex="0" 
-                            role="tab">
-                            {t.path.split('/').pop()}
+                            role="tab" 
+                            aria-selected={t.path === $activeTab}>
                             {#if t.isDirty}<span class="dirty-dot"></span>{/if}
-                        </div>
+                            {t.path.split('/').pop()}
+                        </button>
                     {/each}
                 </div>
                 <div class="editor-host">
@@ -2067,23 +2234,36 @@ export const prerender = false;
     </div>
     
     <StatusBar />
-    
-    <!-- CRITICAL: The Merge Gate overlay must be present to approve AI code -->
     <MergeGate />
 </div>
 
 <style>
     .nexus-root { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; background: #060608; color: #eee; font-family: 'Inter', sans-serif; }
-    .nexus-main { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-    .nexus-sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid #1a1a1a; background: #0d1117; display: flex; flex-direction: column; overflow: hidden; }
+    .nexus-main { display: flex; flex: 1; min-height: 0; overflow: hidden; position: relative; }
+    
+    /* Optimized widths for 4GB Duet 2 */
+    .nexus-sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid #1a1a1a; background: #0d1117; display: flex; flex-direction: column; overflow: hidden; z-index: 20; }
     .nexus-ghost { width: 320px; flex-shrink: 0; border-right: 1px solid #1a1a1a; background: #050508; display: flex; flex-direction: column; overflow: hidden; }
     .nexus-workspace { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    
     .nexus-editor { flex: 2; display: flex; flex-direction: column; min-height: 0; background: #000; }
     .editor-host { flex: 1; overflow: hidden; position: relative; }
     .nexus-terminal { flex: 1; border-top: 1px solid #1a1a1a; background: #050505; display: flex; flex-direction: column; min-height: 0; }
+
     .tabs { display: flex; background: #0d1117; border-bottom: 1px solid #1a1a1a; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
-    .tab { padding: 10px 16px; cursor: pointer; font-size: 11px; color: #666; border-right: 1px solid #1a1a1a; white-space: nowrap; outline: none; position: relative; }
+    .tab { display: flex; align-items: center; gap: 6px; padding: 10px 16px; cursor: pointer; font-size: 11px; color: #666; border: none; border-right: 1px solid #1a1a1a; background: none; white-space: nowrap; outline: none; position: relative; transition: color 0.2s; }
+    .tab:hover { color: #aaa; }
     .tab.active { background: #000; color: #22d3ee; }
-    .dirty-dot { position: absolute; top: 4px; right: 4px; width: 4px; height: 4px; background: #fbbf24; border-radius: 50%; }
-    .welcome { height: 100%; display: flex; align-items: center; justify-content: center; color: #222; font-size: 14px; letter-spacing: 2px; }
+    
+    .dirty-dot { width: 6px; height: 6px; background: #fbbf24; border-radius: 50%; box-shadow: 0 0 5px #fbbf24; }
+    .welcome { height: 100%; display: flex; align-items: center; justify-content: center; color: #222; font-size: 14px; letter-spacing: 2px; text-transform: uppercase; }
+
+    /* New Visor Toggle Styles */
+    .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #1a1a1a; background: #050508; }
+    .sidebar-title { font-size: 10px; font-weight: bold; color: #22d3ee; letter-spacing: 2px; }
+    .sidebar-content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #22d3ee transparent; }
+    
+    .toggle-btn { background: none; border: none; color: #22d3ee; cursor: pointer; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+    .toggle-btn:hover { background: rgba(34, 211, 238, 0.1); color: #fff; }
+    .open-btn { position: absolute; top: 8px; left: 8px; z-index: 50; background: #0d1117; border: 1px solid #1a1a1a; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
 </style>

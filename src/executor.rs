@@ -51,6 +51,19 @@ impl Executor {
                         Err(e) => results.push(format!("!! [BIO-DOME_FAULT]: {}", e)),
                     }
                 }
+                AgentAction::Message { message } => {
+                    results.push(format!(">> [MESSAGE]: {}", message));
+                }
+                AgentAction::SystemAudit { target, status, analysis } => {
+                    let analysis_str = analysis.map_or("None".to_string(), |v| serde_json::to_string_pretty(&v).unwrap_or_default());
+                    results.push(format!(">> [AUDIT - {}]: {}\n{}", target, status, analysis_str));
+                }
+                AgentAction::ComponentStatus { components } => {
+                    results.push(format!(">> [COMPONENT STATUS]:\n{}", serde_json::to_string_pretty(&components).unwrap_or_default()));
+                }
+                AgentAction::ReadinessReport { overall_status, version, deployment_target, next_step } => {
+                    results.push(format!(">> [READINESS - v{}]: {} (Target: {})\n   Next: {}", version, overall_status, deployment_target, next_step));
+                }
                 _ => results.push("!! [AGENT]: Action rejected by protocol.".to_string()),
             }
         }

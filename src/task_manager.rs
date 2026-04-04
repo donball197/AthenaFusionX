@@ -11,14 +11,16 @@ pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key
     let temp = ResonatorCore::read_thermal_temp();
     let turns = if temp > 78.0 { 1 } else if temp > 68.0 { 3 } else { 6 };
     
-    let memory_context = "SYSTEM CONSCIOUSNESS: Nexus v2.0. ARM64-DNA. UI (Svelte), Backend (Rust/Zig), and Native Muscle (llama.cpp) are one organism. Local Model Fallback is a priority.";
+    // THE ARBORETUM: Pulling full architectural context
+    let memory_context = "SYSTEM: Nexus v2.0 [ARM64-DNA]. VISION: Full-Spectrum (Includes .env, .sh, and weights).";
+    
+    let mut session_log = format!(">> [THERMAL: {:.1}C] Zenith Vision Active. Turns: {}\n", temp, turns);
 
-    let mut session_log = format!(">> [THERMAL: {:.1}C] Native Vision Active. Turns: {}\n", temp, turns);
-
-    // FULL-SPECTRUM VISION: Now includes C++, Headers, and Model files
+    // X-RAY SCAN: Including hidden files, models, and scripts. 
+    // Excluding only heavy binaries/build artifacts to save context tokens.
     let spatial_map = Command::new("sh")
         .arg("-c")
-        .arg(r"find . -maxdepth 4 -not -path '*/.*' -not -path './target*' -not -path './ui/node_modules*' \( -name '*.rs' -o -name '*.zig' -o -name '*.svelte' -o -name '*.js' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.gguf' \)")
+        .arg(r"find . -maxdepth 4 -not -path './target*' -not -path './ui/node_modules*' -not -path './.git/*' \( -name '*.rs' -o -name '*.zig' -o -name '*.svelte' -o -name '*.js' -o -name '*.sh' -o -name '*.py' -o -name '*.gguf' -o -name '*.tflite' -o -name '.env' \)")
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -34,7 +36,9 @@ pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key
              DNA_MAP: {}\n\
              MISSION: {}\n\
              OBSERVATIONS: {}\n\n\
-             STRICT PROTOCOL: Output JSON actions. You are the Sovereign Architect. Audit the entire circuit including Native llama.cpp muscles.",
+             STRICT PROTOCOL: JSON actions only. Output exactly [{{ \"action\": \"...\" }}]. \
+             You can see everything. If you need to check secrets, read .env. \
+             If you need to check deployment, read .sh files.",
             memory_context, spatial_map, directive, observation_log
         );
 
@@ -45,17 +49,16 @@ pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key
 
                 if let Ok(actions) = NeuralParser::extract_actions(&response) {
                     for action in &actions {
+                        // BROADCAST SIGNAL: Trigger UI tab switch on ReadFile
                         if let crate::agent_protocol::AgentAction::ReadFile { path } = action {
-                            let _ = agent.tx.send(serde_json::json!({"type": "file_opened", "payload": path}).to_string());
+                            let _ = agent.tx.send(serde_json::json!({
+                                "type": "file_opened", 
+                                "payload": path
+                            }).to_string());
                         }
                     }
 
                     if let Ok(results) = Executor::execute_handle(&handle, actions.clone()).await {
-                        for action in actions {
-                            if let crate::agent_protocol::AgentAction::WriteFile { path, .. } = action {
-                                let _ = agent.tx.send(serde_json::json!({"type": "file_written", "payload": path}).to_string());
-                            }
-                        }
                         for res in results {
                             session_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
                             observation_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
@@ -63,7 +66,7 @@ pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key
                     }
                 }
             }
-            Err(_) => { break; }
+            Err(_e) => break,
         }
     }
     session_log

@@ -36,27 +36,39 @@ impl MicroAgent {
         _resonance: f32,
     ) -> Result<(String, u128), NexusError> {
         let start = std::time::Instant::now();
-        let model = ctx.target_model.unwrap_or_else(|| "gemma-3-27b-it".to_string());
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
-        let payload = json!({ "contents": [{ "parts": [{ "text": user_text }] }] });
         
-        let _ = self.tx.send(json!({"type": "terminal", "payload": "\x1b[32m[BRAIN] Engaging 27B-IT Reasoning Core...\x1b[0m"}).to_string());
+        // UPGRADE: Shifting default cortex to Gemma 4 31B
+        let model = ctx.target_model.unwrap_or_else(|| "gemma-4-31b-it".to_string());
+        
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", 
+            model, 
+            api_key
+        );
 
+        let payload = json!({ 
+            "contents": [{ "parts": [{ "text": user_text }] }],
+            "generationConfig": {
+                "temperature": 0.15,
+                "maxOutputTokens": 32768, // LEVERAGING GEMMA 4 CAPACITY
+                "topP": 0.95
+            }
+        });
+        
         let response = client.post(url).json(&payload).send().await
-            .map_err(|e| NexusError::Other(e.to_string()))?;
+            .map_err(|e| NexusError::Other(format!("API_IGNITION_FAILURE: {}", e)))?;
 
         let mut full_text = String::new();
         let mut stream = response.bytes_stream();
 
         while let Some(item) = stream.next().await {
-            if let Ok(bytes) = item {
-                let chunk = String::from_utf8_lossy(&bytes);
-                for line in chunk.lines() {
+            if let Ok(bytes_chunk) = item {
+                let chunk_str = String::from_utf8_lossy(&bytes_chunk);
+                for line in chunk_str.lines() {
                     if line.starts_with("data: ") {
                         if let Ok(val) = serde_json::from_str::<Value>(&line[6..]) {
                             if let Some(token) = val["candidates"][0]["content"]["parts"][0]["text"].as_str() {
                                 full_text.push_str(token);
-                                // BROADCAST: type: ghost_token is required for the AI Panel
                                 let _ = self.tx.send(json!({"type": "ghost_token", "payload": token}).to_string());
                             }
                         }
@@ -72,178 +84,121 @@ impl MicroAgent {
 use crate::neural_agent::{ContextPacket, MicroAgent};
 use crate::json_parser::NeuralParser;
 use crate::executor::Executor;
-use crate::agent_protocol::AgentAction;
 use crate::component_runner::{AgentComponent, Capabilities};
+use crate::resonator::ResonatorCore;
 use std::process::Command;
 use std::collections::HashSet;
+use std::sync::Arc;
 
-pub async fn send_task(agent: std::sync::Arc<MicroAgent>, client: &reqwest::Client, api_key: &str, directive: &str) {
+pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key: &str, directive: &str) -> String {
+    let temp = ResonatorCore::read_thermal_temp();
+    let turns = if temp > 78.0 { 1 } else if temp > 68.0 { 3 } else { 6 };
     
-    let spatial_map = Command::new("find")
-        .args(["src", "-maxdepth", "2", "-name", "*.rs"])
+    let memory_context = "SYSTEM CONSCIOUSNESS: Nexus v2.0. ARM64-DNA. UI (Svelte), Backend (Rust/Zig), and Native Muscle (llama.cpp) are one organism. Local Model Fallback is a priority.";
+
+    let mut session_log = format!(">> [THERMAL: {:.1}C] Native Vision Active. Turns: {}\n", temp, turns);
+
+    // FULL-SPECTRUM VISION: Now includes C++, Headers, and Model files
+    let spatial_map = Command::new("sh")
+        .arg("-c")
+        .arg(r"find . -maxdepth 4 -not -path '*/.*' -not -path './target*' -not -path './ui/node_modules*' \( -name '*.rs' -o -name '*.zig' -o -name '*.svelte' -o -name '*.js' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.gguf' \)")
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    // Start with a clean observation log
     let mut observation_log = String::new();
     let mut history: HashSet<String> = HashSet::new();
+    let handle = AgentComponent::spawn("Nexus_Architect", Capabilities::ALL, agent.clone(), agent.tx.clone());
 
-    println!("\x1b[36m>> [MISSION] Starting Deterministic Loop: {}\x1b[0m", directive);
-
-    // 🛡️ COMPONENT ISOLATION: Wrap the raw agent in a strict capability sandbox
-    let capabilities = Capabilities::READ_FS | Capabilities::WRITE_FS;
-    let component = AgentComponent::spawn(
-        "Task_Loop_Node",
-        capabilities,
-        agent.clone(),
-        agent.tx.clone(),
-    );
-
-    for turn in 1..=6 {
-        // Construct the prompt to highly prioritize OBSERVATIONS over the static map
+    for turn in 1..=turns {
         let full_prompt = format!(
-            "You are NEXUS running on Lenovo Duet 2 (4GB RAM).\n\
-            MISSION: {}\n\n\
-            CRITICAL RECENT OBSERVATIONS (PRIORITY 1):\n{}\n\n\
-            PROJECT_DNA_MAP (PRIORITY 2 - File paths only, NOT contents):\n{}\n\n\
-            STRICT OUTPUT RULES:\n\
-            - Output ONLY a valid JSON array of AgentAction objects.\n\
-            - Use exactly these keys: \"action\", \"path\", \"search\", \"replace\", \"content\", \"target\", \"message\", \"reason\".\n\
-            - NEVER use \"file\", \"filename\", \"count\", or extra fields.\n\
-            - For PatchFile: always include \"path\", \"search\", and \"replace\". `search` MUST be specific (2+ lines). Never search for a single `}}` or `{{`.\n\
-            - ANTI-SYCOPHANT PROTOCOL: You MUST execute `ReadFile` to check file contents before confirming success. If the OBSERVATION log contains file contents, you MUST base your 'Message' entirely on what is actually in the file.\n\
-            - If no action needed or mission is complete, return a single Message action answering the user's question.\n\
-            - Do not add any text outside the JSON array.\n\n\
-            Respond with JSON only.",
-            directive, 
-            if observation_log.is_empty() { "None yet. Execute actions to gather data." } else { &observation_log },
-            spatial_map
+            "CORE_MEMORY: {}\n\
+             DNA_MAP: {}\n\
+             MISSION: {}\n\
+             OBSERVATIONS: {}\n\n\
+             STRICT PROTOCOL: Output JSON actions. You are the Sovereign Architect. Audit the entire circuit including Native llama.cpp muscles.",
+            memory_context, spatial_map, directive, observation_log
         );
 
-        let ctx = ContextPacket {
-            system_prompt: Some(
-                "You are NEXUS on low-RAM hardware. Be precise. Prioritize OBSERVATIONS over DNA_MAP. Output ONLY clean JSON array.".into()
-            ),
-            ..Default::default()
-        };
-
-        match component.agent.prepare_and_run(&client, &api_key, &full_prompt, ctx, 0.1).await {
+        match agent.prepare_and_run(client, api_key, &full_prompt, ContextPacket::default(), 0.1).await {
             Ok((response, _)) => {
-                if history.contains(&response) {
-                    println!("\x1b[33m>> [LOOP] Repeating response. Ending mission.\x1b[0m");
-                    break;
-                }
+                if history.contains(&response) { break; }
                 history.insert(response.clone());
 
-                match NeuralParser::extract_actions(&response) {
-                    Ok(actions) => {
-                        if actions.is_empty() || actions.iter().all(|a| matches!(a, AgentAction::Message { .. })) {
-                            for a in &actions {
-                                if let AgentAction::Message { message } = a {
-                                    println!("\n\x1b[36m>> [NEXUS REPORT]\n{}\x1b[0m\n", message);
-                                }
-                            }
-                            println!("\x1b[32m>> [MISSION] No more actions needed. Task complete.\x1b[0m");
-                            break;
-                        }
-
-                        println!("\x1b[90m>> [EXEC] turn {} | Validating Capabilities...\x1b[0m", turn);
-
-                        // 🛡️ SECURITY MATRIX INTERCEPT
-                        let mut safe_actions = Vec::new();
-                        let mut validation_faults = false;
-
-                        for action in actions {
-                            if let Err(e) = component.validate_action(&action) {
-                                let fault_msg = format!("[SECURITY_INTERCEPT] Action blocked: {}", e);
-                                observation_log.push_str(&format!("\n{}", fault_msg));
-                                println!("\x1b[31m   ✗ {}\x1b[0m", fault_msg);
-                                validation_faults = true;
-                            } else {
-                                safe_actions.push(action);
-                            }
-                        }
-
-                        // If capabilities blocked everything, force the agent to observe its failure next turn
-                        if safe_actions.is_empty() && validation_faults {
-                            continue;
-                        }
-
-                        println!("\x1b[90m>> [EXEC] turn {} | Integrating safe actions...\x1b[0m", turn);
-
-                        match Executor::execute(safe_actions).await {
-                            Ok(results) => {
-                                for res in &results {
-                                    if res.contains("SUCCESS") || res.contains("Patched") {
-                                        println!("\x1b[32m   ✓ SUCCESS\x1b[0m");
-                                    } else if res.starts_with("MSG:") {
-                                        let msg = res.replacen("MSG: ", "", 1);
-                                        println!("\n\x1b[36m>> [NEXUS MESSAGE]: {}\x1b[0m\n", msg);
-                                    } else {
-                                        println!("\x1b[31m   ✗ {}\x1b[0m", res);
-                                    }
-                                    observation_log.push_str(&format!("\n[OBSERVATION Turn {}]: {}", turn, res));
-                                }
-                            }
-                            Err(e) => {
-                                observation_log.push_str(&format!("\n[HARDWARE_FAULT Turn {}]: {}", turn, e));
-                                println!("\x1b[31m   ✗ Execution error: {}\x1b[0m", e);
-                            }
+                if let Ok(actions) = NeuralParser::extract_actions(&response) {
+                    for action in &actions {
+                        if let crate::agent_protocol::AgentAction::ReadFile { path } = action {
+                            let _ = agent.tx.send(serde_json::json!({"type": "file_opened", "payload": path}).to_string());
                         }
                     }
-                    Err(e) => {
-                        observation_log.push_str(&format!("\n[PROTOCOL_ERROR Turn {}]: {}", turn, e));
-                        println!("\x1b[33m   ✗ Parser error: {}\x1b[0m", e);
+
+                    if let Ok(results) = Executor::execute_handle(&handle, actions.clone()).await {
+                        for action in actions {
+                            if let crate::agent_protocol::AgentAction::WriteFile { path, .. } = action {
+                                let _ = agent.tx.send(serde_json::json!({"type": "file_written", "payload": path}).to_string());
+                            }
+                        }
+                        for res in results {
+                            session_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
+                            observation_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
+                        }
                     }
                 }
             }
-            Err(_) => {
-                println!("\x1b[31m!! [UPLINK] Failed. Breaking loop.\x1b[0m");
-                break;
-            }
+            Err(_) => { break; }
         }
     }
-
-    println!("\x1b[36m>> [MISSION_COMPLETE] Zenith Alignment attained.\x1b[0m");
+    session_log
 }
 use crate::neural_agent::{MicroAgent, ContextPacket};
-use crate::executor::Executor;
+use crate::component_runner::AgentHandle;
 use crate::agent_protocol::AgentAction;
 use anyhow::Result;
 use std::sync::Arc;
-use crate::system_monitor::SystemMonitor;
 
 pub struct Orchestrator {
     pub agent: Arc<MicroAgent>,
+    handle: AgentHandle,
 }
 
 impl Orchestrator {
-    pub fn new(agent: Arc<MicroAgent>) -> Self { Self { agent } }
+    pub fn new(agent: Arc<MicroAgent>) -> Self {
+        let (tx, _) = tokio::sync::broadcast::channel(16);
+        let handle = crate::component_runner::AgentComponent::spawn(
+            "orchestrator",
+            crate::component_runner::Capabilities::READ_FS | crate::component_runner::Capabilities::WRITE_FS,
+            agent.clone(),
+            tx,
+        );
+
+        Self { agent, handle }
+    }
 
     pub async fn run_autonomous_loop(
-        &self, 
-        instruction: String, 
+        &self,
+        instruction: String,
         context: ContextPacket,
         client: &reqwest::Client,
         api_key: &str,
         _tx: &tokio::sync::broadcast::Sender<String>,
-        _monitor: &SystemMonitor
+        _monitor: &crate::system_monitor::SystemMonitor,
     ) -> Result<String> {
-        let (raw_response, _) = self.agent.prepare_and_run(
-            client, 
-            api_key, 
-            &instruction, 
-            context.clone(), 
-            1.0
-        ).await?;
+        let (raw_response, _) = self.agent.prepare_and_run(client, api_key, &instruction, context, 1.0)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-        if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&raw_response) {
-            let results: Vec<String> = Executor::execute(actions).await.map_err(|e| anyhow::anyhow!(e))?;
-            return Ok(results.join("\n"));
+        // UPGRADE: Using the surgical extractor to ignore markdown fluff and pascal/snake case mismatches
+        match AgentAction::extract_and_parse(&raw_response) {
+            Ok(actions) => {
+                let results: Vec<String> = self.handle.execute_actions(actions).await
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                Ok(results.join("\n"))
+            }
+            Err(e) => {
+                println!(">> [ORCHESTRATOR] Protocol extraction failed: {}. Returning raw response.", e);
+                Ok(raw_response)
+            }
         }
-
-        Ok(raw_response)
     }
 }
