@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 # Project Nexus Singularity v0.12.0 - Zadok Handshake
 # Purpose: High-integrity build verification for ARM64/Duet2
 

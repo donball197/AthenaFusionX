@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 # 1. Clear the specific path to prevent append/corruption errors
 rm -f /sdcard/vision_input.jpg
 

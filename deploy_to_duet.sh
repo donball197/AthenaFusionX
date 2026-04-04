@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 # Using the confirmed Wi-Fi IP from your screenshot
 DUET_IP="10.11.1.249" 
 DUET_USER="donball197"

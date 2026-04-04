@@ -1,22 +1,56 @@
-# Secrets and Keys
+# === PROJECT NEXUS: UNIVERSAL DNA PROTECTION ===
+
+# --- Rust & Cargo (The Brain) ---
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# --- Zig & Native (The Muscles) ---
+# We never sync compiled binaries across ARM64 devices
+*.so
+*.a
+*.o
+*.lib
+*.dll
+*.dylib
+zig-out/
+zig-cache/
+
+# --- Svelte & Node (The Glass) ---
+node_modules/
+/ui/dist/
+/ui/.svelte-kit/
 .env
 .env.*
-secrets.json
-.bashrc
-.bash_history
+!.env.example
+npm-debug.log*
 
-# Build Artifacts
-target/
-ui/node_modules/
-ui/dist/
-ui/.svelte-kit/
-vendor/
+# --- Sovereign Vault & Secrets ---
+# Protect your API keys and your identity
+.env
+auth.json
+persona.json
+GEMINI_API_KEY
 
-# System / IDE
+# --- Deep Memory & State ---
+# SQLite and local memory stay on the physical device
+*.db
+*.db-journal
+*.sqlite
+.nexus_memory/
+.lazarus/snapshots/
+# We sync the ledger.json so the DNA knows its history, but not the blobs
+!.lazarus/ledger.json
+
+# --- Large Model Weights ---
+# Never push GGUF or TFLite models to Git
+vault/models/
+*.gguf
+*.tflite
+*.bin
+*.weights
+
+# --- OS Noise ---
 .DS_Store
-.vscode/
-.idea/
-
-# Local Dev
-dummy.json
-.nexus_heal.json
+Thumbs.db
+.direnv/

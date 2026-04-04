@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 echo ">> [HIVE TEST] Verifying Forensics Bridge..."
 
 # 1. Check if the server is up

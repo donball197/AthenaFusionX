@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 
 echo ">> [NEXUS] ALIGNING NEURAL PATHWAYS TO GEMMA-3-27B-IT..."
 

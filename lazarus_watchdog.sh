@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 while true; do
   # Get available memory in MB
   AVAILABLE=$(free -m | awk '/^Mem:/{print $7}')

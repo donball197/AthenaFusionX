@@ -1,4 +1,6 @@
 #!/bin/bash
+# CWD_CHECK
+[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
 # NEXUS SENTRY // RELIABLE WATCHDOG
 
 echo ">> [SENTRY] Watchdog Online. Manual Mode Engaged."
