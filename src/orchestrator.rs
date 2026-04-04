@@ -35,12 +35,17 @@ impl Orchestrator {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-        if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&raw_response) {
-            let results: Vec<String> = self.handle.execute_actions(actions).await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            return Ok(results.join("\n"));
+        // UPGRADE: Using the surgical extractor to ignore markdown fluff and pascal/snake case mismatches
+        match AgentAction::extract_and_parse(&raw_response) {
+            Ok(actions) => {
+                let results: Vec<String> = self.handle.execute_actions(actions).await
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                Ok(results.join("\n"))
+            }
+            Err(e) => {
+                println!(">> [ORCHESTRATOR] Protocol extraction failed: {}. Returning raw response.", e);
+                Ok(raw_response)
+            }
         }
-
-        Ok(raw_response)
     }
 }

@@ -1,35 +1,56 @@
-use std::process::Command;
+use tokio::process::Command;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use anyhow::Result;
 
 pub struct PodmanShield;
 
 impl PodmanShield {
-    /// execute_isolated: Runs a command inside a ephemeral ARM64 container.
-    /// Default: rust:alpine (The Compiler Muscle)
+    /// execute_isolated: Asynchronous Zircon-style IPC stream
     pub async fn execute_isolated(directive: &str, workspace_path: &str) -> Result<String> {
-        println!(">> [SHIELD] Engaging Bio-Dome isolation...");
+        println!(">> [SHIELD] Opening Async IPC Channel to Bio-Dome...");
 
-        // SUTURING TO YOUR ACTUAL CACHED DNA
-        let target_image = "docker.io/library/rust:alpine";
-
-        let output = Command::new("podman")
+        let mut child = Command::new("podman")
             .args([
                 "run",
                 "--rm",
-                "--network", "none",            // Air-gapped for sovereignty
+                "--network", "none",            // Air-gapped
                 "--memory", "512m",             // Resource governed
-                "-v", &format!("{}:/workspace:z", workspace_path), // 'z' for SELinux/Chromebook safety
-                "-w", "/workspace",             // Set working dir
-                target_image,
+                "-v", &format!("{}:/workspace:z", workspace_path), // 'z' for Crostini/Termux safety
+                "-w", "/workspace",
+                "docker.io/library/rust:alpine",
                 "sh", "-c", directive
             ])
-            .output()?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        let stdout = child.stdout.take().expect("Failed to capture Bio-Dome stdout");
+        let mut reader = BufReader::new(stdout).lines();
+        let mut output_buffer = String::new();
+
+        // Real-time telemetry feed
+        while let Ok(Some(line)) = reader.next_line().await {
+            // Echoing the stream live to the host terminal
+            println!(">> [BIO-DOME TELEMETRY]: {}", line);
+            
+            // Zircon-style Signal Check: The Arbiter's kill switch
+            if line.contains("MALICIOUS_INTENT") {
+                println!("!! [ARBITER] Rogue behavior detected. Severing IPC.");
+                let _ = child.kill().await;
+                return Err(anyhow::anyhow!("SHIELD_BREACH: Malicious intent intercepted."));
+            }
+            
+            output_buffer.push_str(&line);
+            output_buffer.push('\n');
+        }
+
+        let status = child.wait().await?;
+        if status.success() {
+            println!(">> [SHIELD] Bio-Dome process completed successfully.");
+            Ok(output_buffer)
         } else {
-            let err = String::from_utf8_lossy(&output.stderr).to_string();
-            Err(anyhow::anyhow!("SHIELD_BREACH_IN_ISOLATION: {}", err))
+            Err(anyhow::anyhow!("SHIELD_FAULT: Bio-Dome exited with {}", status))
         }
     }
 }

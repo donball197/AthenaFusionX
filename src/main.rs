@@ -3,6 +3,9 @@ use std::sync::atomic::AtomicU32;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use std::path::PathBuf;
 
+// Inject the universal UI bridge into the binary
+mod api_bridge; 
+
 use nexus_singularity::{
     server, 
     arbiter_agent, 
@@ -29,7 +32,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent = Arc::new(neural_agent::MicroAgent::init(tx.clone())?);
     let monitor = system_monitor::SystemMonitor::new();
     let orchestrator = Arc::new(orchestrator::Orchestrator::new(agent.clone()));
-    let memory = Arc::new(Mutex::new(memory::MemoryPalace::init(PathBuf::from(".nexus_memory"))));
+    
+    // FIX: Await the async init and pass the correct string literal type
+    let memory_palace = memory::MemoryPalace::init(".nexus_memory").await?;
+    let memory = Arc::new(Mutex::new(memory_palace));
     
     let arbiter = Arc::new(arbiter_agent::ArbiterAgent::new(
         agent.clone(), 
@@ -52,9 +58,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace_root,
     });
 
-    println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK READY. IGNITING SERVER...\x1b[0m");
+    // 5. Ignite the Svelte UI API Bridge in the background
+    tokio::spawn(async {
+        api_bridge::start_api_bridge().await;
+    });
+
+    println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK READY. IGNITING KERNEL SERVER...\x1b[0m");
     
-    // 5. Start the Server
+    // 6. Start the Core Server
     server::start_server(state).await;
 
     Ok(())
