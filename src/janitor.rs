@@ -13,7 +13,8 @@ impl Janitor {
             loop {
                 governor.apply_cooldown().await;
                 let vitals = state.monitor.get_vitals();
-                if vitals.cpu_load < 15.0 && governor.get_state() == crate::thermal_governor::CoolingState::Normal {
+                // UPGRADE: Fixed logic error. cpu_load is a fraction, so it should be < 0.15, not < 15.0
+                if vitals.cpu_load < 0.15 && governor.get_state() == crate::thermal_governor::CoolingState::Normal {
                     println!(">> [JANITOR] Low load + nominal temp — running maintenance...");
                 }
                 sleep(Duration::from_secs(60)).await;

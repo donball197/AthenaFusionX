@@ -1,9 +1,10 @@
 use anyhow::Result;
 
+// UPGRADE: Centralized FFI Declarations
 extern "C" {
-    fn resonator_ignite(path: *const u8, len: usize) -> bool;
-    fn scan_entropy() -> f32;
-    fn get_thermal_temp() -> f32;
+    pub fn resonator_ignite(path: *const u8, len: usize) -> bool;
+    pub fn scan_entropy() -> f32;
+    pub fn get_thermal_temp() -> f32;
 }
 
 pub struct ResonatorCore;

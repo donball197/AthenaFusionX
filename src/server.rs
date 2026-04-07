@@ -2,15 +2,15 @@ use axum::{
     extract::{Query, State, ws::{WebSocketUpgrade, WebSocket, Message}},
     http::{header, StatusCode, Uri},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{get, post, delete},
     Json, Router,
 };
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use walkdir::WalkDir;
-use crate::{task_manager, sandbox, nexus_error::NexusError};
+use crate::{task_manager, sandbox};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
@@ -36,7 +36,12 @@ pub async fn start_server(state: Arc<AppState>) {
         .route("/api/fs/list", get(handle_fs_list))
         .route("/api/fs/read", get(handle_read_file))
         .route("/api/fs/write", post(handle_write_file))
-        .route("/api/memories", get(handle_get_memories)) // NEW
+        .route("/api/fs/delete", delete(handle_delete_file))
+        .route("/api/memories", get(handle_get_memories))
+        .route("/api/memories/search", get(handle_search_memories))
+        .route("/api/memories/purge", delete(handle_purge_memories))
+        .route("/api/missions", get(handle_get_missions))
+        .route("/api/lazarus/snapshots", get(handle_lazarus_snapshots))
         .route("/api/task", post(handle_task))
         .route("/ws/nexus", get(ws_handler))
         .fallback(static_handler)
@@ -49,15 +54,82 @@ pub async fn start_server(state: Arc<AppState>) {
     axum::serve(listener, app.into_make_service()).await.unwrap();
 }
 
+async fn handle_fs_list(Query(p): Query<ListParams>, State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    let path = p.path.as_deref().unwrap_or(".");
+    match sandbox::validate_path(path) {
+        Ok(safe) => {
+            let mut entries = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&safe) {
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                        entries.push(FsEntry {
+                            name,
+                            path: entry.path().to_string_lossy().to_string(),
+                            is_dir: entry.path().is_dir(),
+                        });
+                    }
+                }
+            }
+            (StatusCode::OK, Json(entries)).into_response()
+        }
+        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
+    }
+}
+
 async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let palace = state.memory.lock().await;
     match palace.fetch_all().await {
         Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Memory Read Fault: {}", e)).into_response(),
     }
 }
 
-// ... [Keep other handle functions from previous consolidation] ...
+async fn handle_search_memories(Query(q): Query<SearchQuery>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let query = q.q.as_deref().unwrap_or("");
+    let palace = state.memory.lock().await;
+    match palace.search_memories(query).await {
+        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Search Fault: {}", e)).into_response(),
+    }
+}
+
+async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.purge_all().await {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Purge Fault: {}", e)).into_response(),
+    }
+}
+
+async fn handle_get_missions() -> impl IntoResponse {
+    match crate::mission_queue::MissionQueue::new(".nexus_missions.db").await {
+        Ok(queue) => match queue.get_pending().await {
+            Ok(m) => (StatusCode::OK, Json(m)).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Queue Error: {}", e)).into_response(),
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Init Error: {}", e)).into_response(),
+    }
+}
+
+async fn handle_lazarus_snapshots() -> impl IntoResponse {
+    match crate::lazarus_vault::LazarusVault::list_snapshots() {
+        Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Vault Error: {}", e)).into_response(),
+    }
+}
+
+async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
+    let agent = state.agent.clone();
+    let client = state.client.clone();
+    let api_key = state.api_key.clone();
+    let memory = state.memory.clone();
+    let directive = payload.directive.clone();
+    tokio::spawn(async move {
+        let _ = task_manager::send_task(agent, &client, &api_key, &directive, memory).await;
+    });
+    Json(json!({ "status": "QUEUED" }))
+}
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
@@ -65,57 +137,61 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.tx.subscribe();
-    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(3));
     loop {
         tokio::select! {
-            Ok(msg) = rx.recv() => { if socket.send(Message::Text(msg)).await.is_err() { break; } }
+            Ok(msg) = rx.recv() => {
+                if socket.send(Message::Text(msg)).await.is_err() { break; }
+            }
             _ = heartbeat.tick() => {
                 let v = state.monitor.get_vitals();
-                let payload = serde_json::json!({ "type": "telemetry", "payload": v });
+                let payload = json!({ "type": "telemetry", "payload": v });
                 if socket.send(Message::Text(payload.to_string())).await.is_err() { break; }
             }
-            Some(res) = socket.recv() => { if res.is_err() { break; } }
+            Some(Ok(msg)) = socket.recv() => {
+                if let Message::Text(text) = msg {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if parsed["type"] == "directive" {
+                            let mut cmd = parsed["payload"].as_str().unwrap_or_default().to_string();
+                            
+                            // === SUTURE: AUTONOMIC CONTEXT INJECTOR ===
+                            let lower_cmd = cmd.to_lowercase();
+                            if lower_cmd.contains("audit") || lower_cmd.contains("all the code") {
+                                let _ = state.tx.send(String::from(">> [CORTEX_UPLINK] Broad audit detected. Injecting local workspace DNA..."));
+                                let mut context = String::from("\n\n--- [SYSTEM WORKSPACE DNA] ---\n");
+                                
+                                if let Ok(entries) = std::fs::read_dir("src") {
+                                    for entry in entries.flatten() {
+                                        let path = entry.path();
+                                        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                                // Hard limit to prevent token explosion
+                                                let preview = &content; // GEMMA-4 262K UNLOCKED
+                                                context.push_str(&format!("\n// === FILE: {} ===\n{}\n", path.display(), preview));
+                                            }
+                                        }
+                                    }
+                                }
+                                cmd.push_str(&context);
+                            }
+                            
+                            let state_clone = state.clone();
+                            tokio::spawn(async move {
+                                let _ = task_manager::send_task(
+                                    state_clone.agent.clone(),
+                                    &state_clone.client,
+                                    &state_clone.api_key,
+                                    &cmd,
+                                    state_clone.memory.clone()
+                                ).await;
+                            });
+                        }
+                    }
+                }
+            }
+            else => break,
         }
     }
-}
-
-async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
-    let result = task_manager::send_task(state.agent.clone(), &state.client, &state.api_key, &payload.directive).await;
-    Json(serde_json::json!({ "output": result }))
-}
-
-async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
-    let path = p.path.as_deref().unwrap_or("src");
-    if let Ok(safe) = sandbox::validate_path(path) {
-        let mut entries = Vec::new();
-        for entry in WalkDir::new(safe).max_depth(3).into_iter().filter_map(|e| e.ok()) {
-            entries.push(FsEntry { 
-                name: entry.file_name().to_string_lossy().to_string(), 
-                path: entry.path().to_string_lossy().to_string(), 
-                is_dir: entry.path().is_dir() 
-            });
-        }
-        (StatusCode::OK, Json(entries)).into_response()
-    } else {
-        (StatusCode::FORBIDDEN, "Access Denied").into_response()
-    }
-}
-
-async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
-    if let Ok(safe) = sandbox::validate_path(&p.path) {
-        if let Ok(c) = std::fs::read_to_string(safe) {
-            return (StatusCode::OK, Json(serde_json::json!({ "content": c }))).into_response();
-        }
-    }
-    StatusCode::NOT_FOUND.into_response()
-}
-
-async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
-    if let Ok(safe) = sandbox::validate_path(&payload.path) {
-        if let Some(p) = safe.parent() { let _ = std::fs::create_dir_all(p); }
-        if std::fs::write(safe, &payload.content).is_ok() { return StatusCode::OK.into_response(); }
-    }
-    StatusCode::FORBIDDEN.into_response()
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
@@ -128,8 +204,45 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     }
 }
 
-#[derive(Deserialize)] pub struct TaskRequest { pub directive: String }
-#[derive(Deserialize)] pub struct FileParams { pub path: String }
-#[derive(Deserialize)] pub struct ListParams { pub path: Option<String> }
+async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+    match sandbox::validate_path(&p.path) {
+        Ok(safe) => match std::fs::read_to_string(&safe) {
+            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
+            Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
+        },
+        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
+    }
+}
+
+async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
+    match sandbox::validate_path(&payload.path) {
+        Ok(safe) => {
+            if let Some(p) = safe.parent() { let _ = std::fs::create_dir_all(p); }
+            match std::fs::write(&safe, &payload.content) {
+                Ok(_) => StatusCode::OK.into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
+    }
+}
+
+async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+    match sandbox::validate_path(&p.path) {
+        Ok(safe) => {
+            let res = if safe.is_dir() { std::fs::remove_dir_all(&safe) } else { std::fs::remove_file(&safe) };
+            match res {
+                Ok(_) => StatusCode::OK.into_response(),
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
+    }
+}
+
+#[derive(Deserialize)] pub struct TaskRequest  { pub directive: String }
+#[derive(Deserialize)] pub struct FileParams   { pub path: String }
+#[derive(Deserialize)] pub struct ListParams   { pub path: Option<String> }
+#[derive(Deserialize)] pub struct SearchQuery  { pub q: Option<String> }
 #[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }
-#[derive(Serialize)] pub struct FsEntry { pub name: String, pub path: String, pub is_dir: bool }
+#[derive(Serialize)]   pub struct FsEntry      { pub name: String, pub path: String, pub is_dir: bool }

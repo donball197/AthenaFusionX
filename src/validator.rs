@@ -1,45 +1,42 @@
 use std::process::Command;
-use crate::nexus_error::NexusError;
+use anyhow::{Context, Result, anyhow};
 
 pub struct Validator;
 
 impl Validator {
-    pub fn run_rust_checks() -> Result<(), NexusError> {
-        println!(">> [VALIDATOR] Enforcing Rust Syntax & Linting...");
-        
-        // 1. Syntax Check
+    pub fn run_rust_checks() -> Result<()> {
+        println!(">> [VALIDATOR] Enforcing Rust Syntax...");
         let check = Command::new("cargo")
             .args(["check", "--target", "aarch64-unknown-linux-gnu", "-j", "2"])
             .status()
-            .map_err(|e| NexusError::Other(format!("Toolchain missing: {}", e)))?;
+            .context("Failed to run cargo check toolchain")?;
 
         if !check.success() {
-            return Err(NexusError::Other("SYNTAX_FAULT: Code failed cargo check.".into()));
+            return Err(anyhow!("SYNTAX_FAULT: Code failed cargo check. Check your braces and types."));
         }
 
-        // 2. Clippy Enforcement
+        println!(">> [VALIDATOR] Enforcing Clippy Lints...");
         let clippy = Command::new("cargo")
             .args(["clippy", "--target", "aarch64-unknown-linux-gnu", "--", "-D", "warnings"])
             .status()
-            .map_err(|e| NexusError::Other(format!("Clippy fault: {}", e)))?;
+            .context("Failed to run cargo clippy")?;
 
         if !clippy.success() {
-            return Err(NexusError::Other("LINT_FAULT: Code rejected by Clippy.".into()));
+            return Err(anyhow!("LINT_FAULT: Code rejected by Clippy (Strict Mode)."));
         }
-
         Ok(())
     }
 
-    pub fn run_ui_checks() -> Result<(), NexusError> {
+    pub fn run_ui_checks() -> Result<()> {
         println!(">> [VALIDATOR] Enforcing UI Linting...");
         let status = Command::new("npm")
             .current_dir("ui")
             .args(["run", "lint"])
             .status()
-            .map_err(|_| NexusError::Other("NPM missing".into()))?;
+            .context("Failed to run NPM linting toolchain")?;
 
         if !status.success() {
-            return Err(NexusError::Other("UI_FAULT: Svelte linting failed.".into()));
+            return Err(anyhow!("UI_FAULT: Svelte/Vite linting failed."));
         }
         Ok(())
     }

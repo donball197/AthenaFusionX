@@ -1,9 +1,9 @@
-use crate::nexus_error::NexusError;
+use anyhow::{Result, anyhow};
 
 pub struct DiffEngine;
 
 impl DiffEngine {
-    pub fn apply(original: &str, search: &str, replace: &str) -> Result<String, NexusError> {
+    pub fn apply(original: &str, search: &str, replace: &str) -> Result<String> {
         let clean_search = search.trim();
         if clean_search.is_empty() { return Ok(original.to_string()); }
         
@@ -12,7 +12,7 @@ impl DiffEngine {
             return Ok(original.replace(search, replace)); 
         }
 
-        Err(NexusError::Patch("PATTERN_NOT_FOUND: Could not locate exact search string in file.".into()))
+        Err(anyhow!("PATTERN_NOT_FOUND: Could not locate exact search string in file."))
     }
 
     pub fn unified_diff(_old: &str, _new: &str, path: &str) -> String {

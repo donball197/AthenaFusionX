@@ -33,17 +33,25 @@ pub async fn terminal_command(
                     let name = entry.file_name().to_string_lossy().to_string();
                     if !name.starts_with('.') && name != "target" { 
                         let suffix = if entry.path().is_dir() { "/" } else { "" };
-                        out.push_str(&format!("   {}{}\n", name, suffix)); 
+                        out.push_str(&format!("    {}{}\n", name, suffix)); 
                     }
                 }
             } else {
-                out.push_str("   [Directory not found or inaccessible]\n");
+                out.push_str("    [Directory not found or inaccessible]\n");
             }
             json!({"type": "output", "data": out}).to_string()
         },
         "status" => {
             let v = state.monitor.get_vitals();
-            json!({"type": "output", "data": format!(">> STATUS | TEMP: {:.1}C | CPU: {:.1}% | RAM: {:.2}GB", v.temperature, v.cpu_load, v.ram_used_gb)}).to_string()
+            // SUTURE: Aligned field names with standardized Vitals struct (ram_gb)
+            json!({
+                "type": "output", 
+                "data": format!(">> STATUS | TEMP: {:.1}C | CPU: {:.1}% | RAM: {:.2}GB", 
+                    v.temperature, 
+                    v.cpu_load * 100.0, 
+                    v.ram_gb
+                )
+            }).to_string()
         },
         "diff" => {
             if let Some(hash) = parts.get(1) {
@@ -67,7 +75,7 @@ pub async fn terminal_command(
             match LazarusVault::list_snapshots() {
                 Ok(snaps) => {
                     let mut out = format!(">> ARCHIVES: {} items\n", snaps.len());
-                    for s in snaps.iter().rev().take(5) { out.push_str(&format!("   {} | {}\n", &s.hash[..8], s.path)); }
+                    for s in snaps.iter().rev().take(5) { out.push_str(&format!("    {} | {}\n", &s.hash[..8], s.path)); }
                     json!({"type": "output", "data": out}).to_string()
                 },
                 _ => json!({"type": "output", "data": ">> Vault Empty"}).to_string()

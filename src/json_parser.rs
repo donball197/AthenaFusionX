@@ -1,49 +1,36 @@
 use crate::agent_protocol::AgentAction;
-use crate::nexus_error::NexusError;
 use serde_json::Value;
+use regex::Regex;
 
 pub struct NeuralParser;
 
 impl NeuralParser {
-    /// extract_actions: Extracts neural intent and utilizes the 
-    /// fuzzy deserializer in agent_protocol.rs to map hardware actions.
-    pub fn extract_actions(text: &str) -> Result<Vec<AgentAction>, NexusError> {
-        let clean = text.replace("```json", "").replace("```", "").trim().to_string();
-        
+    pub fn extract_actions(text: &str) -> anyhow::Result<Vec<AgentAction>> {
         let mut actions = Vec::new();
+        let thought_re = Regex::new(r"(?s)<\|(?:think|thought|channel)>.*?<\|(?:end|channel)\|?>").unwrap();
+        let stripped_text = thought_re.replace_all(text, "");
+        let unescaped_text = stripped_text.replace("&quot;", "\"").replace("&amp;", "&");
         
-        // Find the outermost structure
-        // Aggressively locate the JSON array boundaries
-        let start = clean.find('[');
-        let end = clean.rfind(']');
-        
-        // Fallback to object boundaries if it didn't output an array
-        let (start, end) = if start.is_some() && end.is_some() {
-            (start, end)
-        } else {
-            (clean.find('{'), clean.rfind('}'))
-        };
-
-        if let (Some(s), Some(e)) = (start, end) {
-            let json_slice = &clean[s..=e];
-            let val: Value = serde_json::from_str(json_slice)
-                .map_err(|err| NexusError::Other(format!("JSON Structure Fault: {}", err)))?;
-
-            if val.is_array() {
-                // Uses the custom Deserialize impl in agent_protocol.rs for each item
-                if let Ok(batch) = serde_json::from_value::<Vec<AgentAction>>(val) {
-                    actions = batch;
+        if let (Some(start), Some(end)) = (unescaped_text.find('['), unescaped_text.rfind(']')) {
+            if start < end {
+                let array_str = &unescaped_text[start..=end];
+                if let Ok(batch) = serde_json::from_str::<Vec<AgentAction>>(array_str) {
+                    return Ok(batch);
                 }
-            } else {
-                // Uses the custom Deserialize impl for the single object
-                if let Ok(single) = serde_json::from_value::<AgentAction>(val) {
-                    actions.push(single);
+                if let Ok(val) = serde_json::from_str::<Value>(array_str) {
+                    if let Some(arr) = val.as_array() {
+                        for item in arr {
+                            if let Ok(action) = serde_json::from_value::<AgentAction>(item.clone()) {
+                                actions.push(action);
+                            }
+                        }
+                    }
                 }
             }
         }
-
+        
         if actions.is_empty() {
-            Err(NexusError::Other("DNA_TRANSLATION_FAILURE: No valid actions found".into()))
+            Err(anyhow::anyhow!("DNA_TRANSLATION_FAILURE: Bridge could not bind actions to schema."))
         } else {
             Ok(actions)
         }

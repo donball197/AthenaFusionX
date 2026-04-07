@@ -1,6 +1,7 @@
 use crate::neural_agent::{MicroAgent, ContextPacket};
 use crate::component_runner::AgentHandle;
 use crate::agent_protocol::AgentAction;
+use crate::arbiter_agent::ArbiterAgent;
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -35,9 +36,18 @@ impl Orchestrator {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-        // UPGRADE: Using the surgical extractor to ignore markdown fluff and pascal/snake case mismatches
         match AgentAction::extract_and_parse(&raw_response) {
             Ok(actions) => {
+                // UPGRADE: Consult the Arbiter before executing the loop
+                let arbiter = ArbiterAgent::new(self.agent.clone(), None);
+                let action_json = serde_json::to_string(&actions).unwrap_or_default();
+                
+                if let Ok(report) = arbiter.analyze_directive(api_key, &action_json).await {
+                    if !report.can_proceed || report.risk_score >= 0.45 {
+                        return Ok(format!("!! [ARBITER BLOCK] Risk Score: {:.2}. Reason: {}", report.risk_score, report.recommendation));
+                    }
+                }
+
                 let results: Vec<String> = self.handle.execute_actions(actions).await
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 Ok(results.join("\n"))

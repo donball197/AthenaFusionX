@@ -5,7 +5,8 @@ edition = "2021"
 
 [features]
 default = []
-future_npu = []
+# SUTURE: Map the feature directly to the optional crate
+future_npu = ["dep:tflite"]
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
@@ -16,9 +17,7 @@ reqwest = { version = "0.11", features = ["json", "stream"] }
 futures-util = "0.3"
 dotenvy = "0.15"
 walkdir = "2.4"
-rustyline = "12.0"
 clap = { version = "4.4", features = ["derive"] }
-sysinfo = "0.30"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 anyhow = "1.0"
@@ -29,13 +28,15 @@ prometheus = "0.13"
 rust-embed = "8.2"
 mime_guess = "2.0"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
-screenshots = "0.8"
 base64 = "0.21"
-image = "0.24"
 mimalloc = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
-tokio-rusqlite = "0.5"
-rusqlite = { version = "0.31", features = ["bundled"] }
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-native-tls", "macros", "chrono"] }
+
+# SUTURE: The high-level safe bridge, marked optional
+tflite = { version = "0.9.8", optional = true }
+indicatif = "0.18.4"
+comfy-table = "7.2.2"
 
 [build-dependencies]
 cc = "1.0"

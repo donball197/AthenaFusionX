@@ -1,77 +1,99 @@
-use serde::{Serialize, Deserialize};
-use tokio_rusqlite::Connection;
-use std::sync::Arc;
-use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Row};
+use std::path::Path;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct MemoryEntry {
-    pub key: String,
-    pub value: String,
-    pub category: String, // e.g., "Business Goal", "Architectural Rule", "DNA"
-    pub timestamp: i64,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AgentMemory {
+    pub id: i64,
+    pub origin: String,
+    pub directive: String,
+    pub result: String,
+    pub timestamp: String,
 }
 
 pub struct MemoryPalace {
-    conn: Arc<Connection>,
+    pub pool: SqlitePool,
 }
 
 impl MemoryPalace {
-    pub async fn init(db_path: &str) -> Result<Self> {
-        let conn = Connection::open(db_path).await?;
-        conn.call(|c| {
-            c.execute(
-                "CREATE TABLE IF NOT EXISTS memories (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL
-                )",
-                [],
-            ).map_err(tokio_rusqlite::Error::from)?;
-            Ok(())
-        }).await?;
-        
-        Ok(Self { conn: Arc::new(conn) })
+    pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> {
+        if !Path::new(db_path).exists() {
+            std::fs::File::create(db_path).ok();
+        }
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(&format!("sqlite:{}", db_path))
+            .await?;
+        let palace = Self { pool };
+        palace.init_full_schema().await?;
+        Ok(palace)
     }
 
-    pub async fn store(&self, entry: MemoryEntry) -> Result<()> {
-        let conn = self.conn.clone();
-        conn.call(move |c| {
-            c.execute(
-                "INSERT OR REPLACE INTO memories (key, value, category, timestamp) VALUES (?, ?, ?, ?)",
-                rusqlite::params![entry.key, entry.value, entry.category, entry.timestamp],
-            ).map_err(tokio_rusqlite::Error::from)?;
-            Ok(())
-        }).await?;
+    pub async fn init_full_schema(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("CREATE TABLE IF NOT EXISTS neural_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin TEXT NOT NULL,
+            directive TEXT NOT NULL,
+            result TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );").execute(&self.pool).await?;
+
+        sqlx::query("CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
+            directive, result, content='neural_context', content_rowid='id'
+        );").execute(&self.pool).await?;
+
+        sqlx::query("CREATE TABLE IF NOT EXISTS healing_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            layer TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            cvss REAL,
+            notes TEXT
+        );").execute(&self.pool).await?;
         Ok(())
     }
 
-    pub async fn fetch_all(&self) -> Result<Vec<MemoryEntry>> {
-        let conn = self.conn.clone();
-        conn.call(|c| {
-            let mut stmt = c.prepare("SELECT key, value, category, timestamp FROM memories ORDER BY category ASC")?;
-            let rows = stmt.query_map([], |row| {
-                Ok(MemoryEntry {
-                    key: row.get(0)?,
-                    value: row.get(1)?,
-                    category: row.get(2)?,
-                    timestamp: row.get(3)?,
-                })
-            })?;
-            let mut results = Vec::new();
-            for r in rows { results.push(r?); }
-            Ok(results)
-        }).await.map_err(anyhow::Error::from)
+    pub async fn store_memory(&self, origin: &str, directive: &str, result: &str) -> Result<(), sqlx::Error> {
+        let res = sqlx::query("INSERT INTO neural_context (origin, directive, result) VALUES (?, ?, ?)")
+            .bind(origin).bind(directive).bind(result).execute(&self.pool).await?;
+        let row_id = res.last_insert_rowid();
+        sqlx::query("INSERT INTO memory_search (rowid, directive, result) VALUES (?, ?, ?)")
+            .bind(row_id).bind(directive).bind(result).execute(&self.pool).await?;
+        Ok(())
     }
 
-    pub async fn get_system_context(&self) -> String {
-        if let Ok(memories) = self.fetch_all().await {
-            memories.iter()
-                .map(|m| format!("[{}]: {}", m.category, m.value))
-                .collect::<Vec<String>>()
-                .join("\n")
-        } else {
-            "No persistent memories established.".to_string()
+    pub async fn fetch_all(&self) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY id DESC LIMIT 50")
+            .fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|row| AgentMemory {
+            id: row.get("id"), origin: row.get("origin"), directive: row.get("directive"),
+            result: row.get("result"), timestamp: row.get("timestamp"),
+        }).collect())
+    }
+
+    pub async fn purge_all(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM neural_context").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM memory_search").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context 
+                                JOIN memory_search ON neural_context.id = memory_search.rowid 
+                                WHERE memory_search MATCH ? ORDER BY rank LIMIT 5")
+            .bind(query).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| AgentMemory {
+            id: r.get("id"), origin: r.get("origin"), directive: r.get("directive"),
+            result: r.get("result"), timestamp: r.get("timestamp")
+        }).collect())
+    }
+
+    pub async fn get_success_rate_for_layer(&self, layer: &str) -> f32 {
+        let result = sqlx::query("SELECT CAST(SUM(success) AS REAL) * 1.0 / COUNT(*) as rate FROM healing_metrics WHERE layer = ?")
+            .bind(layer).fetch_optional(&self.pool).await;
+        match result {
+            Ok(Some(row)) => row.get::<Option<f32>, _>("rate").unwrap_or(0.78),
+            _ => 0.78,
         }
     }
 }

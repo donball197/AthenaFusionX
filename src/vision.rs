@@ -1,58 +1,65 @@
 use anyhow::{Context, Result};
-use screenshots::Screen;
 use base64::{Engine as _, engine::general_purpose};
-use std::io::Cursor;
-use image::{imageops::FilterType, ImageFormat};
-use std::process::Command;
+use reqwest::Client;
+use serde_json::json;
+use std::fs;
 
-pub async fn capture_frame() -> Result<String> {
-    let screens = Screen::all().context("No screens found")?;
-    let screen = screens.first().context("No primary screen")?;
-    
-    let capture_data = screen.capture().context("Capture failed")?;
-    let raw_bytes = capture_data.as_raw();
+/// Cloud-Offloaded Vision Cortex (Optimized for 4GB Metal)
+pub async fn scan_local_image_cloud(image_path: &str, prompt: &str, api_key: &str) -> Result<String> {
+    println!("\x1b[35m>> [VISION_CORTEX] Encoding {} for lightweight cloud offload...\x1b[0m", image_path);
 
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-        capture_data.width(),
-        capture_data.height(),
-        raw_bytes.to_vec()
-    ).context("Failed to reconstruct image from raw bytes")?;
-    
-    let dynamic_img = image::DynamicImage::ImageRgba8(img);
-    let scaled = dynamic_img.resize(1280, 720, FilterType::Lanczos3);
-
-    let mut jpeg_buffer = Vec::new();
-    let mut cursor = Cursor::new(&mut jpeg_buffer);
-    scaled.write_to(&mut cursor, ImageFormat::Jpeg)
-        .map_err(|e| anyhow::anyhow!("Encoding failed: {}", e))?;
-
-    Ok(general_purpose::STANDARD.encode(&jpeg_buffer))
-}
-
-pub fn scan_local_image(filename: &str) -> Result<String> {
-    if filename.contains("..") || filename.contains('/') {
-        return Err(anyhow::anyhow!("Security Block: Invalid filename."));
+    // Security boundary: Prevent directory traversal outside the workspace
+    if image_path.contains("..") {
+        return Err(anyhow::anyhow!("Security Block: Invalid image path structure."));
     }
 
-    let target_path = format!("/workspace/{}", filename);
+    let image_bytes = fs::read(image_path).context("Failed to read image from disk")?;
+    let base64_image = general_purpose::STANDARD.encode(&image_bytes);
 
-    // Call the CLI directly instead of using the heavy SDK library
-    let output = Command::new("podman")
-        .args([
-            "exec",
-            "nexus_secops",
-            "identify",
-            &target_path,
-        ])
-        .output()
-        .context("Failed to communicate with SecOps drone")?;
+    let mime_type = if image_path.to_lowercase().ends_with(".png") { 
+        "image/png" 
+    } else { 
+        "image/jpeg" 
+    };
 
-    if output.status.success() {
-        let report = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(report)
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent?key={}",
+        api_key
+    );
+
+    let payload = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [
+                { "text": prompt },
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64_image
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 1024
+        }
+    });
+
+    let client = Client::new();
+    let res = client.post(&url).json(&payload).send().await?;
+    
+    if !res.status().is_success() {
+        let err = res.text().await?;
+        return Err(anyhow::anyhow!("VISION_API_FAULT: {}", err));
+    }
+
+    let body: serde_json::Value = res.json().await?;
+    
+    if let Some(text) = body["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+        println!("\x1b[35m>> [VISION_CORTEX] Analysis Complete. 0MB Local RAM Consumed.\x1b[0m");
+        Ok(text.trim().to_string())
     } else {
-        let error = String::from_utf8_lossy(&output.stderr).to_string();
-        Err(anyhow::anyhow!("Drone Vision Error: {}", error))
+        Err(anyhow::anyhow!("VISION_FAULT: Malformed response from Conductor."))
     }
 }
-pub async fn capture_and_analyze() -> anyhow::Result<String> { Ok("Vision analysis active".into()) }

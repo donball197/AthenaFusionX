@@ -1,4 +1,3 @@
-// Project Nexus Singularity v1.9.0 — Actor Evolution + Zig Harmony
 pub mod sandbox;
 pub mod agent_protocol;
 pub mod agents;
@@ -34,12 +33,12 @@ pub mod memory;
 pub mod metrics;
 pub mod mission_control;
 pub mod mission_planner;
+pub mod mission_queue;
 pub mod models;
 pub mod monitor;
 pub mod nano_agent;
 pub mod network;
 pub mod neural_agent;
-pub mod nexus_error;
 pub mod orchestrator;
 pub mod podman;
 pub mod polyglot;
@@ -64,7 +63,9 @@ pub mod zig_kernel_autofix;
 pub mod zig_kernel_inspector;
 pub mod diagnostics;
 pub mod component_runner;
-pub mod mission_queue;   // ← ADD THIS LINE
+pub mod self_healing_engine;
+pub mod zenith_check;
+pub mod void_walker;
 
 #[cfg(feature = "future_npu")]
 pub mod native_agent_manager;
@@ -72,3 +73,4 @@ pub mod native_agent_manager;
 pub mod tflite_bridge;
 #[cfg(feature = "future_npu")]
 pub mod python_reactor;
+pub mod dynamic_broker;
