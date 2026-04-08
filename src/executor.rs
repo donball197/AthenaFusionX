@@ -1,84 +1,149 @@
-use anyhow::{Context, Result};
-use serde_json::Value;
-use tokio::sync::broadcast::Sender;
+// src/executor.rs - Extended with new actions (secure & compiling)
+use anyhow::{Context, Result, anyhow};
 use std::process::Command;
 use std::fs;
-use std::path::Path;
 use crate::agent_protocol::AgentAction;
+use crate::sandbox;
 use crate::component_runner::AgentHandle;
+use crate::diff::DiffEngine;
+
+const ALLOWED_BINARIES: &[&str] = &[
+    "cargo", "rustc", "clippy-driver", "npm", "node", "git", "ls", "cat", "grep", 
+    "find", "echo", "mkdir", "rm", "cp", "mv", "zig", "make"
+];
 
 pub struct Executor;
 
 impl Executor {
-    pub async fn execute_handle(_handle: &AgentHandle, _actions: Vec<AgentAction>) -> Result<Vec<String>> {
-        Ok(vec![">> [AGENT]: Action logged via actor handle.".into()])
+    fn execute_command_safe(command: &str) -> Result<String> {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() { return Err(anyhow!("Empty command")); }
+
+        let binary = parts[0];
+        if !ALLOWED_BINARIES.contains(&binary) {
+            return Err(anyhow!("SECURITY_VIOLATION: Binary '{}' not allowed", binary));
+        }
+
+        let mut cmd = Command::new(binary);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+
+        let output = cmd.output().context("Command execution failed")?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        if !output.status.success() {
+            Err(anyhow!("Command failed: {}", String::from_utf8_lossy(&output.stderr)))
+        } else {
+            Ok(stdout)
+        }
     }
 
-    pub async fn execute_swarm_json(json_text: &str, tx: &Sender<String>) -> Result<Vec<String>> {
+    pub async fn execute_actions(actions: &[AgentAction]) -> Result<Vec<String>> {
         let mut observations = Vec::new();
-        let start = json_text.find('[').context("JSON_FRACTURE: Missing start bracket")?;
-        let end = json_text.rfind(']').context("JSON_FRACTURE: Missing end bracket")?;
-        
-        let actions: Vec<Value> = serde_json::from_str(&json_text[start..=end]).context("JSON_PARSE_FAIL")?;
-
-        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-
-        // SOVEREIGN COMMAND WHITELIST
-        let whitelist = ["cargo", "rustc", "ls", "cat", "rm", "grep", "find", "echo"];
 
         for action in actions {
-            let op = action.get("action").or_else(|| action.get("op")).and_then(|a| a.as_str()).unwrap_or("").to_lowercase();
-            let target = action.get("target").or_else(|| action.get("file")).or_else(|| action.get("path")).and_then(|a| a.as_str()).unwrap_or("GLOBAL");
-            
-            // --- FS WRITES & LAZARUS FAILSAFE ---
-            if op == "write_file" || op == "patch" || op == "create_file" {
-                let backup_dir = format!(".lazarus_vault/{}", timestamp);
-                let _ = fs::create_dir_all(&backup_dir);
-                let _ = Command::new("cp").args(["-r", "src", &backup_dir]).output();
-
-                let content = action.get("content").or_else(|| action.get("code")).and_then(|c| c.as_str()).unwrap_or("");
-                if !content.is_empty() {
-                    if let Some(parent) = Path::new(target).parent() { let _ = fs::create_dir_all(parent); }
-                    fs::write(target, content).context("FS_WRITE_FAIL")?;
-                    observations.push(format!("FILE_WRITE_SUCCESS: {}", target));
-                    let _ = tx.send(format!(">> [FS] Updated: {}", target));
-                }
-            } 
-            // --- FS READS ---
-            else if op == "read_file" || op == "read" {
-                match fs::read_to_string(target) {
-                    Ok(c) => observations.push(format!("FILE_READ_SUCCESS: {}\nCONTENT:\n{}", target, c)),
-                    Err(e) => observations.push(format!("FILE_READ_ERROR: {} - {}", target, e)),
-                }
-            }
-            // --- HARDENED COMMAND EXECUTION ---
-            else if op.contains("command") || op == "run" || op == "execute_command" {
-                let cmd = action.get("command").or_else(|| action.get("cmd")).or_else(|| action.get("args")).and_then(|c| c.as_str()).unwrap_or("");
-                if !cmd.is_empty() {
-                    // COMMAND GATE: Identify the binary
-                    let primary_bin = cmd.split_whitespace().next().unwrap_or("");
-                    
-                    if whitelist.contains(&primary_bin) {
-                        println!("\x1b[33m>> [EXEC] {}\x1b[0m", cmd);
-                        let output = Command::new("sh").args(["-c", cmd]).output()?;
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        
-                        if output.status.success() {
-                            observations.push(format!("COMMAND_SUCCESS: {}\nSTDOUT: {}", cmd, stdout));
-                        } else {
-                            observations.push(format!("COMMAND_ERROR: {}\nSTDERR: {}", cmd, stderr));
-                        }
-                    } else {
-                        // SECURITY BLOCK
-                        let violation = format!("SECURITY_VIOLATION: Command '{}' uses unauthorized binary '{}'.", cmd, primary_bin);
-                        println!("\x1b[31m!! {}\x1b[0m", violation);
-                        let _ = tx.send(format!("!! {}", violation));
-                        observations.push(violation);
+            match action {
+                AgentAction::ReadFile { path } => {
+                    let safe = sandbox::validate_path(path)?;
+                    match fs::read_to_string(&safe) {
+                        Ok(c) => observations.push(format!("FILE_READ_SUCCESS: {}\nCONTENT:\n{}", path, c)),
+                        Err(e) => observations.push(format!("FILE_READ_ERROR: {} - {}", path, e)),
                     }
+                }
+                AgentAction::WriteFile { path, content } => {
+                    let safe = sandbox::validate_path(path)?;
+                    if let Some(p) = safe.parent() { let _ = fs::create_dir_all(p); }
+                    fs::write(&safe, content)?;
+                    observations.push(format!("WRITE_SUCCESS: {}", path));
+                }
+                AgentAction::PatchFile { path, search, replace } => {
+                    let safe = sandbox::validate_path(path)?;
+                    let orig = fs::read_to_string(&safe)?;
+                    let new = DiffEngine::apply(&orig, search, replace)?;
+                    fs::write(&safe, new)?;
+                    observations.push(format!("PATCH_SUCCESS: {}", path));
+                }
+                AgentAction::ExecuteCommand { command } => {
+                    match Self::execute_command_safe(command) {
+                        Ok(out) => observations.push(format!("COMMAND_SUCCESS:\n{}", out)),
+                        Err(e) => observations.push(format!("COMMAND_ERROR: {}", e)),
+                    }
+                }
+                AgentAction::ListDirectory { path } => {
+                    let safe = sandbox::validate_path(path)?;
+                    let mut out = format!("DIRECTORY LISTING [{}]:\n", path);
+                    if let Ok(entries) = fs::read_dir(&safe) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if !name.starts_with('.') {
+                                out.push_str(&format!("  {}\n", name));
+                            }
+                        }
+                    }
+                    observations.push(out);
+                }
+                AgentAction::DeleteFile { path } => {
+                    let safe = sandbox::validate_path(path)?;
+                    if safe.is_dir() { fs::remove_dir_all(&safe)?; } else { fs::remove_file(&safe)?; }
+                    observations.push(format!("DELETE_SUCCESS: {}", path));
+                }
+                AgentAction::SearchCodebase { pattern } => {
+                    let output = Command::new("grep").args(["-rn", pattern, "src", "ui/src"]).output()?;
+                    observations.push(format!("SEARCH_RESULTS: {}\n{}", pattern, String::from_utf8_lossy(&output.stdout)));
+                }
+                
+                // === NEW ACTIONS IMPLEMENTATION ===
+                AgentAction::CreateDirectory { path } => {
+                    let safe = sandbox::validate_path(path)?;
+                    fs::create_dir_all(&safe)?;
+                    observations.push(format!("DIRECTORY_CREATED: {}", path));
+                }
+                AgentAction::RunCargo { command } => {
+                    let allowed = ["check", "build", "test", "clippy", "fmt", "audit", "flamegraph"];
+                    if !allowed.contains(&command.as_str()) {
+                        return Err(anyhow!("Cargo subcommand not allowed: {}", command));
+                    }
+                    // SUTURE: Passed reference to prevent borrow checker failure
+                    let output = Command::new("cargo").arg(&command).output()?;
+                    observations.push(format!("CARGO_{}:\n{}", command.to_uppercase(), String::from_utf8_lossy(&output.stdout)));
+                }
+                AgentAction::GitOperation { operation, args } => {
+                    let allowed_ops = ["status", "log", "diff", "branch"];
+                    if !allowed_ops.contains(&operation.as_str()) {
+                        return Err(anyhow!("Git operation not allowed: {}", operation));
+                    }
+                    let mut cmd = Command::new("git");
+                    cmd.arg(operation);
+                    cmd.args(args);
+                    let output = cmd.output()?;
+                    observations.push(format!("GIT_{}: {}", operation.to_uppercase(), String::from_utf8_lossy(&output.stdout)));
+                }
+                AgentAction::SearchReplaceMulti { pattern, replace: _, file_pattern } => {
+                    observations.push(format!("MULTI_REPLACE: pattern='{}' in files matching '{}'", pattern, file_pattern));
+                    // TODO: Implement full multi-file version later
+                }
+                AgentAction::RunTests { test_filter } => {
+                    let mut cmd = Command::new("cargo");
+                    cmd.arg("test");
+                    if let Some(filter) = test_filter {
+                        cmd.arg(filter);
+                    }
+                    let output = cmd.output()?;
+                    observations.push(format!("TEST_RUN:\n{}", String::from_utf8_lossy(&output.stdout)));
+                }
+                AgentAction::Message { message } => {
+                    observations.push(format!("MESSAGE: {}", message));
+                }
+                AgentAction::GenerateReport { data } => {
+                    observations.push(format!("REPORT: {}", serde_json::to_string_pretty(data)?));
                 }
             }
         }
         Ok(observations)
+    }
+
+    pub async fn execute_handle(_handle: &AgentHandle, actions: Vec<AgentAction>) -> Result<Vec<String>> {
+        Self::execute_actions(&actions).await
     }
 }

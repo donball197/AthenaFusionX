@@ -1,6 +1,6 @@
 <script>
-    import { runTask } from '$lib/api';
-    import { pushTermLine } from '$lib/components/NexusWS';
+    import { runTask } from '$lib/api.js';
+    import { pushTermLine } from '$lib/core/NexusWS.js';
     let isAuditing = $state(false);
 
     async function igniteAudit() {

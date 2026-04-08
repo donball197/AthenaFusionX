@@ -1,32 +1,32 @@
 
 >> [AUDIT REPORT]:
-CVSS v3.1: 6.5 (MEDIUM)
+CVSS v3.1 Score: 6.5
 Severity: MEDIUM
-Remediation:
-*   The `SafeBuffer::write_safe` function implements a bounds check to prevent buffer overflows. Ensure this check is consistently applied to all write operations to the buffer.
-*   Consider using a more robust memory management strategy to avoid manual buffer size management.
+Remediation Steps:
+*   The `SafeBuffer::write_safe` function implements a basic buffer overflow check. While effective, consider using established Rust crates like `bytes` or `VecDeque` for more robust and potentially performant buffer management.
+*   Ensure comprehensive testing of the `SafeBuffer` with various payload sizes, including edge cases (empty payloads, payloads close to `max_capacity`).
 
-CVSS v3.1: 7.5 (HIGH)
+CVSS v3.1 Score: 7.5
 Severity: HIGH
-Remediation:
-*   The `KernelError` enum includes a `SecurityViolation` variant with a CVSS score. Ensure that all security-related errors are properly categorized and assigned appropriate CVSS scores.
-*   Implement comprehensive error handling and logging to capture and respond to kernel errors effectively.
+Remediation Steps:
+*   The `KernelError` enum includes a `SecurityViolation` variant with a CVSS score. This is a good practice for tracking security-related errors. Ensure that the CVSS scores assigned to `SecurityViolation` instances are accurate and reflect the actual risk.
+*   Review the error handling logic throughout the codebase to ensure that `KernelError` instances are properly propagated and handled.
 
-CVSS v3.1: 5.3 (MEDIUM)
+CVSS v3.1 Score: 5.3
 Severity: MEDIUM
-Remediation:
-*   The `RealignmentEngine::check_alignment_fast` function verifies 64-byte boundaries. Ensure that this check is performed before any memory access that requires alignment.
-*   The `debug_assert_eq!` macro provides a sanity check for the alignment mask. Consider adding more robust validation to ensure the mask is always valid.
+Remediation Steps:
+*   The `RealignmentEngine::check_alignment_fast` function checks for 64-byte alignment. While this is a valid check, ensure that the `CACHE_LINE_SIZE` constant is configurable or appropriately sized for the target architecture.
+*   The `debug_assert_eq!` is a good sanity check, but consider adding more robust validation of the `ALIGN_MASK` during initialization or configuration.
 
-CVSS v3.1: 7.5 (HIGH)
+CVSS v3.1 Score: 7.5
 Severity: HIGH
-Remediation:
-*   The `Vmo::clone` function checks for an invalid parent handle (0). Implement more comprehensive validation of input parameters to prevent potential vulnerabilities.
-*   Handle potential errors during VMO cloning and mapping gracefully to prevent application crashes or unexpected behavior.
+Remediation Steps:
+*   The `Vmo::clone` function checks for a parent handle of 0, which is a reasonable validation. However, consider adding additional checks to ensure the validity of the parent handle (e.g., checking if the handle is still valid).
+*   The `Vmo` struct implements `Drop` to close the handle. Ensure that this cleanup logic is reliable and handles potential errors during handle closing.
 
-CVSS v3.1: 7.5 (HIGH)
+CVSS v3.1 Score: 7.5
 Severity: HIGH
-Remediation:
-*   The `Vmar::map` function uses unsafe code to map a VMO into a VMAR handle. Carefully review the underlying FFI implementation to ensure it is secure and reliable.
-*   Implement robust error handling to catch and respond to potential mapping failures.
-*   Consider using a safer memory mapping API if available.
+Remediation Steps:
+*   The `Vmar::map` function uses an unsafe block to call `nexus_vmar_map`. Carefully review the implementation of `nexus_vmar_map` to ensure that it is secure and does not introduce vulnerabilities.
+*   The error handling in `Vmar::map` checks for a null pointer return from `nexus_vmar_map`. Ensure that this error handling is sufficient and that any potential errors are properly propagated.
+*   The use of `ZX_VM_PERM_READ | ZX_VM_PERM_WRITE | ZX_VM_MAP_RANGE` defines the permissions for the mapped memory. Review these permissions to ensure that they are appropriate for the intended use case and do not grant excessive privileges.

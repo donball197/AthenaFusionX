@@ -1,20 +1,16 @@
 <script>
-    import { createEventDispatcher } from 'svelte';
-    const dispatch = createEventDispatcher();
-    export let id;
-    export let agents = [];
-    export let isFocused = false;
+    let { id, agents = [], isFocused = false, onClick, onStrike } = $props();
 
     // Calculate heat based on how many agents are active in this hive
-    $: activeCount = agents.filter(a => a.is_active).length;
-    $: heatLevel = activeCount / 4; // 0.0 to 1.0
+    let activeCount = $derived(agents.filter(a => a.is_active).length);
+    let heatLevel = $derived(activeCount / 4); // 0.0 to 1.0
 </script>
 
 <div 
-    class="card" 
-    class:focused={isFocused} 
+    class="card {isFocused ? 'focused' : ''}" 
     style="--heat: {heatLevel}; --border-glow: {activeCount > 0 ? '#0f0' : '#111'}"
-    on:click={() => dispatch('click')}
+    onclick={() => onClick?.()}
+    role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && onClick?.()}
 >
     <div class="card-header">
         <span>HIVE_{id.toString().padStart(2, '0')}</span>
@@ -23,7 +19,7 @@
 
     <div class="agent-grid">
         {#each agents as agent}
-            <div class="agent-node" class:active={agent.is_active}>
+            <div class="agent-node {agent.is_active ? 'active' : ''}">
                 {#if isFocused}<span class="agent-id">A_{agent.id}</span>{/if}
             </div>
         {/each}
@@ -31,7 +27,7 @@
 
     {#if isFocused}
         <div class="focus-controls">
-            <button class="strike-btn" on:click|stopPropagation={() => dispatch('strike')}>
+            <button class="strike-btn" onclick={(e) => { e.stopPropagation(); onStrike?.(); }}>
                 INITIATE_HIVE_STRIKE
             </button>
         </div>

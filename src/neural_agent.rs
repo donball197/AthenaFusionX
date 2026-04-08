@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, anyhow};
-use serde::{Serialize, Deserialize};
-use serde_json::{json, Value};
+// src/neural_agent.rs - Cleaned & Hardened (Safe Parsing Restored)
+use anyhow::{Context, Result};
+use serde_json::Value;
 use reqwest::Client;
 use std::sync::Mutex;
 use std::collections::VecDeque;
@@ -8,14 +8,11 @@ use tokio::sync::broadcast;
 use futures_util::StreamExt;
 use std::io::{self, Write};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ContextPacket {
+    pub system_prompt: Option<String>,
     pub current_file: String,
     pub recent_logs: Vec<String>,
-    pub file_content: Option<String>,
-    pub terminal_log: Option<String>,
-    pub system_prompt: Option<String>,
-    pub target_model: Option<String>,
 }
 
 pub struct MicroAgent {
@@ -25,7 +22,10 @@ pub struct MicroAgent {
 
 impl MicroAgent {
     pub fn init(tx: broadcast::Sender<String>) -> Result<Self> {
-        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(16)), tx })
+        Ok(MicroAgent {
+            memory: Mutex::new(VecDeque::with_capacity(16)),
+            tx,
+        })
     }
 
     pub async fn prepare_and_run(
@@ -36,38 +36,41 @@ impl MicroAgent {
         ctx: ContextPacket,
         _resonance: f32,
     ) -> Result<(String, u128)> {
-        let start_time = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let model = "gemma-4-26b-a4b-it";
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", 
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
             model, api_key
         );
 
-        let sys_prompt = ctx.system_prompt.unwrap_or_else(|| "You are NEXUS Ghost, a Sovereign AI Architect.".to_string());
+        let sys_prompt = ctx.system_prompt.unwrap_or_else(|| 
+            "You are NEXUS Ghost — Sovereign AI Architect.".to_string()
+        );
 
-        let payload = json!({ 
+        let payload = serde_json::json!({
             "system_instruction": { "parts": [{ "text": sys_prompt }] },
             "contents": [{ "role": "user", "parts": [{ "text": user_text }] }],
-            "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
+            "generationConfig": { 
+                "temperature": 0.1, 
+                "maxOutputTokens": 8192, 
+                "topP": 0.95 
+            }
         });
 
-        let _ = self.tx.send(json!({"type": "ghost_start"}).to_string());
-
         let response = client.post(&url).json(&payload).send().await
-            .context("Failed to establish neural uplink to Google API")?;
+            .context("Failed to connect to Gemini API")?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let _ = self.tx.send(json!({"type": "ghost_end"}).to_string());
-            return Err(anyhow!("Neural Link Rejected: HTTP {}", status));
+            return Err(anyhow::anyhow!("API rejected request: HTTP {}", response.status()));
         }
 
         let mut full_text = String::new();
         let mut line_buffer = String::new();
         let mut stream = response.bytes_stream();
 
-        print!("\n\x1b[38;5;51m[NEXUS_STREAM] \x1b[0m");
-
+        print!("\n\x1b[38;5;51m[NEXUS STREAM] \x1b[0m");
+        
+        // SUTURE: Reverted to serde_json parser to safely unescape quotes in tool blocks
         while let Some(item) = stream.next().await {
             if let Ok(bytes) = item {
                 line_buffer.push_str(&String::from_utf8_lossy(&bytes).replace("\r\n", "\n"));
@@ -78,19 +81,18 @@ impl MicroAgent {
                     if clean.is_empty() || clean == "[DONE]" { continue; }
                     
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                        if let Some(token) = val["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                        if let Some(token) = val.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
                             print!("\x1b[38;5;253m{}\x1b[0m", token);
                             io::stdout().flush().ok();
-                            let _ = self.tx.send(json!({"type": "ghost_token", "payload": token}).to_string());
+                            let _ = self.tx.send(serde_json::json!({"type": "ghost_token", "payload": token}).to_string());
                             full_text.push_str(token);
                         }
                     }
                 }
             }
         }
-        
-        println!("\n\x1b[38;5;244m--------------------------------\x1b[0m\n");
-        let _ = self.tx.send(json!({"type": "ghost_end"}).to_string());
-        Ok((full_text, start_time.elapsed().as_millis()))
+        println!("\n\x1b[38;5;244m────────────────────────────────\x1b[0m");
+
+        Ok((full_text, start.elapsed().as_millis()))
     }
 }

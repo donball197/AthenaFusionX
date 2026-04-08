@@ -1,6 +1,6 @@
 <script>
     import Voice from './Voice.svelte';
-    export let prompt = "";
+    let { prompt = $bindable("") } = $props();
 </script>
 
 <div class="relative">

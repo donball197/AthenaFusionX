@@ -1,42 +1,50 @@
 <script>
-    export let horizontal = false;
-    export let vertical = false;
-    export let value;
+    import { onMount, onDestroy } from 'svelte';
+
+    // Svelte 5 props
+    let { horizontal = false, vertical = false, value = $bindable(0.5) } = $props();
+
     let dragging = false;
 
-    function start(e) { dragging = true; e.preventDefault(); }
-    
+    function start(e) {
+        dragging = true;
+        e.preventDefault();
+    }
+
     function move(e) {
         if (!dragging) return;
-        if (horizontal) value = e.clientX / window.innerWidth;
-        if (vertical) value = 1 - (e.clientY / window.innerHeight);
-        if (value < 0.1) value = 0.1; 
-        if (value > 0.9) value = 0.9;
+        let next = value;
+        if (horizontal) next = e.clientX / window.innerWidth;
+        if (vertical)   next = 1 - (e.clientY / window.innerHeight);
+        value = Math.min(0.9, Math.max(0.1, next));
     }
 
     function stop() { dragging = false; }
 
-    if (typeof window !== 'undefined') {
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", stop);
-    }
+    // FIX: Listeners registered in onMount and cleaned up in onDestroy.
+    // The previous pattern registered them at module evaluation time and
+    // never removed them, leaking one pair of handlers per component instance.
+    onMount(() => {
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup',   stop);
+    });
+
+    onDestroy(() => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup',   stop);
+    });
 </script>
 
-<button 
-    class="handle {horizontal ? 'h' : ''} {vertical ? 'v' : ''}" 
-    on:mousedown={start}
+<button
+    class="handle {horizontal ? 'h' : ''} {vertical ? 'v' : ''}"
+    onmousedown={start}
     aria-label="Resize Splitter"
     type="button"
 ></button>
 
 <style>
-    .handle { 
-        background: #222; 
-        border: none; 
-        padding: 0;
-        transition: background 0.2s; 
-    }
-    .handle:hover { background: #444; }
-    .handle.h { width: 4px; cursor: col-resize; height: 100%; }
-    .handle.v { height: 4px; cursor: row-resize; width: 100%; }
+    .handle            { background: #222; border: none; padding: 0; transition: background 0.2s; }
+    .handle:hover      { background: #444; }
+    .handle.h          { width: 4px; cursor: col-resize; height: 100%; }
+    .handle.v          { height: 4px; cursor: row-resize; width: 100%; }
 </style>

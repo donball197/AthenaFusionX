@@ -1,58 +1,82 @@
-const API_URL = "/api";
+// ui/src/lib/api.js
+// Standardized API client for Nexus backend (Svelte 5 synchronized)
 
-export async function runTask(directive) {
+async function request(url, options = {}) {
     try {
-        const res = await fetch(`${API_URL}/task`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ directive })
-        });
-        if (!res.ok) throw new Error("Zenith Task failed to initiate");
-        const data = await res.json();
-        return data.output; // Returns the full string session log
+        const res = await fetch(url, options);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
     } catch (e) {
-        console.error(">> ZENITH_ERROR:", e);
-        return `!! [SYSTEM_FAULT]: ${e.message}`;
+        console.error(`[API_FAULT] ${url}:`, e);
+        return null;
     }
 }
 
 export async function readFile(path) {
+    const data = await request(`/api/fs/read?path=${encodeURIComponent(path)}`);
+    return data || { content: `// Failed to read ${path}\n` };
+}
+
+export async function writeFile(path, content) {
     try {
-        const res = await fetch(`${API_URL}/fs/read?path=${path}`);
-        if (!res.ok) throw new Error("File not found");
-        return await res.json();
-    } catch (e) {
-        console.error(e);
-        return { content: "// Error loading file" };
-    }
-}
-
-export async function saveFile(path, content) {
-    const res = await fetch(`${API_URL}/fs/write`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, content })
-    });
-    return res.ok;
-}
-
-export async function deleteFile(path) {
-    const res = await fetch(`${API_URL}/fs/delete?path=${path}`, {
-        method: "DELETE"
-    });
-    return res.ok;
-}
-
-export async function spawnDrone(directive) {
-    try {
-        const res = await fetch(`${API_URL}/drone`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ directive })
+        const res = await fetch('/api/fs/write', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content })
         });
         return res.ok;
     } catch (e) {
-        console.error(">> DRONE_FAULT:", e);
+        console.error("writeFile failed:", e);
         return false;
     }
+}
+
+export async function deleteFile(path) {
+    try {
+        const res = await fetch(`/api/fs/delete?path=${encodeURIComponent(path)}`, { 
+            method: 'DELETE' 
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("deleteFile failed:", e);
+        return false;
+    }
+}
+
+export async function listFiles(path = ".") {
+    return await request(`/api/fs/list?path=${encodeURIComponent(path)}`) || [];
+}
+
+export async function runTask(directive) {
+    const data = await request('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directive })
+    });
+    return data || { status: "ERROR", output: "Failed to queue task." };
+}
+
+// === MEMORY & MISSIONS (Newly Synchronized) ===
+
+export async function getMemories() {
+    return await request('/api/memories') || [];
+}
+
+export async function searchMemories(q) {
+    return await request(`/api/memories/search?q=${encodeURIComponent(q)}`) || [];
+}
+
+export async function purgeMemories() {
+    try {
+        const res = await fetch('/api/memories/purge', { method: 'DELETE' });
+        return res.ok;
+    } catch (e) { return false; }
+}
+
+export async function getMissions() {
+    return await request('/api/missions') || [];
+}
+
+export async function getSnapshots() {
+    return await request('/api/lazarus/snapshots') || [];
 }

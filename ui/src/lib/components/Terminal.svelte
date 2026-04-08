@@ -1,64 +1,52 @@
 <script>
-    import { terminalLogs, systemVitals } from '$lib/store.js';
-    import { runTask } from '$lib/api.js';
-    import { pushTermLine } from './NexusWS.js';
+    import { terminalState, wsState } from '$lib/core/store.svelte.js';
+    import { WS, pushTermLine } from '$lib/core/NexusWS.js';
 
-    let logContainer = $state();
-    let commandInput = $state('');
-    let isProcessing = $state(false);
+    let viewportRef = $state(null);
+    let inputRef = $state(null);
+    let command = $state('');
 
-    // SUTURE: Replacing afterUpdate with $effect
-    // This triggers every time terminalLogs is updated
     $effect(() => {
-        if (logContainer && $terminalLogs) {
-            logContainer.scrollTop = logContainer.scrollHeight;
+        // Auto-scroll when logs or the ghost buffer updates
+        if ((terminalState.logs.length || terminalState.ghostBuffer) && viewportRef) {
+            viewportRef.scrollTop = viewportRef.scrollHeight;
         }
     });
 
-    async function handleCommand(e) {
-        if (e.key === 'Enter' && commandInput.trim()) {
-            const cmd = commandInput.trim();
-            commandInput = '';
-            
-            pushTermLine(`\x1b[36mnexus_visor>\x1b[0m ${cmd}`);
-            
-            isProcessing = true;
-            try {
-                const result = await runTask(cmd);
-                pushTermLine(result.output || result);
-            } catch (err) {
-                pushTermLine(`!! [UPLINK_ERROR]: ${err.message}`, "text-red-500");
-            } finally {
-                isProcessing = false;
-            }
-        }
+    function executeCommand() {
+        if (!command.trim() || !wsState.ready) return;
+        
+        pushTermLine(`❯ ${command}`, 'text-gray-500');
+        WS.send(JSON.stringify({ type: 'directive', payload: command }));
+        command = '';
+    }
+
+    function handleKeydown(e) {
+        if (e.key === 'Enter') executeCommand();
     }
 </script>
 
-<div class="h-full flex flex-col bg-black font-mono text-xs">
-    <div class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar" bind:this={logContainer}>
-        {#each $terminalLogs as log}
-            <div class="whitespace-pre-wrap leading-tight">{@html log.html}</div>
+<div class="flex flex-col h-full w-full bg-[#050508] font-mono text-[11px] p-3 overflow-hidden border border-cyan-900/20">
+    <div class="flex-1 overflow-y-auto space-y-1 custom-scrollbar" bind:this={viewportRef}>
+        {#each terminalState.logs as log}
+            <div class="{log.cls} whitespace-pre-wrap">{log.message}</div>
         {/each}
-        {#if isProcessing}
-            <div class="text-yellow-400 animate-pulse">>> [NEURAL_UPLINK] Processing...</div>
+        
+        {#if terminalState.isGhostTyping}
+            <div class="text-cyan-100 whitespace-pre-wrap border-l border-cyan-500 pl-2">
+                {terminalState.ghostBuffer}<span class="animate-pulse">_</span>
+            </div>
         {/if}
     </div>
 
-    <div class="flex items-center px-2 py-2 bg-[#050A0F] border-t border-cyan-900/20">
-        <span class="text-cyan-400 mr-2 font-black">nexus_visor></span>
+    <div class="mt-2 pt-2 border-t border-cyan-900/20 flex items-center gap-2">
+        <span class="text-cyan-600 font-bold">NEXUS_CLI ❯</span>
         <input 
-            type="text" 
-            bind:value={commandInput} 
-            onkeydown={handleCommand}
-            disabled={isProcessing}
-            class="flex-1 bg-transparent text-gray-300 outline-none focus:ring-0"
-            placeholder={isProcessing ? "Neural uplink active..." : "Enter system directive..."}
+            bind:this={inputRef}
+            bind:value={command}
+            onkeydown={handleKeydown}
+            class="flex-1 bg-transparent border-none outline-none text-cyan-300 placeholder-cyan-900/50"
+            placeholder="Awaiting directive..."
         />
     </div>
 </div>
-
-<style>
-    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #0a2f3f; }
-</style>

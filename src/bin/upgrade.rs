@@ -7,7 +7,7 @@ use nexus_singularity::system_monitor::SystemMonitor;
 use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::memory::MemoryPalace;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 use std::sync::atomic::AtomicU32;
 
 #[tokio::main]
@@ -22,12 +22,13 @@ async fn main() -> anyhow::Result<()> {
     let monitor = SystemMonitor::new();
     let orchestrator = Arc::new(Orchestrator::new(agent.clone()));
     
-    let memory_palace = MemoryPalace::init(".nexus_memory").await?;
-    let memory = Arc::new(tokio::sync::Mutex::new(memory_palace));
+    let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;
+    let memory = Arc::new(Mutex::new(memory_palace));
 
     let scheduler_tx = scheduler::MasterSupervisor::ignite(
         tx.clone(), reqwest::Client::new(), api_key.clone(), 
-        orchestrator.clone(), Arc::new(AtomicU32::new(0)), monitor.clone()
+        orchestrator.clone(), Arc::new(AtomicU32::new(0)), monitor.clone(),
+        memory.clone()
     );
 
     let state = Arc::new(AppState {
@@ -39,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
         arbiter: Arc::new(ArbiterAgent::new(agent, None)),
         memory,
         api_key,
-        current_resonance: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+        current_resonance: Arc::new(AtomicU32::new(0)),
         tx: tx.clone(),
         scheduler_tx,
         workspace_root: std::env::current_dir()?,

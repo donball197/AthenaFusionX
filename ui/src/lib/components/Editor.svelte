@@ -1,49 +1,109 @@
 <script>
-    import { onMount, onDestroy, untrack } from 'svelte';
-    import { openTabs, activeTab, activeTabObj } from '$lib/store';
+    import { onMount, tick } from 'svelte';
+    import { ide } from '$lib/core/store.svelte.js';
+    import { EditorState } from '@codemirror/state';
     import { EditorView, basicSetup } from 'codemirror';
-    import { rust } from '@codemirror/lang-rust';
     import { oneDark } from '@codemirror/theme-one-dark';
+    import { rust } from '@codemirror/lang-rust';
 
-    let { path = '' } = $props(); 
-    let editorElement = $state();
+    let { path } = $props();
+
+    let editorContainer;
     let view;
 
-    // React to path changes using Svelte 5 Effects
-    $effect(() => {
-        if (path && view) {
-            // SUTURE: Accessing the derived store correctly with $ prefix
-            const content = $activeTabObj?.content || '';
-            untrack(() => {
-                if (view.state.doc.toString() !== content) {
-                    view.dispatch({
-                        changes: { from: 0, to: view.state.doc.length, insert: content }
-                    });
-                }
+    onMount(async () => {
+        await tick();
+        if (editorContainer) {
+            view = new EditorView({
+                state: EditorState.create({
+                    doc: "// NEXUS_OS READY\n// CodeMirror initialized successfully.",
+                    extensions: [
+                        basicSetup,
+                        oneDark,
+                        rust(),
+                        EditorView.updateListener.of((update) => {
+                            if (update.docChanged && path) {
+                                const tab = ide.openTabs.find(t => t.path === path);
+                                if (tab && tab.content !== update.state.doc.toString()) {
+                                    tab.content = update.state.doc.toString();
+                                    tab.isDirty = true;
+                                }
+                            }
+                        })
+                    ]
+                }),
+                parent: editorContainer
             });
         }
+        return () => view?.destroy();
     });
 
-    onMount(() => {
-        view = new EditorView({
-            doc: $activeTabObj?.content || '',
-            extensions: [
-                basicSetup,
-                rust(),
-                oneDark,
-                EditorView.updateListener.of((update) => {
-                    if (update.docChanged) {
-                        openTabs.update(tabs => tabs.map(t => 
-                            t.path === path ? { ...t, content: update.state.doc.toString(), isDirty: true } : t
-                        ));
+    $effect(() => {
+        if (!view || !path) return;
+        
+        const currentFile = ide.openTabs.find(t => t.path === path);
+        
+        // SUTURE: Telemetry logged to the Chrome console
+        console.log("[VISUAL_CORTEX] Target:", path, "| Content Loaded:", !!currentFile?.content);
+        
+        if (currentFile && currentFile.content !== undefined) {
+            const newContent = currentFile.content;
+            if (newContent !== view.state.doc.toString()) {
+                view.dispatch({
+                    changes: {
+                        from: 0,
+                        to: view.state.doc.length,
+                        insert: newContent
                     }
-                })
-            ],
-            parent: editorElement
-        });
+                });
+            }
+        }
     });
-
-    onDestroy(() => { if (view) view.destroy(); });
 </script>
 
-<div class="h-full w-full bg-[#0b0b0e] font-mono text-xs overflow-hidden" bind:this={editorElement}></div>
+<div class="editor-wrapper">
+    <div class="editor-layer" bind:this={editorContainer}></div>
+    
+    {#if !path}
+        <div class="welcome-overlay">
+            AWAITING SECTOR SELECTION...
+        </div>
+    {/if}
+</div>
+
+<style>
+    .editor-wrapper {
+        position: relative;
+        height: 100%;
+        width: 100%;
+        background: #020202;
+    }
+    .editor-layer {
+        position: absolute;
+        inset: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+    }
+    .welcome-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #020202;
+        color: #444;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 2px;
+        font-size: 0.9rem;
+    }
+    :global(.cm-editor) {
+        height: 100% !important;
+        outline: none !important;
+    }
+    :global(.cm-scroller) {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 12.5px;
+    }
+</style>

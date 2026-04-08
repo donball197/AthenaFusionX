@@ -1,8 +1,8 @@
 <script>
     import { onMount } from 'svelte';
-    export let resonance = 0.0;
+    let { resonance = 0.0 } = $props();
 
-    let nodes = [];
+    let nodes = $state([]);
 
     onMount(async () => {
         try {

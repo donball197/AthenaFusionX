@@ -1,3 +1,4 @@
+// src/lazarus_vault.rs - Hardened Backup System
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;
@@ -22,9 +23,11 @@ impl LazarusVault {
 
     pub fn list_snapshots() -> Result<VecDeque<Snapshot>> {
         let ledger_path = Path::new(".lazarus/ledger.json");
-        if !ledger_path.exists() { return Ok(VecDeque::new()); }
-        let data = fs::read_to_string(ledger_path).context("Vault Read Fault")?;
-        serde_json::from_str(&data).context("DNA Corruption")
+        if !ledger_path.exists() {
+            return Ok(VecDeque::new());
+        }
+        let data = fs::read_to_string(ledger_path).context("Vault ledger read failed")?;
+        serde_json::from_str(&data).context("Ledger corruption")
     }
 
     pub fn auto_snapshot(target: &str, reason: &str) -> Result<String> {
@@ -38,14 +41,17 @@ impl LazarusVault {
 
         let mut hasher = Sha256::new();
         hasher.update(content);
-        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let hash = format!("{:x}", hasher.finalize());
 
         let timestamp = Utc::now().to_rfc3339();
         let backup_path = root.join(format!("{}.snap", Utc::now().timestamp_micros()));
+
         fs::write(&backup_path, content)?;
-        
+
         let mut ledger = Self::list_snapshots().unwrap_or_default();
-        if ledger.len() >= Self::MAX_HISTORY { ledger.pop_front(); }
+        if ledger.len() >= Self::MAX_HISTORY {
+            ledger.pop_front();
+        }
 
         ledger.push_back(Snapshot {
             timestamp,
@@ -54,22 +60,20 @@ impl LazarusVault {
             hash: hash.clone(),
             backup_path: backup_path.to_string_lossy().to_string(),
         });
-        
+
         fs::write(".lazarus/ledger.json", serde_json::to_string_pretty(&ledger)?)?;
         Ok(hash)
     }
 
     pub fn restore_snapshot(hash_prefix: &str) -> Result<String> {
         let ledger = Self::list_snapshots()?;
-        let target_snap = ledger.iter().find(|s| s.hash.starts_with(hash_prefix))
-            .context("!! [VAULT] Snapshot hash not found.")?;
-
-        if !Path::new(&target_snap.backup_path).exists() {
-            return Err(anyhow::anyhow!("!! [VAULT] Physical backup file missing."));
-        }
+        let target_snap = ledger.iter()
+            .find(|s| s.hash.starts_with(hash_prefix))
+            .context("Snapshot not found")?;
 
         let safe_content = fs::read_to_string(&target_snap.backup_path)?;
         fs::write(&target_snap.path, safe_content)?;
-        Ok(format!(">> [RESTORED] {} reverted to state {}", target_snap.path, hash_prefix))
+
+        Ok(format!(">> [LAZARUS] Restored {} from snapshot {}", target_snap.path, hash_prefix))
     }
 }

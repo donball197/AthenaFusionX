@@ -1,3 +1,5 @@
+// src/server.rs
+// HARDENED VERSION - Integrates Sandbox validation on all API endpoints
 use axum::{
     extract::{Query, State, ws::{WebSocketUpgrade, WebSocket, Message}},
     http::{header, StatusCode, Uri},
@@ -57,9 +59,9 @@ pub async fn start_server(state: Arc<AppState>) {
 async fn handle_fs_list(Query(p): Query<ListParams>, State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let path = p.path.as_deref().unwrap_or(".");
     match sandbox::validate_path(path) {
-        Ok(safe) => {
+        Ok(safe_path) => {
             let mut entries = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&safe) {
+            if let Ok(rd) = std::fs::read_dir(&safe_path) {
                 for entry in rd.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if !name.starts_with('.') && name != "target" && name != "node_modules" {
@@ -73,7 +75,55 @@ async fn handle_fs_list(Query(p): Query<ListParams>, State(_state): State<Arc<Ap
             }
             (StatusCode::OK, Json(entries)).into_response()
         }
-        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
+        Err(e) => {
+            println!("\x1b[31m>> [API SECURITY_BLOCK] Directory List rejected: {}\x1b[0m", e);
+            (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+    match sandbox::validate_path(&p.path) {
+        Ok(safe_path) => match std::fs::read_to_string(&safe_path) {
+            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
+            Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
+        },
+        Err(e) => {
+            println!("\x1b[31m>> [API SECURITY_BLOCK] File Read rejected: {}\x1b[0m", e);
+            (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
+    match sandbox::validate_path(&payload.path) {
+        Ok(safe_path) => {
+            if let Some(p) = safe_path.parent() { let _ = std::fs::create_dir_all(p); }
+            match std::fs::write(&safe_path, &payload.content) {
+                Ok(_) => StatusCode::OK.into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            }
+        }
+        Err(e) => {
+            println!("\x1b[31m>> [API SECURITY_BLOCK] File Write rejected: {}\x1b[0m", e);
+            (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+    match sandbox::validate_path(&p.path) {
+        Ok(safe_path) => {
+            let res = if safe_path.is_dir() { std::fs::remove_dir_all(&safe_path) } else { std::fs::remove_file(&safe_path) };
+            match res {
+                Ok(_) => StatusCode::OK.into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            }
+        }
+        Err(e) => {
+            println!("\x1b[31m>> [API SECURITY_BLOCK] File Delete rejected: {}\x1b[0m", e);
+            (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response()
+        }
     }
 }
 
@@ -124,9 +174,10 @@ async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<Tas
     let client = state.client.clone();
     let api_key = state.api_key.clone();
     let memory = state.memory.clone();
+    let tx = state.tx.clone();
     let directive = payload.directive.clone();
     tokio::spawn(async move {
-        let _ = task_manager::send_task(agent, &client, &api_key, &directive, memory).await;
+        let _ = task_manager::send_task(agent, &client, &api_key, &directive, memory, tx).await;
     });
     Json(json!({ "status": "QUEUED" }))
 }
@@ -152,37 +203,17 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 if let Message::Text(text) = msg {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
                         if parsed["type"] == "directive" {
-                            let mut cmd = parsed["payload"].as_str().unwrap_or_default().to_string();
-                            
-                            // === SUTURE: AUTONOMIC CONTEXT INJECTOR ===
-                            let lower_cmd = cmd.to_lowercase();
-                            if lower_cmd.contains("audit") || lower_cmd.contains("all the code") {
-                                let _ = state.tx.send(String::from(">> [CORTEX_UPLINK] Broad audit detected. Injecting local workspace DNA..."));
-                                let mut context = String::from("\n\n--- [SYSTEM WORKSPACE DNA] ---\n");
-                                
-                                if let Ok(entries) = std::fs::read_dir("src") {
-                                    for entry in entries.flatten() {
-                                        let path = entry.path();
-                                        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                                // Hard limit to prevent token explosion
-                                                let preview = &content; // GEMMA-4 262K UNLOCKED
-                                                context.push_str(&format!("\n// === FILE: {} ===\n{}\n", path.display(), preview));
-                                            }
-                                        }
-                                    }
-                                }
-                                cmd.push_str(&context);
-                            }
-                            
+                            let cmd = parsed["payload"].as_str().unwrap_or_default().to_string();
                             let state_clone = state.clone();
+                            let tx_clone = state.tx.clone();
                             tokio::spawn(async move {
                                 let _ = task_manager::send_task(
                                     state_clone.agent.clone(),
                                     &state_clone.client,
                                     &state_clone.api_key,
                                     &cmd,
-                                    state_clone.memory.clone()
+                                    state_clone.memory.clone(),
+                                    tx_clone
                                 ).await;
                             });
                         }
@@ -201,42 +232,6 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
         Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(),
         None => if !final_path.contains('.') { ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data).into_response() } 
                 else { StatusCode::NOT_FOUND.into_response() }
-    }
-}
-
-async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
-    match sandbox::validate_path(&p.path) {
-        Ok(safe) => match std::fs::read_to_string(&safe) {
-            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
-            Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
-        },
-        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
-    }
-}
-
-async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
-    match sandbox::validate_path(&payload.path) {
-        Ok(safe) => {
-            if let Some(p) = safe.parent() { let _ = std::fs::create_dir_all(p); }
-            match std::fs::write(&safe, &payload.content) {
-                Ok(_) => StatusCode::OK.into_response(),
-                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            }
-        }
-        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
-    }
-}
-
-async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
-    match sandbox::validate_path(&p.path) {
-        Ok(safe) => {
-            let res = if safe.is_dir() { std::fs::remove_dir_all(&safe) } else { std::fs::remove_file(&safe) };
-            match res {
-                Ok(_) => StatusCode::OK.into_response(),
-                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            }
-        }
-        Err(_) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access Denied"}))).into_response(),
     }
 }
 

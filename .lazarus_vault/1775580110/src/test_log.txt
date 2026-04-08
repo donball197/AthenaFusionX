@@ -1,0 +1,6 @@
+NotFound
+Patch
+KernelFault
+NeuralLinkSevered
+Other
+SecurityViolation

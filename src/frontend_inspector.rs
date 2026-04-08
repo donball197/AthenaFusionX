@@ -1,20 +1,27 @@
 use crate::fs_utils;
-use anyhow::Result;
+use anyhow::{Result, Context};
 
-pub fn scan_ui_layer() -> Result<String> {
-    let files_to_scan = vec![
-        "ui/src/routes/+page.svelte",
-        "ui/src/lib/components/Editor.svelte",
-        "ui/src/lib/components/Terminal.svelte",
-    ];
+pub struct UIInspector;
 
-    println!(">> [INSPECTOR] Ingesting Svelte UI DNA...");
-    let mut payload = String::new();
+impl UIInspector {
+    pub fn scan_svelte_logic(path: &str) -> Result<String> {
+        let content = fs_utils::read_file_safe(path)
+            .context(format!("Failed to ingest Svelte DNA at {}", path))?;
 
-    for path in files_to_scan {
-        let content = fs_utils::read_file_safe(path).unwrap_or_else(|_| "// FILE MISSING".into());
-        payload.push_str(&format!("--- TARGET: {} ---\n{}\n\n", path, content));
+        println!(">> [INSPECTOR] Analyzing Svelte 5 Runes in {}...", path);
+        
+        // Identify Svelte 5 specific structures for the Agent
+        let has_state = content.contains("$state");
+        let has_derived = content.contains("$derived");
+        let has_effect = content.contains("$effect");
+        let has_props = content.contains("$props");
+
+        let mut analysis = format!("--- TARGET: {} ---\n", path);
+        analysis.push_str(&format!("REACTIVE_PROFILE: [State: {}, Derived: {}, Effect: {}, Props: {}]\n", 
+            has_state, has_derived, has_effect, has_props));
+        analysis.push_str("CONTENT:\n");
+        analysis.push_str(&content);
+
+        Ok(analysis)
     }
-
-    Ok(payload)
 }

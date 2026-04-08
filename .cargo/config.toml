@@ -3,12 +3,19 @@ target = "aarch64-unknown-linux-gnu"
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = [
-    # Optimize explicitly for the MT8183 big cores (Cortex-A73)
+    # Safely target the Cortex-A73 architecture (ARMv8.0-A)
     "-C", "target-cpu=cortex-a73",
-    
-    # Strip dead code aggressively
+
+    # Use fast LLVM linker to prevent RAM swapping
+    "-C", "link-arg=-fuse-ld=lld",
+
+    # Aggressive dead code elimination
     "-C", "link-arg=-Wl,--gc-sections",
-    
-    # Enable specific hardware math features available on this chip
-    "-C", "target-feature=+neon,+crc"
+
+    # STRICT ARMv8.0 FEATURES ONLY (Removed +lse and +aes)
+    "-C", "target-feature=+neon,+crc",
+
+    # Reduce binary size and improve performance
+    "-C", "force-unwind-tables=no",
+    "-C", "symbol-mangling-version=v0"
 ]

@@ -1,0 +1,42 @@
+[package]
+name = "nexus_singularity"
+version = "1.9.0"
+edition = "2021"
+
+[features]
+default = []
+# SUTURE: Map the feature directly to the optional crate
+future_npu = ["dep:tflite"]
+
+[dependencies]
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1.36", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+futures-util = "0.3"
+dotenvy = "0.15"
+walkdir = "2.4"
+clap = { version = "4.4", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+anyhow = "1.0"
+bitflags = "2.4"
+once_cell = "1.18"
+regex = "1.10"
+prometheus = "0.13"
+rust-embed = "8.2"
+mime_guess = "2.0"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+base64 = "0.21"
+mimalloc = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-native-tls", "macros", "chrono"] }
+
+# SUTURE: The high-level safe bridge, marked optional
+tflite = { version = "0.9.8", optional = true }
+indicatif = "0.18.4"
+comfy-table = "7.2.2"
+
+[build-dependencies]
+cc = "1.0"

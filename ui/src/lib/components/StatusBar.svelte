@@ -1,10 +1,12 @@
 <script>
-    import { layout } from "$lib/store";
-    import { WS } from "$lib/components/NexusWS";
+    import { layout } from "$lib/core/store.svelte.js";
+    import { WS } from "$lib/core/NexusWS.js";
     let resonance = 50;
 
     function updateResonance() {
-        WS.send({ type: "resonance_update", data: resonance });
+        if (WS && WS.readyState === 1) {
+            WS.send(JSON.stringify({ type: "resonance_update", data: resonance }));
+        }
     }
 </script>
 
@@ -21,7 +23,7 @@
             id="resonance" 
             min="0" max="100" 
             bind:value={resonance} 
-            on:change={updateResonance}
+            onchange={updateResonance}
         />
         <span class="val">{resonance}%</span>
     </div>

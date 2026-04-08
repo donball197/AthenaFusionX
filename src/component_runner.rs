@@ -1,3 +1,4 @@
+// src/component_runner.rs - Cleaned & Hardened
 use crate::agent_protocol::AgentAction;
 use crate::executor::Executor;
 use bitflags::bitflags;
@@ -8,15 +9,11 @@ use anyhow::Result;
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Capabilities: u32 {
-        const READ_FS      = 0b0000_0001;
-        const WRITE_FS     = 0b0000_0010;
-        const NETWORK      = 0b0000_0100;
-        const SPAWN_DRONE  = 0b0000_1000;
-        const SYSTEM_EXEC  = 0b0001_0000;
-        const MEMORY_OPS   = 0b0010_0000;
-        const VISION       = 0b0100_0000;
-        const ZIG_FFI      = 0b1000_0000;
-        const ALL          = 0b1111_1111;
+        const READ_FS   = 0b0000_0001;
+        const WRITE_FS  = 0b0000_0010;
+        const NETWORK   = 0b0000_0100;
+        const SYSTEM_EXEC = 0b0001_0000;
+        const ALL       = 0b1111_1111;
     }
 }
 
@@ -51,7 +48,12 @@ pub struct AgentComponent {
 }
 
 impl AgentComponent {
-    pub fn spawn(id: &str, _caps: Capabilities, agent: Arc<crate::neural_agent::MicroAgent>, _tx: broadcast::Sender<String>) -> AgentHandle {
+    pub fn spawn(
+        id: &str,
+        _caps: Capabilities,
+        agent: Arc<crate::neural_agent::MicroAgent>,
+        _tx: broadcast::Sender<String>
+    ) -> AgentHandle {
         let (tx, rx) = mpsc::channel(32);
         let actor = Self {
             id: id.to_string(),
@@ -75,7 +77,7 @@ impl AgentComponent {
         }
     }
 
-    fn to_handle(&self) -> AgentComponentHandle {
+    fn to_handle(&self) -> AgentHandle {
         AgentHandle {
             tx: self.self_tx.clone(),
             id: self.id.clone(),
@@ -84,5 +86,3 @@ impl AgentComponent {
     }
 }
 
-// SUTURE: Helper type alias to match the method name 'to_handle' if needed elsewhere
-type AgentComponentHandle = AgentHandle;

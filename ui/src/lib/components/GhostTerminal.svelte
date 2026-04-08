@@ -1,6 +1,5 @@
 <script>
-    export let logs = [];
-    export let isThinking = false;
+    let { logs = [], isThinking = false } = $props();
 </script>
 
 <div class="h-full flex flex-col bg-black p-4 font-mono text-xs border-t border-[#30363d]">

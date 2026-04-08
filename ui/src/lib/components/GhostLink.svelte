@@ -1,8 +1,5 @@
 <script>
-    export let logs = "";
-    export let active = false;
-    export let onToggleFiles;
-    export let version = "v0.41.0";
+    let { logs = "", active = false, onToggleFiles, version = "v0.41.0" } = $props();
 </script>
 
 {#if active}
@@ -14,7 +11,7 @@
                 <span>GHOST LINK // LIVE STREAM</span>
             </div>
             <button 
-                on:click|stopPropagation={onToggleFiles}
+                onclick={(e) => { e.stopPropagation(); onToggleFiles?.(); }}
                 class="pointer-events-auto px-3 py-0.5 border border-green-600 text-neon-green hover:bg-neon-green hover:text-black text-[9px] font-bold transition-all">
                 [ FILES ]
             </button>

@@ -1,18 +1,39 @@
 <script>
-    import { systemVitals } from '$lib/store';
+    import { systemVitals } from '$lib/core/store.svelte.js';
     import Heartbeat from '$lib/components/Heartbeat.svelte';
+    import VitalsModule from '$lib/components/VitalsModule.svelte';
 </script>
 
-<div class="p-8 h-full bg-black flex flex-col gap-8">
-    <div class="grid grid-cols-4 gap-4">
-        {#each Object.entries($systemVitals) as [key, val]}
-            <div class="p-4 border border-cyan-900/20 bg-cyan-900/5">
-                <span class="text-[9px] text-cyan-700 block mb-1 uppercase">{key}</span>
-                <span class="text-xl font-black text-white">{typeof val === 'number' ? val.toFixed(2) : val}</span>
+<div class="p-8 h-full bg-black flex flex-col">
+    <header class="mb-8">
+        <h1 class="text-cyan-400 text-2xl font-black tracking-widest">SYSTEM VITALS</h1>
+        <p class="text-xs text-cyan-700">REAL-TIME HARDWARE + NEURAL RESONANCE</p>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
+        <div class="space-y-6">
+            <VitalsModule />
+
+            <div class="border border-cyan-900/30 bg-[#0a0a0a] p-6 rounded">
+                <Heartbeat resonance={systemVitals.resonance} />
             </div>
-        {/each}
-    </div>
-    <div class="flex-1 border border-cyan-900/30 p-10 flex items-center justify-center">
-        <Heartbeat resonance={$systemVitals.resonance} />
+        </div>
+
+        <div class="border border-cyan-900/30 bg-[#0a0a0a] p-6 font-mono text-xs overflow-auto custom-scrollbar">
+            <h2 class="text-cyan-400 mb-4 uppercase tracking-widest text-[10px]">RAW TELEMETRY</h2>
+            <pre class="text-gray-400 whitespace-pre-wrap">
+{JSON.stringify({
+    cpu: systemVitals.cpu_load,
+    ram: systemVitals.ram_gb,
+    temp: systemVitals.temperature,
+    res: systemVitals.resonance
+}, null, 2)}
+            </pre>
+        </div>
     </div>
 </div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e2937; }
+</style>

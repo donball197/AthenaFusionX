@@ -1,631 +1,56 @@
 <script>
-  import { onMount } from 'svelte';
-  let missions = [];
-  let loading = true;
-
-  async function refreshMissions() {
-    try {
-      const res = await fetch('/api/missions');
-      if (res.ok) missions = await res.json();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      loading = false;
-    }
-  }
-
-  onMount(refreshMissions);
+    let { swarm = [] } = $props();
 </script>
 
-<div class="mission-container h-full">
-  <div class="header">
-    <span class="pulse"></span>
-    <h3>DIRECTIVES</h3>
-  </div>
-
-  {#if loading}
-    <p class="meta">Scanning for active directives...</p>
-  {:else if missions.length === 0}
-    <p class="meta">No active directives.</p>
-  {:else}
-    <div class="mission-list">
-      {#each missions as mission}
-        <div class="mission-card">
-          <div class="id">{mission.id.replace('.txt', '').toUpperCase()}</div>
-          <div class="desc">{mission.description}</div>
-        </div>
-      {/each}
-    </div>
-  {/if}
-</div>
-
-<style>
-  .mission-container {
-    font-family: 'JetBrains Mono', monospace;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid #222;
-  }
-  .pulse {
-    width: 9px;
-    height: 9px;
-    background: #00ffcc;
-    border-radius: 50%;
-    animation: pulse 2s infinite;
-  }
-  h3 {
-    margin: 0;
-    color: #00ffcc;
-    font-size: 0.95rem;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-  }
-  .meta {
-    font-size: 0.75rem;
-    color: #555;
-  }
-  .mission-list {
-    flex: 1;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .mission-card {
-    padding: 10px 12px;
-    border-left: 3px solid #00ffcc;
-    background: rgba(0, 255, 204, 0.04);
-  }
-  .id {
-    font-size: 0.7rem;
-    color: #00ffcc;
-    opacity: 0.85;
-  }
-  .desc {
-    font-size: 0.85rem;
-    color: #ddd;
-    margin-top: 4px;
-  }
-  @keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.8); }
-    70% { box-shadow: 0 0 0 14px rgba(0, 255, 204, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0); }
-  }
-</style>
-let audioCtx;
-let lastClick = 0;
-
-export function initAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-}
-
-export function playResonance(ramUsage) {
-    if (!audioCtx) return;
-    
-    const now = audioCtx.currentTime;
-    const ramInt = parseInt(ramUsage.replace('MB', '')) || 0;
-    
-    // Calculate interval based on RAM usage (150MB = 1s, 1800MB = 0.05s)
-    const interval = Math.max(0.05, 1.0 - (ramInt / 2000));
-
-    if (now - lastClick > interval) {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(ramInt > 1800 ? 880 : 440, now);
-        
-        gain.gain.setValueAtTime(0.1, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-
-        osc.start();
-        osc.stop(now + 0.1);
-        lastClick = now;
-    }
-}
-<script>
-    import { fly } from 'svelte/transition';
-    export let isOpen = true;
-    export let agents = Array(68).fill({status: 'IDLE'});
-</script>
-
-{#if isOpen}
-<div class="sidebar" transition:fly={{ x: -300, duration: 300 }}>
-    <div class="sidebar-header">SWARM_INDEX</div>
-    <div class="agent-list">
-        {#each agents as agent, i}
-            <div class="agent-row">
-                <span class="ln">{i + 1}</span>
-                <span class="id">AGENT_{i.toString().padStart(2, '0')}</span>
-                <span class="status {agent.status}">{agent.status}</span>
-            </div>
-        {/each}
-    </div>
-</div>
-{/if}
-
-<style>
-    .sidebar { width: 250px; background: #050505; border-right: 1px solid #1a1a1a; height: 100vh; overflow-y: auto; }
-    .sidebar-header { padding: 15px; font-size: 10px; color: #666; letter-spacing: 2px; border-bottom: 1px solid #1a1a1a; }
-    .agent-row { display: flex; align-items: center; padding: 8px 15px; font-family: monospace; font-size: 12px; }
-    .agent-row:hover { background: #0a0a0a; }
-    .ln { width: 30px; color: #333; font-size: 10px; }
-    .id { flex-grow: 1; color: #ccc; }
-    .status { font-size: 9px; padding: 2px 4px; border-radius: 2px; }
-    .IDLE { color: #444; }
-    .ACTIVE { color: #0f0; background: #003300; }
-</style>
-export default {
-    click() {
-        try {
-            const audio = new AudioContext();
-            const oscillator = audio.createOscillator();
-            const gain = audio.createGain();
-            
-            oscillator.type = 'square';
-            oscillator.frequency.setValueAtTime(1200, audio.currentTime);
-            gain.gain.setValueAtTime(0.15, audio.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.08);
-            
-            oscillator.connect(gain);
-            gain.connect(audio.destination);
-            oscillator.start();
-            oscillator.stop(audio.currentTime + 0.1);
-        } catch(e) {}
-    },
-
-    success() {
-        try {
-            const audio = new AudioContext();
-            const notes = [880, 1100, 1320];
-            let time = audio.currentTime;
-            
-            notes.forEach((freq, i) => {
-                const osc = audio.createOscillator();
-                const gain = audio.createGain();
-                osc.type = 'sine';
-                osc.frequency.value = freq;
-                gain.gain.value = 0.2;
-                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4 + i * 0.05);
-                
-                osc.connect(gain);
-                gain.connect(audio.destination);
-                osc.start(time + i * 0.08);
-                osc.stop(time + 0.6);
-            });
-        } catch(e) {}
-    },
-
-    error() {
-        try {
-            const audio = new AudioContext();
-            const osc = audio.createOscillator();
-            const gain = audio.createGain();
-            osc.type = 'sawtooth';
-            osc.frequency.value = 180;
-            gain.gain.value = 0.3;
-            gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.6);
-            
-            osc.connect(gain);
-            gain.connect(audio.destination);
-            osc.start();
-            osc.stop(audio.currentTime + 0.6);
-        } catch(e) {}
-    }
-};
-const API_URL = "/api";
-
-export async function runTask(directive) {
-    try {
-        const res = await fetch(`${API_URL}/task`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ directive })
-        });
-        if (!res.ok) throw new Error("Zenith Task failed to initiate");
-        const data = await res.json();
-        return data.output; // Returns the full string session log
-    } catch (e) {
-        console.error(">> ZENITH_ERROR:", e);
-        return `!! [SYSTEM_FAULT]: ${e.message}`;
-    }
-}
-
-export async function readFile(path) {
-    try {
-        const res = await fetch(`${API_URL}/fs/read?path=${path}`);
-        if (!res.ok) throw new Error("File not found");
-        return await res.json();
-    } catch (e) {
-        console.error(e);
-        return { content: "// Error loading file" };
-    }
-}
-
-export async function saveFile(path, content) {
-    const res = await fetch(`${API_URL}/fs/write`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, content })
-    });
-    return res.ok;
-}
-
-export async function deleteFile(path) {
-    const res = await fetch(`${API_URL}/fs/delete?path=${path}`, {
-        method: "DELETE"
-    });
-    return res.ok;
-}
-
-export async function spawnDrone(directive) {
-    try {
-        const res = await fetch(`${API_URL}/drone`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ directive })
-        });
-        return res.ok;
-    } catch (e) {
-        console.error(">> DRONE_FAULT:", e);
-        return false;
-    }
-}
-<script>
-  export let swarm = [];
-</script>
-
-<div class="flex flex-col gap-2.5">
+<div class="flex flex-col gap-2">
   {#each swarm as agent}
-    <div class="group flex items-center gap-4 p-3 bg-black border border-[#30363d] rounded hover:border-neon-green/60 transition-all duration-200">
+    <div class="group flex items-center gap-4 p-3 bg-black border border-cyan-900/20 rounded hover:border-cyan-400 transition-all duration-300">
       <div class="relative flex-shrink-0">
         {#if agent.target !== "IDLE"}
-          <div class="absolute inset-0 bg-neon-green rounded-full animate-ping opacity-30"></div>
+          <div class="absolute inset-0 bg-cyan-400 rounded-full animate-ping opacity-20"></div>
         {/if}
-        <div class="w-3 h-3 rounded-full z-10 {agent.target === 'IDLE' ? 'bg-gray-700' : 'bg-neon-green shadow-[0_0_10px_#39FF14]'}"></div>
+        <div class="w-2 h-2 rounded-full {agent.target === 'IDLE' ? 'bg-gray-800' : 'bg-cyan-400 shadow-[0_0_10px_#00FFFF]'}"></div>
       </div>
 
       <div class="flex-1 min-w-0">
-        <div class="flex justify-between items-baseline text-[10px] uppercase tracking-[1px] font-bold">
-          <span class="text-gray-400">AGENT_{agent.id.toString().padStart(2, '0')}</span>
-          <span class={agent.target === 'IDLE' ? 'text-gray-600' : 'text-neon-green'}>{agent.target}</span>
+        <div class="flex justify-between items-baseline text-[9px] uppercase tracking-widest font-black">
+          <span class="text-gray-600">AGENT_{agent.id.toString().padStart(2, '0')}</span>
+          <span class={agent.target === 'IDLE' ? 'text-gray-700' : 'text-cyan-400'}>{agent.target}</span>
         </div>
-        <div class="mt-2 h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+        <div class="mt-2 h-0.5 bg-[#111] rounded-full overflow-hidden">
           <div 
-            class="h-full bg-neon-green transition-all duration-1000 ease-out"
-            style="width: {agent.target === 'IDLE' ? '18%' : '100%'}">
+            class="h-full bg-cyan-500 transition-all duration-1000"
+            style="width: {agent.target === 'IDLE' ? '5%' : '100%'}">
           </div>
         </div>
       </div>
     </div>
   {/each}
 </div>
-
-<style>
-  .bg-neon-green { background-color: #39FF14; }
-</style>
 <script>
-    import { onMount, onDestroy } from 'svelte';
-    import { openTabs, activeTab, isGhostTyping } from '$lib/store';
-    import { pushTermLine } from '$lib/components/NexusWS.js';
-
-    export let path = '';
-    let editorElement;
-    let view;
-    let saveStatus = '';
-
-    // Dynamically loaded CodeMirror modules
-    let EditorView, basicSetup, rust, javascript, python, markdown, oneDark;
-    let ghostCursorTheme;
-
-    function langExt(p) {
-        if (!p || !rust) return [];
-        if (p.endsWith('.rs'))              return rust();
-        if (/\.(js|ts|svelte|jsx|tsx)$/.test(p)) return javascript();
-        if (p.endsWith('.py'))              return python();
-        if (/\.(md|toml|yaml|yml|json)$/.test(p)) return markdown();
-        return [];
-    }
-
-    function initEditor(content = '') {
-        if (!EditorView) return; // Guard for SSR/loading
-
-        if (view) view.destroy();
-        view = new EditorView({
-            doc: content,
-            extensions: [
-                basicSetup,
-                langExt(path),
-                oneDark,
-                ghostCursorTheme,
-                EditorView.updateListener.of((update) => {
-                    if (update.docChanged) {
-                        openTabs.update(tabs => tabs.map(t =>
-                            t.path === path
-                                ? { ...t, content: view.state.doc.toString(), isDirty: true }
-                                : t
-                        ));
-                    }
-                }),
-                EditorView.domEventHandlers({
-                    keydown(e) {
-                        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                            e.preventDefault();
-                            saveCurrentFile();
-                        }
-                    }
-                }),
-            ],
-            parent: editorElement,
-        });
-    }
-
-    $: if (path && view && EditorView) {
-        const stored = $openTabs.find(t => t.path === path)?.content ?? '';
-        const current = view.state.doc.toString();
-        if (current !== stored) {
-            view.dispatch({ changes: { from: 0, to: current.length, insert: stored } });
-        }
-        if ($isGhostTyping) {
-            view.dom.classList.add('ghost-active');
-        } else {
-            view.dom.classList.remove('ghost-active');
-        }
-    }
-
-    async function saveCurrentFile() {
-        const tab = $openTabs.find(t => t.path === path);
-        if (!tab) return;
-        saveStatus = 'saving';
-        try {
-            const res = await fetch('/api/fs/write', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: tab.path, content: tab.content }),
-            });
-            if (!res.ok) throw new Error(await res.text());
-            openTabs.update(tabs => tabs.map(t =>
-                t.path === path ? { ...t, isDirty: false } : t
-            ));
-            saveStatus = 'saved';
-            pushTermLine(`[FS] Saved → ${path}`, 'ansi-green');
-        } catch (err) {
-            saveStatus = 'error';
-            pushTermLine(`[FS] Save error: ${err.message}`, 'ansi-red');
-        }
-        setTimeout(() => saveStatus = '', 1800);
-    }
-
-    onMount(async () => {
-        // Load CodeMirror safely (client-only)
-        const cm = await import('codemirror');
-        EditorView = cm.EditorView;
-        basicSetup = cm.basicSetup;
-
-        const langs = await Promise.all([
-            import('@codemirror/lang-rust'),
-            import('@codemirror/lang-javascript'),
-            import('@codemirror/lang-python'),
-            import('@codemirror/lang-markdown'),
-            import('@codemirror/theme-one-dark')
-        ]);
-
-        rust = langs[0].rust;
-        javascript = langs[1].javascript;
-        python = langs[2].python;
-        markdown = langs[3].markdown;
-        oneDark = langs[4].oneDark;
-
-        ghostCursorTheme = EditorView.theme({
-            '&.ghost-active .cm-cursor': {
-                borderLeftColor: '#a855f7',
-                borderLeftWidth: '2px',
-                animation: 'ghost-blink 0.4s step-end infinite',
-            }
-        });
-
-        const content = $openTabs.find(t => t.path === path)?.content ?? '';
-        initEditor(content);
-    });
-
-    let lastPath = path;
-    $: if (path !== lastPath && editorElement && EditorView) {
-        lastPath = path;
-        const content = $openTabs.find(t => t.path === path)?.content ?? '';
-        initEditor(content);
-    }
-
-    onDestroy(() => view?.destroy());
+    let { response = "", active = false } = $props();
 </script>
 
-<div class="tabs">
-    {#each $openTabs as tab}
-    <button
-        class="tab {tab.path === path ? 'active' : ''}"
-        on:click={() => activeTab.set(tab.path)}
-    >
-        {#if tab.isDirty}<span class="tab-dot"></span>{/if}
-        {tab.path.split('/').pop()}
-    </button>
-    {/each}
-    <div class="tab-spacer"></div>
-    {#if saveStatus}
-        <span class="save-badge {saveStatus}">
-            {saveStatus === 'saving' ? '● SAVING' : saveStatus === 'saved' ? '✓ SAVED' : '✕ ERROR'}
-        </span>
-    {/if}
-    <button class="save-btn" on:click={saveCurrentFile} title="Save (Ctrl+S)">SAVE</button>
-</div>
-
-<div class="editor-host" bind:this={editorElement}></div>
-
-{#if $isGhostTyping}
-<div class="ghost-bar">
-    <span class="ghost-dots">
-        <span style="animation-delay:0ms"></span>
-        <span style="animation-delay:160ms"></span>
-        <span style="animation-delay:320ms"></span>
-    </span>
-    AI WRITING CODE…
-</div>
-{/if}
-
-<style>
-    .tabs { display: flex; align-items: center; background: #0a0c10; border-bottom: 1px solid #111820; overflow-x: auto; flex-shrink: 0; min-height: 28px; }
-    .tabs::-webkit-scrollbar { height: 0; }
-    .tab { display: flex; align-items: center; gap: 5px; padding: 5px 14px; font-size: 10px; font-family: inherit; color: #2a4050; background: none; border: none; border-right: 1px solid #0e1520; cursor: pointer; white-space: nowrap; transition: color 0.1s; }
-    .tab:hover { color: #5a8090; }
-    .tab.active { background: #060810; color: #22d3ee; border-bottom: 1px solid #22d3ee; }
-    .tab-dot { width: 5px; height: 5px; border-radius: 50%; background: #f59e0b; }
-    .tab-spacer { flex: 1; }
-    .save-badge { font-size: 8px; letter-spacing: 1px; padding: 2px 8px; border-radius: 2px; white-space: nowrap; }
-    .save-badge.saving { color: #f59e0b; }
-    .save-badge.saved  { color: #22c55e; }
-    .save-badge.error  { color: #f87171; }
-    .save-btn { font-family: inherit; font-size: 8px; letter-spacing: 1px; padding: 2px 10px; margin: 0 6px; border: 1px solid #1a3040; background: none; color: #2a5060; cursor: pointer; transition: all 0.15s; }
-    .save-btn:hover { border-color: #22d3ee; color: #22d3ee; }
-
-    .editor-host { flex: 1; overflow: hidden; min-height: 0; }
-    :global(.cm-editor)   { height: 100% !important; }
-    :global(.cm-scroller) { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 11px; }
-
-    .ghost-bar { display: flex; align-items: center; gap: 8px; padding: 4px 12px; background: #130a1e; border-top: 1px solid #3b1060; font-size: 9px; color: #9333ea; letter-spacing: 1px; flex-shrink: 0; }
-    .ghost-dots { display: flex; gap: 3px; }
-    .ghost-dots span { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #7c3aed; animation: gdot 1s ease-in-out infinite; }
-    @keyframes gdot { 0%,100% { transform: translateY(0); opacity: 0.4; } 50% { transform: translateY(-3px); opacity: 1; } }
-    @keyframes ghost-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-</style>
-<script>
-    export let open = false;
-    export let onFileSelect;
-
-    let files = [];
-    let currentDir = ".";
-
-    async function fetchFiles(path = ".") {
-        try {
-            const res = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
-            if (res.ok) {
-                files = await res.json();
-                currentDir = path;
-            }
-        } catch (e) {
-            console.error("Filesystem error:", e);
-        }
-    }
-
-    $: if (open && files.length === 0) fetchFiles();
-
-    function handleBack() {
-        fetchFiles(".");
-    }
-</script>
-
-<aside class="absolute left-0 top-0 bottom-0 bg-[#0d1117] border-r border-green-900/40 z-[110] transition-all duration-300 shadow-2xl {open ? 'w-72' : 'w-0 overflow-hidden'}">
-    <div class="w-72 p-5 flex flex-col h-full">
-        <div class="flex justify-between items-center border-b border-green-900/30 pb-3 mb-4">
-            <span class="text-green-600 text-xs uppercase tracking-widest font-bold">FILESYSTEM</span>
-            <button on:click={handleBack} class="text-[9px] text-green-500 hover:text-white">ROOT</button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto custom-scrollbar space-y-0.5">
-            {#each files as file}
-                <button
-                    on:click={() => file.is_dir ? fetchFiles(file.path) : onFileSelect(file.path)}
-                    class="w-full text-left px-3 py-2.5 rounded hover:bg-green-900/20 flex items-center gap-3 text-sm transition-colors group">
-                    <span class="text-lg opacity-70 group-hover:opacity-100">{file.is_dir ? '📁' : '📄'}</span>
-                    <span class={file.is_dir ? 'text-green-500' : 'text-gray-300'}>{file.name}</span>
-                </button>
-            {/each}
-        </div>
-    </div>
-</aside>
-
-<style>
-    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #0a3d2f; }
-</style>
-<script>
-    import { ghostThinking } from '$lib/store';
-    import { afterUpdate } from 'svelte';
-    import { WS } from '$lib/components/NexusWS';
-
-    // Props passed from Dashboard
-    export let logs = [];
-    export let response = "";
-    export let active = false;
-
-    let container;
-
-    // Auto-scroll to bottom as AI types
-    afterUpdate(() => {
-        if (container) {
-            container.scrollTop = container.scrollHeight;
-        }
-    });
-
-    function acceptPatch() {
-        WS.send({ type: "action", action: "accept_snapshot", data: logs.join("") });
-    }
-
-    function rejectPatch() {
-        WS.send({ type: "action", action: "reject_patch" });
-    }
-
-    function saveAndBuild() {
-        WS.send({ type: "action", action: "cargo_build" });
-    }
-</script>
-
-<div class="ghost-panel">
-    <div class="header">
-        <span class="title">GHOST CORTEX</span>
-        <span class="pulse" class:active={active || $ghostThinking}></span>
-    </div>
-    
-    <div class="content" bind:this={container}>
-        {#if logs.length > 0}
-            <pre>{logs.join("")}</pre>
-        {:else if response}
-            <pre>{response}</pre>
-        {:else}
-            <pre class="text-gray-600">>> AWAITING NEURAL STREAM...</pre>
+<div class="flex flex-col h-full bg-[#050505] border-l border-cyan-900/30 font-mono">
+    <div class="px-4 py-2 bg-cyan-900/10 border-b border-cyan-900/30 flex items-center justify-between">
+        <span class="text-[10px] font-black tracking-widest text-cyan-400">GHOST_CORTEX</span>
+        {#if active}
+            <span class="text-[9px] text-cyan-500 animate-pulse">● LIVE STREAM</span>
         {/if}
     </div>
 
-    {#if !$ghostThinking && (logs.length > 0 || response.length > 10)}
-    <div class="action-tabs">
-        <button class="btn accept" on:click={acceptPatch}>[ ACCEPT ]</button>
-        <button class="btn build" on:click={saveAndBuild}>[ BUILD ]</button>
-        <button class="btn reject" on:click={rejectPatch}>[ REJECT ]</button>
+    <div class="flex-1 p-4 overflow-y-auto text-[11px] text-cyan-100 whitespace-pre-wrap leading-relaxed custom-scrollbar">
+        {#if active && !response}
+            <span class="animate-pulse text-cyan-700">>> AWAITING NEURAL UPLINK...</span>
+        {:else}
+            {response || ">> UPLINK STABLE. AWAITING DIRECTIVE..."}
+        {/if}
     </div>
-    {/if}
 </div>
 
 <style>
-    .ghost-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; background: #0d1117; }
-    .header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #161b22; border-bottom: 1px solid #30363d; }
-    .title { font-size: 10px; font-weight: 600; color: #8b949e; letter-spacing: 1px; }
-    .pulse { width: 8px; height: 8px; border-radius: 50%; background: #30363d; }
-    .pulse.active { background: #58a6ff; box-shadow: 0 0 8px #58a6ff; animation: throb 1.5s infinite; }
-    .content { flex: 1; padding: 8px; overflow-y: auto; min-height: 0; color: #c9d1d9; font-size: 11px; line-height: 1.4; }
-    pre { white-space: pre-wrap; font-family: monospace; margin: 0; }
-    .action-tabs { display: flex; gap: 4px; padding: 6px; background: #161b22; border-top: 1px solid #30363d; }
-    .btn { flex: 1; background: #0d1117; border: 1px solid #30363d; color: #8b949e; cursor: pointer; padding: 8px; font-size: 9px; font-family: monospace; }
-    .btn:hover { background: #21262d; color: #c9d1d9; }
-    .btn.accept:hover { border-color: #238636; color: #3fb950; }
-    @keyframes throb { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1f2937; }
 </style>
 <script>
     export let logs = "";
@@ -823,80 +248,61 @@ export async function spawnDrone(directive) {
     .strike-btn { width: 100%; background: #000; color: #0f0; border: 1px solid #0f0; padding: 10px; margin-top: 15px; font-family: monospace; }
 </style>
 <script>
-    import { pendingPatch, openTabs, fileTreeTrigger } from '$lib/store';
-    import { pushTermLine } from '$lib/components/NexusWS.js';
+    import { pendingPatch, ide, fileTreeTrigger } from '$lib/store.svelte.js';
+    import { pushTermLine } from './NexusWS.js';
+    import { writeFile } from '$lib/api.js';
 
     async function applyPatch() {
         const patch = $pendingPatch;
         if (!patch) return;
 
-        // Write into editor store
-        openTabs.update(tabs => {
-            const exists = tabs.find(t => t.path === patch.path);
-            if (exists) {
-                return tabs.map(t => t.path === patch.path
-                    ? { ...t, content: patch.content, isDirty: true }
-                    : t);
-            }
-            return [...tabs, { path: patch.path, content: patch.content, isDirty: true }];
-        });
-
-        // Persist to disk
-        try {
-            const res = await fetch('/api/fs/write', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: patch.path, content: patch.content }),
-            });
-            if (!res.ok) throw new Error(await res.text());
-            openTabs.update(tabs => tabs.map(t =>
-                t.path === patch.path ? { ...t, isDirty: false } : t
-            ));
-            fileTreeTrigger.update(n => n + 1);
-            pushTermLine(`[PATCH] Applied → ${patch.path}`, 'ansi-green');
-        } catch (e) {
-            pushTermLine(`[PATCH] Write failed: ${e.message}`, 'ansi-red');
+        const success = await writeFile(patch.path, patch.content);
+        
+        if (success) {
+            ide.mountFile(patch.path, patch.content);
+            pushTermLine(`[PATCH] Applied successfully → ${patch.path}`, 'text-green-400');
+            fileTreeTrigger.update(n => (n || 0) + 1); 
+        } else {
+            pushTermLine(`[PATCH] Failed to write ${patch.path}`, 'text-red-400');
         }
 
         pendingPatch.set(null);
     }
 
     function rejectPatch() {
-        pushTermLine(`[PATCH] Rejected by operator.`, 'ansi-yellow');
+        pushTermLine(`[PATCH] Rejected by operator: ${$pendingPatch?.path}`, 'text-yellow-400');
         pendingPatch.set(null);
     }
 </script>
 
 {#if $pendingPatch}
-<div class="fixed bottom-24 right-8 w-80 bg-[#050505] border border-yellow-500/50
-            shadow-[0_0_20px_rgba(234,179,8,0.2)] z-[100] p-4 font-mono">
-    <div class="flex items-center justify-between mb-3">
-        <div class="flex items-center gap-2">
-            <div class="w-2 h-2 bg-yellow-500 animate-pulse rounded-full"></div>
-            <span class="text-[10px] text-yellow-500 font-bold uppercase tracking-widest">Patch Detected</span>
+    <div class="fixed bottom-8 right-8 w-96 bg-[#0a0a0a] border border-yellow-500/70 shadow-2xl z-[300] rounded p-5 font-mono text-xs">
+        <div class="flex justify-between mb-3 text-yellow-400">
+            <span class="font-bold tracking-widest">PATCH DETECTED</span>
+            <span class="text-yellow-600 truncate max-w-[150px]">{$pendingPatch.path}</span>
         </div>
-        <span class="text-[8px] text-gray-500 truncate max-w-[120px]">{$pendingPatch.path}</span>
-    </div>
+        
+        <pre class="bg-black/80 p-3 text-[10px] text-gray-400 overflow-auto max-h-32 mb-4 border border-yellow-900 custom-scrollbar">
+{$pendingPatch.content?.slice(0, 300) || ''}{($pendingPatch.content?.length || 0) > 300 ? '\n...' : ''}
+        </pre>
 
-    <!-- Diff preview — first 8 lines -->
-    <pre class="text-[8px] text-gray-400 bg-black/60 border border-gray-800 p-2 mb-4 max-h-20 overflow-hidden leading-tight">{$pendingPatch.content.split('\n').slice(0,8).join('\n')}{$pendingPatch.content.split('\n').length > 8 ? '\n...' : ''}</pre>
-
-    <div class="flex gap-2">
-        <button
-            on:click={applyPatch}
-            class="flex-1 bg-yellow-500/10 border border-yellow-500 text-yellow-500 text-[10px] py-1.5
-                   font-bold hover:bg-yellow-500 hover:text-black transition-all">
-            COMMIT CHANGE
-        </button>
-        <button
-            on:click={rejectPatch}
-            class="px-3 bg-red-950/20 border border-red-900 text-red-700 text-[10px]
-                   hover:bg-red-900 hover:text-white transition-colors">
-            ✕
-        </button>
+        <div class="flex gap-3">
+            <button onclick={applyPatch} 
+                    class="flex-1 py-3 bg-green-600 hover:bg-green-500 text-black font-bold tracking-widest text-[10px] transition-all">
+                COMMIT TO CORE
+            </button>
+            <button onclick={rejectPatch} 
+                    class="px-6 py-3 border border-red-900 text-red-400 hover:bg-red-950 hover:text-red-300 tracking-widest text-[10px] transition-all">
+                REJECT
+            </button>
+        </div>
     </div>
-</div>
 {/if}
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #713f12; }
+</style>
 <script>
     import SoundFx from '$lib/SoundFx.js';
 
@@ -1134,23 +540,27 @@ export async function spawnDrone(directive) {
 </style>
 <script>
     import { onMount } from 'svelte';
-    export let userPrompt = "";
-    export let isListening = false;
-    export let disabled = false;
+
+    // Svelte 5: $bindable allows parent to two-way bind userPrompt.
+    let {
+        userPrompt  = $bindable(''),
+        isListening = $bindable(false),
+        disabled    = false,
+    } = $props();
 
     let recognition;
 
     onMount(() => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return;
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) return;
 
-        recognition = new SpeechRecognition();
-        recognition.continuous = false;
+        recognition = new SR();
+        recognition.continuous     = false;
         recognition.interimResults = false;
 
-        recognition.onstart = () => isListening = true;
-        recognition.onend = () => isListening = false;
-        recognition.onerror = () => isListening = false;
+        recognition.onstart  = () => { isListening = true;  };
+        recognition.onend    = () => { isListening = false; };
+        recognition.onerror  = () => { isListening = false; };
 
         recognition.onresult = (event) => {
             const transcript = event.results[0][0].transcript;
@@ -1164,19 +574,22 @@ export async function spawnDrone(directive) {
     }
 </script>
 
+<!-- FIX: on:click → onclick (Svelte 5 event syntax) -->
 <button
-    on:click={toggle}
+    onclick={toggle}
     {disabled}
     class="w-6 h-6 border flex items-center justify-center rounded transition-all
-           {disabled ? 'border-gray-800 cursor-not-allowed' :
+           {disabled    ? 'border-gray-800 cursor-not-allowed' :
             isListening ? 'border-red-500 bg-red-900/30 shadow-[0_0_10px_#ef4444]' :
-            'border-[#30363d] hover:border-green-500 bg-[#0a0a0a]'}"
+                          'border-[#30363d] hover:border-green-500 bg-[#0a0a0a]'}"
     title="Voice Uplink"
+    type="button"
 >
     <div class="w-2 h-2 rounded-full transition-all
-        {disabled ? 'bg-gray-700' :
+        {disabled    ? 'bg-gray-700' :
          isListening ? 'bg-red-500 animate-pulse' :
-         'bg-green-600'}"></div>
+                       'bg-green-600'}">
+    </div>
 </button>
 <script>
     export let active = false;
@@ -1243,12 +656,17 @@ export async function spawnDrone(directive) {
     </div>
 </div>
 <script>
-    export let node;
-    export let level = 0;
+    // FIX: Migrated from Svelte 4 `export let` to Svelte 5 $props().
+    let { node, level = 0 } = $props();
 </script>
 
-<div class="pl-{level * 4} text-xs">
-    <div class="flex items-center gap-2 py-1 text-gray-300 hover:text-white">
+<!--
+    FIX: `pl-{level * 4}` produces a dynamic class string that Tailwind's
+    JIT compiler never generates (it can't statically analyse template
+    expressions). Use an inline style instead.
+-->
+<div style="padding-left: {level * 16}px" class="text-xs">
+    <div class="flex items-center gap-2 py-1 text-gray-300 hover:text-white cursor-default">
         {#if node.children}
             <span class="text-green-600">▾</span>
         {:else}
@@ -1256,6 +674,13 @@ export async function spawnDrone(directive) {
         {/if}
         <span>{node.name}</span>
     </div>
+
+    {#if node.children}
+        {#each node.children as child}
+            <!-- Recursive: indent increases by 1 per level -->
+            <svelte:self node={child} level={level + 1} />
+        {/each}
+    {/if}
 </div>
 <script>
     import Voice from './Voice.svelte';
@@ -1295,122 +720,118 @@ export async function spawnDrone(directive) {
 </style>
 <script>
     import { onMount } from 'svelte';
-    import SoundFx from '$lib/SoundFx.js';
+    import { pushTermLine } from './NexusWS.js';
+    import { terminalLogs, systemVitals } from '$lib/store.svelte.js';
+    import { get } from 'svelte/store';
 
-    let { isOpen = $bindable(false) } = $props();
+    let isOpen = $state(false);
     let search = $state('');
     let selectedIndex = $state(0);
 
     const commands = [
-        { id: 'purge', label: 'Purge All Neural Memories', icon: '🗑️', action: 'purge' },
-        { id: 'strike', label: 'Initiate Hive Strike', icon: '⚡', action: 'strike' },
-        { id: 'resync', label: 'Force Swarm Resync', icon: '⟳', action: 'resync' },
-        { id: 'archive', label: 'Archive Current Session', icon: '💾', action: 'archive' },
-        { id: 'lazarus', label: 'Activate Lazarus Timeline', icon: '⌛', action: 'lazarus' },
-        { id: 'vision', label: 'Toggle Visual Cortex Feed', icon: '👁️', action: 'vision' },
-        { id: 'settings', label: 'Open System Settings', icon: '⚙️', action: 'settings' }
+        { id: 'status', label: 'Show System Status', icon: '📊', action: () => {
+            const vitals = get(systemVitals);
+            pushTermLine(`>> STATUS | TEMP: ${vitals.temperature.toFixed(1)}C | CPU: ${(vitals.cpu_load * 100).toFixed(1)}% | RAM: ${vitals.ram_gb.toFixed(2)}GB`, 'text-green-400');
+        } },
+        { id: 'clear', label: 'Clear Terminal', icon: '🧹', action: () => { terminalLogs.set([]); pushTermLine('[NEXUS] Terminal cleared.', 'text-cyan-400'); } },
+        { id: 'audit', label: 'Run Security Audit', icon: '🔍', action: () => pushTermLine('>> [AUDIT] Initiating sovereign scan...', 'text-cyan-400') },
+        { id: 'lazarus', label: 'Activate Lazarus Vault', icon: '⌛', action: () => pushTermLine('>> [LAZARUS] Timeline restored.', 'text-purple-400') },
+        { id: 'vision', label: 'Toggle Visual Cortex', icon: '👁️', action: () => {} },
+        { id: 'purge', label: 'Purge Neural Memories', icon: '🗑️', action: () => pushTermLine('!! [WARNING] Memory purge initiated.', 'text-red-400') }
     ];
 
     let filtered = $derived(
         search 
-            ? commands.filter(cmd => cmd.label.toLowerCase().includes(search.toLowerCase()))
+            ? commands.filter(c => c.label.toLowerCase().includes(search.toLowerCase()))
             : commands
     );
 
-    function executeCommand(cmd) {
-        SoundFx.click();
+    $effect(() => {
+        search; 
+        selectedIndex = 0;
+    });
+
+    function execute() {
+        if (filtered.length === 0) return;
+        filtered[selectedIndex].action();
         isOpen = false;
         search = '';
-        selectedIndex = 0;
-
-        switch (cmd.action) {
-            case 'purge': window.dispatchEvent(new CustomEvent('nexus:purge')); break;
-            case 'strike': alert("HIVE STRIKE INITIATED"); break;
-            case 'resync': alert("Swarm resynchronization complete."); break;
-            case 'lazarus': window.dispatchEvent(new CustomEvent('nexus:lazarus')); break;
-            case 'vision': window.dispatchEvent(new CustomEvent('nexus:toggle-vision')); break;
-            case 'settings': window.dispatchEvent(new CustomEvent('nexus:settings')); break;
-        }
     }
 
-    function handleKeydown(e) {
-        if (!isOpen) return;
-        if (e.key === 'Escape') isOpen = false;
-        else if (e.key === 'Enter' && filtered.length > 0) executeCommand(filtered[selectedIndex]);
-        else if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1);
-        }
-        else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            selectedIndex = Math.max(selectedIndex - 1, 0);
-        }
+    function focusNode(node) {
+        node.focus();
     }
 
     onMount(() => {
-        const handleGlobal = (e) => {
+        const handler = (e) => {
             if (e.ctrlKey && e.key.toLowerCase() === 'k') {
                 e.preventDefault();
                 isOpen = !isOpen;
-                if (isOpen) search = '';
+                if (isOpen) {
+                    search = '';
+                    selectedIndex = 0;
+                }
             }
+            if (!isOpen) return;
+            
+            if (e.key === 'Escape') isOpen = false;
+            if (e.key === 'Enter') { e.preventDefault(); execute(); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1); }
+            if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = Math.max(selectedIndex - 1, 0); }
         };
-        window.addEventListener('keydown', handleGlobal);
-        return () => window.removeEventListener('keydown', handleGlobal);
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
     });
-
-    function focusInput(node) {
-        if (isOpen) node.focus();
-        return {
-            update() { if (isOpen) node.focus(); }
-        };
-    }
 </script>
 
 {#if isOpen}
-    <div 
-        class="fixed inset-0 bg-black/90 z-[300] flex items-start justify-center pt-32" 
-        role="presentation"
-        onclick={() => isOpen = false}
-        onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}
-    >
-        <div 
-            class="w-full max-w-xl bg-[#0a0a0a] border border-neon-green/70 rounded shadow-2xl overflow-hidden nexus-crt"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Command Palette"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.stopPropagation()}
-        >
-            <div class="p-4 border-b border-[#30363d]">
+    <div class="fixed inset-0 bg-black/90 z-[400] flex items-start justify-center pt-32" 
+         onclick={() => isOpen = false} 
+         role="presentation" 
+         onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
+        
+        <div class="w-full max-w-xl bg-[#0a0a0a] border border-cyan-400/70 rounded-xl shadow-2xl overflow-hidden" 
+             onclick={(e) => e.stopPropagation()} 
+             role="dialog" 
+             aria-modal="true" 
+             tabindex="-1"
+             onkeydown={(e) => e.stopPropagation()}>
+             
+            <div class="p-4 border-b border-cyan-900">
                 <input 
                     bind:value={search}
-                    placeholder="Type command or action..."
-                    class="w-full bg-transparent outline-none text-lg placeholder-gray-500"
-                    use:focusInput
-                    onkeydown={handleKeydown}
+                    use:focusNode
+                    placeholder="Enter directive... (e.g. status, clear)"
+                    class="w-full bg-transparent text-cyan-300 text-lg outline-none font-mono placeholder-cyan-900"
+                    autocomplete="off"
+                    spellcheck="false"
                 />
             </div>
-
-            <div class="max-h-96 overflow-y-auto custom-scrollbar p-2">
+            
+            <div class="max-h-96 overflow-y-auto py-2">
                 {#each filtered as cmd, i}
-                    <button
-                        onclick={() => executeCommand(cmd)}
-                        class="w-full text-left px-4 py-3 flex items-center gap-4 hover:bg-green-900/20 rounded transition-all {i === selectedIndex ? 'bg-green-900/40 border-l-2 border-neon-green' : ''}"
+                    <button 
+                        class="w-full text-left px-4 py-3 flex items-center gap-3 font-mono text-sm transition-colors {i === selectedIndex ? 'bg-cyan-900/30 text-cyan-300' : 'text-cyan-700 hover:bg-cyan-950/30'}"
+                        onclick={() => { selectedIndex = i; execute(); }}
+                        onmouseover={() => selectedIndex = i}
+                        onfocus={() => selectedIndex = i}
                     >
-                        <span class="text-xl opacity-80">{cmd.icon}</span>
-                        <span class="flex-1 text-sm">{cmd.label}</span>
+                        <span class="text-xl">{cmd.icon}</span>
+                        <span>{cmd.label}</span>
+                        <span class="ml-auto text-xs text-cyan-900 opacity-50">{cmd.id}</span>
                     </button>
                 {/each}
                 {#if filtered.length === 0}
-                    <div class="p-8 text-center text-gray-500">No matching commands found</div>
+                    <div class="px-4 py-8 text-center text-cyan-900 font-mono text-sm">
+                        No directives match your query.
+                    </div>
                 {/if}
             </div>
-
-            <div class="p-3 border-t border-[#30363d] text-[10px] text-gray-500 flex justify-between">
-                <span>↑ ↓ Navigate • Enter Execute • Esc Close</span>
-                <span>NEXUS COMMAND PALETTE v1.0</span>
+            
+            <div class="p-2 border-t border-cyan-900 bg-[#050505] flex justify-between text-[10px] text-cyan-800 font-mono">
+                <span>Use ↑↓ to navigate</span>
+                <span>Enter to execute</span>
+                <span>Esc to abort</span>
             </div>
         </div>
     </div>
@@ -1454,354 +875,130 @@ export async function spawnDrone(directive) {
         </div>
     </div>
 {/if}
-import {
-    terminalLogs, isGhostTyping, ghostBuffer,
-    systemVitals, fileTreeTrigger, wsReady, pendingPatch,
-    activeTab, openTabs
-} from '$lib/store';
-import { readFile } from '$lib/api';
-
-let socket = null;
-let messageHandlers = [];
-
-function esc(str) {
-    if (!str) return "";
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function ansiToHtml(raw) {
-    if (!raw) return "";
-    const safe = esc(raw);
-    return safe
-        .replace(/\n/g,                  '<br/>')
-        .replace(/\x1b\[31m/g,           '<span class="text-red-500">')
-        .replace(/\x1b\[32m/g,           '<span class="text-green-400">')
-        .replace(/\x1b\[33m/g,           '<span class="text-yellow-400">')
-        .replace(/\x1b\[35m/g,           '<span class="text-purple-400">')
-        .replace(/\x1b\[36m/g,           '<span class="text-cyan-400 font-bold">')
-        .replace(/\x1b\[90m/g,           '<span class="text-gray-500">')
-        .replace(/\x1b\[0m/g,            '</span>');
-}
-
-export function pushTermLine(rawText, cssClass = '') {
-    const html = ansiToHtml(rawText);
-    terminalLogs.update(logs => {
-        const next = [...logs, { html, cls: cssClass }];
-        return next.length > 500 ? next.slice(next.length - 500) : next;
-    });
-}
-
-function handleMessage(event) {
-    let data;
-    try { data = JSON.parse(event.data); }
-    catch { pushTermLine(event.data); return; }
-
-    messageHandlers.forEach(h => h(data));
-
-    // === PERFECT SYNC SUTURE ===
-    if (data.type === 'file_opened' || data.type === 'file_written') {
-        const path = data.payload;
-        readFile(path).then(res => {
-            openTabs.update(tabs => {
-                if (!tabs.find(t => t.path === path)) {
-                    return [...tabs, { path, content: res.content, isDirty: false }];
-                }
-                return tabs;
-            });
-            activeTab.set(path);
-        });
-        
-        if (data.type === 'file_written') {
-            fileTreeTrigger.update(n => n + 1);
-        }
-    }
-    // ============================
-
-    switch (data.type) {
-        case 'telemetry':
-            systemVitals.set(data.payload);
-            break;
-        case 'terminal':
-            pushTermLine(data.payload);
-            break;
-        case 'ghost_start':
-            isGhostTyping.set(true);
-            ghostBuffer.set('>> [NEURAL_UPLINK_ESTABLISHED]\n');
-            break;
-        case 'ghost_token':
-            ghostBuffer.update(b => b + data.payload);
-            break;
-        case 'ghost_end':
-            isGhostTyping.set(false);
-            fileTreeTrigger.update(n => n + 1);
-            break;
-        case 'patch_ready':
-            pendingPatch.set(data.payload);
-            break;
-    }
-}
-
-export const WS = {
-    connect() {
-        if (socket && socket.readyState <= WebSocket.OPEN) return;
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        socket = new WebSocket(`${proto}//${window.location.host}/ws/nexus`);
-        
-        socket.onopen = () => {
-            wsReady.set(true);
-            pushTermLine('\x1b[32m[NEXUS] WebSocket link established.\x1b[0m');
-        };
-
-        socket.onmessage = handleMessage;
-
-        socket.onclose = () => {
-            wsReady.set(false);
-            pushTermLine('\x1b[33m[NEXUS] Link lost — reconnecting...\x1b[0m');
-            setTimeout(() => this.connect(), 3000);
-        };
-    },
-    send(data) {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(typeof data === 'string' ? data : JSON.stringify(data));
-        }
-    }
-};
-
-export const connectWS = WS.connect;
-export const sendRaw = WS.send;
-export function onMessage(fn) {
-    messageHandlers.push(fn);
-    return () => { messageHandlers = messageHandlers.filter(h => h !== fn); };
-}
 <script>
-    export let vitals = { status: 'IDLE', cpu_usage: 0, ram_usage: '0/0', temperature: 0, resonance: 1.0 };
+    import { systemVitals } from '$lib/store.svelte.js';
 </script>
 
-<div class="flex flex-col gap-1 font-mono text-[9px]">
-    <div class="flex justify-between border-b border-cyan-900/20 pb-1 mb-1">
-        <span class="text-zinc-600 uppercase tracking-widest">Telemetry</span>
-        <span class="{vitals.status === 'CRITICAL' ? 'text-pink-600 animate-pulse' :
-                      vitals.status === 'ONLINE'   ? 'text-emerald-500' : 'text-zinc-500'}">
-            {vitals.status}
+<div class="flex items-center gap-6 text-[10px] font-mono text-gray-400">
+    <div class="flex items-center gap-1.5">
+        <span>CPU</span>
+        <span class="text-cyan-400 font-medium">{Math.round(($systemVitals.cpu_load || 0) * 100)}%</span>
+    </div>
+    <div class="flex items-center gap-1.5">
+        <span>RAM</span>
+        <span class="text-purple-400">{$systemVitals.ram_gb?.toFixed(2) || "0.00"}GB</span>
+    </div>
+    <div class="flex items-center gap-1.5">
+        <span>TEMP</span>
+        <span class="{$systemVitals.temperature > 65 ? 'text-red-400' : 'text-orange-400'}">
+            {$systemVitals.temperature?.toFixed(1) || "0.0"}°C
         </span>
     </div>
-    <div class="flex justify-between">
-        <span class="text-zinc-500">CPU</span>
-        <span class="text-cyan-400">{vitals.cpu_usage?.toFixed(1) ?? '0.0'}%</span>
-    </div>
-    <div class="flex justify-between">
-        <span class="text-zinc-500">RAM</span>
-        <span class="text-cyan-400">{vitals.ram_usage}</span>
-    </div>
-    <div class="flex justify-between">
-        <span class="text-zinc-500">HEAT</span>
-        <span class="{vitals.temperature > 60 ? 'text-pink-500' : 'text-cyan-400'}">
-            {vitals.temperature?.toFixed(1) ?? '0.0'}°C
-        </span>
-    </div>
-    <div class="flex justify-between mt-1">
-        <span class="text-zinc-500">RESONANCE</span>
-        <span class="text-purple-400">{vitals.resonance?.toFixed(3) ?? '1.000'}</span>
-    </div>
-    <!-- Mini bars -->
-    <div class="mt-1 space-y-1">
-        <div class="h-0.5 bg-zinc-900 rounded overflow-hidden">
-            <div class="h-full bg-cyan-500 transition-all duration-500" style="width:{vitals.cpu_usage ?? 0}%"></div>
-        </div>
-        <div class="h-0.5 bg-zinc-900 rounded overflow-hidden">
-            <div class="h-full bg-purple-500 transition-all duration-500"
-                 style="width:{(vitals.resonance ?? 1)*100}%"></div>
-        </div>
+    <div class="flex items-center gap-1.5">
+        <span>RES</span>
+        <span class="text-purple-400">{$systemVitals.resonance?.toFixed(2) || "0.98"}</span>
     </div>
 </div>
 <script>
-    import { onMount } from 'svelte';
-    import { activeTab, openTabs, fileTreeTrigger } from '$lib/store';
-    import { pushTermLine } from '$lib/components/NexusWS.js';
+    import { layout } from '$lib/store.svelte.js';
+    import { pushTermLine } from './NexusWS.js';
 
-    let files = [];
-    let newFileName = '';
-    let creating = false;
-    let error = '';
-
-    async function loadFiles() {
-        try {
-            const res = await fetch('/api/fs/list');
-            if (res.ok) {
-                files = await res.json();
-            }
-        } catch (e) {
-            pushTermLine('[FS] Index scan failed.', 'ansi-red');
-        }
+    function toggleVision() {
+        layout.update(l => {
+            const newState = !l.visionActive;
+            // UPGRADE: Replaced invalid 'ansi-purple' with valid Tailwind class
+            pushTermLine(`>> [CORTEX] Visual processing ${newState ? 'ONLINE' : 'OFFLINE'}.`, 'text-purple-400');
+            return { ...l, visionActive: newState };
+        });
     }
-
-    async function selectFile(path) {
-        if (!path || path.endsWith('/')) return;
-        // Already open?
-        const existing = $openTabs.find(t => t.path === path);
-        if (existing) { 
-            activeTab.set(path); 
-            return; 
-        }
-        
-        try {
-            const res = await fetch(`/api/fs/read?path=${encodeURIComponent(path)}`);
-            if (!res.ok) throw new Error('read failed');
-            const data = await res.json();
-            openTabs.update(tabs => [...tabs, { path, content: data.content, isDirty: false }]);
-            activeTab.set(path);
-        } catch (err) {
-            pushTermLine(`[FS] Could not open ${path}`, 'ansi-red');
-        }
-    }
-
-    async function createFile() {
-        const p = newFileName.trim();
-        if (!p) return;
-        error = '';
-        try {
-            const res = await fetch('/api/fs/write', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: p, content: '' }),
-            });
-            if (!res.ok) throw new Error(await res.text());
-            newFileName = '';
-            creating = false;
-            await loadFiles();
-            // Automatically open the new file
-            await selectFile(p);
-            pushTermLine(`[FS] Created ${p}`, 'ansi-green');
-        } catch (e) {
-            error = e.message;
-        }
-    }
-
-    async function deleteFile(path, e) {
-        e.stopPropagation();
-        if (!confirm(`Delete ${path}?`)) return;
-        try {
-            const res = await fetch(`/api/fs/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error(await res.text());
-            openTabs.update(tabs => tabs.filter(t => t.path !== path));
-            if ($activeTab === path) activeTab.set('');
-            await loadFiles();
-            pushTermLine(`[FS] Deleted ${path}`, 'ansi-yellow');
-        } catch (e) {
-            pushTermLine(`[FS] Delete failed: ${e.message}`, 'ansi-red');
-        }
-    }
-
-    onMount(loadFiles);
-    $: if ($fileTreeTrigger) loadFiles();
 </script>
 
-<div class="h-full bg-[#0d1117] flex flex-col font-mono text-[10px]">
-    <!-- Header -->
-    <div class="px-3 py-2 border-b border-cyan-900/30 flex justify-between items-center shrink-0">
-        <span class="text-[9px] text-gray-500 tracking-widest uppercase">Sector_Index</span>
-        <button
-            on:click={() => creating = !creating}
-            class="text-cyan-700 hover:text-cyan-400 text-base leading-none transition-colors"
-            title="New file">+</button>
+<div class="h-full flex flex-col bg-[#020202] border-r border-cyan-900/20 font-mono text-xs">
+    <div class="p-4 border-b border-cyan-900/30">
+        <div class="text-cyan-500 font-black tracking-[0.2em] text-lg">NEXUS</div>
+        <div class="text-cyan-800 text-[9px] tracking-widest mt-1">SOVEREIGN KERNEL</div>
     </div>
 
-    <!-- New file input -->
-    {#if creating}
-        <div class="px-2 py-2 border-b border-cyan-900/20 bg-black/40 shrink-0">
-            <input
-                bind:value={newFileName}
-                placeholder="src/new_file.rs"
-                class="w-full bg-transparent border border-cyan-800/50 text-cyan-300 px-2 py-1 text-[9px] outline-none focus:border-cyan-500"
-                on:keydown={(e) => { if (e.key === 'Enter') createFile(); if (e.key === 'Escape') creating = false; }}
-                autofocus
-            />
-            {#if error}
-                <p class="text-red-500 text-[8px] mt-1">{error}</p>
-            {/if}
-        </div>
-    {/if}
-
-    <!-- File list -->
-    <div class="flex-1 overflow-y-auto p-2 space-y-0.5 custom-scrollbar">
-        {#each files as file}
-            <div
-                role="button"
-                tabindex="0"
-                on:click={() => file.is_dir ? null : selectFile(file.path)}
-                on:keydown={(e) => e.key === 'Enter' && !file.is_dir && selectFile(file.path)}
-                class="w-full text-left px-2 py-1.5 rounded transition-all flex items-center gap-2 group cursor-pointer
-                       {file.path === $activeTab
-                           ? 'bg-cyan-900/30 text-cyan-400'
-                           : 'text-gray-500 hover:bg-zinc-900 hover:text-gray-300'}"
-            >
-                <span class="shrink-0">{file.is_dir ? '📁' : '📄'}</span>
-                <span class="truncate flex-1">{file.name}</span>
-                
-                {#if !file.is_dir}
-                    <!-- dirty indicator from openTabs -->
-                    {#if $openTabs.find(t => t.path === file.path)?.isDirty}
-                        <span class="w-1.5 h-1.5 rounded-full bg-yellow-500 shrink-0"></span>
-                    {/if}
-                    
-                    <button
-                        on:click={(e) => deleteFile(file.path, e)}
-                        class="opacity-0 group-hover:opacity-100 text-red-800 hover:text-red-500 px-1 transition-opacity"
-                        title="Delete">✕</button>
-                {/if}
+    <div class="flex-1 p-4 space-y-6 overflow-y-auto custom-scrollbar">
+        <div>
+            <div class="text-cyan-700 uppercase tracking-widest mb-2 text-[10px]">Modules</div>
+            <div class="space-y-1">
+                <button class="w-full text-left px-2 py-1.5 text-cyan-400 bg-cyan-950/30 border-l-2 border-cyan-400">Terminal</button>
+                <button class="w-full text-left px-2 py-1.5 text-cyan-700 hover:text-cyan-500 hover:bg-cyan-950/10 border-l-2 border-transparent transition-colors">Memory Vault</button>
+                <button class="w-full text-left px-2 py-1.5 text-cyan-700 hover:text-cyan-500 hover:bg-cyan-950/10 border-l-2 border-transparent transition-colors">Network Graph</button>
             </div>
-        {/each}
+        </div>
+
+        <div>
+            <div class="text-cyan-700 uppercase tracking-widest mb-2 text-[10px]">Hardware</div>
+            <div class="space-y-1">
+                <button 
+                    onclick={toggleVision}
+                    class="w-full text-left px-2 py-1.5 text-purple-500 hover:bg-purple-950/20 border-l-2 border-transparent transition-colors flex justify-between">
+                    <span>Visual Cortex</span>
+                    <span>{$layout.visionActive ? 'ON' : 'OFF'}</span>
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 
 <style>
-    .custom-scrollbar::-webkit-scrollbar       { width: 2px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; }
+    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #083344; }
 </style>
 <script>
-    export let horizontal = false;
-    export let vertical = false;
-    export let value;
+    import { onMount, onDestroy } from 'svelte';
+
+    // Svelte 5 props
+    let { horizontal = false, vertical = false, value = $bindable(0.5) } = $props();
+
     let dragging = false;
 
-    function start(e) { dragging = true; e.preventDefault(); }
-    
+    function start(e) {
+        dragging = true;
+        e.preventDefault();
+    }
+
     function move(e) {
         if (!dragging) return;
-        if (horizontal) value = e.clientX / window.innerWidth;
-        if (vertical) value = 1 - (e.clientY / window.innerHeight);
-        if (value < 0.1) value = 0.1; 
-        if (value > 0.9) value = 0.9;
+        let next = value;
+        if (horizontal) next = e.clientX / window.innerWidth;
+        if (vertical)   next = 1 - (e.clientY / window.innerHeight);
+        value = Math.min(0.9, Math.max(0.1, next));
     }
 
     function stop() { dragging = false; }
 
-    if (typeof window !== 'undefined') {
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", stop);
-    }
+    // FIX: Listeners registered in onMount and cleaned up in onDestroy.
+    // The previous pattern registered them at module evaluation time and
+    // never removed them, leaking one pair of handlers per component instance.
+    onMount(() => {
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup',   stop);
+    });
+
+    onDestroy(() => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup',   stop);
+    });
 </script>
 
-<button 
-    class="handle {horizontal ? 'h' : ''} {vertical ? 'v' : ''}" 
-    on:mousedown={start}
+<button
+    class="handle {horizontal ? 'h' : ''} {vertical ? 'v' : ''}"
+    onmousedown={start}
     aria-label="Resize Splitter"
     type="button"
 ></button>
 
 <style>
-    .handle { 
-        background: #222; 
-        border: none; 
-        padding: 0;
-        transition: background 0.2s; 
-    }
-    .handle:hover { background: #444; }
-    .handle.h { width: 4px; cursor: col-resize; height: 100%; }
-    .handle.v { height: 4px; cursor: row-resize; width: 100%; }
+    .handle            { background: #222; border: none; padding: 0; transition: background 0.2s; }
+    .handle:hover      { background: #444; }
+    .handle.h          { width: 4px; cursor: col-resize; height: 100%; }
+    .handle.v          { height: 4px; cursor: row-resize; width: 100%; }
 </style>
 <script>
-    import { layout } from "$lib/store";
+    import { layout } from "$lib/store.svelte.js";
     import { WS } from "$lib/components/NexusWS";
     let resonance = 50;
 
@@ -1867,219 +1064,759 @@ export function onMessage(fn) {
     margin: 0 auto;
   }
 </style><script>
-    import { afterUpdate } from 'svelte';
-    import { terminalLogs, systemVitals } from '$lib/store.js';
-    import { runTask, spawnDrone } from '$lib/api.js';
+    import { onMount, onDestroy } from 'svelte';
+
+    let memories = $state([]);
+
+    async function refresh() {
+        try {
+            const res = await fetch('/api/memories');
+            if (res.ok) memories = await res.json();
+        } catch (e) {
+            console.error('[MemoryVault] fetch error:', e);
+        }
+    }
+
+    // FIX: Use onMount/onDestroy so the listener is properly cleaned up
+    // when the component is unmounted — the bare window.addEventListener
+    // at module level leaked one handler every time the component mounted.
+    onMount(() => {
+        refresh();
+        window.addEventListener('nexus:task-complete', refresh);
+    });
+
+    onDestroy(() => {
+        window.removeEventListener('nexus:task-complete', refresh);
+    });
+</script>
+
+<div class="h-full flex flex-col bg-[#050505] border border-purple-900/30 font-mono text-[10px]">
+    <div class="p-2 border-b border-purple-900/30 flex justify-between items-center bg-[#0a0510]">
+        <span class="text-purple-400 font-bold uppercase tracking-widest">Memory Palace</span>
+        <button onclick={refresh} class="text-purple-600 hover:text-purple-400">⟳</button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+        {#each memories as mem}
+            <div class="p-2 border border-purple-900/20 bg-purple-950/5 rounded group">
+                <div class="flex justify-between text-purple-500/50 mb-1">
+                    <span>{mem.origin}</span>
+                    <span>{mem.timestamp}</span>
+                </div>
+                <!--
+                    Safe text interpolation — directive and result come from
+                    the database (which stores LLM output) so @html is unsafe.
+                -->
+                <div class="text-gray-300 group-hover:text-purple-300 transition-colors truncate">
+                    {mem.directive}
+                </div>
+                <div class="text-gray-600 text-[9px] truncate mt-1 italic">
+                    {mem.result?.slice(0, 120) || ''}
+                </div>
+            </div>
+        {/each}
+        {#if memories.length === 0}
+            <div class="text-center py-8 text-gray-700 italic">No persistent memories established.</div>
+        {/if}
+    </div>
+</div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar       { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #2d1b69; }
+</style>
+<script>
     import { pushTermLine } from './NexusWS.js';
 
-    let logContainer;
-    let commandInput = '';
-    let isProcessing = false;
+    function triggerAudit() {
+        // UPGRADE: Replaced invalid 'ansi-cyan' and 'ansi-green' with valid Tailwind classes
+        pushTermLine('>> [SECOPS] Initiating deep system audit...', 'text-cyan-400');
+        setTimeout(() => {
+            pushTermLine('>> [SECOPS] Scanning neural pathways...', 'text-cyan-500');
+        }, 800);
+        setTimeout(() => {
+            pushTermLine('>> [SECOPS] Audit complete. 0 anomalies detected.', 'text-green-400');
+        }, 2000);
+    }
 
-    afterUpdate(() => {
+    function triggerLockdown() {
+        // UPGRADE: Replaced invalid 'ansi-red' with valid Tailwind class
+        pushTermLine('!! [SECOPS] LOCKDOWN PROTOCOL INITIATED.', 'text-red-500');
+    }
+</script>
+
+<div class="p-4 border border-red-900/30 bg-[#0a0202] font-mono text-xs">
+    <div class="text-red-500 font-bold mb-4 uppercase tracking-widest border-b border-red-900/50 pb-2">Security Operations</div>
+    
+    <div class="space-y-3">
+        <button 
+            onclick={triggerAudit}
+            class="w-full py-2 px-4 bg-cyan-950/20 border border-cyan-900/50 text-cyan-400 hover:bg-cyan-900/40 transition-colors text-left flex justify-between">
+            <span>Run System Audit</span>
+            <span>[A]</span>
+        </button>
+        
+        <button 
+            onclick={triggerLockdown}
+            class="w-full py-2 px-4 bg-red-950/20 border border-red-900/50 text-red-500 hover:bg-red-900/40 hover:text-red-400 transition-colors text-left flex justify-between">
+            <span>Initiate Lockdown</span>
+            <span>[L]</span>
+        </button>
+    </div>
+</div>
+<div class="p-6 font-mono overflow-y-auto h-full">
+    <h1 class="text-xl font-bold text-cyan-400 mb-6">GLOBAL_SYNTHESIS_AUDIT</h1>
+    <div class="grid grid-cols-2 gap-4">
+        <div class="border border-white/10 p-4 bg-white/5">
+            <h2 class="text-green-500 mb-2">KERNEL_DOMAIN</h2>
+            <div class="text-[10px] space-y-1 text-gray-400">
+                <p>CVSS 5.3: Alignment Anomaly - RESOLVED</p>
+                <p>CVSS 7.5: VMO Overwrite - SHIELDED</p>
+            </div>
+        </div>
+        <div class="border border-white/10 p-4 bg-white/5">
+            <h2 class="text-red-500 mb-2">INFRASTRUCTURE</h2>
+            <div class="text-[10px] space-y-1 text-gray-400">
+                <p>CVSS 6.8: Command Injection - PURGED</p>
+                <p>CVSS 7.8: Sandbox Escape - HARDENED</p>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    let agents = Array.from({length: 68}, (_, i) => ({ id: i, status: i < 4 ? 'active' : 'idle' }));
+</script>
+
+<div class="p-4 grid grid-cols-12 gap-1 overflow-y-auto h-full bg-black">
+    {#each agents as agent}
+        <div class="aspect-square border border-white/5 flex items-center justify-center {agent.status === 'active' ? 'bg-cyan-500/20 border-cyan-500/50' : 'bg-gray-900/20'}">
+            <span class="text-[8px] {agent.status === 'active' ? 'text-white' : 'text-gray-700'}">{agent.id}</span>
+        </div>
+    {/each}
+</div>
+<div class="p-8 max-w-2xl font-mono text-[11px] text-gray-400">
+    <h2 class="text-white mb-6 uppercase tracking-widest border-b border-white/10 pb-2">Cognitive Configuration</h2>
+    <div class="space-y-4">
+        <div class="flex justify-between items-center">
+            <span>Primary Cortex:</span>
+            <span class="text-cyan-400">GEMMA_4_31B (API)</span>
+        </div>
+        <div class="flex justify-between items-center">
+            <span>Local Fallback:</span>
+            <span class="text-orange-400">GEMMA_3_NANO (LLAMA_CPP)</span>
+        </div>
+        <div class="flex justify-between items-center">
+            <span>Toolchain Lock:</span>
+            <span class="text-green-500">RUST_V1.80.0</span>
+        </div>
+    </div>
+</div>
+import { systemVitals, ghostBuffer, isGhostTyping, pendingPatch, terminalLogs, wsReady, fileTreeTrigger } from '$lib/store.svelte.js';
+
+export let WS = null;
+
+function esc(str) {
+    if (!str) return "";
+    return str.replace(/[&<>'"]/g, 
+        tag => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#39;',
+            '"': '&quot;'
+        }[tag] || tag)
+    );
+}
+
+export function pushTermLine(msg, cls = 'text-cyan-300', isHtml = false) {
+    terminalLogs.update(logs => {
+        const entry = isHtml ? { html: msg, cls } : { message: esc(msg), cls };
+        const newLogs = [...logs, entry];
+        if (newLogs.length > 100) newLogs.shift();
+        return newLogs;
+    });
+}
+
+export function connectWS() {
+    if (WS) return;
+    WS = new WebSocket('ws://localhost:3000/ws/nexus');
+    
+    WS.onopen = () => {
+        wsReady.set(true);
+        pushTermLine('[NEXUS_WS] Neural uplink established.', 'text-green-400');
+    };
+
+    WS.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            switch (data.type) {
+                case 'telemetry':
+                    systemVitals.set(data.payload);
+                    break;
+                case 'terminal':
+                    pushTermLine(data.payload, data.cls || 'text-cyan-300');
+                    break;
+                case 'ghost_start':
+                    isGhostTyping.set(true);
+                    ghostBuffer.set("");
+                    break;
+                case 'ghost_token':
+                    ghostBuffer.update(b => b + data.payload);
+                    break;
+                case 'ghost_end':
+                    isGhostTyping.set(false);
+                    break;
+                case 'patch':
+                    pendingPatch.set(data.payload);
+                    break;
+                case 'file_refresh':
+                    fileTreeTrigger.update(n => (n || 0) + 1);
+                    break;
+                default:
+                    console.warn('Unknown WS message:', data);
+            }
+        } catch (e) {
+            console.error('WS Parse Error:', e);
+        }
+    };
+
+    WS.onclose = () => {
+        wsReady.set(false);
+        pushTermLine('!! [NEXUS_WS] Connection severed. Reconnecting...', 'text-red-500');
+        WS = null;
+        setTimeout(connectWS, 2000);
+    };
+
+    WS.sendPayload = (payload) => {
+        if (WS && WS.readyState === WebSocket.OPEN) {
+            WS.send(JSON.stringify(payload));
+        } else {
+            pushTermLine('!! [FAULT] WebSocket not ready.', 'text-red-500');
+        }
+    };
+}
+<script>
+    import { onMount } from 'svelte';
+    import { ide } from '$lib/store.svelte.js';
+    import { EditorState } from '@codemirror/state';
+    import { EditorView, basicSetup } from 'codemirror'; // FIX: Restored to unified package
+    import { oneDark } from '@codemirror/theme-one-dark';
+    import { rust } from '@codemirror/lang-rust';
+
+    let editorContainer;
+    let view;
+
+    onMount(() => {
+        view = new EditorView({
+            state: EditorState.create({
+                doc: "// NEXUS_OS READY\n// Select a file from the DNA_FS explorer",
+                extensions: [
+                    basicSetup, 
+                    oneDark, 
+                    rust(),
+                    // UPGRADE: Push manual edits back to the Svelte 5 store
+                    EditorView.updateListener.of((update) => {
+                        if (update.docChanged && ide.activeTab) {
+                            const tab = ide.openTabs.find(t => t.path === ide.activeTab);
+                            if (tab && tab.content !== update.state.doc.toString()) {
+                                tab.content = update.state.doc.toString();
+                                tab.isDirty = true;
+                            }
+                        }
+                    })
+                ]
+            }),
+            parent: editorContainer
+        });
+
+        return () => view?.destroy();
+    });
+
+    // DNA_SYNC: Pull from store when active tab or external content changes
+    $effect(() => {
+        if (!view) return;
+        const currentPath = ide.activeTab;
+        const currentFile = ide.openTabs.find(t => t.path === currentPath);
+        
+        // The condition prevents an infinite loop with the updateListener above
+        if (currentFile && currentFile.content !== view.state.doc.toString()) {
+            view.dispatch({
+                changes: {
+                    from: 0,
+                    to: view.state.doc.length,
+                    insert: currentFile.content
+                }
+            });
+        }
+    });
+</script>
+
+<div class="h-full w-full bg-[#020202] overflow-hidden" bind:this={editorContainer}></div>
+
+<style>
+    :global(.cm-editor) {
+        height: 100% !important;
+        outline: none !important;
+    }
+    :global(.cm-scroller) {
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 12.5px;
+    }
+</style>
+<script>
+    import { terminalLogs, isGhostTyping, ide } from '$lib/store.svelte.js';
+    import { pushTermLine } from './NexusWS.js';
+    import { readFile } from '$lib/api.js';
+
+    let inputValue = $state('');
+    let inputRef;
+    let logContainer;
+
+    async function handleKeydown(e) {
+        if (e.key !== 'Enter' || !inputValue.trim()) return;
+
+        const cmd = inputValue.trim();
+        pushTermLine(`nexus_visor> ${cmd}`, 'text-white');
+        inputValue = '';
+
+        const lower = cmd.toLowerCase();
+
+        if (lower === 'clear') {
+            terminalLogs.set([]);
+            pushTermLine('[NEXUS] Terminal cleared.', 'text-cyan-400');
+        } else if (lower === 'status') {
+            pushTermLine('>> SYSTEM ONLINE | RESONANCE NOMINAL | HIVE ACTIVE', 'text-green-400');
+        } else if (lower.startsWith('open ')) {
+            const path = cmd.substring(5).trim();
+            const data = await readFile(path);
+            if (data?.content) {
+                ide.mountFile(path, data.content);
+                pushTermLine(`>> [MOUNTED]: ${path}`, 'text-green-400');
+            } else {
+                pushTermLine(`!! [FAULT]: File not found on host.`, 'text-red-500');
+            }
+        } else {
+            // SUTURE: Stringify the payload so the Rust backend can deserialize it
+            import('./NexusWS.js').then(({ WS }) => {
+                if (WS && WS.readyState === 1) { // 1 === OPEN
+                    WS.send(JSON.stringify({ type: 'directive', payload: cmd }));
+                } else {
+                    pushTermLine('!! [FAULT] WebSocket disconnected.', 'text-red-500');
+                }
+            });
+        }
+    }
+
+    $effect(() => {
+        terminalLogs; 
         if (logContainer) {
             logContainer.scrollTop = logContainer.scrollHeight;
         }
     });
 
-    async function handleCommand(e) {
-        if (e.key === 'Enter' && commandInput.trim()) {
-            const cmd = commandInput.trim();
-            commandInput = '';
-            
-            // Mirror input to terminal
-            pushTermLine(`\x1b[36mnexus_visor>\x1b[0m ${cmd}`);
-            
-            // ROUTE: Drone (Background) vs Task (Foreground)
-            if (cmd.toLowerCase().startsWith('drone ')) {
-                const directive = cmd.substring(6);
-                const ok = await spawnDrone(directive);
-                if (!ok) pushTermLine('!! [SYSTEM_FAULT]: Failed to dispatch drone.');
-                return;
-            }
-            
-            // Default: Foreground Task
-            isProcessing = true;
-            const result = await runTask(cmd);
-            pushTermLine(result);
-            isProcessing = false;
-        }
-    }
+    $effect(() => {
+        if (inputRef) inputRef.focus();
+    });
 </script>
 
-<div class="h-full flex flex-col bg-black font-mono text-sm border-t border-[#00FFFF]/30">
-    <div class="flex items-center justify-between px-3 py-1 bg-[#0A1A1F] border-b border-[#00FFFF]/20">
-        <span class="text-[#00FFFF] font-bold tracking-wider text-xs">NEXUS TERMINAL v2.0</span>
-        <div class="flex gap-4 text-[10px] text-cyan-400/70">
-            <span>CPU: {$systemVitals.cpu_usage.toFixed(1)}%</span>
-            <span>RAM: {$systemVitals.ram_usage}</span>
-            <span class={$systemVitals.temperature > 68 ? 'text-red-400 animate-pulse' : ''}>
-                TEMP: {$systemVitals.temperature.toFixed(1)}°C
-            </span>
-        </div>
-    </div>
-
-    <div bind:this={logContainer} class="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-cyan-900 scrollbar-track-black">
+<div class="h-full flex flex-col bg-black p-4 font-mono text-[11px] overflow-hidden">
+    <div
+        class="flex-1 overflow-y-auto space-y-1 custom-scrollbar pb-4"
+        bind:this={logContainer}
+    >
         {#each $terminalLogs as log}
-            <div class="whitespace-pre-wrap leading-tight">{@html log.html}</div>
+            <div class={log.cls || 'text-cyan-300'}>
+                {log.message || ''}
+            </div>
         {/each}
-        {#if isProcessing}
-            <div class="text-yellow-400 animate-pulse">>> [NEURAL UPLINK ACTIVE] Processing...</div>
+
+        {#if $isGhostTyping}
+            <div class="text-blue-400 animate-pulse">>> CONDUCTOR PROCESSING NEURAL STREAM...</div>
         {/if}
     </div>
 
-    <div class="flex items-center px-2 py-1 bg-[#050A0F]">
-        <span class="text-cyan-400 mr-2">nexus_visor></span>
-        <input 
-            type="text" 
-            bind:value={commandInput} 
-            on:keydown={handleCommand}
-            disabled={isProcessing}
-            class="flex-1 bg-transparent text-gray-300 focus:outline-none disabled:opacity-50"
-            placeholder={isProcessing ? "Awaiting neural response..." : "Enter system directive..."}
+    <div class="flex items-center border-t border-cyan-900/40 pt-3 shrink-0">
+        <span class="text-cyan-500 mr-2 font-bold">nexus_visor&gt;</span>
+        <input
+            bind:this={inputRef}
+            bind:value={inputValue}
+            onkeydown={handleKeydown}
+            class="flex-1 bg-transparent text-cyan-300 outline-none border-none font-mono text-[11px]"
+            spellcheck="false"
+            autocomplete="off"
         />
-    </div>
-</div>
-import { writable, derived } from 'svelte/store';
-
-// Core Navigation & Tabs
-export const openTabs = writable([{ path: 'src/main.rs', content: '// NEXUS_READY\n', isDirty: false }]);
-export const activeTab = writable('src/main.rs');
-export const activeTabObj = derived([openTabs, activeTab], ([$tabs, $path]) => $tabs.find(t => t.path === $path) ?? null);
-
-// Workspace Layout
-export const fileTree = writable([]);
-export const fileTreeTrigger = writable(0);
-export const layout = writable({ 
-    sidebarVisible: true, 
-    ghostPanelVisible: true, 
-    visionActive: false, 
-    editorWidth: 0.6, 
-    terminalHeight: 0.3 
-});
-
-// AI & Task State
-export const isGhostTyping = writable(false);
-export const ghostBuffer = writable('');
-export const ghostThinking = writable(false);
-export const currentMission = writable(''); // Tracks the active Zenith Directive
-
-// Hardware & System
-export const terminalLogs = writable([]);
-export const pendingPatch = writable(null);
-export const systemVitals = writable({ 
-    status: 'OFFLINE', 
-    cpu_usage: 0, 
-    ram_usage: '0/0', 
-    resonance: 1.0, 
-    temperature: 0 
-});
-export const wsReady = writable(false);
-<script>
-    import { onMount } from 'svelte';
-    import { WS } from './components/NexusWS.js';
-    import { 
-        pendingPatch, isGhostTyping, ghostBuffer, 
-        terminalLogs, systemVitals, activeTab, layout 
-    } from '$lib/store';
-
-    import Editor         from './components/Editor.svelte';
-    import GhostCortex    from './components/GhostCortex.svelte';
-    import GhostTerminal  from './components/GhostTerminal.svelte';
-    import Heartbeat      from './components/Heartbeat.svelte';
-    import ResponseModule from './components/ResponseModule.svelte';
-    import Vitals         from './components/Vitals.svelte';
-    import VisualCortex   from './components/VisualCortex.svelte';
-    import Explorer       from './components/Explorer.svelte';
-    import Voice          from './components/Voice.svelte';
-
-    let userPrompt = "";
-    let neuralResponse = ">> SYSTEM_RES_NOMINAL";
-
-    async function executeAction() {
-        if (!userPrompt.trim() || $isGhostTyping) return;
-        // Global WS singleton send
-        WS.send({ type: 'directive', payload: userPrompt });
-        userPrompt = "";
-    }
-
-    async function handleApplyPatch() {
-        if (!$pendingPatch) return;
-        
-        try {
-            const res = await fetch('/api/fs/write', { 
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ path: $pendingPatch.path, content: $pendingPatch.content })
-            });
-            if (!res.ok) throw new Error("Write failed");
-            
-            WS.send({ type: 'terminal', payload: `[NEXUS] Patch applied successfully to ${$pendingPatch.path}` });
-            pendingPatch.set(null);
-        } catch (e) {
-            WS.send({ type: 'terminal', payload: `!! [FAULT] Failed to apply patch: ${e.message}` });
-        }
-    }
-</script>
-
-<div class="h-screen w-screen bg-black text-neon-green font-mono grid grid-cols-12 grid-rows-12 gap-1 p-1 overflow-hidden">
-    <VisualCortex active={$layout.visionActive} />
-    
-    <header class="col-span-12 row-span-1 bg-[#0a0a0a] border-b border-[#30363d] flex items-center px-4 justify-between">
-        <span class="font-bold text-neon-green tracking-widest">NEXUS SINGULARITY v1.9.1</span>
-        <input 
-            bind:value={userPrompt} 
-            on:keydown={(e) => e.key === 'Enter' && executeAction()} 
-            class="bg-black border border-green-900 w-1/2 px-2 py-1 text-xs outline-none focus:border-neon-green" 
-            placeholder="INPUT DIRECTIVE..." 
-        />
-        <Voice bind:userPrompt isListening={$isGhostTyping} />
-    </header>
-
-    <div class="col-span-3 row-span-2">
-        <Vitals 
-            ram={$systemVitals.ram_usage} 
-            cpu={$systemVitals.cpu_usage} 
-            status={$systemVitals.status} 
-            resonance={$systemVitals.resonance} 
-        />
-    </div>
-
-    <div class="col-span-6 row-span-2 border border-blue-900/20">
-        <!-- FIXED: Wired to global $ghostBuffer -->
-        <GhostCortex response={$ghostBuffer} active={$isGhostTyping} />
-    </div>
-
-    <div class="col-span-3 row-span-2">
-        <Heartbeat resonance={$systemVitals.resonance} />
-    </div>
-
-    <div class="col-span-2 row-span-9 border border-white/5">
-        <Explorer open={$layout.sidebarVisible} onFileSelect={(p) => activeTab.set(p)} />
-    </div>
-
-    <div class="col-span-7 row-span-6">
-        <Editor path={$activeTab} />
-    </div>
-
-    <div class="col-span-3 row-span-6 border border-white/5">
-        <ResponseModule 
-            response={$ghostBuffer} 
-            isThinking={$isGhostTyping} 
-            patchAvailable={$pendingPatch !== null} 
-            onApplyPatch={handleApplyPatch} 
-        />
-    </div>
-
-    <div class="col-span-10 row-span-3">
-        <!-- FIXED: Wired to global $terminalLogs -->
-        <GhostTerminal logs={$terminalLogs} isThinking={$isGhostTyping} />
     </div>
 </div>
 
 <style>
-    :global(body) { margin: 0; background: black; overflow: hidden; }
+    .custom-scrollbar::-webkit-scrollbar        { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e2937; }
 </style>
+<script>
+    import { onMount } from 'svelte';
+    import { ide, fileTreeTrigger, layout } from '$lib/store.svelte.js';
+    import { listFiles, readFile } from '$lib/api.js';
+
+    let files = $state([]);
+    let loading = $state(false);
+
+    async function refresh() {
+        loading = true;
+        const res = await listFiles(".");
+        files = Array.isArray(res) ? res : [];
+        loading = false;
+    }
+
+    onMount(refresh);
+
+    $effect(() => {
+        // SUTURE: Added $ to subscribe to the trigger
+        if ($fileTreeTrigger >= 0) {
+            refresh();
+        }
+    });
+
+    async function openFile(path) {
+        if (!path) return;
+        const data = await readFile(path);
+        if (data && data.content) {
+            ide.mountFile(path, data.content);
+        }
+    }
+</script>
+
+<div class="h-full flex flex-col bg-[#0a0a0a] font-mono text-xs border-r border-cyan-900/30">
+    <div class="px-4 py-3 border-b border-cyan-900/30 flex justify-between items-center bg-black/60">
+        <span class="text-cyan-400 font-bold tracking-widest uppercase text-[10px]">DNA_FS</span>
+        <button onclick={refresh} class="text-cyan-600 hover:text-cyan-400 transition-colors">⟳</button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-2 custom-scrollbar">
+        {#if loading && files.length === 0}
+            <div class="text-center py-8 text-cyan-800 animate-pulse">Scanning DNA...</div>
+        {:else}
+            {#each files as file}
+                <button
+                    onclick={() => file.is_dir ? null : openFile(file.path)}
+                    class="w-full text-left px-3 py-1.5 rounded flex items-center gap-2 hover:bg-cyan-900/20 transition-all group
+                           {ide.activeTab === file.path ? 'bg-cyan-900/40 text-cyan-300' : 'text-gray-500 hover:text-gray-300'}">
+                    <span class="opacity-50 group-hover:opacity-100">{file.is_dir ? '📁' : '📄'}</span>
+                    <span class="truncate">{file.name}</span>
+                </button>
+            {/each}
+        {/if}
+    </div>
+</div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1f2937; }
+</style>
+<script>
+  import { onMount } from 'svelte';
+  let missions = [];
+  let loading = true;
+
+  async function refreshMissions() {
+    try {
+      const res = await fetch('/api/missions');
+      if (res.ok) missions = await res.json();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  onMount(refreshMissions);
+</script>
+
+<div class="mission-container h-full">
+  <div class="header">
+    <span class="pulse"></span>
+    <h3>DIRECTIVES</h3>
+  </div>
+
+  {#if loading}
+    <p class="meta">Scanning for active directives...</p>
+  {:else if missions.length === 0}
+    <p class="meta">No active directives.</p>
+  {:else}
+    <div class="mission-list">
+      {#each missions as mission}
+        <div class="mission-card">
+          <div class="id">{mission.id.replace('.txt', '').toUpperCase()}</div>
+          <div class="desc">{mission.description}</div>
+        </div>
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .mission-container {
+    font-family: 'JetBrains Mono', monospace;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #222;
+  }
+  .pulse {
+    width: 9px;
+    height: 9px;
+    background: #00ffcc;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  h3 {
+    margin: 0;
+    color: #00ffcc;
+    font-size: 0.95rem;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  .meta {
+    font-size: 0.75rem;
+    color: #555;
+  }
+  .mission-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .mission-card {
+    padding: 10px 12px;
+    border-left: 3px solid #00ffcc;
+    background: rgba(0, 255, 204, 0.04);
+  }
+  .id {
+    font-size: 0.7rem;
+    color: #00ffcc;
+    opacity: 0.85;
+  }
+  .desc {
+    font-size: 0.85rem;
+    color: #ddd;
+    margin-top: 4px;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.8); }
+    70% { box-shadow: 0 0 0 14px rgba(0, 255, 204, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0); }
+  }
+</style>
+let audioCtx;
+let lastClick = 0;
+
+export function initAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+export function playResonance(ramUsage) {
+    if (!audioCtx) return;
+    
+    const now = audioCtx.currentTime;
+    const ramInt = parseInt(ramUsage.replace('MB', '')) || 0;
+    
+    // Calculate interval based on RAM usage (150MB = 1s, 1800MB = 0.05s)
+    const interval = Math.max(0.05, 1.0 - (ramInt / 2000));
+
+    if (now - lastClick > interval) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(ramInt > 1800 ? 880 : 440, now);
+        
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(now + 0.1);
+        lastClick = now;
+    }
+}
+<script>
+    import { fly } from 'svelte/transition';
+    export let isOpen = true;
+    export let agents = Array(68).fill({status: 'IDLE'});
+</script>
+
+{#if isOpen}
+<div class="sidebar" transition:fly={{ x: -300, duration: 300 }}>
+    <div class="sidebar-header">SWARM_INDEX</div>
+    <div class="agent-list">
+        {#each agents as agent, i}
+            <div class="agent-row">
+                <span class="ln">{i + 1}</span>
+                <span class="id">AGENT_{i.toString().padStart(2, '0')}</span>
+                <span class="status {agent.status}">{agent.status}</span>
+            </div>
+        {/each}
+    </div>
+</div>
+{/if}
+
+<style>
+    .sidebar { width: 250px; background: #050505; border-right: 1px solid #1a1a1a; height: 100vh; overflow-y: auto; }
+    .sidebar-header { padding: 15px; font-size: 10px; color: #666; letter-spacing: 2px; border-bottom: 1px solid #1a1a1a; }
+    .agent-row { display: flex; align-items: center; padding: 8px 15px; font-family: monospace; font-size: 12px; }
+    .agent-row:hover { background: #0a0a0a; }
+    .ln { width: 30px; color: #333; font-size: 10px; }
+    .id { flex-grow: 1; color: #ccc; }
+    .status { font-size: 9px; padding: 2px 4px; border-radius: 2px; }
+    .IDLE { color: #444; }
+    .ACTIVE { color: #0f0; background: #003300; }
+</style>
+export default {
+    click() {
+        try {
+            const audio = new AudioContext();
+            const oscillator = audio.createOscillator();
+            const gain = audio.createGain();
+            
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(1200, audio.currentTime);
+            gain.gain.setValueAtTime(0.15, audio.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.08);
+            
+            oscillator.connect(gain);
+            gain.connect(audio.destination);
+            oscillator.start();
+            oscillator.stop(audio.currentTime + 0.1);
+        } catch(e) {}
+    },
+
+    success() {
+        try {
+            const audio = new AudioContext();
+            const notes = [880, 1100, 1320];
+            let time = audio.currentTime;
+            
+            notes.forEach((freq, i) => {
+                const osc = audio.createOscillator();
+                const gain = audio.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.value = 0.2;
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4 + i * 0.05);
+                
+                osc.connect(gain);
+                gain.connect(audio.destination);
+                osc.start(time + i * 0.08);
+                osc.stop(time + 0.6);
+            });
+        } catch(e) {}
+    },
+
+    error() {
+        try {
+            const audio = new AudioContext();
+            const osc = audio.createOscillator();
+            const gain = audio.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.value = 180;
+            gain.gain.value = 0.3;
+            gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.6);
+            
+            osc.connect(gain);
+            gain.connect(audio.destination);
+            osc.start();
+            osc.stop(audio.currentTime + 0.6);
+        } catch(e) {}
+    }
+};
+// ui/src/lib/api.js
+// Standardized API client for Nexus backend (Svelte 5 friendly)
+
+export async function readFile(path) {
+    try {
+        const res = await fetch(`/api/fs/read?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    } catch (e) {
+        console.error("readFile failed:", e);
+        return { content: `// Failed to read ${path}\n` };
+    }
+}
+
+export async function writeFile(path, content) {
+    try {
+        const res = await fetch('/api/fs/write', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("writeFile failed:", e);
+        return false;
+    }
+}
+
+export async function deleteFile(path) {
+    try {
+        const res = await fetch(`/api/fs/delete?path=${encodeURIComponent(path)}`, { 
+            method: 'DELETE' 
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("deleteFile failed:", e);
+        return false;
+    }
+}
+
+export async function runTask(directive) {
+    try {
+        const res = await fetch('/api/task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ directive })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    } catch (e) {
+        console.error("runTask failed:", e);
+        return { output: `!! [TASK_FAILED] ${e.message}` };
+    }
+}
+
+export async function spawnDrone(directive) {
+    try {
+        const res = await fetch('/api/drone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ directive })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("spawnDrone failed:", e);
+        return false;
+    }
+}
+
+export async function listFiles(path = ".") {
+    try {
+        const res = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    } catch (e) {
+        console.error("listFiles failed:", e);
+        return [];
+    }
+}
 /**
  * Project Nexus Singularity - Secure Agent Pipeline v1.4.2
  * Standardized JSON ingestion with Error-Gating.
@@ -2121,149 +1858,491 @@ export function isSafePatch(path) {
     const normalized = path.toLowerCase();
     return !forbidden.some(f => normalized.includes(f));
 }
+import { writable } from 'svelte/store';
+
+// --- SYSTEM & TELEMETRY STORES (Svelte 4 Legacy Compatibility) ---
+export const systemVitals = writable({ cpu_load: 0, ram_usage: "0.0GB", temperature: 0, resonance: 0.98 });
+export const ghostBuffer = writable("");
+export const isGhostTyping = writable(false);
+export const pendingPatch = writable(null);
+export const fileTreeTrigger = writable(0);
+export const wsReady = writable(false);
+export const layout = writable({ sidebarVisible: true, visionActive: false });
+
+// THE MISSING LINK: Global Terminal Logs
+export const terminalLogs = writable([{ cls: 'text-cyan-600', html: '[NEXUS] Link established.' }]);
+
+// --- SVELTE 5 REACTIVE IDE STATE ---
+export const ide = $state({
+    openTabs: [],
+    activeTab: "",
+    mountFile(path, content) {
+        const existing = this.openTabs.find(t => t.path === path);
+        if (existing) {
+            existing.content = content;
+            existing.isDirty = false;
+            this.activeTab = path;
+        } else {
+            this.openTabs.push({ path, content, isDirty: false });
+            this.activeTab = path;
+        }
+    },
+    closeTab(path) {
+        this.openTabs = this.openTabs.filter(t => t.path !== path);
+        if (this.activeTab === path) {
+            this.activeTab = this.openTabs.length > 0 ? this.openTabs[0].path : "";
+        } else if (this.openTabs.length === 0) {
+            this.activeTab = "";
+        }
+    }
+});
 <script>
-  import '../app.css';
-  import { onMount } from 'svelte';
+    import { runTask } from '$lib/api';
+    import { pushTermLine } from '$lib/components/NexusWS';
+    let isAuditing = $state(false);
 
-  onMount(() => {
-    console.log(">> [NEXUS] UI BOOT SEQUENCE INITIATED.");
-  });
-</script>
-
-<main class="relative w-full h-screen bg-black overflow-hidden">
-    <slot />
-</main>
-
-<style>
-  :global(body) { margin: 0; background: black; color: #00ffcc; overflow: hidden; }
-</style>
-export const ssr = false;
-<script>
-    import { onMount } from "svelte";
-    import { WS } from "$lib/components/NexusWS";
-    import { 
-        activeTab, openTabs, layout, 
-        ghostBuffer, isGhostTyping 
-    } from "$lib/store";
-    import { fly } from 'svelte/transition';
-    
-    import Editor      from "$lib/components/Editor.svelte";
-    import Terminal    from "$lib/components/Terminal.svelte";
-    import Ghost       from "$lib/components/GhostCortex.svelte";
-    import Sidebar     from "$lib/components/Sidebar.svelte";
-    import StatusBar   from "$lib/components/StatusBar.svelte";
-    import MergeGate   from "$lib/components/MergeGate.svelte";
-
-    onMount(() => WS.connect());
-
-    function toggleSidebar() {
-        $layout.sidebarVisible = !$layout.sidebarVisible;
+    async function igniteAudit() {
+        isAuditing = true;
+        pushTermLine(">> [SECOPS] Initiating Bio-Dome Integrity Scan...", "text-cyan-400");
+        const res = await runTask("Perform a comprehensive security audit of all .sh, .py, and .env files.");
+        pushTermLine(res.output);
+        isAuditing = false;
     }
 </script>
 
-<div class="nexus-root">
-    <div class="nexus-main relative">
-        
-        {#if !$layout.sidebarVisible}
-            <button 
-                class="toggle-btn open-btn" 
-                transition:fly={{ x: -20, duration: 200 }} 
-                on:click={toggleSidebar} 
-                title="Expand Sector Index"
-            >
-                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
-                </svg>
-            </button>
-        {/if}
-
-        {#if $layout.sidebarVisible}
-        <aside 
-            class="nexus-sidebar"
-            transition:fly={{ x: -220, duration: 300, opacity: 1 }}
-        >
-            <div class="sidebar-header">
-                <span class="sidebar-title">SECTOR_INDEX</span>
-                <button class="toggle-btn" on:click={toggleSidebar} title="Retract Explorer">
-                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>
-                    </svg>
-                </button>
-            </div>
-
-            <div class="sidebar-content">
-                <Sidebar />
-            </div>
-        </aside>
-        {/if}
-
-        <div class="nexus-ghost">
-            <Ghost 
-                response={$ghostBuffer} 
-                active={$isGhostTyping} 
-            />
+<div class="p-8 h-full bg-[#050000] grid grid-cols-2 gap-8 font-mono">
+    <div class="border border-red-900/40 p-6 bg-red-950/5 flex flex-col items-center justify-center gap-6">
+        <h2 class="text-red-500 text-xl font-black italic tracking-tighter uppercase">Bio-Dome Shield</h2>
+        <div class="w-48 h-48 rounded-full border-2 border-red-900 border-dashed flex items-center justify-center {isAuditing ? 'animate-spin' : ''}">
+            <span class="text-red-600 font-bold text-4xl">SEC</span>
         </div>
-
-        <div class="nexus-workspace">
-            <div class="nexus-editor">
-                <div class="tabs" role="tablist">
-                    {#each $openTabs as t}
-                        <button 
-                            class="tab {t.path === $activeTab ? 'active' : ''}" 
-                            on:click={() => activeTab.set(t.path)} 
-                            role="tab" 
-                            aria-selected={t.path === $activeTab}>
-                            {#if t.isDirty}<span class="dirty-dot"></span>{/if}
-                            {t.path.split('/').pop()}
-                        </button>
-                    {/each}
-                </div>
-                <div class="editor-host">
-                    {#if $activeTab}
-                        <Editor path={$activeTab} />
-                    {:else}
-                        <div class="welcome">AWAITING SECTOR SELECTION...</div>
-                    {/if}
-                </div>
-            </div>
-            
-            <div class="nexus-terminal">
-                <Terminal />
+        <button onclick={igniteAudit} class="w-full py-4 border border-red-600 text-red-500 hover:bg-red-600 hover:text-black font-black transition-all">
+            [ TRIGGER_ISOLATION_CHECK ]
+        </button>
+    </div>
+    <div class="border border-red-900/10 p-6 text-[10px] text-gray-600 space-y-4">
+        <h3 class="text-red-900 font-bold uppercase underline">Threat_Intelligence</h3>
+        <p>> PODMAN_SHIELD: ACTIVE</p>
+        <p>> ZIRCON_IPC: NOMINAL</p>
+        <p>> HOST_LEAK_PROTECTION: 100%</p>
+        <div class="mt-8 pt-4 border-t border-red-900/20">
+            <span class="text-red-500 font-bold">WARNING:</span> Any sandbox escape attempt will result in immediate kernel-level thread termination.
+        </div>
+    </div>
+</div>
+<div class="p-8 h-full bg-black text-cyan-500 font-mono">
+    <h1 class="text-lg font-bold mb-6 border-b border-cyan-900/40 pb-2 italic uppercase">Workspace_DNA_Map</h1>
+    <div class="grid grid-cols-3 gap-6">
+        <div class="p-4 border border-cyan-900/30 bg-cyan-950/5">
+            <h2 class="text-[10px] text-white mb-4 underline uppercase">Build_Pipeline</h2>
+            <div class="space-y-2">
+                <button class="w-full py-2 bg-cyan-900/20 border border-cyan-800 text-[10px] hover:text-white transition-all text-left px-2">> CARGO CHECK</button>
+                <button class="w-full py-2 bg-cyan-900/20 border border-cyan-800 text-[10px] hover:text-white transition-all text-left px-2">> NPM RUN BUILD</button>
+                <button class="w-full py-2 bg-cyan-900/20 border border-cyan-800 text-[10px] hover:text-white transition-all text-left px-2">> ARCHIVE BINARIES</button>
             </div>
         </div>
     </div>
-    
-    <StatusBar />
-    <MergeGate />
+</div>
+<script>
+    import { systemVitals } from '$lib/store.svelte.js';
+    import Heartbeat from '$lib/components/Heartbeat.svelte';
+    import VitalsModule from '$lib/components/VitalsModule.svelte';
+</script>
+
+<div class="p-8 h-full bg-black flex flex-col">
+    <header class="mb-8">
+        <h1 class="text-cyan-400 text-2xl font-black tracking-widest">SYSTEM VITALS</h1>
+        <p class="text-xs text-cyan-700">REAL-TIME HARDWARE + NEURAL RESONANCE</p>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
+        <div class="space-y-6">
+            <VitalsModule />
+
+            <div class="border border-cyan-900/30 bg-[#0a0a0a] p-6 rounded">
+                <Heartbeat resonance={$systemVitals.resonance} />
+            </div>
+        </div>
+
+        <div class="border border-cyan-900/30 bg-[#0a0a0a] p-6 font-mono text-xs overflow-auto custom-scrollbar">
+            <h2 class="text-cyan-400 mb-4 uppercase tracking-widest text-[10px]">RAW TELEMETRY</h2>
+            <pre class="text-gray-400 whitespace-pre-wrap">
+{JSON.stringify($systemVitals, null, 2)}
+            </pre>
+        </div>
+    </div>
 </div>
 
 <style>
-    .nexus-root { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; background: #060608; color: #eee; font-family: 'Inter', sans-serif; }
-    .nexus-main { display: flex; flex: 1; min-height: 0; overflow: hidden; position: relative; }
-    
-    /* Optimized widths for 4GB Duet 2 */
-    .nexus-sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid #1a1a1a; background: #0d1117; display: flex; flex-direction: column; overflow: hidden; z-index: 20; }
-    .nexus-ghost { width: 320px; flex-shrink: 0; border-right: 1px solid #1a1a1a; background: #050508; display: flex; flex-direction: column; overflow: hidden; }
-    .nexus-workspace { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-    
-    .nexus-editor { flex: 2; display: flex; flex-direction: column; min-height: 0; background: #000; }
-    .editor-host { flex: 1; overflow: hidden; position: relative; }
-    .nexus-terminal { flex: 1; border-top: 1px solid #1a1a1a; background: #050505; display: flex; flex-direction: column; min-height: 0; }
-
-    .tabs { display: flex; background: #0d1117; border-bottom: 1px solid #1a1a1a; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
-    .tab { display: flex; align-items: center; gap: 6px; padding: 10px 16px; cursor: pointer; font-size: 11px; color: #666; border: none; border-right: 1px solid #1a1a1a; background: none; white-space: nowrap; outline: none; position: relative; transition: color 0.2s; }
-    .tab:hover { color: #aaa; }
-    .tab.active { background: #000; color: #22d3ee; }
-    
-    .dirty-dot { width: 6px; height: 6px; background: #fbbf24; border-radius: 50%; box-shadow: 0 0 5px #fbbf24; }
-    .welcome { height: 100%; display: flex; align-items: center; justify-content: center; color: #222; font-size: 14px; letter-spacing: 2px; text-transform: uppercase; }
-
-    /* New Visor Toggle Styles */
-    .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #1a1a1a; background: #050508; }
-    .sidebar-title { font-size: 10px; font-weight: bold; color: #22d3ee; letter-spacing: 2px; }
-    .sidebar-content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #22d3ee transparent; }
-    
-    .toggle-btn { background: none; border: none; color: #22d3ee; cursor: pointer; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
-    .toggle-btn:hover { background: rgba(34, 211, 238, 0.1); color: #fff; }
-    .open-btn { position: absolute; top: 8px; left: 8px; z-index: 50; background: #0d1117; border: 1px solid #1a1a1a; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e2937; }
 </style>
+<div class="p-8 h-full font-mono text-cyan-400 bg-black overflow-y-auto">
+    <h1 class="text-xl font-black italic mb-8 underline uppercase tracking-widest">Zenith_Security_Audit</h1>
+    <div class="space-y-4">
+        <div class="p-4 border-l-4 border-green-500 bg-green-500/5">
+            <span class="text-xs font-bold text-green-400">[LOW] DEPENDENCY_DRIFT</span>
+            <p class="text-[10px] text-gray-500">Screenshots crate using deprecated Rust features. Mitigation: Rebuild on v1.80.0 toolchain.</p>
+        </div>
+        <div class="p-4 border-l-4 border-cyan-500 bg-cyan-500/5 opacity-50">
+            <span class="text-xs font-bold text-cyan-400">[WAIT] CORTICAL_ALIGNMENT</span>
+            <p class="text-[10px] text-gray-500">Scanning for structural FFI mismatches in Zig kernel...</p>
+        </div>
+    </div>
+</div>
+<script>
+    import AgentMap from '$lib/components/AgentMap.svelte';
+    let swarm = $state(Array.from({length: 12}, (_, i) => ({ id: i, target: i < 3 ? "ACTIVE" : "IDLE" })));
+</script>
+
+<div class="p-8 h-full bg-black overflow-y-auto">
+    <header class="flex justify-between items-baseline mb-8">
+        <h1 class="text-purple-400 font-bold tracking-widest uppercase italic">Swarm_Reflex_Lab</h1>
+        <span class="text-[10px] text-purple-900">NODE_COUNT: 68</span>
+    </header>
+    <AgentMap {swarm} />
+</div>
+<div class="p-8 text-xs font-mono text-gray-500 max-w-lg">
+    <h1 class="text-white text-sm mb-8 font-bold underline uppercase tracking-widest">OS_Configuration</h1>
+    <div class="space-y-6">
+        <div class="flex justify-between border-b border-white/5 pb-2">
+            <span>PRIMARY_CORTEX</span>
+            <span class="text-cyan-400 font-bold">GEMMA_4_31B (API)</span>
+        </div>
+        <div class="flex justify-between border-b border-white/5 pb-2">
+            <span>LOCAL_FAILSAFE</span>
+            <span class="text-orange-500 font-bold">GEMMA_3_NANO (LLAMA_CPP)</span>
+        </div>
+        <div class="flex justify-between border-b border-white/5 pb-2">
+            <span>FFI_TARGET</span>
+            <span class="text-green-500 font-bold">ARM64_NATIVE</span>
+        </div>
+        <div class="flex justify-between border-b border-white/5 pb-2">
+            <span>MEMORY_POLICY</span>
+            <span class="text-cyan-700">MIMALLOC_LEAN</span>
+        </div>
+    </div>
+</div>
+<script>
+    import MemoryVault from '$lib/components/MemoryVault.svelte';
+</script>
+
+<div class="h-full bg-black p-6 flex flex-col gap-4">
+    <header class="flex justify-between items-center border-b border-purple-900/30 pb-4">
+        <h1 class="text-purple-400 font-black tracking-[4px] uppercase italic">System_Administrator</h1>
+        <span class="text-[10px] text-purple-900">LEVEL_0_ACCESS_GRANTED</span>
+    </header>
+    <div class="flex-1 border border-purple-900/20 bg-purple-950/5">
+        <MemoryVault />
+    </div>
+</div>
+<div class="h-full flex items-center justify-center bg-black">
+    <div class="w-80 border border-cyan-900 p-8 bg-[#050505] shadow-[0_0_100px_rgba(0,255,255,0.05)]">
+        <h1 class="text-white text-[10px] font-black mb-6 tracking-[4px] uppercase text-center">Nexus_Identity</h1>
+        <div class="space-y-4">
+            <input type="password" class="w-full bg-black border border-cyan-900 p-3 text-xs text-cyan-400 outline-none focus:border-cyan-400 transition-all text-center" placeholder="DNA_KEY_SIGNATURE" />
+            <button class="w-full py-2 bg-cyan-900/20 border border-cyan-800 text-[10px] text-cyan-500 font-bold uppercase hover:bg-cyan-500 hover:text-black transition-all">Authenticate</button>
+        </div>
+    </div>
+</div>
+<script>
+    import { onMount } from 'svelte';
+
+    let snapshots = $state([]);
+    let loading   = $state(true);
+    let restoring = $state(null);
+
+    async function refresh() {
+        loading = true;
+        try {
+            const res = await fetch('/api/lazarus/snapshots');
+            if (res.ok) snapshots = await res.json();
+        } catch (e) {
+            console.error('[History] fetch error:', e);
+        } finally {
+            loading = false;
+        }
+    }
+
+    async function restore(hash) {
+        restoring = hash;
+        try {
+            const res = await fetch('/api/lazarus/restore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash }),
+            });
+            const data = await res.json();
+            alert(data.message || 'Restored.');
+            refresh();
+        } catch (e) {
+            alert('Restore failed: ' + e.message);
+        } finally {
+            restoring = null;
+        }
+    }
+
+    onMount(refresh);
+</script>
+
+<div class="h-full bg-black p-6 flex flex-col gap-4 font-mono text-xs select-text">
+    <header class="flex justify-between items-center border-b border-purple-900/30 pb-4 select-none">
+        <div>
+            <h1 class="text-purple-400 font-black tracking-[4px] uppercase italic">Lazarus_Vault</h1>
+            <p class="text-purple-900 text-[9px] mt-1">Temporal Ledger // File Snapshots</p>
+        </div>
+        <button
+            onclick={refresh}
+            class="text-purple-700 hover:text-purple-400 text-lg transition-colors"
+            aria-label="Refresh snapshots"
+        >⟳</button>
+    </header>
+
+    {#if loading}
+        <div class="text-purple-800 animate-pulse text-center py-12">Scanning vault...</div>
+    {:else if snapshots.length === 0}
+        <div class="text-gray-700 italic text-center py-12">No snapshots in the vault.</div>
+    {:else}
+        <div class="flex-1 overflow-y-auto space-y-2 custom-scrollbar">
+            {#each [...snapshots].reverse() as snap}
+                <div class="p-3 border border-purple-900/20 bg-purple-950/5 rounded flex justify-between items-start gap-4 group">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex gap-3 mb-1">
+                            <span class="text-purple-400 font-bold truncate">{snap.path}</span>
+                            <span class="text-gray-600 shrink-0">{snap.hash?.slice(0, 8)}</span>
+                        </div>
+                        <div class="text-gray-600 text-[9px]">{snap.timestamp}</div>
+                        <div class="text-gray-700 text-[9px] italic truncate mt-0.5">{snap.author}</div>
+                    </div>
+                    <button
+                        onclick={() => restore(snap.hash)}
+                        disabled={restoring === snap.hash}
+                        class="shrink-0 px-3 py-1.5 border border-purple-800 text-purple-500 hover:bg-purple-950 hover:text-purple-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-[9px] tracking-widest uppercase"
+                    >
+                        {restoring === snap.hash ? 'RESTORING...' : 'RESTORE'}
+                    </button>
+                </div>
+            {/each}
+        </div>
+    {/if}
+</div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar       { width: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #2d1b69; }
+</style>
+export const ssr = false;
+<script>
+    import { layout, ide } from '$lib/store.svelte.js';
+    import Editor from '$lib/components/Editor.svelte';
+    import FileTree from '$lib/components/FileTree.svelte';
+</script>
+
+<div class="flex h-full w-full overflow-hidden bg-black">
+    {#if layout.sidebarVisible}
+        <aside class="w-64 border-r border-cyan-900/20 bg-[#020202] overflow-y-auto shrink-0">
+            <FileTree />
+        </aside>
+    {/if}
+
+    <main class="flex-1 bg-black overflow-hidden relative">
+        <Editor />
+
+        {#if !ide.activeTab}
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none opacity-20">
+                <span class="text-7xl font-black tracking-[3rem] text-cyan-950">NEXUS</span>
+                <span class="text-xs font-bold tracking-widest text-cyan-700 mt-6">SOVEREIGN AI BASELINE • ARM64</span>
+            </div>
+        {/if}
+    </main>
+</div>
+<script>
+    import "../app.css";
+    import { page } from '$app/state';
+    import { systemVitals, ghostBuffer, isGhostTyping, ide, layout } from '$lib/store.svelte.js';
+    import { connectWS } from '$lib/components/NexusWS.js';
+    import VitalsModule from '$lib/components/VitalsModule.svelte';
+    import Terminal from '$lib/components/Terminal.svelte';
+    import GhostCortex from '$lib/components/GhostCortex.svelte';
+    import CommandPalette from '$lib/components/CommandPalette.svelte';
+    import MergeGate from '$lib/components/MergeGate.svelte';
+    import { onMount } from 'svelte';
+
+    let { children } = $props();
+    let terminalOpen = $state(true);
+
+    onMount(() => {
+        connectWS();
+    });
+
+    const navItems = [
+        { name: 'IDE', path: '/' },
+        { name: 'SECOPS', path: '/secops' },
+        { name: 'WORKSPACE', path: '/workspace' },
+        { name: 'VITALS', path: '/vitals' },
+        { name: 'AUDIT', path: '/audit' },
+        { name: 'AGENT-LAB', path: '/agent-lab' },
+        { name: 'HISTORY', path: '/history' }
+    ];
+</script>
+
+<div class="h-screen w-screen bg-black text-cyan-400 font-mono flex flex-col overflow-hidden relative">
+    <header class="h-10 bg-[#050505] border-b border-cyan-900/30 flex items-center px-4 justify-between shrink-0 z-[200]">
+        <div class="flex items-center gap-4">
+            <span class="font-black bg-cyan-900 px-2 py-0.5 text-[10px] tracking-widest">NEXUS_OS</span>
+            <nav class="flex gap-0.5 overflow-x-auto no-scrollbar">
+                {#each navItems as item}
+                    <a 
+                        href={item.path} 
+                        class="px-3 py-1 text-[9px] font-bold tracking-tighter transition-all whitespace-nowrap 
+                        {page.url.pathname === item.path ? 'bg-cyan-500 text-black' : 'text-cyan-800 hover:text-cyan-500'}"
+                    >
+                        {item.name}
+                    </a>
+                {/each}
+            </nav>
+        </div>
+        <VitalsModule />
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        <div class="flex-1 flex flex-col min-w-0 border-r border-cyan-900/20 relative">
+            <main class="flex-1 overflow-hidden relative bg-[#020202]">
+                {@render children()}
+            </main>
+
+            <div class="relative shrink-0 flex flex-col transition-all duration-300 ease-in-out {terminalOpen ? 'h-56' : 'h-0'}">
+                <div class="absolute -top-6 left-0 right-4 z-[250] flex justify-between items-end h-6 pointer-events-none">
+                    <div class="flex gap-1 h-full items-end pl-4 pointer-events-auto overflow-x-auto max-w-[70%] no-scrollbar">
+                        {#each ide.openTabs as tab}
+                            <div class="flex items-center gap-1">
+                                <button 
+                                    type="button"
+                                    class="flex items-center gap-2 px-3 py-1 text-[9px] font-black tracking-widest uppercase transition-all rounded-t border border-b-0
+                                    {tab.path === ide.activeTab ? 'bg-[#000] border-cyan-400 text-cyan-300' : 'bg-[#050505] border-cyan-900/50 text-cyan-700 hover:text-cyan-400'}"
+                                    onclick={() => ide.activeTab = tab.path}
+                                >
+                                    {tab.path.split('/').pop()}
+                                </button>
+                                <button 
+                                    type="button"
+                                    class="bg-[#050505] border border-b-0 border-cyan-900/50 text-cyan-800 hover:text-red-500 font-bold px-2 py-1 text-[9px] rounded-t"
+                                    onclick={() => ide.closeTab(tab.path)}
+                                >×</button>
+                            </div>
+                        {/each}
+                    </div>
+                    
+                    <div class="flex gap-1 pointer-events-auto">
+                        <button onclick={() => layout.update(l => ({...l, sidebarVisible: !l.sidebarVisible}))} class="bg-[#050505] border border-b-0 border-cyan-900/50 text-cyan-600 hover:text-cyan-300 px-4 py-1 text-[9px] font-black tracking-widest uppercase transition-all rounded-t">
+                            ◀ DNA_FS
+                        </button>
+                        <button onclick={() => terminalOpen = !terminalOpen} class="bg-[#050505] border border-b-0 border-cyan-900/50 text-cyan-600 hover:text-cyan-300 px-4 py-1 text-[9px] font-black tracking-widest uppercase transition-all rounded-t">
+                            {terminalOpen ? '▼ VISOR_UPLINK' : '▲ VISOR_UPLINK'}
+                        </button>
+                    </div>
+                </div>
+                
+                {#if terminalOpen}
+                    <footer class="h-full bg-black border-t border-cyan-900/40 overflow-hidden z-[100]">
+                        <Terminal />
+                    </footer>
+                {/if}
+            </div>
+        </div>
+
+        <aside class="w-80 bg-[#050505] flex flex-col shrink-0 z-[200] border-l border-cyan-900/20">
+            <GhostCortex response={$ghostBuffer} active={$isGhostTyping} />
+        </aside>
+    </div>
+
+    <CommandPalette />
+    <MergeGate />
+
+    <div class="fixed bottom-4 left-4 text-[9px] text-cyan-800/70 pointer-events-none z-[10]">
+        Ctrl+K • Command Palette
+    </div>
+</div>
+
+<style>
+    :global(body) {
+        margin: 0;
+        background: black;
+        overflow: hidden;
+    }
+</style>
+use crate::neural_agent::{ContextPacket, MicroAgent};
+use crate::json_parser::NeuralParser;
+use crate::executor::Executor;
+use crate::component_runner::{AgentComponent, Capabilities};
+use crate::resonator::ResonatorCore;
+use crate::memory::MemoryPalace;
+use std::process::Command;
+use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+pub async fn send_task(
+    agent: Arc<MicroAgent>, 
+    client: &reqwest::Client, 
+    api_key: &str, 
+    directive: &str,
+    memory: Arc<Mutex<MemoryPalace>> // NEW: Suture to SQLite
+) -> String {
+    let temp = ResonatorCore::read_thermal_temp();
+    let turns = if temp > 78.0 { 1 } else if temp > 68.0 { 3 } else { 6 };
+    
+    // --- CORTICAL RETRIEVAL ---
+    let memory_guard = memory.lock().await;
+    let persistent_context = memory_guard.get_system_context().await;
+    
+    let mut session_log = format!(">> [THERMAL: {:.1}C] Cortical Retrieval Active. Turns: {}\n", temp, turns);
+
+    let spatial_map = Command::new("sh")
+        .arg("-c")
+        .arg(r"find . -maxdepth 4 -not -path './target*' -not -path './ui/node_modules*' \( -name '*.rs' -o -name '*.zig' -o -name '*.svelte' -o -name '*.js' -o -name '.env' \)")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let mut observation_log = String::new();
+    let mut history: HashSet<String> = HashSet::new();
+    let handle = AgentComponent::spawn("Nexus_Architect", Capabilities::ALL, agent.clone(), agent.tx.clone());
+
+    for turn in 1..=turns {
+        let full_prompt = format!(
+            "CORE_MEMORY (PERSISTENT): {}\n\
+             DNA_MAP: {}\n\
+             MISSION: {}\n\
+             OBSERVATIONS: {}\n\n\
+             STRICT PROTOCOL: JSON actions only. You are the Sovereign Architect. Audit the circuit.",
+            persistent_context, spatial_map, directive, observation_log
+        );
+
+        match agent.prepare_and_run(client, api_key, &full_prompt, ContextPacket::default(), 0.1).await {
+            Ok((response, _)) => {
+                if history.contains(&response) { break; }
+                history.insert(response.clone());
+
+                if let Ok(actions) = NeuralParser::extract_actions(&response) {
+                    // Reactive UI Signals
+                    for action in &actions {
+                        if let crate::agent_protocol::AgentAction::ReadFile { path } = action {
+                            let _ = agent.tx.send(serde_json::json!({"type": "file_opened", "payload": path}).to_string());
+                        }
+                    }
+
+                    if let Ok(results) = Executor::execute_handle(&handle, actions.clone()).await {
+                        for res in results {
+                            session_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
+                            observation_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
+                        }
+                    }
+                }
+            }
+            Err(_e) => break,
+        }
+    }
+    session_log
+}

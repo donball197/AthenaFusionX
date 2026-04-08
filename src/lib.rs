@@ -8,7 +8,6 @@ pub mod auditor;
 pub mod auto_healer;
 pub mod backend_autofix;
 pub mod backend_inspector;
-pub mod brain;
 pub mod broker;
 pub mod calibrate;
 pub mod cli;
@@ -74,3 +73,4 @@ pub mod tflite_bridge;
 #[cfg(feature = "future_npu")]
 pub mod python_reactor;
 pub mod dynamic_broker;
+pub mod utils;

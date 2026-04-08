@@ -37,9 +37,16 @@ impl MicroAgent {
     ) -> Result<(String, u128), NexusError> {
         let start = std::time::Instant::now();
         
-        // UPGRADE: Shifting default cortex to Gemma 4 31B
-        let model = ctx.target_model.unwrap_or_else(|| "gemma-4-31b-it".to_string());
+        // SUTURE 1: Mapping to a valid model hosted on the Google REST API.
+        let model = ctx.target_model.unwrap_or_else(|| "gemini-1.5-pro-latest".to_string());
         
+        let system_instruction = format!(
+            "SYSTEM_PROMPT: {}\nACTIVE_FILE: {}\nFILE_CONTENT:\n```\n{}\n```",
+            ctx.system_prompt.unwrap_or_else(|| "You are NEXUS Ghost, a Sovereign AI Architect.".to_string()),
+            ctx.current_file,
+            ctx.file_content.unwrap_or_else(|| "None".to_string())
+        );
+
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", 
             model, 
@@ -47,37 +54,99 @@ impl MicroAgent {
         );
 
         let payload = json!({ 
-            "contents": [{ "parts": [{ "text": user_text }] }],
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{ "text": format!("{}\n\nDIRECTIVE: {}", system_instruction, user_text) }]
+                }
+            ],
             "generationConfig": {
                 "temperature": 0.15,
-                "maxOutputTokens": 32768, // LEVERAGING GEMMA 4 CAPACITY
+                "maxOutputTokens": 8192,
                 "topP": 0.95
             }
         });
         
-        let response = client.post(url).json(&payload).send().await
-            .map_err(|e| NexusError::Other(format!("API_IGNITION_FAILURE: {}", e)))?;
+        let _ = self.tx.send(json!({"type": "ghost_start"}).to_string());
+
+        let response = match client.post(&url).json(&payload).send().await {
+            Ok(res) => res,
+            Err(e) => {
+                let _ = self.tx.send(json!({"type": "ghost_end"}).to_string());
+                let err_msg = format!("!! [API_FAULT] Connection Failed: {}", e);
+                let _ = self.tx.send(json!({"type": "directive", "payload": &err_msg}).to_string());
+                return Err(NexusError::Other(err_msg));
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err_text = response.text().await.unwrap_or_default();
+            let _ = self.tx.send(json!({"type": "ghost_end"}).to_string());
+            
+            // SUTURE 2: Broadcast the HTTP error directly to the Visor terminal
+            let formatted_err = format!("!! [API_HTTP_FAULT] Code {}: {}", status, err_text);
+            let _ = self.tx.send(json!({"type": "directive", "payload": &formatted_err}).to_string());
+            
+            return Err(NexusError::Other(formatted_err));
+        }
 
         let mut full_text = String::new();
+        let mut buffer = String::new();
         let mut stream = response.bytes_stream();
 
         while let Some(item) = stream.next().await {
-            if let Ok(bytes_chunk) = item {
-                let chunk_str = String::from_utf8_lossy(&bytes_chunk);
-                for line in chunk_str.lines() {
-                    if line.starts_with("data: ") {
-                        if let Ok(val) = serde_json::from_str::<Value>(&line[6..]) {
-                            if let Some(token) = val["candidates"][0]["content"]["parts"][0]["text"].as_str() {
-                                full_text.push_str(token);
-                                let _ = self.tx.send(json!({"type": "ghost_token", "payload": token}).to_string());
+            match item {
+                Ok(bytes_chunk) => {
+                    buffer.push_str(&String::from_utf8_lossy(&bytes_chunk));
+                    
+                    while let Some(pos) = buffer.find("\n\n") {
+                        let chunk = buffer[..pos].to_string();
+                        buffer = buffer[pos+2..].to_string();
+                        
+                        let clean_chunk = chunk.trim_start_matches("data: ").trim();
+                        if clean_chunk.is_empty() || clean_chunk == "[" || clean_chunk == "]" { 
+                            continue; 
+                        }
+                        
+                        match serde_json::from_str::<Value>(clean_chunk) {
+                            Ok(val) => {
+                                if let Some(candidates) = val.get("candidates").and_then(|c| c.as_array()) {
+                                    if let Some(first_candidate) = candidates.first() {
+                                        if let Some(parts) = first_candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                                            if let Some(first_part) = parts.first() {
+                                                if let Some(token) = first_part.get("text").and_then(|t| t.as_str()) {
+                                                    full_text.push_str(token);
+                                                    let _ = self.tx.send(json!({"type": "ghost_token", "payload": token}).to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!(">> [PARSE_WARN] Failed to parse SSE chunk: {}", e);
                             }
                         }
                     }
+                },
+                Err(e) => {
+                    let err_msg = format!("!! [STREAM_FAULT] Stream interrupted: {}", e);
+                    let _ = self.tx.send(json!({"type": "directive", "payload": &err_msg}).to_string());
+                    break;
                 }
             }
         }
 
+        let _ = self.tx.send(json!({"type": "ghost_end"}).to_string());
         let duration = start.elapsed().as_millis();
+        
+        if full_text.is_empty() {
+             let err_msg = "!! [EMPTY_RESPONSE] The Conductor returned zero tokens.".to_string();
+             let _ = self.tx.send(json!({"type": "directive", "payload": &err_msg}).to_string());
+             return Err(NexusError::Other(err_msg));
+        }
+        
         Ok((full_text, duration))
     }
 }
@@ -86,22 +155,44 @@ use crate::json_parser::NeuralParser;
 use crate::executor::Executor;
 use crate::component_runner::{AgentComponent, Capabilities};
 use crate::resonator::ResonatorCore;
+use crate::memory::MemoryPalace;
 use std::process::Command;
 use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
-pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key: &str, directive: &str) -> String {
+pub async fn send_task(
+    agent: Arc<MicroAgent>, 
+    client: &reqwest::Client, 
+    api_key: &str, 
+    directive: &str,
+    memory: Arc<Mutex<MemoryPalace>>
+) -> String {
     let temp = ResonatorCore::read_thermal_temp();
     let turns = if temp > 78.0 { 1 } else if temp > 68.0 { 3 } else { 6 };
     
-    let memory_context = "SYSTEM CONSCIOUSNESS: Nexus v2.0. ARM64-DNA. UI (Svelte), Backend (Rust/Zig), and Native Muscle (llama.cpp) are one organism. Local Model Fallback is a priority.";
+    let mut session_log = format!(">> [THERMAL: {:.1}C] Cortical Retrieval Active. Turns: {}\n", temp, turns);
 
-    let mut session_log = format!(">> [THERMAL: {:.1}C] Native Vision Active. Turns: {}\n", temp, turns);
+    // UPGRADE: Lock is acquired, data is extracted, and lock is immediately dropped.
+    // This prevents holding the lock across await boundaries in the loop.
+    let mut persistent_context = String::from("RECENT MEMORIES:\n");
+    {
+        let mem_guard = memory.lock().await;
+        if let Ok(memories) = mem_guard.fetch_all().await {
+            for m in memories.iter().rev().take(5) {
+                persistent_context.push_str(&format!("User: {}\nAgent: {}\n", m.directive, m.result));
+            }
+        }
+    }
 
-    // FULL-SPECTRUM VISION: Now includes C++, Headers, and Model files
-    let spatial_map = Command::new("sh")
-        .arg("-c")
-        .arg(r"find . -maxdepth 4 -not -path '*/.*' -not -path './target*' -not -path './ui/node_modules*' \( -name '*.rs' -o -name '*.zig' -o -name '*.svelte' -o -name '*.js' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.gguf' \)")
+    let spatial_map = Command::new("find")
+        .args([
+            ".",
+            "-maxdepth", "4",
+            "-not", "-path", "./target*",
+            "-not", "-path", "./ui/node_modules*",
+            "(", "-name", "*.rs", "-o", "-name", "*.zig", "-o", "-name", "*.svelte", "-o", "-name", "*.js", "-o", "-name", ".env", ")"
+        ])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -113,20 +204,28 @@ pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key
 
     for turn in 1..=turns {
         let full_prompt = format!(
-            "CORE_MEMORY: {}\n\
+            "{}\n\
              DNA_MAP: {}\n\
              MISSION: {}\n\
              OBSERVATIONS: {}\n\n\
-             STRICT PROTOCOL: Output JSON actions. You are the Sovereign Architect. Audit the entire circuit including Native llama.cpp muscles.",
-            memory_context, spatial_map, directive, observation_log
+             STRICT PROTOCOL: You are a Sovereign Agent. You must respond with a JSON array of actions matching this exact schema. DO NOT invent new actions:\n\
+             [\n\
+               {{ \"action\": \"read_file\", \"path\": \"<string>\" }},\n\
+               {{ \"action\": \"execute_command\", \"command\": \"<string>\" }},\n\
+               {{ \"action\": \"message\", \"message\": \"<string>\" }},\n\
+               {{ \"action\": \"readiness_report\", \"overall_status\": \"<string>\", \"version\": \"<string>\", \"deployment_target\": \"<string>\", \"next_step\": \"<string>\" }}\n\
+             ]",
+            persistent_context, spatial_map, directive, observation_log
         );
 
         match agent.prepare_and_run(client, api_key, &full_prompt, ContextPacket::default(), 0.1).await {
             Ok((response, _)) => {
-                if history.contains(&response) { break; }
-                history.insert(response.clone());
-
                 if let Ok(actions) = NeuralParser::extract_actions(&response) {
+                    // UPGRADE: Deduplication based on parsed semantic actions, not raw string
+                    let action_hash = serde_json::to_string(&actions).unwrap_or_default();
+                    if history.contains(&action_hash) { break; }
+                    history.insert(action_hash);
+
                     for action in &actions {
                         if let crate::agent_protocol::AgentAction::ReadFile { path } = action {
                             let _ = agent.tx.send(serde_json::json!({"type": "file_opened", "payload": path}).to_string());
@@ -134,26 +233,28 @@ pub async fn send_task(agent: Arc<MicroAgent>, client: &reqwest::Client, api_key
                     }
 
                     if let Ok(results) = Executor::execute_handle(&handle, actions.clone()).await {
-                        for action in actions {
-                            if let crate::agent_protocol::AgentAction::WriteFile { path, .. } = action {
-                                let _ = agent.tx.send(serde_json::json!({"type": "file_written", "payload": path}).to_string());
-                            }
-                        }
                         for res in results {
                             session_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
                             observation_log.push_str(&format!("\n[Turn {}]: {}", turn, res));
                         }
                     }
+                } else {
+                    session_log.push_str("\n>> [EXECUTION FAULT]: JSON Schema Mismatch. Action Rejected.");
                 }
             }
-            Err(_) => { break; }
+            Err(_e) => break,
         }
     }
+    
+    let mem_guard = memory.lock().await;
+    let _ = mem_guard.store_memory("User", directive, &session_log).await;
+    
     session_log
 }
 use crate::neural_agent::{MicroAgent, ContextPacket};
 use crate::component_runner::AgentHandle;
 use crate::agent_protocol::AgentAction;
+use crate::arbiter_agent::ArbiterAgent;
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -188,9 +289,18 @@ impl Orchestrator {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-        // UPGRADE: Using the surgical extractor to ignore markdown fluff and pascal/snake case mismatches
         match AgentAction::extract_and_parse(&raw_response) {
             Ok(actions) => {
+                // UPGRADE: Consult the Arbiter before executing the loop
+                let arbiter = ArbiterAgent::new(self.agent.clone(), None);
+                let action_json = serde_json::to_string(&actions).unwrap_or_default();
+                
+                if let Ok(report) = arbiter.analyze_directive(api_key, &action_json).await {
+                    if !report.can_proceed || report.risk_score >= 0.45 {
+                        return Ok(format!("!! [ARBITER BLOCK] Risk Score: {:.2}. Reason: {}", report.risk_score, report.recommendation));
+                    }
+                }
+
                 let results: Vec<String> = self.handle.execute_actions(actions).await
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 Ok(results.join("\n"))

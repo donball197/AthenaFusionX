@@ -1,3 +1,4 @@
+// src/orchestrator.rs - Hardened & Cleaned
 use crate::neural_agent::{MicroAgent, ContextPacket};
 use crate::component_runner::AgentHandle;
 use crate::agent_protocol::AgentAction;
@@ -19,7 +20,6 @@ impl Orchestrator {
             agent.clone(),
             tx,
         );
-
         Self { agent, handle }
     }
 
@@ -38,22 +38,20 @@ impl Orchestrator {
 
         match AgentAction::extract_and_parse(&raw_response) {
             Ok(actions) => {
-                // UPGRADE: Consult the Arbiter before executing the loop
                 let arbiter = ArbiterAgent::new(self.agent.clone(), None);
                 let action_json = serde_json::to_string(&actions).unwrap_or_default();
-                
+
                 if let Ok(report) = arbiter.analyze_directive(api_key, &action_json).await {
                     if !report.can_proceed || report.risk_score >= 0.45 {
-                        return Ok(format!("!! [ARBITER BLOCK] Risk Score: {:.2}. Reason: {}", report.risk_score, report.recommendation));
+                        return Ok(format!("!! [ARBITER BLOCK] Risk {:.2} — {}", report.risk_score, report.recommendation));
                     }
                 }
 
-                let results: Vec<String> = self.handle.execute_actions(actions).await
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let results = self.handle.execute_actions(actions).await?;
                 Ok(results.join("\n"))
             }
             Err(e) => {
-                println!(">> [ORCHESTRATOR] Protocol extraction failed: {}. Returning raw response.", e);
+                println!(">> [ORCHESTRATOR] Parse failed: {}", e);
                 Ok(raw_response)
             }
         }

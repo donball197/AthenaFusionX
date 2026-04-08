@@ -1,7 +1,5 @@
 <script>
-    export let latency = 23;
-    export let nodes = 47;
-    export let status = "STABLE";
+    let { latency = 23, nodes = 47, status = "STABLE" } = $props();
 </script>
 
 <div class="bg-[#050505] border border-[#30363d] p-5 text-xs font-mono">
