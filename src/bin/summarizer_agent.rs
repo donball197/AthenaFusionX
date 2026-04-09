@@ -1,13 +1,18 @@
-// src/bin/summarizer_agent.rs - v1.1.0 [Type-Safe Ingestion]
+// src/bin/summarizer_agent.rs - v1.2.3 [Borrow Checker Suture]
 use redis::AsyncCommands;
 use redis::streams::{StreamReadOptions, StreamReadReply};
 use anyhow::{Result, Context};
 use std::collections::HashMap;
+use serde_json::json;
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Ignite environment variables
+    dotenvy::dotenv().ok();
+
     println!("\x1b[1;35m╔══════════════════════════════════════════════════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;35m║\x1b[0m \x1b[1;37mSUMMARIZER-AGENT: NEURAL FEEDBACK INGESTION\x1b[0m                               \x1b[1;35m║\x1b[0m");
+    println!("\x1b[1;35m║\x1b[0m \x1b[1;37mSUMMARIZER-AGENT: GEMMA 3 27B-it NEURAL LINK\x1b[0m                                \x1b[1;35m║\x1b[0m");
     println!("\x1b[1;35m╚══════════════════════════════════════════════════════════════════════════════╝\x1b[0m\n");
 
     let client = redis::Client::open("redis://127.0.0.1/")?;
@@ -23,10 +28,8 @@ async fn main() -> Result<()> {
 
         for stream in reply.keys {
             for id in stream.ids {
-                // SUTURE: Fix type mismatch by using redis::Value
                 let map: HashMap<String, redis::Value> = id.map;
                 
-                // Explicitly decode redis::Value to String
                 let source: String = map.get("source")
                     .and_then(|v| redis::from_redis_value(v).ok())
                     .unwrap_or_else(|| "unknown".to_string());
@@ -41,24 +44,63 @@ async fn main() -> Result<()> {
 
                 println!(">> [INGEST] Pulse ID: {}", id.id);
                 println!(">> [INGEST] Source: \x1b[1;34m{}\x1b[0m", source);
-                println!(">> [INGEST] Payload: \"{}\"", payload);
-
-                // 3. Initiate Thinking Cycle
+                
+                // Trigger the live API
                 process_thinking_cycle(&payload, &ts).await?;
                 
                 println!("\x1b[32m>> [ZENITH] Summarization cycle complete.\x1b[0m");
             }
         }
-        break; // Break for verification; loop in production
+        break; 
     }
     Ok(())
 }
 
 async fn process_thinking_cycle(payload: &str, timestamp: &str) -> Result<()> {
+    let api_key = env::var("GEMMA_API_KEY").unwrap_or_default();
+    
+    if api_key.is_empty() {
+        println!("!! [CORTEX_FRACTURE] GEMMA_API_KEY missing from environment.");
+        return Ok(());
+    }
+
+    // Google AI Native Endpoint targeting Gemma 3 27B-it
+    let api_url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key={}", api_key);
+
     println!("\n>> [THINKING] <think>");
-    println!("Analyzing extracted data: '{}' [TS: {}]", payload, timestamp);
-    println!("Resonance Level: 0.85 | Consistency: Nominal.");
-    println!("Summary: Placeholder example node detected. Metadata seating successful.");
+    println!(">> [UPLINK] Transmitting payload to Gemma 3 27B-it API...");
+
+    let client = reqwest::Client::new();
+    let prompt = format!(
+        "Analyze this extracted web payload and provide a concise 2-sentence structural summary. Timestamp: {}\nPayload: {}",
+        timestamp, payload
+    );
+
+    let request_body = json!({
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    });
+
+    let res = client.post(&api_url)
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await?;
+
+    if res.status().is_success() {
+        let response_json: serde_json::Value = res.json().await?;
+        let output = response_json["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .unwrap_or("No response generated.");
+        println!(">> [NEURAL_RESPONSE]\n{}", output);
+    } else {
+        // SUTURE: Save the status code before moving 'res' via .text()
+        let status = res.status();
+        let error_text = res.text().await.unwrap_or_default();
+        println!("!! [API_FRACTURE] Google API returned status: {}\n{}", status, error_text);
+    }
+
     println!(">> [THINKING] </think>");
     Ok(())
 }
