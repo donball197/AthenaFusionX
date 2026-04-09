@@ -1,12 +1,14 @@
-// src/executor.rs - v3.3.1 SOVEREIGN SHIELD (CLEANSED)
+// src/executor.rs - v3.3.2 SOVEREIGN SHIELD (HARDENED)
 use anyhow::{Result, anyhow};
 use std::process::Command;
 use std::fs;
 use crate::agent_protocol::AgentAction;
 use crate::sandbox;
 
+// SUTURE: Added diagnostic tools to the whitelist
 const ALLOWED_BINARIES: &[&str] = &[
-    "cargo", "git", "ls", "cat", "grep", "find", "echo", "mkdir", "rm", "zig", "make", "podman", "npm"
+    "cargo", "git", "ls", "cat", "grep", "find", "echo", "mkdir", "rm", "zig", "make", "podman", "npm",
+    "uptime", "free", "df" 
 ];
 
 const PROTECTED_CORE: &[&str] = &["src/lib.rs", "src/main.rs"];
@@ -67,8 +69,16 @@ impl Executor {
                     if parts.is_empty() || !ALLOWED_BINARIES.contains(&parts[0]) {
                         observations.push(format!("SECURITY_VIOLATION: Binary restricted"));
                     } else {
-                        let output = Command::new("sh").args(["-c", command]).output()?;
-                        observations.push(format!("EXEC_SUCCESS: {}", String::from_utf8_lossy(&output.stdout)));
+                        // SUTURE: Removed 'sh -c'. Executing strictly via the whitelisted binary.
+                        let mut cmd = Command::new(parts[0]);
+                        if parts.len() > 1 {
+                            cmd.args(&parts[1..]);
+                        }
+                        
+                        match cmd.output() {
+                            Ok(output) => observations.push(format!("EXEC_SUCCESS: {}", String::from_utf8_lossy(&output.stdout))),
+                            Err(e) => observations.push(format!("EXEC_ERROR: Failed to run binary -> {}", e)),
+                        }
                     }
                 }
                 AgentAction::SpawnDrone { image, command, mount_path } => {

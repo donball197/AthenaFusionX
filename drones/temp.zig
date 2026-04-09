@@ -1,0 +1,1 @@
+const std = @import("std"); pub fn main() !void { const f = try std.fs.openFileAbsolute("/sys/class/hwmon/hwmon0/temp1_input", .{}); defer f.close(); var b: [16]u8 = undefined; const n = try f.readAll(&b); std.io.getStdOut().writer().print("{s}", .{b[0..n]}) catch {}; }

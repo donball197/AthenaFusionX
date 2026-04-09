@@ -1,6 +1,6 @@
-// src/neural_agent.rs - v3.4 Cortex Alignment (Robust Token Splitting)
+// src/neural_agent.rs - v3.5 Visual Cortex Suture (Broadcast Enabled)
 use anyhow::{Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use reqwest::Client;
 use std::sync::Mutex;
 use std::collections::VecDeque;
@@ -39,7 +39,6 @@ impl MicroAgent {
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
 
-        // Threshold fixed to >= 0.8 to capture the 0.8 error-recovery state
         let (temp, max_tokens, thinking_enabled) = if resonance >= 0.8 {
             (0.7, 8192, true)  // Motor/Recovery
         } else if resonance > 0.4 {
@@ -54,7 +53,7 @@ impl MicroAgent {
         let base_prompt = ctx.system_prompt.unwrap_or_else(|| "You are NEXUS Ghost.".to_string());
         let sys_prompt = if thinking_enabled { format!("<|think|>\n{}", base_prompt) } else { base_prompt };
 
-        let payload = serde_json::json!({
+        let payload = json!({
             "system_instruction": { "parts": [{ "text": sys_prompt }] },
             "contents": [{ "role": "user", "parts": [{ "text": user_text }] }],
             "generationConfig": { "temperature": temp, "maxOutputTokens": max_tokens, "topP": 0.95 }
@@ -81,40 +80,36 @@ impl MicroAgent {
 
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
                         if let Some(token) = val.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
-                            
-                            // v3.4 Robust Split Logic: Handles tags appearing in the middle of chunks
                             let mut remaining = token;
                             
                             while !remaining.is_empty() {
                                 if !is_thinking {
                                     if let Some(start_pos) = remaining.find("<think>") {
-                                        // Text before the tag is clean
                                         let clean_part = &remaining[..start_pos];
+                                        self.broadcast_token(clean_part, false);
                                         print!("\x1b[38;5;253m{}\x1b[0m", clean_part);
                                         clean_text.push_str(clean_part);
                                         
-                                        // Enter thinking mode
                                         is_thinking = true;
                                         print!("\x1b[38;5;240m<think>");
                                         remaining = &remaining[start_pos + 7..];
                                     } else {
-                                        // No tag, whole chunk is clean
+                                        self.broadcast_token(remaining, false);
                                         print!("\x1b[38;5;253m{}\x1b[0m", remaining);
                                         clean_text.push_str(remaining);
                                         remaining = "";
                                     }
                                 } else {
                                     if let Some(end_pos) = remaining.find("</think>") {
-                                        // Text before tag is thought
                                         let thought_part = &remaining[..end_pos];
+                                        self.broadcast_token(thought_part, true);
                                         print!("{}", thought_part);
                                         
-                                        // Exit thinking mode
                                         is_thinking = false;
                                         print!("</think>\x1b[0m");
                                         remaining = &remaining[end_pos + 8..];
                                     } else {
-                                        // Whole chunk is thought
+                                        self.broadcast_token(remaining, true);
                                         print!("{}", remaining);
                                         remaining = "";
                                     }
@@ -130,5 +125,17 @@ impl MicroAgent {
         METRICS.record_api_call(start.elapsed().as_millis());
 
         Ok((clean_text, start.elapsed().as_millis()))
+    }
+
+    fn broadcast_token(&self, text: &str, is_thinking: bool) {
+        if text.is_empty() { return; }
+        let msg = json!({
+            "type": "NEURAL_STREAM",
+            "payload": {
+                "text": text,
+                "is_thinking": is_thinking
+            }
+        }).to_string();
+        let _ = self.tx.send(msg);
     }
 }

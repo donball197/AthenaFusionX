@@ -1,10 +1,13 @@
-// src/task_manager.rs - v4.0.2 Contextual Protocol Alignment (Cleaned)
+// src/task_manager.rs - v4.0.6 [Knowledge Synthesis Suture]
 use crate::neural_agent::{ContextPacket, MicroAgent};
 use crate::executor::Executor;
 use crate::memory::MemoryPalace;
 use crate::agent_protocol::AgentAction;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
+use once_cell::sync::Lazy;
+
+static CORTEX_LOCK: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(1));
 
 pub async fn send_task(
     agent: Arc<MicroAgent>, 
@@ -14,6 +17,8 @@ pub async fn send_task(
     memory: Arc<Mutex<MemoryPalace>>, 
     _tx: tokio::sync::broadcast::Sender<String>
 ) -> String {
+    let _permit = CORTEX_LOCK.acquire().await.expect("Cortex lock fractured");
+
     let mut session_obs = String::from("SENSORS_INIT: Metal Ready.\n");
     let mut full_log = String::new();
     let mut resonance: f32 = 0.1; 
@@ -31,11 +36,13 @@ pub async fn send_task(
             "IDENTITY: Ghost of NEXUS. \
             MOTOR FUNCTIONS: Use exactly this flat JSON schema:\n\
             - {{\"action\": \"read_file\", \"path\": \"...\"}}\n\
-            - {{\"action\": \"execute_command\", \"command\": \"...\"}}\n\n\
+            - {{\"action\": \"execute_command\", \"command\": \"...\"}}\n\
+            - {{\"action\": \"message\", \"message\": \"...\"}}\n\n\
             PROTOCOL:\n\
             {}\n\
             2. Output EXACTLY ONE JSON array wrapped in ```json [...] ```.\n\
-            3. Use [NEXUS_HALT] ONLY on absolute mission success.\n\n\
+            3. Once data strands (like file contents or command output) are gathered, you MUST synthesize a final human-readable report using the 'message' action.\n\
+            4. Include the [NEXUS_HALT] token within your final message to signal mission success.\n\n\
             SENSORY DATA:\n{}",
             thinking_instruction, session_obs
         );
@@ -45,8 +52,7 @@ pub async fn send_task(
         match agent.prepare_and_run(client, api_key, directive, ctx, resonance).await {
             Ok((response, _)) => {
                 full_log.push_str(&format!("\n[Turn {}]:\n{}", turn, response));
-                if response.contains("[NEXUS_HALT]") { break; }
-
+                
                 match AgentAction::extract_and_parse(&response) {
                     Ok(actions) => {
                         if actions.iter().any(|a| matches!(a, AgentAction::ExecuteCommand { .. })) {
@@ -59,6 +65,11 @@ pub async fn send_task(
                         let joined = results.join("\n");
                         println!("\x1b[32m>> [EXECUTOR] Feedback captured.\x1b[0m");
                         session_obs.push_str(&format!("\nTURN {} FEEDBACK: {}\n", turn, joined));
+                        
+                        // Break if either the reasoning or the executed message contains the HALT signal
+                        if joined.contains("[NEXUS_HALT]") || response.contains("[NEXUS_HALT]") {
+                            break;
+                        }
                     },
                     Err(e) => {
                         resonance = 0.8; 
