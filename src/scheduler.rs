@@ -36,7 +36,7 @@ impl MasterSupervisor {
                 let _current_resonance = resonance_meter.load(Ordering::Relaxed);
                 let vitals = monitor.get_vitals();
 
-                if vitals.cpu_load > 90.0 || vitals.temperature > 75.0 {
+                if vitals.cpu_load > 75.0 || vitals.temperature > 68.0 {
                     tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
                     continue;
                 }

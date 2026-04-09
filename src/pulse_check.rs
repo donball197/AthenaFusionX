@@ -1,20 +1,17 @@
-mod resonator; // Link to our Zig bridge
+use crate::resonator; // SUTURE: Changed from 'mod' to 'use crate' to resolve E0583
 
-fn main() {
+pub fn execute() {
     println!(">> [NEXUS] INITIATING HIVE PULSE CHECK...");
     
-    // Pulse the Zig Hive
-    resonator::ignite_swarm();
+    // Zig NPU pulse via Resonator Core
+    let _ = resonator::ResonatorCore::ignite_vault("vault/pulse");
     
-    let hive = resonator::sync_swarm_to_ui();
-    let active_count = hive.iter().filter(|u| u.status > 0).count();
+    let thermal = resonator::ResonatorCore::read_thermal_temp();
+    println!(">> [STATUS] THERMAL RESONANCE: {:.1}°C", thermal);
     
-    println!(">> [STATUS] HIVE COUNT: {}/68 UNITS DETECTED", hive.len());
-    println!(">> [STATUS] ACTIVE UNITS: {}", active_count);
-    
-    if hive.len() == 68 {
+    if thermal > 0.0 {
         println!(">> [SUCCESS] THE HIVE IS ALIVE.");
     } else {
-        println!(">> [WARNING] FRAGMENTATION DETECTED IN HIVE MEMORY.");
+        println!(">> [WARNING] FRAGMENTATION DETECTED IN SENSORY STRANDS.");
     }
 }

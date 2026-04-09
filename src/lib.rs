@@ -65,6 +65,10 @@ pub mod component_runner;
 pub mod self_healing_engine;
 pub mod zenith_check;
 pub mod void_walker;
+pub mod pulse_check;
+pub mod kernel_utils;
+pub mod auth;
+pub mod demo_2;
 
 #[cfg(feature = "future_npu")]
 pub mod native_agent_manager;
@@ -73,4 +77,5 @@ pub mod tflite_bridge;
 #[cfg(feature = "future_npu")]
 pub mod python_reactor;
 pub mod dynamic_broker;
+pub mod build;
 pub mod utils;
