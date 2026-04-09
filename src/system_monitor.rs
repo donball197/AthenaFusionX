@@ -1,4 +1,5 @@
 use serde::Serialize;
+use crate::resonator::ResonatorCore;
 use std::fs;
 
 #[derive(Serialize, Clone, Debug)]
@@ -9,35 +10,16 @@ pub struct Vitals {
     pub resonance: f32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SystemMonitor;
 
 impl SystemMonitor {
     pub fn new() -> Self { SystemMonitor }
 
-    fn read_temp() -> f32 {
-        // Broad search for ANY thermal metric in the virtualized tree
-        let paths = [
-            "/sys/class/thermal/thermal_zone0/temp",
-            "/sys/class/thermal/thermal_zone1/temp",
-            "/sys/class/hwmon/hwmon0/temp1_input",
-            "/sys/class/hwmon/hwmon1/temp1_input",
-            "/sys/class/hwmon/hwmon2/temp1_input",
-            "/sys/devices/virtual/thermal/thermal_zone0/temp",
-        ];
-
-        for path in paths {
-            if let Ok(raw) = fs::read_to_string(path) {
-                if let Ok(t) = raw.trim().parse::<f32>() {
-                    if t > 0.0 { return t / 1000.0; }
-                }
-            }
-        }
-        0.0
-    }
-
     pub fn get_vitals(&self) -> Vitals {
-        let temp = Self::read_temp();
+        // High-fidelity thermal data from the Zig Reflex
+        let temp = ResonatorCore::read_thermal_temp();
+
         let ram_gb = if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
             let mut available = 0.0;
             for line in meminfo.lines() {
@@ -54,7 +36,10 @@ impl SystemMonitor {
         } else { 0.0 };
 
         Vitals {
-            cpu_load, ram_gb, temperature: temp, resonance: (100.0 - cpu_load) / 100.0,
+            cpu_load,
+            ram_gb,
+            temperature: temp,
+            resonance: (100.0 - cpu_load) / 100.0,
         }
     }
 }

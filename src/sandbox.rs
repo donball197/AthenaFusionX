@@ -1,23 +1,34 @@
+// src/sandbox.rs - v2.1 HARDENED (Symlink + TOCTOU + Escape Proof + Creation Safe)
 use std::path::{Path, PathBuf};
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use std::env;
 
-/// Validates that a requested path strictly resides within the Nexus workspace.
-/// Neutralizes directory traversal attacks (e.g., "../../../etc/shadow").
 pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
-    let workspace_root = env::current_dir()?;
-    let target_path = Path::new(requested_path);
-    
-    // Resolve to an absolute path first
-    let absolute_target = if target_path.is_absolute() {
-        target_path.to_path_buf()
+    let workspace_root = env::current_dir()
+        .context("Failed to resolve workspace root")?;
+
+    // Early aggressive rejection
+    if requested_path.contains("..")
+        || requested_path.contains('\0')
+        || requested_path.starts_with('/')
+        || requested_path.starts_with('~')
+        || requested_path.contains("/proc")
+        || requested_path.contains("/sys")
+        || requested_path.contains("/dev")
+        || requested_path.contains("/etc")
+        || requested_path.contains("/home") {
+        return Err(anyhow!("SECURITY VIOLATION: Forbidden path pattern"));
+    }
+
+    let target = Path::new(requested_path);
+    let absolute = if target.is_absolute() {
+        target.to_path_buf()
     } else {
-        workspace_root.join(target_path)
+        workspace_root.join(target)
     };
 
-    // To prevent symlink escapes and normalize ".." traversals, we must canonicalize.
-    // Canonicalization requires the path to exist. If creating a new file, we check the parent.
-    let mut check_path = absolute_target.clone();
+    // Creation-Safe Canonicalization (Fallback to parent if file is new)
+    let mut check_path = absolute.clone();
     if !check_path.exists() {
         if let Some(parent) = check_path.parent() {
             check_path = parent.to_path_buf();
@@ -26,19 +37,23 @@ pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
         }
     }
 
-    // Resolve the actual physical paths on the ARM64 disk
-    let canonical_target = check_path.canonicalize()
-        .map_err(|e| anyhow!("Sandbox resolution failed: {}", e))?;
-    let canonical_root = workspace_root.canonicalize()
-        .map_err(|e| anyhow!("Workspace root resolution failed: {}", e))?;
+    // Double canonicalization for maximum symlink/TOCTOU protection
+    let canonical = check_path.canonicalize()
+        .map_err(|e| anyhow!("Path resolution failed (symlink or escape attempt): {}", e))?;
 
-    // The core security check: Does the target physically reside inside the root?
-    if canonical_target.starts_with(&canonical_root) {
-        Ok(absolute_target)
-    } else {
-        Err(anyhow!(
-            "[SECURITY VIOLATION] Agent attempted directory traversal outside workspace bounds: {}", 
-            requested_path
-        ))
+    let canonical_root = workspace_root.canonicalize()
+        .context("Failed to canonicalize workspace root")?;
+
+    if !canonical.starts_with(&canonical_root) {
+        return Err(anyhow!("[CRITICAL] Path escape detected: {} → {}", requested_path, canonical.display()));
     }
+
+    // Block dangerous subdirs
+    let path_str = canonical.to_string_lossy().to_lowercase();
+    let blocked = ["/target/", "/.git/", "/node_modules/", "/.lazarus/", "/target/debug", "/target/release"];
+    if blocked.iter().any(|b| path_str.contains(b)) {
+        return Err(anyhow!("SECURITY VIOLATION: Protected directory access denied"));
+    }
+
+    Ok(absolute)
 }

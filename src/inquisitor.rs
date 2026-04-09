@@ -4,8 +4,13 @@ pub struct Inquisitor;
 
 impl Inquisitor {
     pub fn audit_ui() -> anyhow::Result<String> {
-        println!("\x1b[33m>> [INQUISITOR] Executing UI Build Interrogation...\x1b[0m");
-        let output = Command::new("npm").args(["run", "build"]).current_dir("ui").output()
+        // SUTURE: Shifted to eprintln for Telemetry Hygiene
+        eprintln!("\x1b[33m>> [INQUISITOR] Executing UI Build Interrogation...\x1b[0m");
+
+        // SUTURE: Using --prefix to avoid 'cd' context issues in the Ghost's motor cortex
+        let output = Command::new("npm")
+            .args(["--prefix", "ui", "run", "build"])
+            .output()
             .map_err(|e| anyhow::anyhow!("NPM binary not found: {}", e))?;
 
         if output.status.success() {

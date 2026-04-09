@@ -1,6 +1,7 @@
+// src/agent_protocol.rs - v3.3.0 PROTOCOL
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use anyhow::{Context, Result};
+use anyhow::{Result, anyhow, Context};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -11,6 +12,7 @@ pub enum AgentAction {
     ExecuteCommand { command: String },
     ListDirectory { path: String },
     DeleteFile { path: String },
+    CreateDirectory { path: String }, // SUTURE: Integrated new action
     SearchCodebase { pattern: String },
     RunCargo { command: String },
     SpawnDrone { image: String, command: String, mount_path: String },
@@ -19,6 +21,7 @@ pub enum AgentAction {
     Stasis { duration_ms: u64 },
     SynthesizeZig { path: String, logic: String },
     GenerateReport { #[serde(flatten)] data: Value },
+    ScrapeTarget { url: String },
 }
 
 impl AgentAction {
@@ -27,12 +30,14 @@ impl AgentAction {
         if let Some(start_idx) = unescaped.rfind("```json") {
             let block = &unescaped[start_idx + 7..];
             if let Some(end_idx) = block.find("```") {
-                return serde_json::from_str(block[..end_idx].trim()).context("JSON error");
+                return serde_json::from_str(block[..end_idx].trim())
+                    .context("Failed to parse final JSON block");
             }
         }
         if let (Some(s), Some(e)) = (unescaped.rfind('['), unescaped.rfind(']')) {
-            return serde_json::from_str(&unescaped[s..=e]).context("Brackets error");
+            return serde_json::from_str(&unescaped[s..=e])
+                .context("Failed to bind JSON brackets");
         }
-        Err(anyhow::anyhow!("CORTEX FRACTURE: Re-sync required."))
+        Err(anyhow!("CORTEX FRACTURE: Re-sync JSON required."))
     }
 }

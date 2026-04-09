@@ -3,25 +3,23 @@ use std::env;
 
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={}", out_dir);
-    println!("cargo:rerun-if-changed=src/resonator.zig");
-    println!("cargo:rerun-if-changed=ui/dist");
+    println!("cargo:rerun-if-changed=src/reflex/extractor.zig");
 
-    // Build the Zig static library
     let status = Command::new("zig")
-        .args(&[
-            "build-lib", 
-            "src/resonator.zig", 
-            "-lc", 
-            "-O", "ReleaseFast",
-            &format!("-femit-bin={}/libresonator.a", out_dir)
+        .args([
+            "build-obj", "src/reflex/extractor.zig",
+            "-O", "ReleaseSmall", "-fPIC",
+            &format!("-femit-bin={}/extractor.o", out_dir),
         ])
         .status()
-        .expect("Zig compiler not found. Install with: sudo apt install zig");
+        .expect("Zig compiler missing.");
 
-    if !status.success() {
-        panic!("ZIG_COMPILE_ERROR");
-    }
+    if !status.success() { panic!("ZIG_COMPILE_ERROR"); }
 
-    println!("cargo:rustc-link-lib=static=resonator");
+    Command::new("ar")
+        .args(["crus", &format!("{}/libextractor.a", out_dir), &format!("{}/extractor.o", out_dir)])
+        .status().ok();
+
+    println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-lib=static=extractor");
 }

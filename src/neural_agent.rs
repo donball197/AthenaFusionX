@@ -1,4 +1,4 @@
-// src/neural_agent.rs - v3.2 Dynamic Resonance & Thinking Mode
+// src/neural_agent.rs - v3.4 Cortex Alignment (Robust Token Splitting)
 use anyhow::{Context, Result};
 use serde_json::Value;
 use reqwest::Client;
@@ -39,54 +39,33 @@ impl MicroAgent {
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
 
-        // Tiered Configuration based on Resonance Score
-        let (temp, max_tokens, thinking_enabled) = if resonance > 0.8 {
-            (0.7, 8192, true)  // Motor: Deep Reasoning
+        // Threshold fixed to >= 0.8 to capture the 0.8 error-recovery state
+        let (temp, max_tokens, thinking_enabled) = if resonance >= 0.8 {
+            (0.7, 8192, true)  // Motor/Recovery
         } else if resonance > 0.4 {
-            (0.3, 4096, false) // Cognitive: Balanced
+            (0.3, 4096, false) // Cognitive
         } else {
-            (0.1, 2048, false) // Sensory: Fast Inference
+            (0.1, 2048, false) // Sensory
         };
 
-        let model = std::env::var("NEXUS_MODEL")
-            .unwrap_or_else(|_| "gemma-4-26b-a4b-it".to_string());
+        let model = std::env::var("NEXUS_MODEL").unwrap_or_else(|_| "gemma-4-26b-a4b-it".to_string());
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-            model, api_key
-        );
-
-        let base_prompt = ctx.system_prompt.unwrap_or_else(||
-            "You are NEXUS Ghost — Sovereign AI Architect.".to_string()
-        );
-        
-        let sys_prompt = if thinking_enabled {
-            format!("<|think|>\n{}", base_prompt)
-        } else {
-            base_prompt
-        };
+        let base_prompt = ctx.system_prompt.unwrap_or_else(|| "You are NEXUS Ghost.".to_string());
+        let sys_prompt = if thinking_enabled { format!("<|think|>\n{}", base_prompt) } else { base_prompt };
 
         let payload = serde_json::json!({
             "system_instruction": { "parts": [{ "text": sys_prompt }] },
             "contents": [{ "role": "user", "parts": [{ "text": user_text }] }],
-            "generationConfig": {
-                "temperature": temp,
-                "maxOutputTokens": max_tokens,
-                "topP": 0.95
-            }
+            "generationConfig": { "temperature": temp, "maxOutputTokens": max_tokens, "topP": 0.95 }
         });
 
         println!(">> [NEURAL] Resonance: {:.2} | Thinking: {}", resonance, thinking_enabled);
 
-        let response = client.post(&url).json(&payload).send().await
-            .context("Failed to connect to Gemini API")?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!("API rejected request: HTTP {}", response.status()));
-        }
-
-        let mut full_text = String::new();
+        let response = client.post(&url).json(&payload).send().await.context("API connection failed")?;
+        let mut clean_text = String::new();
         let mut line_buffer = String::new();
+        let mut is_thinking = false;
         let mut stream = response.bytes_stream();
 
         print!("\n\x1b[38;5;51m[NEXUS STREAM] \x1b[0m");
@@ -94,33 +73,62 @@ impl MicroAgent {
         while let Some(item) = stream.next().await {
             if let Ok(bytes) = item {
                 line_buffer.push_str(&String::from_utf8_lossy(&bytes).replace("\r\n", "\n"));
-                while let Some(newline_pos) = line_buffer.find("\n\n") {
-                    let chunk = line_buffer[..newline_pos].to_string();
-                    line_buffer.drain(..newline_pos + 2);
+                while let Some(pos) = line_buffer.find("\n\n") {
+                    let chunk = line_buffer[..pos].to_string();
+                    line_buffer.drain(..pos + 2);
                     let clean = chunk.trim_start_matches("data: ").trim();
                     if clean.is_empty() || clean == "[DONE]" { continue; }
 
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                        if let Some(token) = val
-                            .pointer("/candidates/0/content/parts/0/text")
-                            .and_then(|v| v.as_str())
-                        {
-                            print!("\x1b[38;5;253m{}\x1b[0m", token);
+                        if let Some(token) = val.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
+                            
+                            // v3.4 Robust Split Logic: Handles tags appearing in the middle of chunks
+                            let mut remaining = token;
+                            
+                            while !remaining.is_empty() {
+                                if !is_thinking {
+                                    if let Some(start_pos) = remaining.find("<think>") {
+                                        // Text before the tag is clean
+                                        let clean_part = &remaining[..start_pos];
+                                        print!("\x1b[38;5;253m{}\x1b[0m", clean_part);
+                                        clean_text.push_str(clean_part);
+                                        
+                                        // Enter thinking mode
+                                        is_thinking = true;
+                                        print!("\x1b[38;5;240m<think>");
+                                        remaining = &remaining[start_pos + 7..];
+                                    } else {
+                                        // No tag, whole chunk is clean
+                                        print!("\x1b[38;5;253m{}\x1b[0m", remaining);
+                                        clean_text.push_str(remaining);
+                                        remaining = "";
+                                    }
+                                } else {
+                                    if let Some(end_pos) = remaining.find("</think>") {
+                                        // Text before tag is thought
+                                        let thought_part = &remaining[..end_pos];
+                                        print!("{}", thought_part);
+                                        
+                                        // Exit thinking mode
+                                        is_thinking = false;
+                                        print!("</think>\x1b[0m");
+                                        remaining = &remaining[end_pos + 8..];
+                                    } else {
+                                        // Whole chunk is thought
+                                        print!("{}", remaining);
+                                        remaining = "";
+                                    }
+                                }
+                            }
                             io::stdout().flush().ok();
-                            let _ = self.tx.send(
-                                serde_json::json!({"type": "ghost_token", "payload": token}).to_string()
-                            );
-                            full_text.push_str(token);
                         }
                     }
                 }
             }
         }
         println!("\n\x1b[38;5;244m────────────────────────────────\x1b[0m");
+        METRICS.record_api_call(start.elapsed().as_millis());
 
-        let elapsed = start.elapsed().as_millis();
-        METRICS.record_api_call(elapsed);
-
-        Ok((full_text, elapsed))
+        Ok((clean_text, start.elapsed().as_millis()))
     }
 }

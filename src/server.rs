@@ -1,5 +1,4 @@
-// src/server.rs
-// HARDENED VERSION - Integrates Sandbox validation on all API endpoints
+// src/server.rs - v3.0 Hardened + /api/metrics endpoint
 use axum::{
     extract::{Query, State, ws::{WebSocketUpgrade, WebSocket, Message}},
     http::{header, StatusCode, Uri},
@@ -12,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use crate::{task_manager, sandbox};
+use crate::{task_manager, sandbox, metrics};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
@@ -35,17 +34,18 @@ pub struct AppState {
 
 pub async fn start_server(state: Arc<AppState>) {
     let app = Router::new()
-        .route("/api/fs/list", get(handle_fs_list))
-        .route("/api/fs/read", get(handle_read_file))
-        .route("/api/fs/write", post(handle_write_file))
-        .route("/api/fs/delete", delete(handle_delete_file))
-        .route("/api/memories", get(handle_get_memories))
-        .route("/api/memories/search", get(handle_search_memories))
-        .route("/api/memories/purge", delete(handle_purge_memories))
-        .route("/api/missions", get(handle_get_missions))
-        .route("/api/lazarus/snapshots", get(handle_lazarus_snapshots))
-        .route("/api/task", post(handle_task))
-        .route("/ws/nexus", get(ws_handler))
+        .route("/api/fs/list",          get(handle_fs_list))
+        .route("/api/fs/read",          get(handle_read_file))
+        .route("/api/fs/write",         post(handle_write_file))
+        .route("/api/fs/delete",        delete(handle_delete_file))
+        .route("/api/memories",         get(handle_get_memories))
+        .route("/api/memories/search",  get(handle_search_memories))
+        .route("/api/memories/purge",   delete(handle_purge_memories))
+        .route("/api/missions",         get(handle_get_missions))
+        .route("/api/lazarus/snapshots",get(handle_lazarus_snapshots))
+        .route("/api/task",             post(handle_task))
+        .route("/api/metrics",          get(handle_metrics))
+        .route("/ws/nexus",             get(ws_handler))
         .fallback(static_handler)
         .with_state(state)
         .layer(CorsLayer::permissive());
@@ -54,6 +54,13 @@ pub async fn start_server(state: Arc<AppState>) {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     println!("\x1b[38;2;0;255;255m>> [NEXUS SERVER] UNIFIED UPLINK: http://localhost:3000\x1b[0m");
     axum::serve(listener, app.into_make_service()).await.unwrap();
+}
+
+async fn handle_metrics() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics::get_metrics_text(),
+    )
 }
 
 async fn handle_fs_list(Query(p): Query<ListParams>, State(_state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -114,7 +121,11 @@ async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoRespons
 async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
     match sandbox::validate_path(&p.path) {
         Ok(safe_path) => {
-            let res = if safe_path.is_dir() { std::fs::remove_dir_all(&safe_path) } else { std::fs::remove_file(&safe_path) };
+            let res = if safe_path.is_dir() {
+                std::fs::remove_dir_all(&safe_path)
+            } else {
+                std::fs::remove_file(&safe_path)
+            };
             match res {
                 Ok(_) => StatusCode::OK.into_response(),
                 Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -170,11 +181,11 @@ async fn handle_lazarus_snapshots() -> impl IntoResponse {
 }
 
 async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
-    let agent = state.agent.clone();
-    let client = state.client.clone();
-    let api_key = state.api_key.clone();
-    let memory = state.memory.clone();
-    let tx = state.tx.clone();
+    let agent    = state.agent.clone();
+    let client   = state.client.clone();
+    let api_key  = state.api_key.clone();
+    let memory   = state.memory.clone();
+    let tx       = state.tx.clone();
     let directive = payload.directive.clone();
     tokio::spawn(async move {
         let _ = task_manager::send_task(agent, &client, &api_key, &directive, memory, tx).await;
@@ -205,7 +216,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         if parsed["type"] == "directive" {
                             let cmd = parsed["payload"].as_str().unwrap_or_default().to_string();
                             let state_clone = state.clone();
-                            let tx_clone = state.tx.clone();
+                            let tx_clone    = state.tx.clone();
                             tokio::spawn(async move {
                                 let _ = task_manager::send_task(
                                     state_clone.agent.clone(),
@@ -229,9 +240,15 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/').to_string();
     let final_path = if path.is_empty() { "index.html".to_string() } else { path };
     match Assets::get(&final_path) {
-        Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(),
-        None => if !final_path.contains('.') { ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data).into_response() } 
-                else { StatusCode::NOT_FOUND.into_response() }
+        Some(content) => (
+            [(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())],
+            content.data
+        ).into_response(),
+        None => if !final_path.contains('.') {
+            ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data).into_response()
+        } else {
+            StatusCode::NOT_FOUND.into_response()
+        }
     }
 }
 

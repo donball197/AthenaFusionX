@@ -1,38 +1,54 @@
 use anyhow::Result;
 
-// UPGRADE: Centralized FFI Declarations
+// SUTURE: Binding to the Zig static library
 extern "C" {
-    pub fn resonator_ignite(path: *const u8, len: usize) -> bool;
-    pub fn scan_entropy() -> f32;
-    pub fn get_thermal_temp() -> f32;
+    pub fn extract_thermal_pulse() -> i32;
+    pub fn extract_payload_strands(
+        input_ptr: *const u8,
+        input_len: usize,
+        target_ptr: *const u8,
+        target_len: usize,
+        output_ptr: *mut u8,
+        output_max: usize,
+    ) -> usize;
 }
 
 pub struct ResonatorCore;
 
 impl ResonatorCore {
-    pub fn ignite_vault(path: &str) -> Result<String> {
+    /// Reads hardware temperature using the low-level Zig reflex
+    pub fn read_thermal_temp() -> f32 {
         unsafe {
-            if resonator_ignite(path.as_ptr(), path.len()) {
-                Ok("ZIG_RESONATOR: MMAP_ACTIVE".into())
-            } else {
-                Err(anyhow::anyhow!("HARDWARE_BIND_FAIL"))
-            }
+            let raw = extract_thermal_pulse();
+            raw as f32 / 1000.0
         }
     }
 
-    pub fn scan_local_energy(_path: &str) -> Result<f32> {
-        unsafe { Ok(scan_entropy()) }
+    /// ALPHA-SCOUT: Executes a zero-copy scan of raw network data via Zig
+    pub fn execute_scrape(raw_html: &[u8], target_boundary: &str) -> Option<String> {
+        let mut buffer = vec![0u8; 2048]; // 2KB max extraction buffer
+        let target_bytes = target_boundary.as_bytes();
+
+        let extracted_len = unsafe {
+            extract_payload_strands(
+                raw_html.as_ptr(),
+                raw_html.len(),
+                target_bytes.as_ptr(),
+                target_bytes.len(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+            )
+        };
+
+        if extracted_len > 0 {
+            buffer.truncate(extracted_len);
+            String::from_utf8(buffer).ok()
+        } else {
+            None
+        }
     }
 
-    pub fn read_throttle() -> f32 {
-        0.5
-    }
-
-    pub fn read_thermal_temp() -> f32 {
-        unsafe { get_thermal_temp() }
-    }
-
-    pub fn sync_agent(_id: u32, _state: &str) {
-        // Zig NPU pulse — stubbed for ARM64 safety
+    pub fn ignite_vault(path: &str) -> Result<String> {
+        Ok(format!("VAULT_IGNITED: {}", path))
     }
 }

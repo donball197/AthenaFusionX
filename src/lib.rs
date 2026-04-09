@@ -1,3 +1,4 @@
+// src/lib.rs - v3.0.1 RECONSTRUCTED CORTEX
 pub mod sandbox;
 pub mod agent_protocol;
 pub mod agents;
@@ -69,6 +70,7 @@ pub mod pulse_check;
 pub mod kernel_utils;
 pub mod auth;
 pub mod demo_2;
+pub mod scraper_drone;
 
 #[cfg(feature = "future_npu")]
 pub mod native_agent_manager;
@@ -79,3 +81,4 @@ pub mod python_reactor;
 pub mod dynamic_broker;
 pub mod build;
 pub mod utils;
+pub mod synapse;
