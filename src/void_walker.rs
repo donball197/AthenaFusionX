@@ -1,82 +1,93 @@
 /**
  * Copyright 2026 Donald Ball
- *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use crate::agent_protocol::AgentAction;
-use crate::component_runner::AgentHandle;
-use anyhow::{anyhow, Result};
-use regex::Regex;
-
-/// VoidWalker: A Micro-Agent specialized in identifying logic entropy.
-/// It hunts for unused variables and empty function stubs to maintain code purity.
 pub struct VoidWalker;
 
 impl VoidWalker {
-    pub fn new() -> Self {
-        Self
+    /// Deep-scans the project to ensure every .rs file is linked to the module tree.
+    pub fn identify_orphans() -> Vec<String> {
+        let mut orphans = Vec::new();
+        let mut declared_mods = Vec::new();
+
+        // 1. Map the entire Module Tree starting from roots
+        let root_files = ["src/main.rs", "src/lib.rs"];
+        for root in &root_files {
+            if let Ok(content) = fs::read_to_string(root) {
+                Self::trace_module_tree(Path::new(root), &content, &mut declared_mods);
+            }
+        }
+
+        // 2. Recursive Scan of the physical filesystem
+        let mut all_files = Vec::new();
+        let _ = Self::visit_dirs(Path::new("src"), &mut all_files);
+
+        // 3. Cross-reference absolute paths to prevent name collisions
+        for file_path in all_files {
+            let path_str = file_path.to_string_lossy().to_string();
+            
+            // Safe Zone: Entry points and standalone binaries
+            if path_str.contains("/bin/") || path_str.ends_with("main.rs") || path_str.ends_with("lib.rs") || path_str.ends_with("mod.rs") {
+                continue;
+            }
+
+            if !declared_mods.iter().any(|m| path_str.ends_with(m)) {
+                orphans.push(path_str);
+            }
+        }
+        orphans
     }
 
-    /// Scans the workspace for dead code using a combination of Clippy telemetry
-    /// and pattern-based structural analysis via the provided AgentHandle.
-    pub async fn hunt_dead_code(&self, handle: &AgentHandle) -> Result<String> {
-        let mut report = String::from(">> [VOID_WALKER] Initiating Entropy Scan...\n");
+    /// Recursively traces mod declarations to find their associated files
+    fn trace_module_tree(current_file: &Path, content: &str, whitelist: &mut Vec<String>) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
+                if let Some(mod_name) = trimmed.split_whitespace().nth(if trimmed.starts_with("pub") { 2 } else { 1 }) {
+                    let name = mod_name.trim_end_matches(';');
+                    
+                    // Predict potential file paths for this module
+                    let parent = current_file.parent().unwrap_or(Path::new(""));
+                    let possible_paths = vec![
+                        parent.join(format!("{}.rs", name)),
+                        parent.join(name).join("mod.rs"),
+                        parent.join(current_file.file_stem().unwrap_or_default()).join(format!("{}.rs", name)),
+                    ];
 
-        // 1. Detect Unused Variables via Clippy
-        let clippy_cmd = "cargo clippy -- -W unused_variables -W unused_must_use 2>&1".to_string();
-        let clippy_actions = vec![AgentAction::ExecuteCommand { command: clippy_cmd }];
-
-        let clippy_results = handle
-            .execute_actions(clippy_actions)
-            .await
-            .map_err(|e| anyhow!("CLIPP_EXEC_FAILURE: {}", e))?;
-
-        let clippy_output = clippy_results.join("\n");
-        let unused_re = Regex::new(r"warning: unused (variable|must_use) .* in (.*)").unwrap();
-
-        let mut unused_found = false;
-        for cap in unused_re.captures_iter(&clippy_output) {
-            unused_found = true;
-            report.push_str(&format!(
-                "- [UNUSED_LOGIC] {} detected in {}\n",
-                &cap[1],
-                cap[2].trim()
-            ));
+                    for path in possible_paths {
+                        if path.exists() {
+                            let path_key = path.to_string_lossy().to_string();
+                            if !whitelist.contains(&path_key) {
+                                whitelist.push(path_key);
+                                // Follow the rabbit hole: Read and trace the sub-module
+                                if let Ok(sub_content) = fs::read_to_string(&path) {
+                                    Self::trace_module_tree(&path, &sub_content, whitelist);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
 
-        if !unused_found {
-            report.push_str("- [UNUSED_LOGIC] No unused variables detected.\n");
+    fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        if dir.is_dir() {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    Self::visit_dirs(&path, files)?;
+                } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
         }
-
-        // 2. Detect Empty Functions via grep
-        let empty_fn_cmd = "grep -rE 'fn [a-zA-Z0-9_]+\\(.*?\\) \\{\\s*\\}' src/".to_string();
-        let empty_actions = vec![AgentAction::ExecuteCommand { command: empty_fn_cmd }];
-
-        let empty_results = handle
-            .execute_actions(empty_actions)
-            .await
-            .map_err(|e| anyhow!("EMPTY_FUNC_SCAN_FAILURE: {}", e))?;
-
-        if !empty_results.is_empty() && !empty_results[0].trim().is_empty() {
-            report.push_str("- [EMPTY_STUB] Found empty function definitions:\n");
-            report.push_str(&empty_results[0]);
-        } else {
-            report.push_str("- [EMPTY_STUB] No empty function stubs detected.\n");
-        }
-
-        report.push_str(">> [VOID_WALKER] Scan Complete.\n");
-        Ok(report)
+        Ok(())
     }
 }

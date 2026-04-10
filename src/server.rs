@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-
-// src/server.rs - v4.0.0 Unified API Handler
 use crate::{metrics, sandbox, server_terminal, task_manager};
 use axum::{
     extract::{
@@ -23,7 +21,7 @@ use axum::{
         Query, State,
     },
     http::{header, StatusCode, Uri},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -83,18 +81,17 @@ async fn handle_metrics() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], metrics::get_metrics_text())
 }
 
-// SUTURE: Route to the correct Mission Queue database
-async fn handle_get_missions() -> impl IntoResponse {
+async fn handle_get_missions() -> Response {
     match crate::mission_queue::MissionQueue::new(".nexus_missions.db").await {
         Ok(queue) => match queue.get_pending().await {
             Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Queue Error: {}", e)).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Init Error: {}", e)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
+async fn handle_fs_list(Query(p): Query<ListParams>) -> Response {
     let path = p.path.as_deref().unwrap_or(".");
     match sandbox::validate_path(path) {
         Ok(safe_path) => {
@@ -117,7 +114,7 @@ async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
     }
 }
 
-async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+async fn handle_read_file(Query(p): Query<FileParams>) -> Response {
     match sandbox::validate_path(&p.path) {
         Ok(safe_path) => match std::fs::read_to_string(&safe_path) {
             Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
@@ -127,7 +124,7 @@ async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
     }
 }
 
-async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoResponse {
+async fn handle_write_file(Json(payload): Json<FileContent>) -> Response {
     match sandbox::validate_path(&payload.path) {
         Ok(safe_path) => {
             if let Some(p) = safe_path.parent() {
@@ -142,7 +139,7 @@ async fn handle_write_file(Json(payload): Json<FileContent>) -> impl IntoRespons
     }
 }
 
-async fn handle_delete_file(Query(p): Query<FileParams>) -> impl IntoResponse {
+async fn handle_delete_file(Query(p): Query<FileParams>) -> Response {
     match sandbox::validate_path(&p.path) {
         Ok(safe_path) => {
             let res = if safe_path.is_dir() {
@@ -163,23 +160,16 @@ async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoRes
     let palace = state.memory.lock().await;
     match palace.fetch_all().await {
         Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Memory Read Fault: {}", e)).into_response()
-        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Memory Read Fault: {}", e)).into_response(),
     }
 }
 
-async fn handle_search_memories(
-    Query(q): Query<SearchQuery>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn handle_search_memories(Query(q): Query<SearchQuery>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let query = q.q.as_deref().unwrap_or("");
     let palace = state.memory.lock().await;
     match palace.search_memories(query).await {
         Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Search Fault: {}", e)).into_response()
-        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Search Fault: {}", e)).into_response(),
     }
 }
 
@@ -187,30 +177,25 @@ async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> impl IntoR
     let palace = state.memory.lock().await;
     match palace.purge_all().await {
         Ok(_) => StatusCode::OK.into_response(),
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Purge Fault: {}", e)).into_response()
-        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Purge Fault: {}", e)).into_response(),
     }
 }
 
 async fn handle_lazarus_snapshots() -> impl IntoResponse {
     match crate::lazarus_vault::LazarusVault::list_snapshots() {
         Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Vault Error: {}", e)).into_response()
-        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Vault Error: {}", e)).into_response(),
     }
 }
 
-async fn handle_lazarus_restore(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+async fn handle_lazarus_restore(Json(payload): Json<serde_json::Value>) -> Response {
     let hash = payload["hash"].as_str().unwrap_or("");
     if hash.is_empty() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "hash required"}))).into_response();
     }
     match crate::lazarus_vault::LazarusVault::restore_snapshot(hash) {
         Ok(msg) => (StatusCode::OK, Json(json!({"message": msg}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
-            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
     }
 }
 
@@ -225,10 +210,7 @@ async fn handle_graph() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "nodes": nodes, "timestamp": atlas.timestamp }))).into_response()
 }
 
-async fn handle_task(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<TaskRequest>,
-) -> impl IntoResponse {
+async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
     let agent = state.agent.clone();
     let client = state.client.clone();
     let api_key = state.api_key.clone();
