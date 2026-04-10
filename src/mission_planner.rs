@@ -1,13 +1,33 @@
-// src/mission_planner.rs - Hardened
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+// src/mission_planner.rs - v3.2 (Memory Flow Integration)
 use crate::agent_protocol::AgentAction;
-use crate::server::AppState;
 use crate::component_runner::{AgentHandle, Capabilities};
+use crate::server::AppState;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum StepStatus {
-    Pending, Running, Done, Failed(String),
+    Pending,
+    Running,
+    Done,
+    Failed(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -34,16 +54,19 @@ impl MissionPlanner {
     pub async fn execute(state: &Arc<AppState>, mut mission: Mission) -> anyhow::Result<Mission> {
         let (lifecycle_tx, _) = tokio::sync::broadcast::channel(16);
 
+        // SUTURE: Added state.memory.clone() to satisfy new spawn signature
         let handle: AgentHandle = crate::component_runner::AgentComponent::spawn(
             &format!("mission-{}", mission.id),
             Capabilities::READ_FS | Capabilities::WRITE_FS,
             state.agent.clone(),
             lifecycle_tx,
+            state.memory.clone(),
         );
 
         for step in mission.steps.iter_mut() {
-            if step.status != StepStatus::Pending { continue; }
-
+            if step.status != StepStatus::Pending {
+                continue;
+            }
             step.status = StepStatus::Running;
 
             if let Some(action) = step.action.clone() {

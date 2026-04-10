@@ -1,7 +1,24 @@
-use tokio::process::Command;
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+use anyhow::Result;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use anyhow::Result;
+use tokio::process::Command;
 
 pub struct PodmanShield;
 
@@ -14,12 +31,18 @@ impl PodmanShield {
             .args([
                 "run",
                 "--rm",
-                "--network", "none",            // Air-gapped
-                "--memory", "512m",             // Resource governed
-                "-v", &format!("{}:/workspace:z", workspace_path), // 'z' for Crostini/Termux safety
-                "-w", "/workspace",
+                "--network",
+                "none", // Air-gapped
+                "--memory",
+                "512m", // Resource governed
+                "-v",
+                &format!("{}:/workspace:z", workspace_path), // 'z' for Crostini/Termux safety
+                "-w",
+                "/workspace",
                 "docker.io/library/rust:alpine",
-                "sh", "-c", directive
+                "sh",
+                "-c",
+                directive,
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -33,14 +56,14 @@ impl PodmanShield {
         while let Ok(Some(line)) = reader.next_line().await {
             // Echoing the stream live to the host terminal
             println!(">> [BIO-DOME TELEMETRY]: {}", line);
-            
+
             // Zircon-style Signal Check: The Arbiter's kill switch
             if line.contains("MALICIOUS_INTENT") {
                 println!("!! [ARBITER] Rogue behavior detected. Severing IPC.");
                 let _ = child.kill().await;
                 return Err(anyhow::anyhow!("SHIELD_BREACH: Malicious intent intercepted."));
             }
-            
+
             output_buffer.push_str(&line);
             output_buffer.push('\n');
         }

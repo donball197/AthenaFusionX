@@ -1,38 +1,25 @@
-use crate::neural_agent::{ContextPacket, MicroAgent};
-use std::env;
-use tokio::sync::broadcast;
-use reqwest::Client;
-use anyhow::{Result, Context};
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-pub struct SyntaxSentinel;
 
-pub async fn run_sovereign_audit(payload_path: &str) -> Result<()> {
-    let api_key = env::var("GEMINI_API_KEY").context("GEMINI_API_KEY missing from environment")?;
-    let client = Client::new();
-    let (tx, _) = broadcast::channel(16);
-    let agent = MicroAgent::init(tx).context("Failed to initialize Auditor agent")?;
-
-    let payload = std::fs::read_to_string(payload_path)
-        .context(format!("Failed to read audit target: {}", payload_path))?;
-
-    let ctx = ContextPacket {
-        system_prompt: Some("You are the NEXUS SOVEREIGN AUDITOR. Identify CRITICAL vulnerabilities.".into()),
+use crate::neural_agent::ContextPacket;
+pub fn build_audit_context(file_name: &str, content: &str) -> ContextPacket {
+    ContextPacket {
+        current_file: file_name.to_string(),
+        current_content: content.to_string(),
         ..Default::default()
-    };
-
-    println!(">> [AUDITOR] Initiating Security Sweep...");
-    
-    match agent.prepare_and_run(&client, &api_key, &payload, ctx, 0.2).await {
-        Ok((report, _)) => {
-            println!("\n>> [ZENITH AUDIT COMPLETE]");
-            println!("{}", report);
-            Ok(())
-        }
-        Err(e) => Err(e.context("Security audit synthesis failed")),
     }
-}
-
-pub fn run_integrity_check() -> Result<()> {
-    if std::path::Path::new("src/main.rs").exists() { Ok(()) } 
-    else { Err(anyhow::anyhow!("VITAL_CORE_MISSING: src/main.rs is not found")) }
 }

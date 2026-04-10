@@ -1,12 +1,26 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
 <script>
-    export let active = false;
-    export let events = [
+    let { active = false, events = [
         { time: "02:14", event: "NEURAL_CORE_REBOOT", status: "COMPLETE" },
         { time: "02:17", event: "MEMORY_FRAGMENT_RECOVERED", status: "SUCCESS" },
         { time: "02:21", event: "SWARM_RESYNC", status: "IN_PROGRESS" }
-    ];
-
-    $: displayedEvents = active ? events : [];
+    ] } = $props();
 </script>
 
 {#if active}
@@ -14,9 +28,8 @@
     <div class="uppercase tracking-widest text-purple-400 text-[10px] border-b border-purple-900/50 pb-2 mb-4">
         LAZARUS TIMELINE // RESURRECTION_PROTOCOL
     </div>
-    
     <div class="space-y-4">
-        {#each displayedEvents as ev}
+        {#each events as ev}
             <div class="flex gap-4">
                 <div class="text-purple-500/70 w-12 shrink-0">{ev.time}</div>
                 <div class="flex-1">
@@ -28,7 +41,6 @@
             </div>
         {/each}
     </div>
-    
     <div class="mt-6 text-[9px] text-gray-500 italic">
         Last resurrection cycle: 47 seconds ago
     </div>

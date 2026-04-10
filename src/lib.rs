@@ -1,84 +1,64 @@
-// src/lib.rs - v3.0.1 RECONSTRUCTED CORTEX
-pub mod sandbox;
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+// src/lib.rs — v4.0.4 Realigned (Mission Queue Restored)
 pub mod agent_protocol;
-pub mod agents;
 pub mod alloc;
 pub mod arbiter_agent;
-pub mod ast_route;
-pub mod auditor;
-pub mod auto_healer;
-pub mod backend_autofix;
-pub mod backend_inspector;
-pub mod broker;
-pub mod calibrate;
+pub mod auth;
 pub mod cli;
-pub mod command_executor;
-pub mod context;
-pub mod devops;
+pub mod component_runner;
 pub mod diff;
 pub mod executor;
-pub mod filename;
-pub mod frontend_autofix;
-pub mod frontend_inspector;
 pub mod fs_utils;
-pub mod heartbeat;
-pub mod hive_mind;
-pub mod inquisitor;
 pub mod janitor;
 pub mod json_parser;
 pub mod kernel;
 pub mod lazarus_vault;
-pub mod local_llm;
 pub mod memory;
 pub mod metrics;
 pub mod mission_control;
 pub mod mission_planner;
-pub mod mission_queue;
-pub mod models;
-pub mod monitor;
-pub mod nano_agent;
-pub mod network;
+pub mod mission_queue; // SUTURE: Restored missing module declaration
 pub mod neural_agent;
 pub mod orchestrator;
 pub mod podman;
 pub mod polyglot;
-pub mod rebuild;
-pub mod refuel;
 pub mod resonator;
 pub mod safety_valve;
+pub mod sandbox;
 pub mod scheduler;
-pub mod sentry;
+pub mod scraper_drone;
+pub mod self_healing_engine;
 pub mod server;
-pub mod server_export_handler;
-pub mod server_terminal;
-pub mod stats;
 pub mod system_monitor;
 pub mod task_manager;
-pub mod validator;
 pub mod thermal_governor;
-pub mod verification;
-pub mod vision;
-pub mod watcher;
-pub mod zig_kernel_autofix;
-pub mod zig_kernel_inspector;
-pub mod diagnostics;
-pub mod component_runner;
-pub mod self_healing_engine;
-pub mod zenith_check;
-pub mod void_walker;
-pub mod pulse_check;
-pub mod kernel_utils;
-pub mod auth;
-pub mod demo_2;
-pub mod scraper_drone;
-
-#[cfg(feature = "future_npu")]
-pub mod native_agent_manager;
-#[cfg(feature = "future_npu")]
-pub mod tflite_bridge;
-#[cfg(feature = "future_npu")]
-pub mod python_reactor;
-pub mod dynamic_broker;
-pub mod build;
 pub mod utils;
-pub mod synapse;
+pub mod validator;
+
+// Restored missing logic strands
+pub mod broker;
+pub mod inquisitor;
+pub mod local_llm;
+pub mod server_terminal;
+
+#[cfg(feature = "vision")]
+pub mod vision;
+
+// Future / Heavy strands (Keep pruned if RAM is tight)
+// pub mod void_walker;

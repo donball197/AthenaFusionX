@@ -1,38 +1,23 @@
-use std::process::Command;
-use anyhow::{Context, Result, anyhow};
-use crate::dynamic_broker::DynamicBroker;
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 
 pub struct LocalLLM;
-
 impl LocalLLM {
-    pub fn new() -> Self { LocalLLM }
-
-    pub fn query_gemma_nano(&self, prompt: &str, model_path: &str) -> Result<String> {
-        // SOVEREIGN RESOLUTION: Determine binary location based on host muscle
-        // We look for 'llama-cli' in the device-specific bin directory
-        let binary_path = DynamicBroker::get_library_path("llama-cli")
-            .context("Failed to resolve local inference binary for this host")?;
-
-        println!("\x1b[35m>> [LOCAL_LLM] Allocating RAM for {} using {:?}...\x1b[0m", model_path, binary_path);
-        
-        let output = Command::new(binary_path)
-            .args([
-                "-m", model_path,
-                "-p", prompt,
-                "-n", "128", 
-                "-c", "512",
-                "--temp", "0.1",
-                "--log-disable"
-            ])
-            .output()
-            .context("Failed to execute local inference process")?;
-
-        if output.status.success() {
-            let response = String::from_utf8_lossy(&output.stdout).to_string();
-            Ok(response.trim().to_string())
-        } else {
-            let err = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow!("Local GGUF Fault: {}", err))
-        }
+    pub fn new() -> Self {
+        Self
     }
 }

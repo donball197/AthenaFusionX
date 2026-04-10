@@ -1,3 +1,20 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -10,13 +27,33 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    Build { #[arg(default_value = ".")] path: PathBuf },
-    Heal { #[arg(required = true)] file: PathBuf },
-    Open { #[arg(required = true)] file: PathBuf },
+    Build {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    Heal {
+        #[arg(required = true)]
+        file: PathBuf,
+    },
+    Open {
+        #[arg(required = true)]
+        file: PathBuf,
+    },
     Status,
-    Diff { #[arg(required = true)] original: PathBuf, #[arg(required = true)] against: PathBuf },
-    Restore { #[arg(required = true)] hash: String },
-    Close { #[arg(required = true)] file: PathBuf },
+    Diff {
+        #[arg(required = true)]
+        original: PathBuf,
+        #[arg(required = true)]
+        against: PathBuf,
+    },
+    Restore {
+        #[arg(required = true)]
+        hash: String,
+    },
+    Close {
+        #[arg(required = true)]
+        file: PathBuf,
+    },
     Purge,
 }
 
@@ -31,8 +68,13 @@ pub fn inject_workspace_dna(cmd: &str) -> String {
                 let path = entry.path();
                 if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        let preview = if content.len() > 15000 { &content[..15000] } else { &content };
-                        context.push_str(&format!("\n// === FILE: {} ===\n{}\n", path.display(), preview));
+                        let preview =
+                            if content.len() > 15000 { &content[..15000] } else { &content };
+                        context.push_str(&format!(
+                            "\n// === FILE: {} ===\n{}\n",
+                            path.display(),
+                            preview
+                        ));
                     }
                 }
             }
@@ -47,7 +89,11 @@ pub fn inject_workspace_dna(cmd: &str) -> String {
     final_cmd
 }
 
-pub enum HostMuscle { MotorolaTermux, ChromebookCrostini, GenericARM64 }
+pub enum HostMuscle {
+    MotorolaTermux,
+    ChromebookCrostini,
+    GenericARM64,
+}
 
 pub fn detect_host_muscle() -> HostMuscle {
     if std::env::var("PREFIX").unwrap_or_default().contains("com.termux") {

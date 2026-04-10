@@ -1,14 +1,31 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+use nexus_singularity::arbiter_agent::ArbiterAgent;
+use nexus_singularity::memory::MemoryPalace;
 use nexus_singularity::mission_control::upgrade_command;
-use nexus_singularity::server::AppState;
 use nexus_singularity::neural_agent::MicroAgent;
 use nexus_singularity::orchestrator::Orchestrator;
 use nexus_singularity::scheduler;
+use nexus_singularity::server::AppState;
 use nexus_singularity::system_monitor::SystemMonitor;
-use nexus_singularity::arbiter_agent::ArbiterAgent;
-use nexus_singularity::memory::MemoryPalace;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
-use std::sync::atomic::AtomicU32;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,18 +34,22 @@ async fn main() -> anyhow::Result<()> {
 
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY missing");
     let (tx, _) = broadcast::channel::<String>(128);
-    
+
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
     let monitor = SystemMonitor::new();
     let orchestrator = Arc::new(Orchestrator::new(agent.clone()));
-    
+
     let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;
     let memory = Arc::new(Mutex::new(memory_palace));
 
     let scheduler_tx = scheduler::MasterSupervisor::ignite(
-        tx.clone(), reqwest::Client::new(), api_key.clone(), 
-        orchestrator.clone(), Arc::new(AtomicU32::new(0)), monitor.clone(),
-        memory.clone()
+        tx.clone(),
+        reqwest::Client::new(),
+        api_key.clone(),
+        orchestrator.clone(),
+        Arc::new(AtomicU32::new(0)),
+        monitor.clone(),
+        memory.clone(),
     );
 
     let state = Arc::new(AppState {

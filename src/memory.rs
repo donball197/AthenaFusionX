@@ -1,3 +1,21 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+// src/memory.rs - v4.0.1 (SQL Disambiguation Suture)
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Row};
 use std::path::Path;
@@ -24,6 +42,9 @@ impl MemoryPalace {
             .max_connections(5)
             .connect(&format!("sqlite:{}", db_path))
             .await?;
+            
+        sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
+        
         let palace = Self { pool };
         palace.init_full_schema().await?;
         Ok(palace)
@@ -78,10 +99,13 @@ impl MemoryPalace {
     }
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context 
-                                JOIN memory_search ON neural_context.id = memory_search.rowid 
+        // SUTURE: Explicitly targeting neural_context columns to prevent "ambiguous column" error
+        let rows = sqlx::query("SELECT neural_context.id, neural_context.origin, neural_context.directive, neural_context.result, neural_context.timestamp 
+                                FROM neural_context
+                                JOIN memory_search ON neural_context.id = memory_search.rowid
                                 WHERE memory_search MATCH ? ORDER BY rank LIMIT 5")
             .bind(query).fetch_all(&self.pool).await?;
+            
         Ok(rows.into_iter().map(|r| AgentMemory {
             id: r.get("id"), origin: r.get("origin"), directive: r.get("directive"),
             result: r.get("result"), timestamp: r.get("timestamp")

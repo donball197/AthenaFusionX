@@ -1,53 +1,46 @@
-<script>
-    let { id, agents = [], isFocused = false, onClick, onStrike } = $props();
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-    // Calculate heat based on how many agents are active in this hive
-    let activeCount = $derived(agents.filter(a => a.is_active).length);
-    let heatLevel = $derived(activeCount / 4); // 0.0 to 1.0
+
+<script>
+    let { title = "Agent", status = "IDLE", onclick } = $props();
+
+    function handleKeydown(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            if (onclick) onclick(event);
+        }
+    }
 </script>
 
 <div 
-    class="card {isFocused ? 'focused' : ''}" 
-    style="--heat: {heatLevel}; --border-glow: {activeCount > 0 ? '#0f0' : '#111'}"
-    onclick={() => onClick?.()}
-    role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && onClick?.()}
+    role="button" 
+    tabindex="0"
+    aria-label="{title} status is {status}"
+    onkeydown={handleKeydown}
+    {onclick}
+    class="p-4 border border-purple-900/30 bg-[#0a0510] hover:bg-purple-950/20 cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-purple-500"
 >
-    <div class="card-header">
-        <span>HIVE_{id.toString().padStart(2, '0')}</span>
-        {#if isFocused}<span class="close">EXIT [X]</span>{/if}
+    <div class="flex justify-between items-center mb-2">
+        <h3 class="text-purple-400 font-bold uppercase tracking-widest text-[10px]">{title}</h3>
+        <span class="text-[9px] px-2 py-0.5 rounded-sm {status === 'ACTIVE' ? 'bg-emerald-900/50 text-emerald-400' : 'bg-gray-900 text-gray-500'}">
+            {status}
+        </span>
     </div>
-
-    <div class="agent-grid">
-        {#each agents as agent}
-            <div class="agent-node {agent.is_active ? 'active' : ''}">
-                {#if isFocused}<span class="agent-id">A_{agent.id}</span>{/if}
-            </div>
-        {/each}
+    <div class="text-gray-500 text-[10px] italic">
+        <slot>Awaiting directive...</slot>
     </div>
-
-    {#if isFocused}
-        <div class="focus-controls">
-            <button class="strike-btn" onclick={(e) => { e.stopPropagation(); onStrike?.(); }}>
-                INITIATE_HIVE_STRIKE
-            </button>
-        </div>
-    {/if}
 </div>
-
-<style>
-    .card { 
-        background: rgba(0, calc(var(--heat) * 40), 0, 0.2); 
-        border: 1px solid var(--border-glow); 
-        padding: 10px; 
-        transition: all 0.5s ease; 
-        cursor: pointer;
-        box-shadow: inset 0 0 10px rgba(0, 255, 0, calc(var(--heat) * 0.3));
-    }
-    .focused { background: #000; border: 1px solid #0f0; height: 100%; box-shadow: 0 0 20px #0f0; }
-    .card-header { font-size: 9px; color: #444; display: flex; justify-content: space-between; margin-bottom: 8px; }
-    .agent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-    .agent-node { height: 6px; background: #111; transition: background 0.3s; }
-    .active { background: #0f0; box-shadow: 0 0 5px #0f0; }
-    .focused .agent-node { height: 30px; border: 1px solid #222; }
-    .strike-btn { width: 100%; background: #000; color: #0f0; border: 1px solid #0f0; padding: 10px; margin-top: 15px; font-family: monospace; }
-</style>

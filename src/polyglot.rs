@@ -1,6 +1,23 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
-use serde::Serialize;
 use walkdir::WalkDir;
 
 #[derive(Serialize)]
@@ -41,11 +58,7 @@ pub fn detect_and_build(path: &str) -> BuildResult {
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             );
-            BuildResult {
-                success: out.status.success(),
-                log,
-                detected_stack: stack.into(),
-            }
+            BuildResult { success: out.status.success(), log, detected_stack: stack.into() }
         }
         Err(e) => BuildResult {
             success: false,
@@ -58,28 +71,30 @@ pub fn detect_and_build(path: &str) -> BuildResult {
 /// generate_project_tree: Constructs a high-fidelity visual map of the workspace topology.
 pub fn generate_project_tree() -> String {
     let mut tree = String::from("PROJECT STRUCTURE MAP [ZENITH]:\n");
-    
+
     let walker = WalkDir::new(".")
         .max_depth(5)
         .into_iter()
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !name.starts_with('.') && 
-            name != "target" && 
-            name != "node_modules" && 
-            name != "dist" &&
-            name != ".lazarus_vault"
+            !name.starts_with('.')
+                && name != "target"
+                && name != "node_modules"
+                && name != "dist"
+                && name != ".lazarus_vault"
         })
         .filter_map(|e| e.ok());
 
     for entry in walker {
         let depth = entry.depth();
-        if depth == 0 { continue; }
+        if depth == 0 {
+            continue;
+        }
 
         let indent = "  ".repeat(depth - 1);
         let prefix = if entry.file_type().is_dir() { "📁 " } else { "📄 " };
         let name = entry.file_name().to_string_lossy();
-        
+
         tree.push_str(&format!("{}{}{}\n", indent, prefix, name));
     }
     tree

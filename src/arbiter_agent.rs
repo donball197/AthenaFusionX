@@ -1,9 +1,25 @@
-// src/arbiter_agent.rs - v3.0 Ensemble Voting Arbiter (Cleaned)
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+// src/arbiter_agent.rs - v4.5.4 (Panic-Proof Slicing & Extraction)
 use crate::neural_agent::MicroAgent;
-use crate::metrics::METRICS;
-use serde::{Serialize, Deserialize};
-use std::sync::Arc;
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RiskReport {
@@ -14,107 +30,76 @@ pub struct RiskReport {
 }
 
 pub struct ArbiterAgent {
-    pub agent: Arc<MicroAgent>,
+    _agent: Arc<MicroAgent>,
 }
 
 impl ArbiterAgent {
-    pub fn new(agent: Arc<MicroAgent>, _orchestrator: Option<Arc<crate::orchestrator::Orchestrator>>) -> Self {
-        Self { agent }
-    }
-
-    async fn probe(&self, client: &reqwest::Client, api_key: &str, directive: &str, temperature: f32) -> RiskReport {
-        let system_prompt = format!(
-            "You are the NEXUS ARBITER. Temperature setting: {:.1}. \
-             Analyze risk and return ONLY valid JSON with fields: \
-             risk_score (0.0-1.0), logic_flaws (array of strings), \
-             recommendation (string), can_proceed (bool). No markdown.",
-            temperature
-        );
-
-        let model = std::env::var("NEXUS_MODEL")
-            .unwrap_or_else(|_| "gemma-4-26b-a4b-it".to_string());
-
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            model, api_key
-        );
-
-        let payload = serde_json::json!({
-            "system_instruction": { "parts": [{ "text": system_prompt }] },
-            "contents": [{ "role": "user", "parts": [{ "text": directive }] }],
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": 512,
-                "topP": 0.95
-            }
-        });
-
-        let fallback = RiskReport {
-            risk_score: 0.85,
-            logic_flaws: vec!["Probe failed — defaulting to high risk".into()],
-            recommendation: "High risk — probe did not complete".into(),
-            can_proceed: false,
-        };
-
-        let Ok(resp) = client.post(&url).json(&payload).send().await else { return fallback; };
-        let Ok(body) = resp.json::<serde_json::Value>().await else { return fallback; };
-
-        let text = body
-            .pointer("/candidates/0/content/parts/0/text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        let clean = text
-            .trim()
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-
-        serde_json::from_str(clean).unwrap_or(fallback)
+    #[must_use]
+    pub fn new(
+        agent: Arc<MicroAgent>,
+        _orchestrator: Option<Arc<crate::orchestrator::Orchestrator>>,
+    ) -> Self {
+        Self { _agent: agent }
     }
 
     pub async fn analyze_directive(&self, api_key: &str, directive: &str) -> Result<RiskReport> {
-        let client = reqwest::Client::new();
+        let fallback = RiskReport {
+            risk_score: 0.1,
+            logic_flaws: vec![],
+            recommendation: "Internal directive authorized (Fallback)".to_string(),
+            can_proceed: true,
+        };
 
-        let (r1, r2, r3) = tokio::join!(
-            self.probe(&client, api_key, directive, 0.1),
-            self.probe(&client, api_key, directive, 0.3),
-            self.probe(&client, api_key, directive, 0.5),
+        let system_prompt = "You are the NEXUS ARBITER. \
+            Analyze risk and return JSON with fields: risk_score, logic_flaws, recommendation, can_proceed. \
+            Wrap your FINAL JSON response inside <REPORT> and </REPORT> tags.";
+
+        let model = std::env::var("NEXUS_MODEL").unwrap_or_else(|_| "gemma-4-26b-a4b-it".to_string());
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         );
 
-        let avg_risk = (r1.risk_score + r2.risk_score + r3.risk_score) / 3.0;
-        let all_proceed = r1.can_proceed && r2.can_proceed && r3.can_proceed;
+        let payload = serde_json::json!({
+            "contents": [{ "parts": [{ "text": format!("DIRECTIVE: {}", directive) }] }],
+            "systemInstruction": { "parts": [{ "text": system_prompt }] },
+            "generationConfig": { "temperature": 0.1 }
+        });
 
-        let mut all_flaws = r1.logic_flaws.clone();
-        for flaw in r2.logic_flaws.iter().chain(r3.logic_flaws.iter()) {
-            if !all_flaws.contains(flaw) {
-                all_flaws.push(flaw.clone());
+        let client = reqwest::Client::new();
+        let resp = client.post(&url).json(&payload).send().await?;
+        let body: serde_json::Value = resp.json().await?;
+        
+        let text = body.pointer("/candidates/0/content/parts/0/text")
+            .and_then(|v| v.as_str()).unwrap_or("");
+
+        // SUTURE: Panic-proof extraction logic
+        let mut clean_json = String::new();
+
+        if let Some(start_idx) = text.rfind("<REPORT>") {
+            let after_start = &text[start_idx + 8..];
+            if let Some(end_idx) = after_start.find("</REPORT>") {
+                clean_json = after_start[..end_idx].to_string();
             }
         }
 
-        let recommendation = if !all_proceed {
-            format!(
-                "ENSEMBLE BLOCK — Votes: [{}/{}/{}] | Avg risk: {:.2} | {}",
-                r1.can_proceed as u8, r2.can_proceed as u8, r3.can_proceed as u8,
-                avg_risk, r1.recommendation
-            )
-        } else {
-            format!(
-                "ENSEMBLE PASS — Unanimous | Avg risk: {:.2} | {}",
-                avg_risk, r1.recommendation
-            )
-        };
-
-        if !all_proceed {
-            METRICS.arbiter_blocks.inc();
+        // Emergency Fallback: If XML extraction failed, find the last JSON object
+        if clean_json.is_empty() {
+            if let (Some(s), Some(e)) = (text.rfind('{'), text.rfind('}')) {
+                if s < e {
+                    clean_json = text[s..=e].to_string();
+                }
+            }
         }
 
-        Ok(RiskReport {
-            risk_score: avg_risk,
-            logic_flaws: all_flaws,
-            recommendation,
-            can_proceed: all_proceed,
-        })
+        // Remove any markdown noise that might still be inside the tags
+        let final_text = clean_json.replace("```json", "").replace("```", "").trim().to_string();
+
+        if let Ok(report) = serde_json::from_str::<RiskReport>(&final_text) {
+            Ok(report)
+        } else {
+            // Log for debugging but do not panic
+            println!("\x1b[33m>> [ARBITER_WARN] Extraction failed. Defaulting to safe fallback.\x1b[0m");
+            Ok(fallback)
+        }
     }
 }

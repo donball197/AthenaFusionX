@@ -1,7 +1,24 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
 const std = @import("std");
 
-/// Root hardware extraction reflex. (Existing)
-export fn extract_thermal_pulse() i32 {
+/// THERMAL-PULSE: Hardware-level temperature extraction.
+export fn extract_thermal_pulse_raw() i32 {
     const paths = [_][]const u8{
         "/sys/class/thermal/thermal_zone0/temp",
         "/sys/class/thermal/thermal_zone1/temp",
@@ -20,9 +37,7 @@ export fn extract_thermal_pulse() i32 {
     return 0;
 }
 
-/// ALPHA-SCOUT: High-speed data extraction reflex.
-/// Scans a raw byte payload (HTML/JSON) for a target boundary and extracts the value.
-/// Returns the length of the extracted bytes written to output_ptr.
+/// ALPHA-SCOUT: High-speed payload extraction.
 export fn extract_payload_strands(
     input_ptr: [*]const u8,
     input_len: usize,
@@ -32,20 +47,14 @@ export fn extract_payload_strands(
     output_max: usize,
 ) usize {
     if (input_len == 0 or target_len == 0 or output_max == 0) return 0;
-    
     const input = input_ptr[0..input_len];
     const target = target_ptr[0..target_len];
-    
-    // Zero-allocation substring search
     if (std.mem.indexOf(u8, input, target)) |start_idx| {
         const data_start = start_idx + target_len;
-        
-        // Find the closing boundary (e.g., a quote or bracket)
         var end_idx = data_start;
         while (end_idx < input_len and input[end_idx] != '"' and input[end_idx] != '<' and input[end_idx] != '\n') {
             end_idx += 1;
         }
-        
         const extracted_len = end_idx - data_start;
         if (extracted_len > 0 and extracted_len <= output_max) {
             std.mem.copyForwards(u8, output_ptr[0..extracted_len], input[data_start..end_idx]);

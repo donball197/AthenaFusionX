@@ -1,46 +1,25 @@
-// src/auto_healer.rs - Cleaned + HealerState Restored
-use std::sync::Arc;
-use crate::server::AppState;
-use crate::inquisitor::Inquisitor;
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
 use crate::neural_agent::ContextPacket;
-use anyhow::{Context, Result};
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum DiagnosticStatus { Nominal, Degraded, Critical }
-
-pub struct HealerState { pub overall_status: DiagnosticStatus }
-
-pub async fn run_comprehensive_fix(state: Arc<AppState>, target: &str) -> Result<String> {
-    println!(">> [HEALER] Starting autonomic repair for: {}", target);
-
-    let error_log = if target == "ui" {
-        Inquisitor::audit_ui()?
-    } else {
-        Inquisitor::audit_backend()?
-    };
-
-    if error_log == "NOMINAL" {
-        return Ok("No faults detected.".into());
-    }
-
-    let prompt = format!("Fix this error log:\n{}", error_log);
-    let ctx = ContextPacket {
-        system_prompt: Some("You are the NEXUS SURGEON. Return ONLY the fixed code.".into()),
+pub fn build_heal_context(file_name: &str, error_log: &str) -> ContextPacket {
+    ContextPacket {
+        current_file: file_name.to_string(),
+        current_content: error_log.to_string(),
         ..Default::default()
-    };
-
-    let (suggestion, _) = state.agent.prepare_and_run(
-        &state.client, 
-        &state.api_key, 
-        &prompt, 
-        ctx, 
-        0.5
-    ).await.context("Neural repair handshake failed")?;
-
-    Ok(format!(">> [HEALER] Surgery recommendation:\n{}", suggestion))
-}
-
-pub async fn background_heal_loop(_state: Arc<crate::server::AppState>) {
-    // TODO: Implement thermal-aware background healing loop
-    println!(">> [HEALER] Background loop initialized (stub)");
+    }
 }

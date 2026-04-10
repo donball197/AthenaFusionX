@@ -1,3 +1,20 @@
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
 <script>
     import { onMount, onDestroy } from 'svelte';
 
@@ -12,9 +29,6 @@
         }
     }
 
-    // FIX: Use onMount/onDestroy so the listener is properly cleaned up
-    // when the component is unmounted — the bare window.addEventListener
-    // at module level leaked one handler every time the component mounted.
     onMount(() => {
         refresh();
         window.addEventListener('nexus:task-complete', refresh);
@@ -35,18 +49,14 @@
         {#each memories as mem}
             <div class="p-2 border border-purple-900/20 bg-purple-950/5 rounded group">
                 <div class="flex justify-between text-purple-500/50 mb-1">
-                    <span>{mem.origin}</span>
-                    <span>{mem.timestamp}</span>
+                    <span>{mem.category ?? mem.origin ?? ''}</span>
+                    <span class="text-[9px]">{mem.timestamp ?? ''}</span>
                 </div>
-                <!--
-                    Safe text interpolation — directive and result come from
-                    the database (which stores LLM output) so @html is unsafe.
-                -->
                 <div class="text-gray-300 group-hover:text-purple-300 transition-colors truncate">
-                    {mem.directive}
+                    {mem.tag ?? mem.directive ?? ''}
                 </div>
                 <div class="text-gray-600 text-[9px] truncate mt-1 italic">
-                    {mem.result?.slice(0, 120) || ''}
+                    {(mem.content ?? mem.result ?? '').slice(0, 120)}
                 </div>
             </div>
         {/each}
