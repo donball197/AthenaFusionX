@@ -10,4 +10,4 @@ use_small_heuristics = "Max"
 newline_style = "Unix"
 
 # Group imports by module for cleaner file headers in src/
-imports_granularity = "Module"
+# imports_granularity = "Module"

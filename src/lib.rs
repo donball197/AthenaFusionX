@@ -1,6 +1,6 @@
 /**
- * Copyright 2026 Donald Ball
- * Licensed under the Apache License, Version 2.0
+ * Project Nexus Singularity - Core Library v1.9.2
+ * Master Module Registry - ARM64 Optimized
  */
 
 pub mod agent_protocol;
@@ -9,6 +9,7 @@ pub mod broker;
 pub mod cli;
 pub mod component_runner;
 pub mod executor;
+pub mod factory;
 pub mod inquisitor;
 pub mod json_parser;
 pub mod lazarus_vault;
@@ -28,9 +29,12 @@ pub mod server;
 pub mod server_terminal;
 pub mod system_monitor;
 pub mod task_manager;
+pub mod stream_optimizer;
 pub mod void_walker;
+pub mod litert_bridge;
+pub mod memory_bridge; // ⚡ FIXED: Added missing module declaration
 
-// SUTURE: Re-integrating legacy muscles into v4.0 core
+pub mod swarm; 
 pub mod kernel;
 pub mod self_healing_engine;
 pub mod vision;
@@ -40,3 +44,5 @@ pub mod auth;
 pub mod diff;
 pub mod fs_utils;
 pub mod thermal_governor;
+pub mod agents;
+pub mod hiram_core;

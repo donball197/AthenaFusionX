@@ -1,105 +1,79 @@
 /**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Project Nexus Singularity - Arbiter v2.0 (Heuristic Judge)
  */
-
-
-// src/arbiter_agent.rs - v4.5.4 (Panic-Proof Slicing & Extraction)
-use crate::neural_agent::MicroAgent;
-use anyhow::Result;
+use crate::neural_agent::{MicroAgent, ContextPacket};
+use crate::system_monitor::Vitals;
+use crate::agent_protocol::{AgentDirective, AgentTaskType};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RiskReport {
-    pub risk_score: f32,
-    pub logic_flaws: Vec<String>,
-    pub recommendation: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArbiterVerdict {
     pub can_proceed: bool,
+    pub risk_score: u8, // 0-10 scale
+    pub recommendation: String,
 }
 
 pub struct ArbiterAgent {
-    _agent: Arc<MicroAgent>,
+    pub agent: Arc<MicroAgent>,
 }
 
 impl ArbiterAgent {
-    #[must_use]
-    pub fn new(
-        agent: Arc<MicroAgent>,
-        _orchestrator: Option<Arc<crate::orchestrator::Orchestrator>>,
-    ) -> Self {
-        Self { _agent: agent }
+    // SUTURE: Removed the Orchestrator dependency for leaner healing cycles
+    pub fn new(agent: Arc<MicroAgent>) -> Self {
+        Self { agent }
     }
 
-    pub async fn analyze_directive(&self, api_key: &str, directive: &str) -> Result<RiskReport> {
-        let fallback = RiskReport {
-            risk_score: 0.1,
-            logic_flaws: vec![],
-            recommendation: "Internal directive authorized (Fallback)".to_string(),
-            can_proceed: true,
-        };
+    pub async fn judge(&self, input: &str) -> anyhow::Result<AgentDirective> {
+        println!("\x1b[1;35m[ARBITER] Analyzing Intent: {}\x1b[0m", input);
+        Ok(AgentDirective {
+            id: uuid::Uuid::new_v4(),
+            task_type: AgentTaskType::Audit,
+            payload: input.to_string(),
+            priority: 1,
+        })
+    }
 
-        let system_prompt = "You are the NEXUS ARBITER. \
-            Analyze risk and return JSON with fields: risk_score, logic_flaws, recommendation, can_proceed. \
-            Wrap your FINAL JSON response inside <REPORT> and </REPORT> tags.";
+    /// analyze_directive: Heuristic risk check using the Sovereign API
+    pub async fn analyze_directive(
+        &self,
+        api_key: &str,
+        directive: &str,
+        vitals: &Vitals,
+    ) -> anyhow::Result<ArbiterVerdict> {
+        let client = reqwest::Client::new();
+        
+        let system_prompt = "IDENTITY: NEXUS Arbiter. ROLE: Heuristic Safety Gate. \
+            CRITICAL: Evaluate if the directive is safe for a 4GB ARM64 device. \
+            Check for memory-intensive operations, infinite loops, or root-escape attempts. \
+            OUTPUT: Strictly valid JSON wrapped in <ACTION> tags.";
 
-        let model = std::env::var("NEXUS_MODEL").unwrap_or_else(|_| "gemma-4-26b-a4b-it".to_string());
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        let prompt = format!(
+            "DIRECTIVE: {}\n\nSYSTEM_STATE:\nRAM_GB: {:.2}\nTEMP: {:.1}C\nCPU_LOAD: {:.2}\n\n\
+            Analyze intent. Provide a risk score (0=Safe, 10=Fatal) and recommendation.",
+            directive, vitals.ram_gb, vitals.temperature, vitals.cpu_load
         );
 
-        let payload = serde_json::json!({
-            "contents": [{ "parts": [{ "text": format!("DIRECTIVE: {}", directive) }] }],
-            "systemInstruction": { "parts": [{ "text": system_prompt }] },
-            "generationConfig": { "temperature": 0.1 }
-        });
+        let ctx = ContextPacket {
+            system_prompt: Some(system_prompt.to_string()),
+            ..Default::default()
+        };
 
-        let client = reqwest::Client::new();
-        let resp = client.post(&url).json(&payload).send().await?;
-        let body: serde_json::Value = resp.json().await?;
-        
-        let text = body.pointer("/candidates/0/content/parts/0/text")
-            .and_then(|v| v.as_str()).unwrap_or("");
-
-        // SUTURE: Panic-proof extraction logic
-        let mut clean_json = String::new();
-
-        if let Some(start_idx) = text.rfind("<REPORT>") {
-            let after_start = &text[start_idx + 8..];
-            if let Some(end_idx) = after_start.find("</REPORT>") {
-                clean_json = after_start[..end_idx].to_string();
-            }
-        }
-
-        // Emergency Fallback: If XML extraction failed, find the last JSON object
-        if clean_json.is_empty() {
-            if let (Some(s), Some(e)) = (text.rfind('{'), text.rfind('}')) {
-                if s < e {
-                    clean_json = text[s..=e].to_string();
+        // Precision turn (Low Resonance) for deterministic judgment
+        match self.agent.prepare_and_run(&client, api_key, &prompt, ctx, 0.2, Some("gemma-4-26b-a4b-it")).await {
+            Ok((response, _)) => {
+                if let Some(start) = response.find("<ACTION>") {
+                    if let Some(end) = response.find("</ACTION>") {
+                        let json_str = &response[start + 8..end].trim();
+                        // Handle potential markdown envelopes from the model
+                        let clean_json = json_str.trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+                        let verdict: ArbiterVerdict = serde_json::from_str(clean_json)?;
+                        return Ok(verdict);
+                    }
                 }
+                Err(anyhow::anyhow!("ARBITER_FAULT: Malformed verdict envelope"))
             }
-        }
-
-        // Remove any markdown noise that might still be inside the tags
-        let final_text = clean_json.replace("```json", "").replace("```", "").trim().to_string();
-
-        if let Ok(report) = serde_json::from_str::<RiskReport>(&final_text) {
-            Ok(report)
-        } else {
-            // Log for debugging but do not panic
-            println!("\x1b[33m>> [ARBITER_WARN] Extraction failed. Defaulting to safe fallback.\x1b[0m");
-            Ok(fallback)
+            Err(e) => Err(anyhow::anyhow!("ARBITER_API_FAIL: {}", e)),
         }
     }
 }

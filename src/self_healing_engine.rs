@@ -1,21 +1,8 @@
 /**
  * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Project Nexus Singularity - v2.2 (Arbiter + Memory API Sync)
  */
 
-
-// src/self_healing_engine.rs - v2.1 (Arbiter result now gates healing)
 use crate::{
     arbiter_agent::ArbiterAgent,
     inquisitor::Inquisitor,
@@ -56,12 +43,12 @@ impl SelfHealingEngine {
     }
 
     pub async fn ignite_autonomic_loop(self) {
-        println!("\x1b[36m>> [SELF-HEALING v2.1] Autonomic Loop Started (4GB safe)\x1b[0m");
+        println!("\x1b[36m>> [SELF-HEALING v2.2] Autonomic Loop Started (4GB safe)\x1b[0m");
 
         loop {
             self.governor.apply_cooldown().await;
 
-            let vitals = self.state.monitor.get_vitals();
+            let mut monitor = self.state.monitor.lock().await; let vitals = monitor.get_vitals();
 
             // Resource guard for Lenovo Duet 4GB
             if vitals.cpu_load > 0.65 || vitals.temperature > 68.0 || vitals.ram_gb > 3.2 {
@@ -82,23 +69,21 @@ impl SelfHealingEngine {
                     continue;
                 }
 
-                // FIX: Actually use the Arbiter result to decide whether to heal
-                let arbiter = ArbiterAgent::new(
-                    self.state.agent.clone(),
-                    Some(self.state.orchestrator.clone()),
-                );
+                // ⚡ SUTURE: Updated Arbiter API Binding (1 Argument)
+                let arbiter = ArbiterAgent::new(self.state.agent.clone());
 
-                match arbiter.analyze_directive(&self.state.api_key, &issue.description).await {
+                // ⚡ SUTURE: Passing 'vitals' to the new Heuristic Judge
+                match arbiter.analyze_directive(&self.state.api_key, &issue.description, &vitals).await {
                     Ok(report) => {
                         if !report.can_proceed {
                             println!(
-                                "\x1b[33m>> [ARBITER] Healing blocked (score {:.2}): {}\x1b[0m",
+                                "\x1b[33m>> [ARBITER] Healing blocked (score {}): {}\x1b[0m",
                                 report.risk_score, report.recommendation
                             );
                             continue;
                         }
                         println!(
-                            "\x1b[32m>> [ARBITER] Authorized (score {:.2}): {}\x1b[0m",
+                            "\x1b[32m>> [ARBITER] Authorized (score {}): {}\x1b[0m",
                             report.risk_score, report.recommendation
                         );
                     }
@@ -192,11 +177,12 @@ impl SelfHealingEngine {
 
     async fn record_cycle(&self) {
         let palace = self.memory.lock().await;
+        // ⚡ SUTURE: Cleaned the phantom float argument. Exactly 3 arguments.
         let _ = palace
             .store_memory(
                 "SelfHealingEngine",
                 "autonomic_cycle",
-                "Completed diagnostic + repair pass with Arbiter gating",
+                "Completed diagnostic + repair pass with Arbiter gating"
             )
             .await;
     }

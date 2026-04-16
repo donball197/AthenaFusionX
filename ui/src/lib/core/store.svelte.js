@@ -1,39 +1,50 @@
+// ════════════════════════════════════════════════════════════════
+//  NEXUS SINGULARITY — Reactive Store v6.1.0 (Dynamic Hardware)
+// ════════════════════════════════════════════════════════════════
+
+export const wsState = $state({ ready: false, latency: 0 });
+
+export const systemVitals = $state({
+    cpu_load:    0,
+    ram_gb:      0,
+    total_ram_gb: 4.0, // Dynamic baseline
+    temperature: 0,
+    resonance:   0,
+});
+
 export const terminalState = $state({
     logs: [],
     isGhostTyping: false,
-    ghostBuffer: ""
-});
-
-export const systemVitals = $state({
-    cpu_load: 0.15,
-    ram_gb: 0.85,
-    temperature: 45.0,
-    resonance: 0.98
-});
-
-export const wsState = $state({ ready: false });
-export const fileTreeTrigger = $state({ value: 0 });
-
-export const layout = $state({
-    visionActive: false,
-    sidebarVisible: true,
-    visorVisible: true
-});
-
-export const pendingPatch = $state({
-    active: false,
-    path: "",
-    content: ""
+    buffers: { GHOST_CORTEX: '', SYSTEM_LOG: '' },
 });
 
 export const ide = $state({
-    activeTab: null,
     openTabs: [],
-    mountFile: (path, content) => {
-        const existing = ide.openTabs.find(t => t.path === path);
-        if (!existing) {
-            ide.openTabs.push({ path, content, isDirty: false });
+    activeTab: null,
+    mountFile(path, content) {
+        const existing = this.openTabs.find(t => t.path === path);
+        if (existing) { this.activeTab = path; return; }
+        this.openTabs.push({ path, content, isDirty: false });
+        this.activeTab = path;
+    },
+    updateContent(path, content) {
+        const tab = this.openTabs.find(t => t.path === path);
+        if (tab && tab.content !== content) {
+            tab.content = content;
+            tab.isDirty = true;
         }
-        ide.activeTab = path;
-    }
+    },
+    markSaved(path) {
+        const tab = this.openTabs.find(t => t.path === path);
+        if (tab) tab.isDirty = false;
+    },
+    closeTab(path) {
+        this.openTabs = this.openTabs.filter(t => t.path !== path);
+        if (this.activeTab === path) {
+            this.activeTab = this.openTabs.at(-1)?.path ?? null;
+        }
+    },
 });
+
+export const layout = $state({ explorerVisible: true, ghostVisible: true });
+export const fileTreeTrigger = $state({ value: 0 });

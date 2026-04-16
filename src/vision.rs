@@ -44,7 +44,7 @@ pub async fn scan_local_image_cloud(
         if image_path.to_lowercase().ends_with(".png") { "image/png" } else { "image/jpeg" };
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent?key={}",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-moe:generateContent?key={}",
         api_key
     );
 

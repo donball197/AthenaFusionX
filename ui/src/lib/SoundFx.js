@@ -1,58 +1,26 @@
+// NEXUS Synthetic Audio Engine
+const playTone = (freq, type, duration, volume) => {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(volume, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+    } catch(e) {}
+};
+
 export default {
-    click() {
-        try {
-            const audio = new AudioContext();
-            const oscillator = audio.createOscillator();
-            const gain = audio.createGain();
-            
-            oscillator.type = 'square';
-            oscillator.frequency.setValueAtTime(1200, audio.currentTime);
-            gain.gain.setValueAtTime(0.15, audio.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.08);
-            
-            oscillator.connect(gain);
-            gain.connect(audio.destination);
-            oscillator.start();
-            oscillator.stop(audio.currentTime + 0.1);
-        } catch(e) {}
+    click: () => playTone(800, 'sine', 0.1, 0.1),
+    processing: () => playTone(440, 'square', 0.05, 0.05),
+    success: () => {
+        playTone(1000, 'sine', 0.2, 0.1);
+        setTimeout(() => playTone(1200, 'sine', 0.3, 0.1), 100);
     },
-
-    success() {
-        try {
-            const audio = new AudioContext();
-            const notes = [880, 1100, 1320];
-            let time = audio.currentTime;
-            
-            notes.forEach((freq, i) => {
-                const osc = audio.createOscillator();
-                const gain = audio.createGain();
-                osc.type = 'sine';
-                osc.frequency.value = freq;
-                gain.gain.value = 0.2;
-                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4 + i * 0.05);
-                
-                osc.connect(gain);
-                gain.connect(audio.destination);
-                osc.start(time + i * 0.08);
-                osc.stop(time + 0.6);
-            });
-        } catch(e) {}
-    },
-
-    error() {
-        try {
-            const audio = new AudioContext();
-            const osc = audio.createOscillator();
-            const gain = audio.createGain();
-            osc.type = 'sawtooth';
-            osc.frequency.value = 180;
-            gain.gain.value = 0.3;
-            gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.6);
-            
-            osc.connect(gain);
-            gain.connect(audio.destination);
-            osc.start();
-            osc.stop(audio.currentTime + 0.6);
-        } catch(e) {}
-    }
+    error: () => playTone(150, 'sawtooth', 0.5, 0.2)
 };

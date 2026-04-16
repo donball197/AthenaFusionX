@@ -52,12 +52,12 @@ pub struct MissionPlanner;
 
 impl MissionPlanner {
     pub async fn execute(state: &Arc<AppState>, mut mission: Mission) -> anyhow::Result<Mission> {
-        let (lifecycle_tx, _) = tokio::sync::broadcast::channel(16);
+        let (lifecycle_tx, _) = tokio::sync::broadcast::channel::<String>(16);
 
         // SUTURE: Added state.memory.clone() to satisfy new spawn signature
-        let handle: AgentHandle = crate::component_runner::AgentComponent::spawn(
+        let handle: AgentHandle = crate::component_runner::AgentComponent::spawn_legacy(
             &format!("mission-{}", mission.id),
-            Capabilities::READ_FS | Capabilities::WRITE_FS,
+            Capabilities::READ | Capabilities::WRITE,
             state.agent.clone(),
             lifecycle_tx,
             state.memory.clone(),

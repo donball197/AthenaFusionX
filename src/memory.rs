@@ -1,21 +1,6 @@
 /**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Project Nexus Singularity - v4.5.1 Memory Palace (SQLx + FTS5)
  */
-
-
-// src/memory.rs - v4.0.1 (SQL Disambiguation Suture)
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Row};
 use std::path::Path;
@@ -42,9 +27,9 @@ impl MemoryPalace {
             .max_connections(5)
             .connect(&format!("sqlite:{}", db_path))
             .await?;
-            
+
         sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
-        
+
         let palace = Self { pool };
         palace.init_full_schema().await?;
         Ok(palace)
@@ -62,7 +47,7 @@ impl MemoryPalace {
         sqlx::query("CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
             directive, result, content='neural_context', content_rowid='id'
         );").execute(&self.pool).await?;
-
+        
         sqlx::query("CREATE TABLE IF NOT EXISTS healing_metrics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             layer TEXT NOT NULL,
@@ -71,9 +56,11 @@ impl MemoryPalace {
             cvss REAL,
             notes TEXT
         );").execute(&self.pool).await?;
+
         Ok(())
     }
 
+    // ⚡ THE MISSING BINDING RESTORED
     pub async fn store_memory(&self, origin: &str, directive: &str, result: &str) -> Result<(), sqlx::Error> {
         let res = sqlx::query("INSERT INTO neural_context (origin, directive, result) VALUES (?, ?, ?)")
             .bind(origin).bind(directive).bind(result).execute(&self.pool).await?;
@@ -92,24 +79,51 @@ impl MemoryPalace {
         }).collect())
     }
 
+    pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT neural_context.id, neural_context.origin, neural_context.directive, neural_context.result, neural_context.timestamp
+                                FROM neural_context
+                                JOIN memory_search ON neural_context.id = memory_search.rowid
+                                WHERE memory_search MATCH ? ORDER BY rank LIMIT 5")
+            .bind(query).fetch_all(&self.pool).await?;
+
+        Ok(rows.into_iter().map(|r| AgentMemory {
+            id: r.get("id"), origin: r.get("origin"), directive: r.get("directive"),
+            result: r.get("result"), timestamp: r.get("timestamp")
+        }).collect())
+    }
+
     pub async fn purge_all(&self) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM neural_context").execute(&self.pool).await?;
         sqlx::query("DELETE FROM memory_search").execute(&self.pool).await?;
         Ok(())
     }
 
-    pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        // SUTURE: Explicitly targeting neural_context columns to prevent "ambiguous column" error
-        let rows = sqlx::query("SELECT neural_context.id, neural_context.origin, neural_context.directive, neural_context.result, neural_context.timestamp 
-                                FROM neural_context
-                                JOIN memory_search ON neural_context.id = memory_search.rowid
-                                WHERE memory_search MATCH ? ORDER BY rank LIMIT 5")
-            .bind(query).fetch_all(&self.pool).await?;
-            
-        Ok(rows.into_iter().map(|r| AgentMemory {
-            id: r.get("id"), origin: r.get("origin"), directive: r.get("directive"),
-            result: r.get("result"), timestamp: r.get("timestamp")
+    pub async fn fetch_random_strands(&self, limit: i64) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY RANDOM() LIMIT ?")
+            .bind(limit).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|row| AgentMemory {
+            id: row.get("id"), origin: row.get("origin"), directive: row.get("directive"),
+            result: row.get("result"), timestamp: row.get("timestamp"),
         }).collect())
+    }
+
+    pub async fn fetch_oldest_strands(&self, limit: i64) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY id ASC LIMIT ?")
+            .bind(limit).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|row| AgentMemory {
+            id: row.get("id"), origin: row.get("origin"), directive: row.get("directive"),
+            result: row.get("result"), timestamp: row.get("timestamp"),
+        }).collect())
+    }
+
+    pub async fn update_strand_summary(&self, id: i64, summary: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE neural_context SET result = ? WHERE id = ?")
+            .bind(summary).bind(id).execute(&self.pool).await?;
+        sqlx::query("INSERT INTO memory_search(memory_search, rowid, directive, result) VALUES('delete', ?, ?, ?)")
+            .bind(id).execute(&self.pool).await.ok(); 
+        sqlx::query("INSERT INTO memory_search(rowid, directive, result) SELECT id, directive, result FROM neural_context WHERE id = ?")
+            .bind(id).execute(&self.pool).await?;
+        Ok(())
     }
 
     pub async fn get_success_rate_for_layer(&self, layer: &str) -> f32 {

@@ -1,62 +1,45 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+use sysinfo::{System, Components};
 
-
-// src/system_monitor.rs - v3.1 Real /proc readers restored
-use crate::resonator::ResonatorCore;
-use serde::Serialize;
-use std::fs;
-
-#[derive(Serialize, Clone, Debug)]
 pub struct Vitals {
+    pub ram_gb: f64,
+    pub total_ram_gb: f64,
     pub temperature: f32,
     pub cpu_load: f32,
-    pub ram_gb: f32,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct SystemMonitor;
+pub struct SystemMonitor {
+    sys: System,
+}
 
 impl SystemMonitor {
     pub fn new() -> Self {
-        SystemMonitor
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        Self { sys }
     }
 
-    pub fn get_vitals(&self) -> Vitals {
-        let temperature = ResonatorCore::read_thermal_temp();
+    pub fn get_vitals(&mut self) -> Vitals {
+        // Refresh system state
+        self.sys.refresh_memory();
+        self.sys.refresh_cpu_all();
 
-        // Real RAM from /proc/meminfo — available in GB
-        let ram_gb = fs::read_to_string("/proc/meminfo")
-            .ok()
-            .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("MemAvailable:"))
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .map(|kb| kb / 1024.0 / 1024.0)
-            })
-            .unwrap_or(1.4);
+        let total_mem = self.sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+        let used_mem = self.sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+        
+        // v0.31+ Thermal API: Components is now a separate refreshed list
+        let components = Components::new_with_refreshed_list();
+        let temp = components.iter()
+            .find(|c| c.label().contains("CPU") || c.label().contains("Package"))
+            .map(|c| c.temperature().unwrap_or(0.0))
+            .unwrap_or(0.0);
 
-        // Real CPU load from /proc/loadavg — normalized to 4-core Duet
-        let cpu_load = fs::read_to_string("/proc/loadavg")
-            .ok()
-            .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f32>().ok()))
-            .map(|load| (load / 4.0).min(1.0))
-            .unwrap_or(0.18);
+        let load = self.sys.global_cpu_usage() / 100.0;
 
-        Vitals { temperature, cpu_load, ram_gb }
+        Vitals {
+            ram_gb: used_mem,
+            total_ram_gb: total_mem,
+            temperature: temp,
+            cpu_load: load,
+        }
     }
 }

@@ -1,7 +1,12 @@
-// ui/src/lib/api.js
-// Standardized API client for Nexus backend (Svelte 5 synchronized)
+// Standardized API client with Sovereign Auth Suture
 
 async function request(url, options = {}) {
+    // ⚡ SUTURE: Global Authorization Header
+    options.headers = {
+        ...options.headers,
+        'Authorization': 'SOVEREIGN'
+    };
+
     try {
         const res = await fetch(url, options);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -18,29 +23,11 @@ export async function readFile(path) {
 }
 
 export async function writeFile(path, content) {
-    try {
-        const res = await fetch('/api/fs/write', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, content })
-        });
-        return res.ok;
-    } catch (e) {
-        console.error("writeFile failed:", e);
-        return false;
-    }
-}
-
-export async function deleteFile(path) {
-    try {
-        const res = await fetch(`/api/fs/delete?path=${encodeURIComponent(path)}`, { 
-            method: 'DELETE' 
-        });
-        return res.ok;
-    } catch (e) {
-        console.error("deleteFile failed:", e);
-        return false;
-    }
+    return await fetch('/api/fs/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'SOVEREIGN' },
+        body: JSON.stringify({ path, content })
+    }).then(res => res.ok);
 }
 
 export async function listFiles(path = ".") {
@@ -56,25 +43,8 @@ export async function runTask(directive) {
     return data || { status: "ERROR", output: "Failed to queue task." };
 }
 
-// === MEMORY & MISSIONS (Newly Synchronized) ===
-
 export async function getMemories() {
     return await request('/api/memories') || [];
-}
-
-export async function searchMemories(q) {
-    return await request(`/api/memories/search?q=${encodeURIComponent(q)}`) || [];
-}
-
-export async function purgeMemories() {
-    try {
-        const res = await fetch('/api/memories/purge', { method: 'DELETE' });
-        return res.ok;
-    } catch (e) { return false; }
-}
-
-export async function getMissions() {
-    return await request('/api/missions') || [];
 }
 
 export async function getSnapshots() {

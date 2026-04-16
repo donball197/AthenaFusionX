@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
             ..Default::default()
         };
 
-        match agent.prepare_and_run(&client, &api_key, &prompt, ctx, 0.3).await {
+        match agent.prepare_and_run(&client, &api_key, &prompt, ctx, 0.3, None).await {
             Ok((summary, _)) => {
                 grand_synthesis_payload.push_str(&format!("--- {} DOMAIN SUMMARY ---\n{}\n\n", domain.name, summary));
                 println!("    -> Domain summarized successfully.");
@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
-    match agent.prepare_and_run(&client, &api_key, &synth_prompt, synth_ctx, 0.7).await {
+    match agent.prepare_and_run(&client, &api_key, &synth_prompt, synth_ctx, 0.7, None).await {
         Ok((final_report, _)) => {
             println!("\n\x1b[32m=== [GLOBAL SYNTHESIS REPORT] ===\x1b[0m\n{}", final_report);
             std::fs::write(".nexus_global_synthesis.md", final_report)?;

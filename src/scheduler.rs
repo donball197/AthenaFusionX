@@ -39,7 +39,7 @@ impl MasterSupervisor {
         api_key: String,
         orchestrator: Arc<Orchestrator>,
         resonance_meter: Arc<AtomicU32>,
-        monitor: SystemMonitor,
+        mut monitor: SystemMonitor,
         memory: Arc<Mutex<MemoryPalace>>,
     ) -> mpsc::Sender<NexusTask> {
         let (task_tx, mut task_rx) = mpsc::channel::<NexusTask>(32);

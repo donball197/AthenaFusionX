@@ -1,21 +1,22 @@
 [build]
 target = "aarch64-unknown-linux-gnu"
+jobs = 2
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = [
-    # Safely target the Cortex-A73 architecture (ARMv8.0-A)
     "-C", "target-cpu=cortex-a73",
-
-    # Use fast LLVM linker to prevent RAM swapping
     "-C", "link-arg=-fuse-ld=lld",
-
-    # Aggressive dead code elimination
     "-C", "link-arg=-Wl,--gc-sections",
-
-    # STRICT ARMv8.0 FEATURES ONLY (Removed +lse and +aes)
-    "-C", "target-feature=+neon,+crc",
-
-    # Reduce binary size and improve performance
+    "-C", "link-arg=-Wl,--no-keep-memory",
+    "-C", "link-arg=-Wl,--thinlto-cache-dir=/tmp/thinlto",
+    # UPGRADED: Removed deprecated +fp-armv8. Rust ties it to +neon natively.
+    "-C", "target-feature=+neon,+crc,+dotprod",
     "-C", "force-unwind-tables=no",
-    "-C", "symbol-mangling-version=v0"
+    "-C", "symbol-mangling-version=v0",
+    "-C", "embed-bitcode=no",
+    "-C", "prefer-dynamic=no",
 ]
+
+[env]
+RUSTFLAGS = "-C linker-plugin-lto"
+CARGO_INCREMENTAL = "0"

@@ -1,44 +1,49 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
 <script>
-    let { files = [], activePath = "", onSelect } = $props();
+    import { layout, systemVitals } from '$lib/core/store.svelte.js';
+    import { fly } from 'svelte/transition';
+    import SoundFx from '$lib/SoundFx.js';
+
+    function toggle(key) {
+        SoundFx.click();
+        layout[key] = !layout[key];
+    }
 </script>
 
-<div class="flex flex-col h-full bg-[#0d1117]">
-    <div class="px-5 py-4 border-b border-[#30363d] text-xs text-gray-500 tracking-widest uppercase">
-        SECTOR INDEX
-    </div>
-    <div class="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
-        {#each files as file}
-            <button
-                onclick={() => onSelect && onSelect({ path: file.path })}
-                class="w-full text-left px-4 py-3 rounded text-xs transition-all flex items-center gap-3
-                {activePath === file.path 
-                    ? 'bg-blue-900/30 text-blue-400 border-l-2 border-blue-500' 
-                    : 'text-gray-400 hover:bg-zinc-900 hover:text-gray-200'}">
-                <span>{file.is_dir ? '📁' : '📄'}</span>
-                <span class="truncate">{file.name}</span>
-            </button>
-        {/each}
+{#if layout.explorerVisible}
+<div class="tactical-wrap" transition:fly={{ x: -20, duration: 200 }}>
+    <div class="inner glass-panel">
+        <div class="blade-label">TACTICAL_UNITS</div>
+        
+        <button class="t-btn" class:on={layout.visorVisible} onclick={() => toggle('visorVisible')}>
+            <span class="icon">👁</span>
+            <span class="text">VISOR</span>
+        </button>
+
+        <button class="t-btn" class:on={layout.autopilotActive} onclick={() => toggle('autopilotActive')}>
+            <span class="icon">🤖</span>
+            <span class="text">PILOT</span>
+        </button>
+
+        <div class="divider"></div>
+
+        <div class="mini-graph">
+            <div class="bar" style="height: {systemVitals.cpu_load * 100}%"></div>
+            <div class="label">CPU</div>
+        </div>
     </div>
 </div>
+{/if}
 
 <style>
-    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #27272a; }
+    .tactical-wrap { position: absolute; left: 220px; top: 50px; bottom: 30px; width: 45px; z-index: 40; }
+    .inner { height: 100%; display: flex; flex-direction: column; align-items: center; padding: 15px 0; gap: 20px; border-radius: 0 8px 8px 0; border-left: none; }
+    .blade-label { writing-mode: vertical-rl; font-size: 7px; font-weight: 900; color: rgba(255,255,255,0.2); letter-spacing: 3px; }
+    .t-btn { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; opacity: 0.4; transition: 0.2s; }
+    .t-btn.on { opacity: 1; filter: drop-shadow(0 0 5px #00ffff); }
+    .t-btn .icon { font-size: 14px; }
+    .t-btn .text { font-size: 6px; font-weight: 900; color: #00ffff; }
+    .divider { width: 20px; height: 1px; background: rgba(255,255,255,0.1); }
+    .mini-graph { width: 4px; height: 40px; background: rgba(255,255,255,0.05); position: relative; border-radius: 2px; }
+    .mini-graph .bar { position: absolute; bottom: 0; width: 100%; background: #fb923c; transition: height 0.3s; border-radius: 2px; }
+    .mini-graph .label { position: absolute; top: 100%; font-size: 5px; margin-top: 4px; }
 </style>

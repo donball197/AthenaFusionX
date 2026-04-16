@@ -1,21 +1,8 @@
 /**
  * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Project Nexus Singularity - v1.9.6 (Synthetic Thermal Patch)
  */
 
-
-// src/thermal_governor.rs - ARM64 Thermal Awareness
 use std::fs;
 use tokio::time::{sleep, Duration};
 
@@ -42,7 +29,9 @@ impl ThermalGovernor {
         Self::default()
     }
 
-    fn read_temp() -> f32 {
+    // ⚡ SUTURE: Synthetic Fallback Logic
+    pub fn read_temp() -> f32 {
+        // 1. Try to read physical hardware (works on Motorola/Termux)
         for zone in 0..5 {
             let path = format!("/sys/class/thermal/thermal_zone{}/temp", zone);
             if let Ok(raw) = fs::read_to_string(&path) {
@@ -53,7 +42,20 @@ impl ThermalGovernor {
                 }
             }
         }
-        0.0
+        
+        // 2. Fallback: Synthetic calculation based on CPU load (works on Crostini)
+        if let Ok(load_data) = fs::read_to_string("/proc/loadavg") {
+            if let Some(one_min_load_str) = load_data.split_whitespace().next() {
+                if let Ok(load) = one_min_load_str.parse::<f32>() {
+                    // Base temp 42C + (Load * 12C). Caps at 95C.
+                    let synthetic_temp = 42.0 + (load * 12.0);
+                    return synthetic_temp.min(95.0);
+                }
+            }
+        }
+        
+        // 3. Absolute failsafe
+        40.0 
     }
 
     pub fn get_state(&self) -> CoolingState {
@@ -71,14 +73,14 @@ impl ThermalGovernor {
         match self.get_state() {
             CoolingState::Critical => {
                 println!(
-                    "\x1b[31m>> [THERMAL] CRITICAL {}°C — Aggressive cooldown\x1b[0m",
+                    "\x1b[31m>> [THERMAL] CRITICAL {:.1}°C — Aggressive cooldown\x1b[0m",
                     Self::read_temp()
                 );
                 sleep(Duration::from_secs(12)).await;
             }
             CoolingState::Throttled => {
                 println!(
-                    "\x1b[33m>> [THERMAL] WARN {}°C — Light cooldown\x1b[0m",
+                    "\x1b[33m>> [THERMAL] WARN {:.1}°C — Light cooldown\x1b[0m",
                     Self::read_temp()
                 );
                 sleep(Duration::from_secs(5)).await;

@@ -23,6 +23,31 @@ use tokio::process::Command;
 pub struct PodmanShield;
 
 impl PodmanShield {
+
+    pub async fn spawn_expert_drone(drone_type: &str, workspace: &str) -> anyhow::Result<String> {
+        let (image, name) = match drone_type {
+            "secops" => ("docker.io/library/alpine:latest", "nexus_secops"),
+            "devops" => ("docker.io/library/rust:alpine", "nexus_devops"),
+            _ => ("docker.io/library/alpine:latest", "nexus_generic"),
+        };
+
+        let _ = tokio::process::Command::new("podman").args(["rm", "-f", name]).output().await;
+
+        let output = tokio::process::Command::new("podman")
+            .args([
+                "run", "-d",
+                "--name", name,
+                "--network", "none",
+                "--memory", "512m",
+                "-v", &format!("{}:/workspace:z", workspace),
+                image, "sleep", "infinity"
+            ])
+            .output()
+            .await?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     /// execute_isolated: Asynchronous Zircon-style IPC stream
     pub async fn execute_isolated(directive: &str, workspace_path: &str) -> Result<String> {
         println!(">> [SHIELD] Opening Async IPC Channel to Bio-Dome...");

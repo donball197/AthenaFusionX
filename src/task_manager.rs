@@ -1,110 +1,59 @@
 /**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Project Nexus Singularity - v2.1.0 (Array-Protocol Hardening)
  */
-
-
-// src/task_manager.rs - v5.2.0 (Explicit Feedback & Schema Lock)
 use std::sync::{Arc, LazyLock};
-use tokio::sync::{broadcast, mpsc, Semaphore, Mutex};
+use tokio::sync::{broadcast, Semaphore, Mutex};
 use crate::agent_protocol::AgentAction;
-use crate::neural_agent::{MicroAgent, ContextPacket};
-use crate::memory::MemoryPalace;
 use crate::{executor, json_parser};
-use crate::component_runner::{AgentHandle, Capabilities};
 
 static TASK_SLAB: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
 
-fn truncate_output(output: &str, max_len: usize) -> String {
-    if output.len() <= max_len { output.to_string() } 
-    else { format!("{}...\n\n[TRUNCATED]", &output[..max_len]) }
-}
-
 pub async fn send_task(
-    agent: Arc<MicroAgent>,
+    agent: Arc<crate::neural_agent::MicroAgent>,
     client: &reqwest::Client,
     api_key: &str,
     directive: &str,
-    memory: Arc<Mutex<MemoryPalace>>,
+    memory: Arc<Mutex<crate::memory::MemoryPalace>>,
     tx: broadcast::Sender<String>,
 ) -> String {
-    let _permit = TASK_SLAB.clone().acquire_owned().await.expect("SLAB_FAIL");
-    let mut session_obs = String::from("SENSORS_INIT: Metal Ready.\n");
-    let mut full_log = String::new();
+    let _permit = TASK_SLAB.clone().acquire_owned().await.expect("SLAB_LOCK_FAIL");
+    let mut session_obs = String::from("SENSORS_INIT: Substrate Ready.\n");
     
-    let is_complex = directive.len() > 60 || ["scrape", "analyze", "compare"].iter().any(|&w| directive.to_lowercase().contains(w));
-    let mut resonance: f32 = if is_complex { 0.8 } else { 0.2 };
+    let system_prompt = r#"
+IDENTITY: Ghost of NEXUS. 
+ROLE: Kernel-level orchestrator.
+PROTOCOL: Reasoning in <THOUGHT>, Actions in <ACTION> (JSON).
 
-    let (tx_internal, _rx) = mpsc::channel(8);
-    let handle = AgentHandle { tx: tx_internal, id: "internal".into(), capabilities: Capabilities::ALL };
+[STRICT JSON SCHEMA]
+You must output a SINGLE JSON ARRAY inside a SINGLE <ACTION> block.
+Example: <ACTION> [{"type": "execute_command", "command": "ls"}, {"type": "halt"}] </ACTION>
 
-    for turn in 1..=10 {
-        let thinking_instruction = if resonance >= 0.7 {
-            "1. Reason briefly in <THOUGHT> tags (MAX 2 SENTENCES)."
-        } else {
-            "1. Skip <THOUGHT> tags. Output <ACTION> immediately."
-        };
+1. Shell: {"type": "execute_command", "command": "cmd"}
+2. Scribe: {"type": "write_file", "path": "path", "content": "text"}
+3. Halt: {"type": "halt"} (MANDATORY at end of array)
+"#;
 
-        println!("\n\x1b[35m>> [NEURAL_PULSE] Turn {}/10 - Resonance: {:.1}\x1b[0m", turn, resonance);
+    for _turn in 1..=3 {
+        let prompt = format!("DIRECTIVE: {}\n\nOBSERVATIONS:\n{}\n\nExecute:", directive, session_obs);
+        let ctx = crate::neural_agent::ContextPacket { system_prompt: Some(system_prompt.into()), ..Default::default() };
 
-        let system_prompt = format!(
-            "IDENTITY: Ghost of NEXUS.\n\
-            PROTOCOL:\n\
-            {}\n\
-            2. Output EXACTLY ONE JSON array wrapped in <ACTION> tags.\n\
-            3. CRITICAL: Use 'url' for scrape_target and 'path' for read_file. DO NOT MIX THEM.\n\n\
-            SCHEMA REFERENCE:\n\
-            - {{\"action\": \"scrape_target\", \"url\": \"https://...\"}}\n\
-            - {{\"action\": \"read_file\", \"path\": \"src/...\"}}\n\
-            - {{\"action\": \"halt\"}}",
-            thinking_instruction
-        );
+        if let Ok((response, _)) = agent.prepare_and_run(client, api_key, &prompt, ctx, 0.7, None).await {
+            let _ = tx.send(response.clone());
 
-        let prompt = format!("DIRECTIVE: {directive}\n\nOBSERVATIONS:\n{session_obs}\n\nExecute:");
-        let ctx = ContextPacket { system_prompt: Some(system_prompt), ..Default::default() };
-
-        match tokio::time::timeout(std::time::Duration::from_secs(90), agent.prepare_and_run(client, api_key, &prompt, ctx, resonance)).await {
-            Ok(Ok((response, _))) => {
-                let _ = tx.send(response.clone()); 
-                full_log.push_str(&format!("\n[Turn {}]:\n{}", turn, response));
-
-                match json_parser::extract_actions(&response) {
-                    Ok(actions) => {
-                        if actions.iter().any(|a| matches!(a, AgentAction::Halt)) {
-                            println!("\x1b[1;32m>> [NEXUS_HALT] Objective secured.\x1b[0m");
-                            break;
-                        }
-                        
-                        match executor::Executor::execute_handle(&handle, actions, memory.clone()).await {
-                            Ok(obs) => {
-                                let safe_obs = truncate_output(&obs.join("\n"), 5000);
-                                session_obs.push_str(&format!("RESULT: {}\n", safe_obs));
-                            }
-                            Err(e) => {
-                                session_obs.push_str(&format!("ERROR: {}\n", e));
-                            }
-                        }
+            if let Ok(actions) = json_parser::extract_actions(&response) {
+                match executor::Executor::execute_handle(actions.clone(), memory.clone()).await {
+                    Ok(results) => {
+                        for res in &results { println!("\x1b[1;33m>> [SHELL] {}\x1b[0m", res); }
+                        session_obs.push_str(&format!("RESULT: {}\n", results.join("\n")));
                     },
                     Err(e) => {
-                        resonance = 0.9; // Spike resonance to help it read the error
-                        session_obs.push_str(&format!("{}\n", e));
+                        println!("\x1b[1;31m>> [ERROR] {}\x1b[0m", e);
+                        session_obs.push_str(&format!("ERROR: {}\n", e));
                     }
                 }
-            },
-            _ => break,
+                if actions.iter().any(|a| matches!(a, AgentAction::Halt)) { break; }
+            }
         }
     }
-    let _ = memory.lock().await.store_memory("NEXUS_ARCHITECT", directive, &full_log).await;
-    full_log
+    "TASK_SEQUENCE_COMPLETE".into()
 }

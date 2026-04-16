@@ -1,42 +1,39 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
 <script>
-    let { response = "", active = false } = $props();
+    import { terminalState, layout } from '$lib/core/store.svelte.js';
+    import { fly, fade } from 'svelte/transition';
+    
+    let buffer = $derived(terminalState.buffers.GHOST_CORTEX);
+    let isTyping = $derived(terminalState.isGhostTyping);
 </script>
 
-<div class="flex flex-col h-full bg-[#050505] border-l border-cyan-900/30 font-mono">
-    <div class="px-4 py-2 bg-cyan-900/10 border-b border-cyan-900/30 flex items-center justify-between">
-        <span class="text-[10px] font-black tracking-widest text-cyan-400">GHOST_CORTEX</span>
-        {#if active}
-            <span class="text-[9px] text-cyan-500 animate-pulse">● LIVE STREAM</span>
-        {/if}
+{#if layout.ghostCortexVisible && (isTyping || buffer.length > 35)}
+<div class="cortex-overlay glass-panel" in:fly={{ y: 20 }} out:fade>
+    <div class="header">
+        <span class="pulse-dot"></span>
+        GHOST_CORTEX_MONOLOGUE
     </div>
-
-    <div class="flex-1 p-4 overflow-y-auto text-[11px] text-cyan-100 whitespace-pre-wrap leading-relaxed custom-scrollbar">
-        {#if active && !response}
-            <span class="animate-pulse text-cyan-700">>> AWAITING NEURAL UPLINK...</span>
-        {:else}
-            {response || ">> UPLINK STABLE. AWAITING DIRECTIVE..."}
-        {/if}
+    <div class="content custom-scrollbar">
+        <span class="ghost-text">{buffer}</span>
+        {#if isTyping}<span class="cursor">_</span>{/if}
     </div>
 </div>
+{/if}
 
 <style>
-    .custom-scrollbar::-webkit-scrollbar { width: 3px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #1f2937; }
+    .cortex-overlay {
+        position: absolute; bottom: 85px; right: 20px; width: 320px;
+        background: rgba(2, 2, 10, 0.9); border: 1px solid rgba(167, 139, 250, 0.2);
+        z-index: 1000; box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+    }
+    .header { 
+        background: rgba(167, 139, 250, 0.05); font-size: 7px; padding: 6px 10px; 
+        color: #a78bfa; font-weight: 900; letter-spacing: 2px;
+        display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(167, 139, 250, 0.1);
+    }
+    .pulse-dot { width: 4px; height: 4px; background: #a78bfa; border-radius: 50%; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .content { padding: 12px; font-size: 10px; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; max-height: 200px; overflow-y: auto; line-height: 1.5; }
+    .ghost-text { opacity: 0.8; }
+    .cursor { color: #a78bfa; animation: blink 1s infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
 </style>

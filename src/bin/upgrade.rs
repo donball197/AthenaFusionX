@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::memory::MemoryPalace;
 use nexus_singularity::mission_control::upgrade_command;
@@ -22,7 +21,6 @@ use nexus_singularity::neural_agent::MicroAgent;
 use nexus_singularity::orchestrator::Orchestrator;
 use nexus_singularity::scheduler;
 use nexus_singularity::server::AppState;
-use nexus_singularity::system_monitor::SystemMonitor;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -36,29 +34,32 @@ async fn main() -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<String>(128);
 
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
-    let monitor = SystemMonitor::new();
-    let orchestrator = Arc::new(Orchestrator::new(agent.clone()));
+    
+    // ⚡ Vitals locked in a Mutex for the UI / Server State
+    let monitor = tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new());
+    let orchestrator = Arc::new(Orchestrator::new(agent.clone(), None));
 
     let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;
     let memory = Arc::new(Mutex::new(memory_palace));
 
+    // ⚡ Cellular Division: The Scheduler gets its own dedicated, raw SystemMonitor
     let scheduler_tx = scheduler::MasterSupervisor::ignite(
         tx.clone(),
         reqwest::Client::new(),
         api_key.clone(),
         orchestrator.clone(),
         Arc::new(AtomicU32::new(0)),
-        monitor.clone(),
-        memory.clone(),
+        nexus_singularity::system_monitor::SystemMonitor::new(),
+        memory.clone(), // ⚡ Memory correctly seated in the 7th slot
     );
 
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
-        monitor,
+        monitor, // ⚡ Mutex monitor correctly assigned to AppState
         agent: agent.clone(),
         orchestrator,
         local_llm: Arc::new(nexus_singularity::local_llm::LocalLLM::new()),
-        arbiter: Arc::new(ArbiterAgent::new(agent, None)),
+        arbiter: Arc::new(ArbiterAgent::new(agent)),
         memory,
         api_key,
         current_resonance: Arc::new(AtomicU32::new(0)),

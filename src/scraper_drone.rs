@@ -1,43 +1,48 @@
 /**
  * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Licensed under the Apache License, Version 2.0
  */
 
-
-// src/scraper_drone.rs - ALPHA-SCOUT (Natively Tethered)
-use crate::memory::MemoryPalace;
-use crate::resonator::ResonatorCore;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use scraper::{Html, Selector};
+use crate::memory::MemoryPalace;
 
-pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Result<()> {
-    println!(">> [ALPHA-SCOUT] Traversal: {}", url);
+pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .user_agent("NEXUS-AlphaScout/4.2 (Sovereign Architecture)")
+        .build()?;
 
-    let client = reqwest::Client::builder().user_agent("NexusSingularity/4.0.0").build()?;
-    let response = client.get(url).send().await.context("Network uplink failed")?;
-    let html_bytes = response.bytes().await?;
+    let response = client.get(url).send().await?.text().await?;
 
-    println!(">> [ALPHA-SCOUT] Extracting <h1> via Zig Resonator...");
-    let extracted = ResonatorCore::execute_scrape(&html_bytes, "<h1>");
+    // --- SUTURE: Non-Atomic Scope Block (Thread Safety Fix) ---
+    let (title, full_strand) = {
+        let document = Html::parse_document(&response);
+        
+        let title_selector = Selector::parse("h1").unwrap();
+        let title_inner = document.select(&title_selector).next()
+            .map(|e| e.text().collect::<String>())
+            .unwrap_or_else(|| url.to_string());
 
-    if let Some(content) = extracted {
-        println!(">> [ALPHA-SCOUT] Pulse captured. Committing to SQLite Synapse...");
-        let palace = memory.lock().await;
-        // SUTURE: Updated to use the universal v4 store_memory
-        palace.store_memory("ALPHA_SCOUT", url, &content).await?;
-    }
+        let body_selector = Selector::parse("p, pre, code").unwrap();
+        let mut content = Vec::new();
+        
+        for element in document.select(&body_selector).take(50) {
+            let text: String = element.text().collect::<String>();
+            let trimmed = text.trim();
+            if trimmed.len() > 20 {
+                content.push(trimmed.to_string());
+            }
+        }
+        (title_inner, content.join("\n\n"))
+    }; 
 
-    Ok(())
+    let result_summary = format!("TITLE: {}\nCONTENT_DENSITY: {} chars\nDATA: {}", title, full_strand.len(), full_strand);
+
+    // Imprint to Synapse
+    let palace = memory.lock().await;
+    palace.store_memory("ALPHA-SCOUT", &title, &result_summary).await?;
+
+    Ok(format!("SCRAPE_SUCCESS: Secured {} bytes from {}", full_strand.len(), url))
 }

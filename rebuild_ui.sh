@@ -1,17 +1,16 @@
-#!/bin/bash
-# CWD_CHECK
-[[ "$PWD" != *"/nexus_singularity-dev"* ]] && echo "Error: Run from project root" && exit 1
-echo ">>> [1/4] NUCLEAR CLEANING"
-rm -rf ui/dist ui/.svelte-kit ui/node_modules/.vite
-mkdir -p ui/dist
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo ">>> [2/4] CHECKING ENVIRONMENT"
-df -h . | grep -v Filesystem  # Ensure we aren't at 100% disk usage
-
-echo ">>> [3/4] VERBOSE UI BUILD"
-cd ui && npm run build -- --debug
-
-echo ">>> [4/4] POST-BUILD INTEGRITY CHECK"
+echo ">> [UI REBUILD] Installing deps and building..."
+cd ui
+npm install 2>&1 | tail -5
+npm run build 2>&1
 cd ..
-ls -lh ui/dist/index.html
-ls -lh ui/dist/_app/immutable/entry/start.*.js
+
+echo ">> [BACKEND] Rebuilding Rust with embedded UI..."
+cargo build --target aarch64-unknown-linux-gnu -j 2 2>&1
+
+echo ""
+echo "╔═══════════════════════════════════════╗"
+echo "║  REBUILD COMPLETE — open localhost:3000 ║"
+echo "╚═══════════════════════════════════════╝"

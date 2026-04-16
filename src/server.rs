@@ -1,34 +1,16 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-use crate::{metrics, sandbox, server_terminal, task_manager};
+use crate::task_manager;
 use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
-    },
+    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State},
     http::{header, StatusCode, Uri},
-    response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    response::IntoResponse,
+    routing::{get, post},
     Json, Router,
 };
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
 #[derive(RustEmbed)]
@@ -37,10 +19,10 @@ struct Assets;
 
 pub struct AppState {
     pub client: reqwest::Client,
-    pub monitor: crate::system_monitor::SystemMonitor,
+    pub monitor: Mutex<crate::system_monitor::SystemMonitor>,
     pub agent: Arc<crate::neural_agent::MicroAgent>,
     pub orchestrator: Arc<crate::orchestrator::Orchestrator>,
-    pub memory: Arc<tokio::sync::Mutex<crate::memory::MemoryPalace>>,
+    pub memory: Arc<Mutex<crate::memory::MemoryPalace>>,
     pub api_key: String,
     pub current_resonance: Arc<std::sync::atomic::AtomicU32>,
     pub tx: tokio::sync::broadcast::Sender<String>,
@@ -51,176 +33,23 @@ pub struct AppState {
 }
 
 pub async fn start_server(state: Arc<AppState>) {
-    let app = Router::new()
-        .route("/api/fs/list", get(handle_fs_list))
-        .route("/api/fs/read", get(handle_read_file))
-        .route("/api/fs/write", post(handle_write_file))
-        .route("/api/fs/delete", delete(handle_delete_file))
-        .route("/api/memories", get(handle_get_memories))
-        .route("/api/memories/search", get(handle_search_memories))
-        .route("/api/memories/purge", delete(handle_purge_memories))
-        .route("/api/missions", get(handle_get_missions))
-        .route("/api/lazarus/snapshots", get(handle_lazarus_snapshots))
-        .route("/api/lazarus/restore", post(handle_lazarus_restore))
-        .route("/api/graph", get(handle_graph))
-        .route("/api/task", post(handle_task))
-        .route("/api/metrics", get(handle_metrics))
-        .route("/api/terminal", post(server_terminal::terminal_command))
-        .route("/ws/nexus", get(ws_handler))
-        .fallback(static_handler)
-        .with_state(state)
-        .layer(CorsLayer::permissive());
-
-    let addr = "0.0.0.0:3000";
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    println!("\x1b[38;2;0;255;255m>> [NEXUS SERVER] UNIFIED UPLINK: http://localhost:3000\x1b[0m");
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK ACTIVE: http://localhost:3000\x1b[0m");
     axum::serve(listener, app.into_make_service()).await.unwrap();
 }
 
-async fn handle_metrics() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], metrics::get_metrics_text())
-}
-
-async fn handle_get_missions() -> Response {
-    match crate::mission_queue::MissionQueue::new(".nexus_missions.db").await {
-        Ok(queue) => match queue.get_pending().await {
-            Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        },
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
-}
-
-async fn handle_fs_list(Query(p): Query<ListParams>) -> Response {
-    let path = p.path.as_deref().unwrap_or(".");
-    match sandbox::validate_path(path) {
-        Ok(safe_path) => {
-            let mut entries = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&safe_path) {
-                for entry in rd.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                        entries.push(FsEntry {
-                            name,
-                            path: entry.path().to_string_lossy().to_string(),
-                            is_dir: entry.path().is_dir(),
-                        });
-                    }
-                }
-            }
-            (StatusCode::OK, Json(entries)).into_response()
-        }
-        Err(e) => (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response(),
-    }
-}
-
-async fn handle_read_file(Query(p): Query<FileParams>) -> Response {
-    match sandbox::validate_path(&p.path) {
-        Ok(safe_path) => match std::fs::read_to_string(&safe_path) {
-            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
-            Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
-        },
-        Err(e) => (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response(),
-    }
-}
-
-async fn handle_write_file(Json(payload): Json<FileContent>) -> Response {
-    match sandbox::validate_path(&payload.path) {
-        Ok(safe_path) => {
-            if let Some(p) = safe_path.parent() {
-                let _ = std::fs::create_dir_all(p);
-            }
-            match std::fs::write(&safe_path, &payload.content) {
-                Ok(_) => StatusCode::OK.into_response(),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-            }
-        }
-        Err(e) => (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response(),
-    }
-}
-
-async fn handle_delete_file(Query(p): Query<FileParams>) -> Response {
-    match sandbox::validate_path(&p.path) {
-        Ok(safe_path) => {
-            let res = if safe_path.is_dir() {
-                std::fs::remove_dir_all(&safe_path)
-            } else {
-                std::fs::remove_file(&safe_path)
-            };
-            match res {
-                Ok(_) => StatusCode::OK.into_response(),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-            }
-        }
-        Err(e) => (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response(),
-    }
-}
-
-async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let palace = state.memory.lock().await;
-    match palace.fetch_all().await {
-        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Memory Read Fault: {}", e)).into_response(),
-    }
-}
-
-async fn handle_search_memories(Query(q): Query<SearchQuery>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let query = q.q.as_deref().unwrap_or("");
-    let palace = state.memory.lock().await;
-    match palace.search_memories(query).await {
-        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Search Fault: {}", e)).into_response(),
-    }
-}
-
-async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let palace = state.memory.lock().await;
-    match palace.purge_all().await {
-        Ok(_) => StatusCode::OK.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Purge Fault: {}", e)).into_response(),
-    }
-}
-
-async fn handle_lazarus_snapshots() -> impl IntoResponse {
-    match crate::lazarus_vault::LazarusVault::list_snapshots() {
-        Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Vault Error: {}", e)).into_response(),
-    }
-}
-
-async fn handle_lazarus_restore(Json(payload): Json<serde_json::Value>) -> Response {
-    let hash = payload["hash"].as_str().unwrap_or("");
-    if hash.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "hash required"}))).into_response();
-    }
-    match crate::lazarus_vault::LazarusVault::restore_snapshot(hash) {
-        Ok(msg) => (StatusCode::OK, Json(json!({"message": msg}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
-    }
-}
-
-async fn handle_graph() -> impl IntoResponse {
-    let atlas = crate::broker::KnowledgeBroker::get_atlas().await;
-    let nodes: Vec<serde_json::Value> = atlas
-        .entries
-        .iter()
-        .take(50)
-        .map(|e| json!({ "id": e.name, "kind": e.kind, "path": e.path }))
-        .collect();
-    (StatusCode::OK, Json(json!({ "nodes": nodes, "timestamp": atlas.timestamp }))).into_response()
-}
-
-async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
-    let agent = state.agent.clone();
-    let client = state.client.clone();
-    let api_key = state.api_key.clone();
-    let memory = state.memory.clone();
-    let tx = state.tx.clone();
-    let directive = payload.directive.clone();
-    tokio::spawn(async move {
-        let _ = task_manager::send_task(agent, &client, &api_key, &directive, memory, tx).await;
-    });
-    Json(json!({ "status": "QUEUED" }))
+fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/api/fs/list", get(handle_fs_list))
+        .route("/api/fs/read", get(handle_read_file))
+        .route("/api/fs/write", post(handle_write_file))
+        .route("/api/memories", get(handle_get_memories))
+        .route("/api/task", post(handle_task))
+        .route("/ws/nexus", get(ws_handler))
+        .fallback(static_handler)
+        .with_state(state)
+        .layer(CorsLayer::permissive())
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -229,83 +58,86 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.tx.subscribe();
-    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(3));
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
     loop {
         tokio::select! {
-            Ok(msg) = rx.recv() => {
-                if socket.send(Message::Text(msg.into())).await.is_err() { break; }
+            Ok(msg) = rx.recv() => { 
+                let json_msg = json!({"type": "NEURAL_STREAM", "payload": {"text": msg}}).to_string();
+                if socket.send(Message::Text(json_msg.into())).await.is_err() { break; } 
             }
             _ = heartbeat.tick() => {
-                let v = state.monitor.get_vitals();
-                let payload = json!({ "type": "telemetry", "payload": v });
+                let mut monitor = state.monitor.lock().await;
+                let v = monitor.get_vitals();
+                let payload = json!({"type": "telemetry", "payload": {
+                    "temperature": v.temperature, 
+                    "cpu_load": v.cpu_load, 
+                    "ram_gb": v.ram_gb,
+                    "total_ram_gb": v.total_ram_gb
+                }});
                 if socket.send(Message::Text(payload.to_string().into())).await.is_err() { break; }
             }
-            Some(Ok(msg)) = socket.recv() => {
-                if let Message::Text(text) = msg {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if parsed["type"] == "directive" {
-                            let cmd = parsed["payload"].as_str().unwrap_or_default().to_string();
-                            let state_clone = state.clone();
-                            let tx_clone = state.tx.clone();
-                            tokio::spawn(async move {
-                                let _ = task_manager::send_task(state_clone.agent.clone(), &state_clone.client, &state_clone.api_key, &cmd, state_clone.memory.clone(), tx_clone).await;
-                            });
-                        }
-                    }
-                }
-            }
-            else => break,
         }
     }
 }
 
-async fn static_handler(uri: Uri) -> impl IntoResponse {
-    let path = uri.path().trim_start_matches('/').to_string();
-    let final_path = if path.is_empty() { "index.html".to_string() } else { path };
-    match Assets::get(&final_path) {
-        Some(content) => (
-            [(
-                header::CONTENT_TYPE,
-                mime_guess::from_path(&final_path).first_or_octet_stream().as_ref(),
-            )],
-            content.data,
-        )
-            .into_response(),
-        None => {
-            if !final_path.contains('.') {
-                ([(header::CONTENT_TYPE, "text/html")], Assets::get("index.html").unwrap().data)
-                    .into_response()
-            } else {
-                StatusCode::NOT_FOUND.into_response()
-            }
-        }
+async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse { 
+    let path = p.path.as_deref().unwrap_or("."); 
+    let mut entries = Vec::new(); 
+    if let Ok(rd) = std::fs::read_dir(path) { 
+        for entry in rd.flatten() { 
+            let name = entry.file_name().to_string_lossy().to_string(); 
+            if !name.starts_with('.') && name != "target" { 
+                entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": entry.path().is_dir() })); 
+            } 
+        } 
+    } 
+    Json(entries) 
+}
+
+async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse { 
+    match std::fs::read_to_string(&p.path) { 
+        Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(), 
+        Err(_) => StatusCode::NOT_FOUND.into_response(), 
+    } 
+}
+
+async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse { 
+    let s = state.clone(); 
+    tokio::spawn(async move { 
+        task_manager::send_task(s.agent.clone(), &s.client, &s.api_key, &payload.directive, s.memory.clone(), s.tx.clone()).await; 
+    }); 
+    Json(json!({ "status": "QUEUED" })) 
+}
+
+async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse { 
+    let palace = state.memory.lock().await; 
+    match palace.fetch_all().await { 
+        Ok(m) => (StatusCode::OK, Json(m)).into_response(), 
+        Err(_) => StatusCode::NOT_FOUND.into_response() 
+    } 
+}
+
+async fn static_handler(uri: Uri) -> impl IntoResponse { 
+    let path = uri.path().trim_start_matches('/').to_string(); 
+    let final_path = if path.is_empty() { "index.html".to_string() } else { path }; 
+    match Assets::get(&final_path) { 
+        Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(), 
+        None => Assets::get("index.html").map(|c| ([(header::CONTENT_TYPE, "text/html")], c.data).into_response()).unwrap_or(StatusCode::NOT_FOUND.into_response()) 
+    } 
+}
+
+// ── ARMORED WRITE HANDLER ──────────────────────────────────────────────
+async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse { 
+    if p.path.starts_with("src/") || p.path.starts_with("lib/") || p.path == "Cargo.toml" {
+        return StatusCode::FORBIDDEN;
+    }
+    match std::fs::write(&p.path, p.content) {
+        Ok(_) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
-#[derive(Deserialize)]
-pub struct TaskRequest {
-    pub directive: String,
-}
-#[derive(Deserialize)]
-pub struct FileParams {
-    pub path: String,
-}
-#[derive(Deserialize)]
-pub struct ListParams {
-    pub path: Option<String>,
-}
-#[derive(Deserialize)]
-pub struct SearchQuery {
-    pub q: Option<String>,
-}
-#[derive(Deserialize, Serialize)]
-pub struct FileContent {
-    pub path: String,
-    pub content: String,
-}
-#[derive(Serialize)]
-pub struct FsEntry {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-}
+#[derive(Deserialize)] pub struct TaskRequest { pub directive: String }
+#[derive(Deserialize)] pub struct FileParams { pub path: String }
+#[derive(Deserialize)] pub struct ListParams { pub path: Option<String> }
+#[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }

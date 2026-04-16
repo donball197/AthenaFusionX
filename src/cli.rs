@@ -1,117 +1,86 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+use std::io::{self, Write};
+use std::sync::Arc;
+use crate::server::AppState;
+use crate::task_manager;
 
-
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-
-#[derive(Parser, Debug)]
-#[command(name = "nexus", about = "NEXUS SOVEREIGN INTERFACE", disable_help_subcommand = true)]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum Commands {
-    Build {
-        #[arg(default_value = ".")]
-        path: PathBuf,
-    },
-    Heal {
-        #[arg(required = true)]
-        file: PathBuf,
-    },
-    Open {
-        #[arg(required = true)]
-        file: PathBuf,
-    },
-    Status,
-    Diff {
-        #[arg(required = true)]
-        original: PathBuf,
-        #[arg(required = true)]
-        against: PathBuf,
-    },
-    Restore {
-        #[arg(required = true)]
-        hash: String,
-    },
-    Close {
-        #[arg(required = true)]
-        file: PathBuf,
-    },
-    Purge,
-}
-
-pub fn inject_workspace_dna(cmd: &str) -> String {
-    let lower_cmd = cmd.to_lowercase();
-    let mut final_cmd = cmd.to_string();
-    if lower_cmd.contains("audit") || lower_cmd.contains("review") || lower_cmd.contains("scan") {
-        println!("\x1b[36m>> [CLI_INJECTOR] Broad analysis detected. Attaching local workspace DNA...\x1b[0m");
-        let mut context = String::from("\n\n--- [SYSTEM WORKSPACE DNA] ---\n");
-        if let Ok(entries) = std::fs::read_dir("src") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        let preview =
-                            if content.len() > 15000 { &content[..15000] } else { &content };
-                        context.push_str(&format!(
-                            "\n// === FILE: {} ===\n{}\n",
-                            path.display(),
-                            preview
-                        ));
-                    }
-                }
-            }
-        }
-        if lower_cmd.contains("cargo.toml") || lower_cmd.contains("depend") {
-            if let Ok(cargo) = std::fs::read_to_string("Cargo.toml") {
-                context.push_str(&format!("\n// === FILE: Cargo.toml ===\n{}\n", cargo));
-            }
-        }
-        final_cmd.push_str(&context);
-    }
-    final_cmd
-}
-
+#[derive(Debug, Clone)]
 pub enum HostMuscle {
-    MotorolaTermux,
     ChromebookCrostini,
+    MotorolaTermux,
     GenericARM64,
 }
 
 pub fn detect_host_muscle() -> HostMuscle {
-    if std::env::var("PREFIX").unwrap_or_default().contains("com.termux") {
-        return HostMuscle::MotorolaTermux;
+    if std::path::Path::new("/usr/bin/cicerone").exists() {
+        HostMuscle::ChromebookCrostini
+    } else if std::path::Path::new("/data/data/com.termux").exists() {
+        HostMuscle::MotorolaTermux
+    } else {
+        HostMuscle::GenericARM64
     }
-    if let Ok(kernel) = std::fs::read_to_string("/proc/version") {
-        let k_lower = kernel.to_lowercase();
-        if k_lower.contains("chrome") || k_lower.contains("cros") || k_lower.contains("penguin") {
-            return HostMuscle::ChromebookCrostini;
-        }
-    }
-    HostMuscle::GenericARM64
 }
 
 pub fn get_muscle_string(muscle: &HostMuscle) -> &'static str {
     match muscle {
-        HostMuscle::MotorolaTermux => "MOTOROLA_EDGE [TERMUX SANDBOX]",
-        HostMuscle::ChromebookCrostini => "CHROMEBOOK [NATIVE LINUX]",
-        HostMuscle::GenericARM64 => "UNKNOWN [GENERIC ARM64]",
+        HostMuscle::ChromebookCrostini => "CHROMEBOOK [NATIVE LINUX/CROSTINI]",
+        HostMuscle::MotorolaTermux => "MOTOROLA [TERMUX/ANDROID]",
+        HostMuscle::GenericARM64 => "GENERIC ARM64 SUBSTRATE",
     }
+}
+
+pub fn inject_workspace_dna(directive: &str) -> String {
+    let strict_schema = r#"
+[STRICT JSON SCHEMA REQUIRED]
+You are bound by the Serde AgentAction protocol. You must output actions EXACTLY in this format, including the "type" field.
+
+1. To run a terminal command:
+{"type": "execute_command", "command": "your_command_here"}
+
+2. To write or overwrite a file:
+{"type": "write_file", "path": "file_path", "content": "file_content"}
+
+3. To log system telemetry:
+{"type": "system_status", "data": {"key": "value"}}
+
+4. To stop (MANDATORY immediately after an action):
+{"type": "halt"}
+
+DO NOT invent new commands, target keys, or parameters. Use ONLY the exact structures above.
+"#;
+    format!("SYSTEM_CONTEXT: [SOVEREIGN_MODE]\n{}\n\nDIRECTIVE: {}", strict_schema, directive)
+}
+
+pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
+    // Wait for server logs to settle
+    tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+    
+    let stdin = io::stdin();
+    let mut input = String::new();
+
+    loop {
+        print!("\r\x1b[K\x1b[1;32mNEXUS_OS >> \x1b[0m");
+        io::stdout().flush()?;
+        
+        input.clear();
+        if stdin.read_line(&mut input)? == 0 { break; }
+        
+        let directive = input.trim();
+        if directive.is_empty() { continue; }
+        
+        if directive == "exit" || directive == "halt" { break; }
+
+        let enriched = inject_workspace_dna(directive);
+        let s = state.clone();
+        tokio::spawn(async move {
+            task_manager::send_task(
+                s.agent.clone(),
+                &s.client,
+                &s.api_key,
+                &enriched,
+                s.memory.clone(),
+                s.tx.clone()
+            ).await;
+        });
+    }
+    Ok(())
 }

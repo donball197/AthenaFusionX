@@ -1,0 +1,13 @@
+[
+  {"hazard": "...", "telemetry_trigger": "...", "healing_action": [{"type": "execute_command", "command": "..."}]},
+  {"hazard": "Flash Flood", "telemetry_trigger": "water_level > 2.5m", "healing_action": [{"type": "execute_command", "command": "deploy_flood_gates --sector A1"}]},
+  {"hazard": "Wildfire", "telemetry_trigger": "smoke_density > 400ppm", "healing_action": [{"type": "execute_command", "command": "activate_perimeter_sprinklers --zone 4"}]},
+  {"hazard": "Earthquake", "telemetry_trigger": "seismic_magnitude > 6.0", "healing_action": [{"type": "execute_command", "command": "shutdown_gas_main_valve --all"}]},
+  {"hazard": "Hurricane", "telemetry_trigger": "wind_speed > 130kmh", "healing_action": [{"type": "execute_command", "command": "stow_satellite_dish --mode secure"}]},
+  {"hazard": "Chemical Leak", "telemetry_trigger": "voc_sensor_alert == true", "healing_action": [{"type": "execute_command", "command": "isolate_hvac_ventilation --wing B"}]},
+  {"hazard": "Grid Outage", "telemetry_trigger": "voltage_drop < 0.8pu", "healing_action": [{"type": "execute_command", "command": "engage_edge_battery_backup --priority high"}]},
+  {"hazard": "Tsunami", "telemetry_trigger": "pressure_buoy_delta > 0.5bar", "healing_action": [{"type": "execute_command", "command": "trigger_coastal_sirens --pattern evacuation"}]},
+  {"hazard": "Landslide", "telemetry_trigger": "soil_displacement > 10cm", "healing_action": [{"type": "execute_command", "command": "lock_access_road_gate --gate 12"}]},
+  {"hazard": "Industrial Blast", "telemetry_trigger": "acoustic_peak > 140dB", "healing_action": [{"type": "execute_command", "command": "deploy_foam_suppression --area warehouse_c"}]},
+  {"hazard": "Severe Blizzard", "telemetry_trigger": "snow_accumulation_rate > 5cm_hr", "healing_action": [{"type": "execute_command", "command": "enable_runway_heating_elements --set 60C"}]}
+]

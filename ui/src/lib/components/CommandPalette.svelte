@@ -1,148 +1,127 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
 <script>
     import { onMount } from 'svelte';
-    import { pushTermLine } from '$lib/core/NexusWS.js';
-    import { terminalState, systemVitals } from '$lib/core/store.svelte.js';
+    import { fade, scale } from 'svelte/transition';
+    import SoundFx from '$lib/SoundFx.js';
 
-    let isOpen = $state(false);
-    let search = $state('');
+    let visible = $state(false);
+    let query = $state('');
     let selectedIndex = $state(0);
 
     const commands = [
-        { 
-            id: 'status', 
-            label: 'Show System Status', 
-            action: () => {
-                const v = systemVitals;
-                pushTermLine(`>> STATUS | TEMP: ${v.temperature.toFixed(1)}°C | CPU: ${(v.cpu_load * 100).toFixed(1)}% | RAM: ${v.ram_gb.toFixed(2)} GB | RES: ${(v.resonance * 100).toFixed(1)}%`, 'text-emerald-400');
-            }
-        },
-        { 
-            id: 'clear', 
-            label: 'Clear Terminal', 
-            action: () => { 
-                 terminalState.logs = []; 
-                 pushTermLine('[NEXUS] Terminal buffer flushed.', 'text-cyan-400'); 
-             }
-        },
-        { id: 'audit', label: 'Run Security Audit', action: () => pushTermLine('>> [AUDITOR] Initiating sovereign system scan...', 'text-cyan-400') },
-        { id: 'lazarus', label: 'Activate Lazarus Vault', action: () => pushTermLine('>> [LAZARUS] Restoring timeline snapshot...', 'text-purple-400') },
-        { id: 'heal', label: 'Trigger Self-Healing Cycle', action: () => pushTermLine('>> [SELF-HEALING] Autonomic repair loop engaged.', 'text-amber-400') },
-        { id: 'vision', label: 'Toggle Visual Cortex', action: () => pushTermLine('>> [VISION] Visual processing layer activated.', 'text-sky-400') },
-        { id: 'purge', label: 'Purge Neural Memories', action: () => pushTermLine('!! [WARNING] Memory palace purge initiated — irreversible.', 'text-rose-400') }
+        { id: 'audit', name: 'RUN_SECURITY_AUDIT', icon: '🛡️', desc: 'Scan workspace for vulnerabilities' },
+        { id: 'build', name: 'TRIGGER_RELEASE_BUILD', icon: '📦', desc: 'Compile optimized ARM64 binary' },
+        { id: 'clean', name: 'PURGE_SYSTEM_CACHE', icon: '🧹', desc: 'Free up RAM on Lenovo Duet' },
+        { id: 'ghost', name: 'WAKE_GHOST_CORTEX', icon: '👻', desc: 'Initiate deep neural reasoning' }
     ];
 
-    let filtered = $derived(
-        search ? commands.filter(c => c.label.toLowerCase().includes(search.toLowerCase())) : commands
-    );
-
-    $effect(() => {
-        search;
-        selectedIndex = 0;
-    });
-
-    function execute() {
-        if (filtered.length === 0) return;
-        filtered[selectedIndex].action();
-        isOpen = false;
-        search = '';
-    }
-
-    function focusInput(node) {
-        setTimeout(() => node.focus(), 10);
+    function handleKeydown(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            visible = !visible;
+            if (visible) SoundFx.click();
+        }
+        if (!visible) return;
+        if (e.key === 'Escape') visible = false;
+        if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = (selectedIndex + 1) % commands.length; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = (selectedIndex - 1 + commands.length) % commands.length; }
+        if (e.key === 'Enter') {
+            SoundFx.success();
+            visible = false;
+        }
     }
 
     onMount(() => {
-        const handler = (e) => {
-            if (e.ctrlKey && e.key.toLowerCase() === 'k') {
-                e.preventDefault();
-                isOpen = !isOpen;
-                if (isOpen) {
-                    search = '';
-                    selectedIndex = 0;
-                }
-                return;
-            }
-            if (!isOpen) return;
-            if (e.key === 'Escape') isOpen = false;
-            if (e.key === 'Enter') { e.preventDefault(); execute(); }
-            if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1); }
-            if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = Math.max(selectedIndex - 1, 0); }
-        };
-        window.addEventListener('keydown', handler);
-        return () => window.removeEventListener('keydown', handler);
+        window.addEventListener('keydown', handleKeydown);
+        return () => window.removeEventListener('keydown', handleKeydown);
     });
 </script>
 
-{#if isOpen}
-    <div class="fixed inset-0 bg-black/95 z-[500] flex items-start justify-center pt-28" 
-         onclick={() => isOpen = false}
-         onkeydown={(e) => { if(e.key === 'Escape') isOpen = false; }}
-         role="button" 
-         tabindex="0">
-        
-        <div class="w-full max-w-2xl bg-zinc-950 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden" 
-             onclick={(e) => e.stopPropagation()} 
-             onkeydown={(e) => e.stopPropagation()}
-             role="dialog" 
-             aria-modal="true" 
-             tabindex="-1">
-            
-            <div class="px-6 py-5 border-b border-zinc-800 flex items-center gap-3">
-                <span class="text-cyan-400 text-xl">⌘</span>
-                <input 
-                    bind:value={search}
-                    use:focusInput
-                    placeholder="Search commands or directives..."
-                    class="flex-1 bg-transparent text-lg text-zinc-100 outline-none font-mono placeholder-zinc-500"
-                    autocomplete="off"
-                    spellcheck="false"
-                />
+{#if visible}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div 
+        class="palette-overlay" 
+        transition:fade={{ duration: 100 }} 
+        onclick={() => visible = false}
+    >
+        <div 
+            class="palette-box glass-panel" 
+            transition:scale={{ start: 0.95, duration: 150 }} 
+            onclick={(e) => e.stopPropagation()}
+        >
+            <div class="search-row">
+                <span class="prompt">❯</span>
+                <input bind:value={query} placeholder="ENTER_SYSTEM_DIRECTIVE..." autofocus />
             </div>
-            
-            <div class="max-h-[440px] overflow-y-auto py-2 custom-scrollbar">
-                {#each filtered as cmd, i}
-                    <button 
-                        class="w-full px-6 py-[14px] text-left font-mono text-sm transition-all flex items-center
-                              {i === selectedIndex ? 'bg-zinc-900 text-white border-l-2 border-cyan-400' : 'text-zinc-400 hover:bg-zinc-900/70 hover:text-zinc-200'}"
-                        onclick={() => { selectedIndex = i; execute(); }}
-                        onmouseover={() => selectedIndex = i}
-                        onfocus={() => selectedIndex = i}
-                    >
-                        <span class="flex-1">{cmd.label}</span>
-                        <span class="text-[10px] uppercase tracking-widest text-zinc-600 font-light">{cmd.id}</span>
-                    </button>
+            <div class="results">
+                {#each commands as cmd, i}
+                    <div class="result-item" class:selected={i === selectedIndex}>
+                        <span class="icon">{cmd.icon}</span>
+                        <div class="info">
+                            <div class="name">{cmd.name}</div>
+                            <div class="desc">{cmd.desc}</div>
+                        </div>
+                        {#if i === selectedIndex}
+                            <span class="enter-hint">↵ ENTER</span>
+                        {/if}
+                    </div>
                 {/each}
-                {#if filtered.length === 0}
-                    <div class="px-6 py-16 text-center text-zinc-500 font-mono text-sm">No matching directives found</div>
-                {/if}
-            </div>
-            <div class="px-6 py-3.5 border-t border-zinc-800 bg-zinc-950/80 flex justify-between text-[10px] text-zinc-500 font-mono">
-                <span>↑↓ Navigate</span>
-                <span>⏎ Execute</span>
-                <span>ESC Close • Ctrl+K Toggle</span>
             </div>
         </div>
     </div>
 {/if}
 
 <style>
-    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 2px; }
+    .palette-overlay { 
+        position: fixed; 
+        inset: 0; 
+        background: rgba(0,0,0,0.7); 
+        backdrop-filter: blur(4px); 
+        z-index: 2000; 
+        display: flex; 
+        justify-content: center; 
+        padding-top: 15vh; 
+    }
+    .palette-box { 
+        width: 500px; 
+        height: fit-content; 
+        background: #05050a; 
+        border: 1px solid rgba(0,255,255,0.2); 
+        border-radius: 8px; 
+        overflow: hidden; 
+        box-shadow: 0 20px 50px rgba(0,0,0,1); 
+    }
+    .search-row { 
+        display: flex; 
+        align-items: center; 
+        padding: 15px; 
+        border-bottom: 1px solid rgba(255,255,255,0.05); 
+        gap: 15px; 
+    }
+    .prompt { color: #00ffff; font-weight: 900; }
+    .search-row input { 
+        flex: 1; 
+        background: none; 
+        border: none; 
+        color: #fff; 
+        outline: none; 
+        font-family: 'JetBrains Mono', monospace; 
+        font-size: 14px; 
+    }
+    .results { padding: 8px; }
+    .result-item { 
+        display: flex; 
+        align-items: center; 
+        padding: 10px 15px; 
+        gap: 15px; 
+        border-radius: 4px; 
+        transition: 0.1s; 
+        cursor: pointer; 
+    }
+    .result-item.selected { background: rgba(0, 255, 255, 0.1); }
+    .icon { font-size: 18px; width: 25px; text-align: center; }
+    .info { flex: 1; }
+    .name { font-size: 10px; font-weight: 900; color: #e2e8f0; }
+    .desc { font-size: 8px; color: #64748b; margin-top: 2px; }
+    .enter-hint { font-size: 8px; color: #00ffff; font-weight: 900; opacity: 0.5; }
 </style>

@@ -1,63 +1,25 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+/*
+ * NEXUS KERNEL — FFI Bridge v1.3 [ZIG_FUSED]
  */
-
-
-pub const ROOT_VMAR_HANDLE: u32 = 0;
-pub const MAX_REGION_SIZE: usize = 1024 * 1024 * 1024;
-pub const ZX_VM_PERM_READ: u32 = 1 << 1;
-pub const ZX_VM_PERM_WRITE: u32 = 1 << 2;
-pub const ZX_VM_MAP_RANGE: u32 = 1 << 4;
+#[link(name = "muscle")]
+extern "C" {
+    fn zx_vmo_create_native(size: usize) -> u32;
+    fn zx_handle_close_native(handle: u32);
+}
 
 pub trait KernelOps: Send + Sync {
-    fn vmo_clone(&self, parent: u32, size: usize) -> u32;
-    fn vmar_map(&self, vmar: u32, options: u32, vmo: u32, size: usize) -> *mut u8;
+    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32;
     fn handle_close(&self, handle: u32);
 }
 
-pub struct HardwareInterface;
+pub struct NativeOps;
+impl NativeOps { pub fn new() -> Self { Self } }
 
-impl KernelOps for HardwareInterface {
-    fn vmo_clone(&self, parent: u32, size: usize) -> u32 {
-        println!(">> [MOCK KERNEL] Cloning VMO parent {} with size {}", parent, size);
-        parent + 1
-    }
-    fn vmar_map(&self, vmar: u32, _options: u32, vmo: u32, size: usize) -> *mut u8 {
-        println!(">> [MOCK KERNEL] Mapping VMO {} to VMAR {} (Size: {})", vmo, vmar, size);
-        std::ptr::null_mut() // Safe null pointer for testing
+impl KernelOps for NativeOps {
+    fn vmo_clone(&self, _parent: u32, size: usize) -> u32 {
+        unsafe { zx_vmo_create_native(size) }
     }
     fn handle_close(&self, handle: u32) {
-        println!(">> [MOCK KERNEL] Closing handle {}", handle);
-    }
-}
-
-pub mod raw {
-    pub unsafe fn nexus_vmar_map(_vmar: u32, _options: u32, _vmo: u32, _size: usize) -> *mut u8 {
-        std::ptr::null_mut()
-    }
-    pub unsafe fn nexus_vmo_clone(parent: u32, _size: usize) -> u32 {
-        parent + 1
-    }
-    pub unsafe fn nexus_handle_close(_handle: u32) {}
-}
-
-#[derive(Clone, Copy)]
-pub struct VmarHandle(pub u32);
-
-impl Default for VmarHandle {
-    fn default() -> Self {
-        Self(ROOT_VMAR_HANDLE)
+        unsafe { zx_handle_close_native(handle) }
     }
 }

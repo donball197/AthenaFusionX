@@ -1,74 +1,48 @@
 [package]
 name = "nexus_singularity"
-version = "4.0.2"
+default-run = "nexus_singularity"
+version = "1.9.0"
 edition = "2021"
 rust-version = "1.80"
 
 [features]
 default = []
-future_npu = ["dep:tflite"]
+vision = []
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
-tokio = { version = "1.44", features = ["full"] }
+tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "net", "time", "signal", "process"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"] }
-futures-util = "0.3"
 dotenvy = "0.15"
-walkdir = "2.5"
-clap = { version = "4.5", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.11"
-anyhow = "1.0"
-bitflags = "2.6"
-once_cell = "1.20"
-regex = "1.11"
-prometheus = "0.14.0" 
-rust-embed = "8.5"
-mime_guess = "2.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 tower-http = { version = "0.6", features = ["cors"] }
-base64 = "0.22"
-mimalloc = "0.1"
-tokio-util = { version = "0.7", features = ["io"] }
-# SUTURE: Disabling default features is mandatory to evict MySQL/RSA
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "tls-rustls", "macros"] }
-tflite = { version = "0.9.8", optional = true }
-indicatif = "0.18"
-comfy-table = "7.2"
-redis = { version = "0.32.7", features = ["tokio-comp"] }
-
-[[bin]]
-name = "nexus_singularity"
-path = "src/main.rs"
-
-[[bin]]
-name = "ui_audit"
-path = "src/bin/ui_audit.rs"
-
-[[bin]]
-name = "alpha_scout"
-path = "src/bin/alpha_scout.rs"
-
-[[bin]]
-name = "cli"
-path = "src/bin/cli.rs"
-
-[[bin]]
-name = "thermal_probe"
-path = "src/bin/thermal_probe.rs"
-
-[[bin]]
-name = "upgrade"
-path = "src/bin/upgrade.rs"
-
-[profile.dev]
-opt-level = 0
-debug = 0
+mimalloc = "0.1"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.11"
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive"] }
+once_cell = "1.21"
+sha2 = "0.10"
+walkdir = "2.5"
+bitflags = "2.8"
+rust-embed = { version = "8.5", features = ["interpolate-folder-path"] }
+mime_guess = "2.0"
+futures-util = "0.3.32"
+scraper = "0.19"
+bytes = "1.5"
+uuid = { version = "1.20.0", features = ["serde", "v4"] }
+async-trait = "0.1.89"
+sysinfo = "0.36.1"
+lazy_static = "1.5.0"
 
 [profile.release]
-opt-level = "z"
-lto = "thin"
-codegen-units = 1
+opt-level = 2
+lto = false
+codegen-units = 32
 panic = "abort"
 strip = true
+debug = false
+incremental = false

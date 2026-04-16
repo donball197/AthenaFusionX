@@ -54,3 +54,4 @@ vault/models/
 .DS_Store
 Thumbs.db
 .direnv/
+.env
