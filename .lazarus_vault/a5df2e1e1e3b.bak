@@ -1,0 +1,73 @@
+use crate::agent_protocol::AgentAction;
+use crate::memory::MemoryPalace;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::process::Command;
+use tokio::fs;
+
+pub struct Executor;
+
+impl Executor {
+    pub async fn execute_handle(actions: Vec<AgentAction>, memory: Arc<Mutex<MemoryPalace>>) -> Result<Vec<String>, String> {
+        let mut results = Vec::new();
+
+        for action in actions {
+            match action {
+                AgentAction::SearchMemory { query } => {
+                    let palace = memory.lock().await;
+                    
+                    // ⚡ STOCHASTIC SUTURE: Intercept "RANDOM" keyword for Daydreaming
+                    let search_result = if query.to_uppercase().contains("RANDOM") {
+                        palace.fetch_random_strands(10).await
+                    } else {
+                        palace.search_memories(&query).await
+                    };
+
+                    match search_result {
+                        Ok(strands) => {
+                            let mut out = format!("MEMORY_SEARCH for '{}':\n", query);
+                            if strands.is_empty() { out.push_str("No neural strands found."); }
+                            for s in strands {
+                                out.push_str(&format!("[{}] Dir: {} | Res: {}\n", s.timestamp, s.directive, s.result));
+                            }
+                            results.push(out);
+                        },
+                        Err(e) => results.push(format!("SEARCH_ERROR: {}", e)),
+                    }
+                },
+                AgentAction::ExecuteCommand { command } => {
+                    let restricted = [";", "|", "&", ">", "<", "`", "$(", "\\"];
+                    if restricted.iter().any(|&s| command.contains(s)) {
+                        let whitelist = ["cargo check", "cargo build", "npm run build", "ls", "find", "cat", "ping"];
+                        if !whitelist.iter().any(|&w| command.starts_with(w)) {
+                            return Err(format!("FIREWALL_BLOCK: Security risk in '{}'", command));
+                        }
+                    }
+                    let output = Command::new("sh").arg("-c").arg(&command).output().await
+                        .map_err(|e| format!("Execution failed: {}", e))?;
+                    results.push(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                },
+                AgentAction::VmoPulse => {
+                    let handle = unsafe { crate::kernel::zx_vmo_create_native(4096) };
+                    crate::kernel::register_handle(handle, crate::kernel::HandleType::Vmo(handle));
+                    results.push(format!("VMO_PULSE: 0x{:x}", handle));
+                },
+                AgentAction::WriteFile { path, content } => {
+                    if path.contains("src/kernel") || path.contains("Cargo.toml") {
+                        return Err(format!("DNA_BLOCK: Write forbidden to {}", path));
+                    }
+                    fs::write(&path, &content).await.map_err(|e| e.to_string())?;
+                    results.push(format!("File '{}' secured.", path));
+                },
+                AgentAction::ExportReport { title, content } => {
+                    let filename = format!("exports/AUDIT_{}.md", title.replace(" ", "_"));
+                    fs::write(&filename, content).await.map_err(|e| e.to_string())?;
+                    results.push(format!("EXPORT_SUCCESS: {}", filename));
+                },
+                AgentAction::Halt => { break; },
+                _ => results.push("ACTION_ACK".into()),
+            }
+        }
+        Ok(results)
+    }
+}

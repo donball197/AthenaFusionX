@@ -1,60 +1,64 @@
-/**
- * Project Nexus Singularity - v1.9.5 (Ultra-Lean CLI)
- */
+use nexus_singularity::server::{AppState, start_server};
+use nexus_singularity::cli::run_cli_loop;
+use nexus_singularity::dream_cycle::start_daydream;
+use nexus_singularity::void_walker::VoidWalker;
+use nexus_singularity::lazarus_vault::LazarusVault;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use nexus_singularity::{
-    memory::MemoryPalace,
-    orchestrator::Orchestrator,
-    neural_agent::MicroAgent,
-    server::AppState,
-    cli,
-};
+use tokio::sync::{broadcast, mpsc, Mutex};
+use std::env;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // 1. Hardware Synthesis
-    let muscle = cli::detect_host_muscle();
-    let muscle_str = cli::get_muscle_string(&muscle);
+async fn main() {
+    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v2.0.0)\x1b[0m");
+    dotenvy::dotenv().ok();
+    let api_key = env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
+    let (tx, _) = broadcast::channel(256);
+    let (scheduler_tx, _) = mpsc::channel(100);
 
-    print!("\x1B[2J\x1B[1;1H"); 
-    println!("\x1b[1;36m>> [NEXUS SINGULARITY] IGNITION SEQUENCE INITIATED\x1b[0m");
-    println!("\x1b[38;5;240m>> [HOST_DNA] {}\x1b[0m", muscle_str);
+    let memory = Arc::new(Mutex::new(nexus_singularity::memory::MemoryPalace::new(".nexus_memory.db").await.unwrap()));
+    let agent = Arc::new(nexus_singularity::neural_agent::MicroAgent::init(tx.clone()).unwrap());
 
-    // 2. Establish Nervous System
-    let (tx, _rx) = tokio::sync::broadcast::channel(256);
-    let (scheduler_tx, _scheduler_rx) = tokio::sync::mpsc::channel(100);
-
-    // 3. Neural Initialization
-    let memory = Arc::new(Mutex::new(MemoryPalace::new(".nexus_brain.db").await?));
-    let agent = Arc::new(MicroAgent::init(tx.clone())?);
-    let orchestrator = Arc::new(Orchestrator::new(agent.clone(), None));
-    
-    // 4. State Binding
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
-        monitor: tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()),
+        monitor: Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()),
         agent: agent.clone(),
-        orchestrator,
+        orchestrator: Arc::new(nexus_singularity::orchestrator::Orchestrator::new(agent.clone(), None)),
         memory: memory.clone(),
-        api_key: std::env::var("GEMINI_API_KEY").unwrap_or_default(),
-        current_resonance: Arc::new(std::sync::atomic::AtomicU32::new(528)),
+        api_key: api_key.clone(),
+        current_resonance: Arc::new(std::sync::atomic::AtomicU32::new(50)),
         tx: tx.clone(),
         scheduler_tx,
         arbiter: Arc::new(nexus_singularity::arbiter_agent::ArbiterAgent::new(agent.clone())),
         local_llm: Arc::new(nexus_singularity::local_llm::LocalLLM::new()),
-        workspace_root: std::env::current_dir()?,
+        workspace_root: std::env::current_dir().unwrap_or_default(),
     });
 
-    // 5. Silent Background Uplink (No Visor pop-ups)
-    let server_state = state.clone();
+    // 1. [ARCHIVIST] Background Dream Cycle
+    let d_mem = memory.clone();
+    let d_agent = agent.clone();
+    let d_key = api_key.clone();
     tokio::spawn(async move {
-        nexus_singularity::server::start_server(server_state).await;
+        start_daydream(d_mem, d_agent, d_key).await;
     });
 
-    // 6. Immediate CLI Ignition
-    println!("\x1b[32m>> [NEXUS] CLI ACTIVE. SYSTEM STANDING BY.\x1b[0m");
-    nexus_singularity::cli::run_cli_loop(state).await?;
+    // 2. [SENTINEL] Proactive Defense
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+            let orphans = VoidWalker::identify_orphans();
+            for file in orphans {
+                println!("\x1b[33m>> [SENTINEL] Unprotected file: {}. Snapshotting.\x1b[0m", file);
+                let _ = LazarusVault::auto_snapshot(&file, "sentinel_auto").await;
+            }
+        }
+    });
 
-    Ok(())
+    // 3. Launch Server
+    let s_state = state.clone();
+    tokio::spawn(async move { start_server(s_state).await; });
+
+    // 4. Foreground CLI
+    if let Err(e) = run_cli_loop(state).await {
+        eprintln!("!! [FATAL] CLI crashed: {}", e);
+    }
 }

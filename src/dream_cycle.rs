@@ -1,14 +1,36 @@
-// src/dream_cycle.rs - v0.1.0 (Latent Space Wanderer)
-pub async fn start_daydream(memory: Arc<Mutex<MemoryPalace>>, agent: Arc<MicroAgent>) {
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use crate::memory::MemoryPalace;
+use crate::neural_agent::{MicroAgent, ContextPacket};
+
+pub async fn start_daydream(memory: Arc<Mutex<MemoryPalace>>, agent: Arc<MicroAgent>, api_key: String) {
+    let client = reqwest::Client::new();
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(300)).await; // Dream every 5 mins of idle
+        // Sleep for 15 minutes between synthesis cycles
+        tokio::time::sleep(std::time::Duration::from_secs(900)).await; 
         
-        let strands = memory.lock().await.fetch_random_strands(2).await;
-        if strands.len() == 2 {
-            println!("\x1b[34m>> [NEXUS_DREAM] Entering Latent Replay...\x1b[0m");
-            // Ask the model to find a creative connection between two unrelated memories
-            let directive = format!("Connect these: '{}' and '{}'", strands[0].result, strands[1].result);
-            // Run at Resonance 0.9 (High Creativity)
+        println!("\x1b[34m>> [ARCHIVIST] Identifying patterns for architectural optimization...\x1b[0m");
+        
+        let strands = {
+            let palace = memory.lock().await;
+            palace.fetch_random_strands(15).await.unwrap_or_default()
+        };
+
+        if strands.len() >= 5 {
+            let mut context = String::new();
+            for s in strands {
+                context.push_str(&format!("Dir: {} | Res: {}\n", s.directive, s.result));
+            }
+
+            let prompt = format!("Summarize these logs into 3 high-density system insights:\n{}", context);
+            let ctx = ContextPacket { task_complexity: 1, ..Default::default() };
+
+            if let Ok((insight, _)) = agent.prepare_and_run(&client, &api_key, &prompt, ctx, 0.8, None).await {
+                let palace = memory.lock().await;
+                if palace.store_insight(&insight).await.is_ok() {
+                    println!("\x1b[32m>> [ARCHIVIST] Insights successfully enshrined to substrate.\x1b[0m");
+                }
+            }
         }
     }
 }

@@ -1,9 +1,94 @@
+pub mod vmo;
+pub mod vmar;
 pub mod error;
 pub mod ffi;
-pub mod memory;
-pub mod realignment;
-pub mod vmar;
-pub mod vmo;
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+// --- SOVEREIGN MUSCLE BRIDGE ---
+extern "C" {
+    pub fn zx_vmo_create_native(size: usize) -> u32;
+    pub fn zx_handle_close_native(handle: u32);
+    pub fn zx_vmo_write_native(handle: u32, buffer: *const u8, size: usize) -> i32;
+    pub fn zx_vmo_read_native(handle: u32, buffer: *mut u8, size: usize) -> i32;
+    pub fn muscle_get_active_vmos() -> u32;
+    pub fn muscle_get_next_handle() -> u32;
+}
+
+lazy_static! {
+    pub static ref HANDLE_REGISTRY: Mutex<HashMap<u32, HandleType>> = Mutex::new(HashMap::new());
+}
+
+pub enum HandleType {
+    Vmo(u32),
+    Vmar(vmar::Vmar),
+}
+
+/// The Guard: Automated protection. When this struct is dropped, 
+/// it ensures the memory is physically unmapped from ARM64.
+pub struct VmoGuard {
+    pub id: u32,
+}
+
+impl Drop for VmoGuard {
+    fn drop(&mut self) {
+        let mut reg = HANDLE_REGISTRY.lock().unwrap();
+        if reg.contains_key(&self.id) {
+            unsafe { zx_handle_close_native(self.id); }
+            reg.remove(&self.id);
+            println!("\x1b[33m[GUARD] Handle 0x{:x} safely reclaimed.\x1b[0m", self.id);
+        }
+    }
+}
+
+pub fn get_live_telemetry() -> (u32, u32) {
+    unsafe { (muscle_get_active_vmos(), muscle_get_next_handle()) }
+}
+
+pub fn close_handle(id: u32) -> bool {
+    let mut reg = HANDLE_REGISTRY.lock().unwrap();
+    if reg.contains_key(&id) {
+        unsafe { zx_handle_close_native(id); }
+        reg.remove(&id);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn reclaim_all() -> usize {
+    let mut reg = HANDLE_REGISTRY.lock().unwrap();
+    let count = reg.len();
+    for (&id, _) in reg.iter() {
+        unsafe { zx_handle_close_native(id); }
+    }
+    reg.clear();
+    count
+}
+
+pub fn register_handle(id: u32, h: HandleType) {
+    let mut reg = HANDLE_REGISTRY.lock().unwrap();
+    reg.insert(id, h);
+}
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
 pub struct SafeBuffer {
     data: Vec<u8>,
     max_capacity: usize,
@@ -21,185 +106,200 @@ impl SafeBuffer {
         self.data.extend_from_slice(payload);
         Ok(())
     }
-}use std::fmt;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Severity {
-    Critical, // CVSS 9.0-10.0
-    High,     // CVSS 7.0-8.9
-    Medium,   // CVSS 4.0-6.9
-    Low,      // CVSS 0.1-3.9
 }
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-#[derive(Debug, Clone)]
-pub enum KernelError {
-    VmoCloneFailed { parent: u32, size: usize },
-    VmarMapFailed { vmar_handle: u32, size: usize },
-    InvalidHandle(u32),
-    AlignmentAnomaly { address: usize },
-    SecurityViolation { message: String, cvss: f32 },
-}
 
-impl KernelError {
-    pub fn severity(&self) -> Severity {
-        match self {
-            Self::SecurityViolation { cvss, .. } => {
-                if *cvss >= 9.0 { Severity::Critical }
-                else if *cvss >= 7.0 { Severity::High }
-                else { Severity::Medium }
-            },
-            Self::VmarMapFailed { .. } => Severity::High,
-            Self::VmoCloneFailed { .. } => Severity::High,
-            Self::AlignmentAnomaly { .. } => Severity::Medium,
-            Self::InvalidHandle(_) => Severity::Low,
-        }
-    }
-}
-
-impl fmt::Display for KernelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label = match self.severity() {
-            Severity::Critical => "![CRITICAL]!",
-            Severity::High => "[HIGH]",
-            Severity::Medium => "[MEDIUM]",
-            Severity::Low => "[LOW]",
-        };
-        match self {
-            Self::VmoCloneFailed { parent, size } => write!(f, "{} VMO_CLONE_FAIL: parent={} size={}", label, parent, size),
-            Self::VmarMapFailed { vmar_handle, size } => write!(f, "{} VMAR_MAP_FAIL: handle=0x{:x} size={}", label, vmar_handle, size),
-            Self::InvalidHandle(h) => write!(f, "{} INVALID_HANDLE: 0x{:x}", label, h),
-            Self::AlignmentAnomaly { address } => write!(f, "{} ALIGN_FAIL: address=0x{:x}", label, address),
-            Self::SecurityViolation { message, cvss } => write!(f, "{} SECURITY: {} (CVSS: {:.1})", label, message, cvss),
-        }
-    }
-}
-
-impl std::error::Error for KernelError {}
 use crate::kernel::error::KernelError;
 
-/// RealignmentEngine: Native Rust implementation for ARM64 cache alignment.
+pub const CACHE_LINE_SIZE: usize = 64;
+pub const ALIGN_MASK: usize = CACHE_LINE_SIZE - 1;
+
 pub struct RealignmentEngine;
 
 impl RealignmentEngine {
-    /// CACHE_LINE_SIZE: Standard ARM64 cache line size in bytes.
-    pub const CACHE_LINE_SIZE: usize = 64;
-    /// ALIGN_MASK: Mask for bitwise alignment check (64 - 1).
-    pub const ALIGN_MASK: usize = Self::CACHE_LINE_SIZE - 1;
-
     /// check_alignment_fast: Deterministically verifies 64-byte boundaries.
-    /// AUDITOR FIX: Uses bitwise logic and includes a sanity assertion.
     #[inline(always)]
     pub fn check_alignment_fast(address: *const u8) -> Result<(), KernelError> {
         let addr_val = address as usize;
-        
-        // Ensure the mask is valid for the constant cache size
-        debug_assert_eq!(Self::ALIGN_MASK, 63);
-
-        if (addr_val & Self::ALIGN_MASK) == 0 {
+        if (addr_val & ALIGN_MASK) == 0 {
             Ok(())
         } else {
             Err(KernelError::AlignmentAnomaly { address: addr_val })
         }
     }
 }
-pub const ROOT_VMAR_HANDLE: u32 = 0;
-pub const MAX_REGION_SIZE: usize = 1024 * 1024 * 1024;
-pub const ZX_VM_PERM_READ: u32 = 1 << 1;
-pub const ZX_VM_PERM_WRITE: u32 = 1 << 2;
-pub const ZX_VM_MAP_RANGE: u32 = 1 << 4;
+/**
+ * NEXUS KERNEL — ZMAR Mapping v1.1
+ * Virtual Memory Address Region Orchestration
+ */
+use crate::kernel::error::KernelError;
+use crate::kernel::vmo::Vmo;
+
+pub struct Vmar {
+    pub addr: usize,
+    pub size: usize,
+    pub permissions: u32, // R, W, X logic
+}
+
+impl Vmar {
+    /// Maps a Vmo into this address region
+    pub fn map_vmo(&self, vmo: &Vmo, offset: usize, len: usize) -> Result<usize, KernelError> {
+        if offset + len > vmo.size {
+            return Err(KernelError::InvalidArgs);
+        }
+        
+        let target_addr = self.addr + offset;
+        println!("\x1b[35m[VMAR] Mapping VMO handle {} to 0x{:X} [SIZE: {}]\x1b[0m", 
+            vmo.handle, target_addr, len);
+            
+        Ok(target_addr)
+    }
+}
+/*
+ * NEXUS KERNEL — FFI Bridge v1.7 [REAL_MMAP + COW_CLONE_RESTORED]
+ */
+
+#[link(name = "muscle")]
+extern "C" {
+    pub fn zx_vmo_create_native(size: usize) -> u32;
+    pub fn zx_vmo_clone_native(parent_handle: u32, size: usize) -> u32;
+    pub fn zx_handle_close_native(handle: u32);
+    pub fn muscle_get_active_vmos() -> u32;
+    pub fn muscle_get_next_handle() -> u32;
+}
 
 pub trait KernelOps: Send + Sync {
-    fn vmo_clone(&self, parent: u32, size: usize) -> u32;
-    fn vmar_map(&self, vmar: u32, options: u32, vmo: u32, size: usize) -> *mut u8;
+    fn vmo_create(&self, size: usize) -> u32;
+    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32;
     fn handle_close(&self, handle: u32);
+    fn get_active_vmos(&self) -> u32;
+    fn get_next_handle(&self) -> u32;
 }
 
-pub struct HardwareInterface;
+pub struct NativeKernelOps;
 
-impl KernelOps for HardwareInterface {
-    fn vmo_clone(&self, parent: u32, size: usize) -> u32 {
-        println!(">> [MOCK KERNEL] Cloning VMO parent {} with size {}", parent, size);
-        parent + 1 
+impl KernelOps for NativeKernelOps {
+    fn vmo_create(&self, size: usize) -> u32 {
+        unsafe { zx_vmo_create_native(size) }
     }
-    fn vmar_map(&self, vmar: u32, _options: u32, vmo: u32, size: usize) -> *mut u8 {
-        println!(">> [MOCK KERNEL] Mapping VMO {} to VMAR {} (Size: {})", vmo, vmar, size);
-        std::ptr::null_mut() // Safe null pointer for testing
+
+    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32 {
+        unsafe { zx_vmo_clone_native(parent_handle, size) }
     }
+
     fn handle_close(&self, handle: u32) {
-        println!(">> [MOCK KERNEL] Closing handle {}", handle);
+        unsafe { zx_handle_close_native(handle) }
+    }
+    
+    fn get_active_vmos(&self) -> u32 {
+        unsafe { muscle_get_active_vmos() }
+    }
+    
+    fn get_next_handle(&self) -> u32 {
+        unsafe { muscle_get_next_handle() }
+    }
+}
+/**
+ * NEXUS KERNEL — Error Definitions v1.1
+ */
+#[derive(Debug)]
+pub enum KernelError {
+    VmoCloneFailed { parent: u32, size: usize },
+    InvalidArgs,
+    RegistryFull,
+    AlignmentAnomaly { address: usize },
+}
+
+impl std::fmt::Display for KernelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
-pub mod raw {
-    pub unsafe fn nexus_vmar_map(_vmar: u32, _options: u32, _vmo: u32, _size: usize) -> *mut u8 {
-        std::ptr::null_mut()
-    }
-    pub unsafe fn nexus_vmo_clone(parent: u32, _size: usize) -> u32 {
-        parent + 1
-    }
-    pub unsafe fn nexus_handle_close(_handle: u32) {}
-}
-
-#[derive(Clone, Copy)]
-pub struct VmarHandle(pub u32);
-
-impl Default for VmarHandle {
-    fn default() -> Self { Self(ROOT_VMAR_HANDLE) }
-}
+impl std::error::Error for KernelError {}
+/**
+ * NEXUS KERNEL — Zircon VMO Emulation v1.2 [UPGRADED]
+ * Copyright 2026 Donald Ball
+ */
 use crate::kernel::error::KernelError;
 use crate::kernel::ffi::KernelOps;
 use std::sync::Arc;
 
-/// Vmo: Virtual Memory Object owning a kernel handle.
 pub struct Vmo {
     pub handle: u32,
     pub size: usize,
+    pub refcount: u32,
     ops: Arc<dyn KernelOps>,
 }
 
 impl Vmo {
-    /// clone: Generates a child VMO using the provided hardware interface.
-    pub fn clone(ops: Arc<dyn KernelOps>, parent: u32, size: usize) -> Result<Self, KernelError> {
-        if parent == 0 { return Err(KernelError::InvalidHandle(0)); }
-        
-        let handle = ops.vmo_clone(parent, size);
+    pub fn new(ops: Arc<dyn KernelOps>, size: usize) -> Result<Self, KernelError> {
+        let handle = ops.vmo_clone(0, size);
         if handle == 0 {
-            Err(KernelError::VmoCloneFailed { parent, size })
+            Err(KernelError::VmoCloneFailed { parent: 0, size })
         } else {
-            Ok(Self { handle, size, ops })
+            Ok(Self { handle, size, refcount: 1, ops })
+        }
+    }
+
+    /// Zircon-style clone with Snapshot capability
+    pub fn clone(&self, _options: u32) -> Result<Self, KernelError> {
+        // Future: Check _options for ZX_VMO_CHILD_SNAPSHOT
+        let child_handle = self.ops.vmo_clone(self.handle, self.size);
+        
+        if child_handle == 0 {
+            Err(KernelError::VmoCloneFailed { parent: self.handle, size: self.size })
+        } else {
+            println!("\x1b[36m[VMO] COW Clone Created — Handle {} → {} [RESONANCE: 1.00]\x1b[0m", 
+                self.handle, child_handle);
+            Ok(Self { 
+                handle: child_handle, 
+                size: self.size, 
+                refcount: 1, 
+                ops: self.ops.clone() 
+            })
         }
     }
 }
 
 impl Drop for Vmo {
     fn drop(&mut self) {
+        // Handle RAII cleanup
         self.ops.handle_close(self.handle);
     }
 }
-use crate::kernel::error::KernelError;
-use crate::kernel::ffi::{self, ZX_VM_PERM_READ, ZX_VM_PERM_WRITE, ZX_VM_MAP_RANGE};
-use crate::kernel::vmo::Vmo;
-use std::ptr;
 
-/// VirtualMemoryAddressRegion: Orchestrates address space mapping.
-pub struct Vmar;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::ffi::NativeKernelOps;
 
-impl Vmar {
-    /// map: Maps a VMO into the specified VMAR handle using centralized permissions.
-    pub fn map(vmar_handle: u32, vmo: &Vmo) -> Result<*mut u8, KernelError> {
-        let options = ZX_VM_PERM_READ | ZX_VM_PERM_WRITE | ZX_VM_MAP_RANGE;
+    #[test]
+    fn test_vmo_cow_integrity() {
+        let ops = Arc::new(NativeKernelOps);
+        let parent = Vmo::new(ops.clone(), 4096).unwrap();
         
-        let addr = unsafe {
-            ffi::raw::nexus_vmar_map(vmar_handle, options, vmo.handle, vmo.size)
-        };
-
-        if addr == ptr::null_mut() {
-            Err(KernelError::VmarMapFailed { 
-                vmar_handle,
-                size: vmo.size 
-            })
-        } else {
-            Ok(addr)
-        }
+        // Create the Ghost Clone
+        let ghost_clone = parent.clone(0).unwrap();
+        
+        // Assert handles are different but sizes are identical
+        assert_ne!(parent.handle, ghost_clone.handle);
+        assert_eq!(parent.size, ghost_clone.size);
+        println!("\x1b[32m[TEST_PASS] COW Handle Separation Verified\x1b[0m");
     }
 }

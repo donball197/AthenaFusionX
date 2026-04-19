@@ -1,5 +1,7 @@
 <script>
     import { onMount } from 'svelte';
+    import VmoTable from '$lib/components/VmoTable.svelte'; // ⚡ INJECTED VMO TABLE
+
     let memories = $state([]), loading = $state(true), searchQ = $state(''), purging = $state(false), msg = $state(''), expanded = $state(null);
     async function load() { loading=true; try { const r=await fetch('/api/memories'); if(r.ok) memories=await r.json(); } finally { loading=false; } }
     async function search() { if(!searchQ.trim()){load();return;} loading=true; try { const r=await fetch(`/api/memories/search?q=${encodeURIComponent(searchQ)}`); if(r.ok) memories=await r.json(); } finally { loading=false; } }
@@ -10,8 +12,8 @@
 </script>
 <div class="mv" style="display:flex;flex-direction:column;height:100%;background:#020008;font-family:'JetBrains Mono',monospace;">
     <div style="flex:none;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid rgba(167,139,250,.1);background:#04000f;">
-        <div style="font-size:11px;font-weight:900;letter-spacing:.15em;color:#a78bfa;display:flex;align-items:center;gap:6px;">◈ MEMORY_PALACE</div>
-        <div style="font-size:9px;color:rgba(167,139,250,.3);">{memories.length} STRANDS</div>
+        <div style="font-size:11px;font-weight:900;letter-spacing:.15em;color:#a78bfa;display:flex;align-items:center;gap:6px;">◈ NEURAL_STRANDS</div>
+        <div style="font-size:9px;color:rgba(167,139,250,.3);">{memories.length} STORED</div>
     </div>
     <div style="flex:none;padding:10px 12px;border-bottom:1px solid rgba(167,139,250,.06);">
         <div style="display:flex;gap:4px;margin-bottom:6px;">
@@ -24,14 +26,20 @@
             {#if msg}<span style="font-size:9px;color:#34d399;">{msg}</span>{/if}
         </div>
     </div>
-    <div style="flex:1;overflow-y:auto;padding:8px;">
+
+    <div style="flex:1; padding:10px; min-height: 250px;">
+        <VmoTable />
+    </div>
+
+    <div style="flex:1; overflow-y:auto; padding:8px; border-top: 1px solid rgba(167,139,250,.2);">
+        <div style="font-size:8px;font-weight:900;letter-spacing:.15em;color:rgba(167,139,250,.4);margin-bottom:8px;padding-left:4px;">HISTORICAL_STRANDS</div>
         {#if loading}
-            <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px 0;color:rgba(167,139,250,.3);font-size:9px;letter-spacing:.1em;">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px 0;color:rgba(167,139,250,.3);font-size:9px;letter-spacing:.1em;">
                 <div style="width:28px;height:28px;border-radius:50%;border:2px solid rgba(167,139,250,.1);border-top-color:#a78bfa;animation:spin 1s linear infinite;"></div>
                 SCANNING NEURAL ARCHIVE...
             </div>
         {:else if memories.length===0}
-            <div style="padding:40px;text-align:center;font-size:9px;color:rgba(167,139,250,.2);letter-spacing:.15em;">NO MEMORY STRANDS FOUND</div>
+            <div style="padding:20px;text-align:center;font-size:9px;color:rgba(167,139,250,.2);letter-spacing:.15em;">NO MEMORY STRANDS FOUND</div>
         {:else}
             {#each memories as m}
                 <div style="border:1px solid {expanded===m.id?'rgba(167,139,250,.3)':'rgba(167,139,250,.1)'};margin-bottom:5px;background:rgba(167,139,250,.02);transition:border-color .15s;">

@@ -1,0 +1,74 @@
+use std::sync::{Arc, LazyLock};
+use tokio::sync::{broadcast, Semaphore, Mutex};
+use crate::agent_protocol::AgentAction;
+use crate::{executor, json_parser};
+use serde_json::json;
+
+static TASK_SLAB: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
+
+pub async fn send_task(
+    agent: Arc<crate::neural_agent::MicroAgent>,
+    client: &reqwest::Client,
+    api_key: &str,
+    directive: &str,
+    memory: Arc<Mutex<crate::memory::MemoryPalace>>,
+    tx: broadcast::Sender<String>,
+) -> String {
+    let _permit = TASK_SLAB.clone().acquire_owned().await.expect("SLAB_LOCK_FAIL");
+    let mut session_obs = String::from("SENSORS_INIT: Substrate Ready.\n");
+    
+    let system_prompt = r##"
+IDENTITY: Ghost of NEXUS. ROLE: Kernel Orchestrator.
+PROTOCOL: Reasoning in <THOUGHT>, JSON array in <ACTION> block.
+RULE: Only one <ACTION> block per turn.
+"##;
+
+    for turn in 1..=4 {
+        // 🛡️ 4GB SHIELD: Keep memory logs from getting too long for the Duet
+        if session_obs.len() > 2000 {
+            session_obs = format!("...[PRUNED]...\n{}", &session_obs[session_obs.len()-1000..]);
+        }
+
+        let prompt = format!("DIRECTIVE: {}\n\nOBSERVATIONS:\n{}\n\nExecute:", directive, session_obs);
+        let ctx = crate::neural_agent::ContextPacket { system_prompt: Some(system_prompt.into()), ..Default::default() };
+
+        if let Ok((response, _)) = agent.prepare_and_run(client, api_key, &prompt, ctx, 0.7, None).await {
+            
+            // Stream the AI's "Thought" to your terminal
+            if let Some(start) = response.find("<THOUGHT>") {
+                if let Some(end) = response.find("</THOUGHT>") {
+                    let thought = &response[start + 9..end];
+                    let _ = tx.send(json!({"type": "NEURAL_STREAM", "payload": format!("\n\x1b[34m>> [THOUGHT Turn {}]: {}\x1b[0m\n", turn, thought.trim())}).to_string());
+                }
+            }
+
+            match json_parser::extract_actions(&response) {
+                Ok(actions) => {
+                    if actions.is_empty() { 
+                        session_obs.push_str("SYSTEM: Awaiting actions. Turn Complete.\n");
+                        continue; 
+                    }
+                    
+                    match executor::Executor::execute_handle(actions.clone(), memory.clone()).await {
+                        Ok(results) => {
+                            let combined = results.join("\n");
+                            let _ = tx.send(json!({"type": "NEURAL_STREAM", "payload": format!("\x1b[32m>> [EXECUTOR]: {}\x1b[0m\n", combined)}).to_string());
+                            session_obs.push_str(&format!("RESULT: {}\n", combined));
+                        },
+                        Err(e) => {
+                            session_obs.push_str(&format!("ERROR: {}\n", e));
+                        }
+                    }
+                    if actions.iter().any(|a| matches!(a, AgentAction::Halt)) { break; }
+                },
+                Err(e) => {
+                    // ⚡ THE SHADOW-PARSE SUTURE: Tells the AI to fix its own bad JSON
+                    let suture_msg = format!("INTERNAL_SUTURE: Your JSON was invalid ({}). RE-EMIT clean <ACTION> block.", e);
+                    println!("\x1b[33m>> [SYSTEM] Forcing AI Syntax Correction...\x1b[0m");
+                    session_obs.push_str(&format!("{}\n", suture_msg));
+                }
+            }
+        }
+    }
+    "TASK_SEQUENCE_COMPLETE".into()
+}

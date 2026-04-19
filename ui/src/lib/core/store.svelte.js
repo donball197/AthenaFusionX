@@ -1,15 +1,15 @@
 // ════════════════════════════════════════════════════════════════
-//  NEXUS SINGULARITY — Reactive Store v6.1.0 (Dynamic Hardware)
+//  NEXUS SINGULARITY — Reactive Store v6.3.0
 // ════════════════════════════════════════════════════════════════
 
 export const wsState = $state({ ready: false, latency: 0 });
 
 export const systemVitals = $state({
-    cpu_load:    0,
-    ram_gb:      0,
-    total_ram_gb: 4.0, // Dynamic baseline
-    temperature: 0,
-    resonance:   0,
+    cpu_load:     0,
+    ram_gb:       0,
+    total_ram_gb: 4.0,
+    temperature:  0,
+    resonance:    0,
 });
 
 export const terminalState = $state({
@@ -46,5 +46,22 @@ export const ide = $state({
     },
 });
 
-export const layout = $state({ explorerVisible: true, ghostVisible: true });
+export const layout = $state({
+    explorerVisible:    true,
+    ghostVisible:       true,
+    ghostCortexVisible: false,
+    // ⚡ FIX: TacticalBlade.svelte toggles these
+    visorVisible:       false,
+    autopilotActive:    false,
+});
+
 export const fileTreeTrigger = $state({ value: 0 });
+
+export const vmoTelemetry = $state({
+    connected:   false,
+    status:      'DISCONNECTED',
+    active_vmos: 0,
+    next_handle: '0x00',
+    resonance:   0.0,
+    logs:        [],
+});

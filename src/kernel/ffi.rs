@@ -1,25 +1,56 @@
-/*
- * NEXUS KERNEL — FFI Bridge v1.3 [ZIG_FUSED]
- */
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VmoInfo {
+    pub handle: u32,
+    pub size: usize,
+    pub committed_pages: usize,
+    pub is_cow: bool,
+    pub parent_handle: u32,
+}
+
 #[link(name = "muscle")]
 extern "C" {
-    fn zx_vmo_create_native(size: usize) -> u32;
-    fn zx_handle_close_native(handle: u32);
+    pub fn zx_vmo_create_native(size: usize) -> u32;
+    pub fn zx_vmo_clone_native(parent_handle: u32, size: usize) -> u32;
+    pub fn zx_handle_close_native(handle: u32);
+    pub fn zx_vmo_write_native(handle: u32, offset: usize, buffer: *const u8, size: usize) -> i32;
+    pub fn zx_vmo_read_native(handle: u32, offset: usize, buffer: *mut u8, size: usize) -> i32;
+    pub fn muscle_get_active_vmos() -> u32;
+    pub fn muscle_get_next_handle() -> u32;
+    
+    // ⚡ TELEMETRY FFI
+    pub fn zx_vmo_get_info(handle: u32, out_info: *mut VmoInfo) -> i32;
+    pub fn zx_vmo_get_all_handles(out_handles: *mut u32, max_count: usize) -> usize;
 }
 
 pub trait KernelOps: Send + Sync {
+    fn vmo_create(&self, size: usize) -> u32;
     fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32;
     fn handle_close(&self, handle: u32);
+    fn get_active_vmos(&self) -> u32;
+    fn get_next_handle(&self) -> u32;
 }
 
-pub struct NativeOps;
-impl NativeOps { pub fn new() -> Self { Self } }
+pub struct NativeKernelOps;
 
-impl KernelOps for NativeOps {
-    fn vmo_clone(&self, _parent: u32, size: usize) -> u32 {
+impl KernelOps for NativeKernelOps {
+    fn vmo_create(&self, size: usize) -> u32 {
         unsafe { zx_vmo_create_native(size) }
     }
+
+    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32 {
+        unsafe { zx_vmo_clone_native(parent_handle, size) }
+    }
+
     fn handle_close(&self, handle: u32) {
         unsafe { zx_handle_close_native(handle) }
+    }
+    
+    fn get_active_vmos(&self) -> u32 {
+        unsafe { muscle_get_active_vmos() }
+    }
+    
+    fn get_next_handle(&self) -> u32 {
+        unsafe { muscle_get_next_handle() }
     }
 }

@@ -1,0 +1,302 @@
+[
+  {
+    "hash": "ab7ac17add99ab5dab9a5902a0c8177ecd3710a85e8234b68191167795774d7b",
+    "path": "src/server.rs",
+    "backup_path": ".lazarus_vault/ab7ac17add99.bak",
+    "timestamp": 1776539272
+  },
+  {
+    "hash": "9e88c55e8ed24333d9cd3f789653d9bbd068b7f3fb5b26845ab9f49751ab00de",
+    "path": "src/cli.rs",
+    "backup_path": ".lazarus_vault/9e88c55e8ed2.bak",
+    "timestamp": 1776550741
+  },
+  {
+    "hash": "cf4b948bd483c13cdfc3e6ee8ca76a37fa017767ecca127f831483a4e23dd864",
+    "path": "src/void_walker.rs",
+    "backup_path": ".lazarus_vault/cf4b948bd483.bak",
+    "timestamp": 1776550741
+  },
+  {
+    "hash": "a5df2e1e1e3b80168e96f0d858f5b4ff55750ae5ac3ff716cadd48259ec616a9",
+    "path": "src/executor.rs",
+    "backup_path": ".lazarus_vault/a5df2e1e1e3b.bak",
+    "timestamp": 1776550741
+  },
+  {
+    "hash": "01417e6e5db27cb21bbc8d7ea843365ada4d3e60a50b865b25fd62fd15514a0b",
+    "path": "src/kernel/memory.rs",
+    "backup_path": ".lazarus_vault/01417e6e5db2.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "c50fbd87058e0402d5b74ec5dc3477c7ad0fe8c22c3237df33e66c0bc36966d2",
+    "path": "src/kernel/realignment.rs",
+    "backup_path": ".lazarus_vault/c50fbd87058e.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "865fe550ed9e27f233cf9fa7d3baadd67d070c08877fe909bf6d6e69d0115991",
+    "path": "src/kernel/vmar.rs",
+    "backup_path": ".lazarus_vault/865fe550ed9e.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "f4c9306f6275fed4323430e4e7f052b22c2b7f596a451e179ab88f7aed67070a",
+    "path": "src/kernel/ffi.rs",
+    "backup_path": ".lazarus_vault/f4c9306f6275.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "853e04403ea0dbfc34cd1bd7f7df9f3c6122593ba1684f343a49a368e5290b59",
+    "path": "src/kernel/error.rs",
+    "backup_path": ".lazarus_vault/853e04403ea0.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "5d0651ffdc797bf5fa1e501c8a63ae882b5f51c99b2a9c978ad54c83659bf3a6",
+    "path": "src/kernel/vmo.rs",
+    "backup_path": ".lazarus_vault/5d0651ffdc79.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "207c450d0164c77675f0b14873cab4fb1ae5b8f4f639bc40a61f1e1128c7d492",
+    "path": "src/alloc.rs",
+    "backup_path": ".lazarus_vault/207c450d0164.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "890728247526515fdd2bb362376b909a878e27b070f9dd40365cd5906c3d46f7",
+    "path": "src/broker.rs",
+    "backup_path": ".lazarus_vault/890728247526.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "3ea347f5c64c9b0b24f32e1b8de069ff05bc4c5a1c172a22036b300577dfbfb5",
+    "path": "src/inquisitor.rs",
+    "backup_path": ".lazarus_vault/3ea347f5c64c.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "080a37655a72f7b493bcddcb8881ba35e776566663f147fa415df2aab76c9e40",
+    "path": "src/podman.rs",
+    "backup_path": ".lazarus_vault/080a37655a72.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "91eb24dd48632397df354673b6032dd888145bd387fdc8fa1605b7519e3c133d",
+    "path": "src/thermal_governor.rs",
+    "backup_path": ".lazarus_vault/91eb24dd4863.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "e7b3d1e4fda346295a5dcb33b5acd397bd7900056de215187359e90c159e770b",
+    "path": "src/diff.rs",
+    "backup_path": ".lazarus_vault/e7b3d1e4fda3.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "049a7b5e3040ad8bada3a6c78523261a16b3b62aa093cda471edba497cfdc082",
+    "path": "src/resonator.rs",
+    "backup_path": ".lazarus_vault/049a7b5e3040.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "1f095a88de9f50ee808efd59b046b58b5ad41b2a09f06c30cb8032ecd63909d1",
+    "path": "src/fs_utils.rs",
+    "backup_path": ".lazarus_vault/1f095a88de9f.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "aab90f829f5b850f6edc379f7856ada3327f609ff937d227e2f827a0a7a7babf",
+    "path": "src/local_llm.rs",
+    "backup_path": ".lazarus_vault/aab90f829f5b.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "eaa5045620867a496f4baeec9633e659875b47077884ad0f37b3926bbcf28099",
+    "path": "src/metrics.rs",
+    "backup_path": ".lazarus_vault/eaa504562086.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "348d166831952ad5ba72828bb958ad24fb374aa276cc42ea5cc877dcc952bdf3",
+    "path": "src/sandbox.rs",
+    "backup_path": ".lazarus_vault/348d16683195.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "5feff23790538676e2d06b7cdfd88fde2900000e8e5eb7da64420fc3f0600c1a",
+    "path": "src/mission_control.rs",
+    "backup_path": ".lazarus_vault/5feff2379053.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "d2348047e57989d3a7ff20dc37a168c08763983d44d9278bef1194cf51f0abd8",
+    "path": "src/cli.rs",
+    "backup_path": ".lazarus_vault/d2348047e579.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "b10c22ed10d7a7c1bcf636bc93e24cf8192deafef4930233357384b2509f1855",
+    "path": "src/memory.rs",
+    "backup_path": ".lazarus_vault/b10c22ed10d7.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "70039c5980a17a9950a65e64c9d8910e4402331b0a0497969f7cc58ce730ca78",
+    "path": "src/void_walker.rs",
+    "backup_path": ".lazarus_vault/70039c5980a1.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "f7c1e8ea7b741789c86a05f7c180964592474783ae868bc13195b513af0bb243",
+    "path": "src/json_parser.rs",
+    "backup_path": ".lazarus_vault/f7c1e8ea7b74.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "32b4804661f8d84e785a617dc59c4b375e1aaf6888480a097bab49e50548c216",
+    "path": "src/stream_optimizer.rs",
+    "backup_path": ".lazarus_vault/32b4804661f8.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "5e1161961ff1fd7b423d0efdd59b49a0bbcb3958597ff31f5082f737b52067fc",
+    "path": "src/services/litert.rs",
+    "backup_path": ".lazarus_vault/5e1161961ff1.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "72df1e41bb69d5dfec4d64939d51fe2063c591c802ea50a06d73bcc34f193f93",
+    "path": "src/arbiter_agent.rs",
+    "backup_path": ".lazarus_vault/72df1e41bb69.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "d827b16727acf277489c254de1d6a43b6afd60cb49a8058fba4a73811f71fa8f",
+    "path": "src/orchestrator.rs",
+    "backup_path": ".lazarus_vault/d827b16727ac.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "0b60592e388c61e278e8086ada3ccdb997c5f698a4997bf574f464850734c5b3",
+    "path": "src/agents/pruner.rs",
+    "backup_path": ".lazarus_vault/0b60592e388c.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "4de8968335aae3eb3d8b735e4a09da863f4c1ddf6a195a7f07f7a4f2a22a1180",
+    "path": "src/agents/data_agent.rs",
+    "backup_path": ".lazarus_vault/4de8968335aa.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "d2477dbef4acab4361534337e0c55c5c8bbc76745b7afebc422cb629fe132173",
+    "path": "src/agents/scribe_agent.rs",
+    "backup_path": ".lazarus_vault/d2477dbef4ac.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "47df89f15a3c9466c8c79630449df0198b9f0a3dcb34e0e667630fec37daabd8",
+    "path": "src/agents/scout_agent.rs",
+    "backup_path": ".lazarus_vault/47df89f15a3c.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "2b9ca90d07dec84f758aa349c4a7d2f968c679857aaeae52253039b83920cdce",
+    "path": "src/component_runner.rs",
+    "backup_path": ".lazarus_vault/2b9ca90d07de.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "3754f21db093b08cee6368523d7d0e3fdfd88f0631634d6f4cf57964b65218bf",
+    "path": "src/mission_planner.rs",
+    "backup_path": ".lazarus_vault/3754f21db093.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "4a34ff8d4b68c1ee5b870cb4b99eeff73e6a8bf1571bc63630dd9fac87358537",
+    "path": "src/swarm/consensus.rs",
+    "backup_path": ".lazarus_vault/4a34ff8d4b68.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "36eccd0539a858e109dbdec65f23c2dda5008a11b6918fc4bee3c47638a5d6a8",
+    "path": "src/swarm/swarm_node.rs",
+    "backup_path": ".lazarus_vault/36eccd0539a8.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "d9542543d42c2ce753d642b26920ee4cc16530c6fdafc4435b6cbd3c75b6f079",
+    "path": "src/swarm/swarm_core.rs",
+    "backup_path": ".lazarus_vault/d9542543d42c.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "1ea91532dee31bbd1d993fdda023da0c45a777f614b134e527f6d488e9f1cf13",
+    "path": "src/swarm/arbiter.rs",
+    "backup_path": ".lazarus_vault/1ea91532dee3.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "25987483a1f86815df9de2cb6f5c0c9e13f654aeeaa3e3d2560745fc2d1bbfcf",
+    "path": "src/executor.rs",
+    "backup_path": ".lazarus_vault/25987483a1f8.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "4a399d513dc617de5a4a7bc12ade050dd10d31e69070534b7f3de18ee278da93",
+    "path": "src/litert_bridge.rs",
+    "backup_path": ".lazarus_vault/4a399d513dc6.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "c823dfb81bf74f058af405c65b73f4ea72fcca4d4c6e2e2fceb2c1779c4d5500",
+    "path": "src/factory.rs",
+    "backup_path": ".lazarus_vault/c823dfb81bf7.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "adcd59d462670ce25d19c55a6a13fddcad8acf5c7564efaa48868471acd54126",
+    "path": "src/task_manager.rs",
+    "backup_path": ".lazarus_vault/adcd59d46267.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "f1e3d75a0d449292e934a4fb7ebe7e50555be183d790995ce3bc10cfb513d855",
+    "path": "src/self_healing_engine.rs",
+    "backup_path": ".lazarus_vault/f1e3d75a0d44.bak",
+    "timestamp": 1776554840
+  },
+  {
+    "hash": "dfd0f684243359a7fcfed875ad25a85a1d20cd5e47ac305e9c6462cef0af6a16",
+    "path": "src/scheduler.rs",
+    "backup_path": ".lazarus_vault/dfd0f6842433.bak",
+    "timestamp": 1776554841
+  },
+  {
+    "hash": "7afa82bcbc16659dbb68dd2ada803f26f628c8fb3bfd6ccfe406158d220b8fc6",
+    "path": "src/ws_bridge.rs",
+    "backup_path": ".lazarus_vault/7afa82bcbc16.bak",
+    "timestamp": 1776554841
+  },
+  {
+    "hash": "38f139358d4fecb1b9f4b5074724093db0c55a8065b72493d5c8b51b17c3f52f",
+    "path": "src/vitals_handler.rs",
+    "backup_path": ".lazarus_vault/38f139358d4f.bak",
+    "timestamp": 1776554841
+  },
+  {
+    "hash": "4fa6981daf51fd0b91a078badf6b9a95ba529b4ac1283a31ca1d793bb127b0b5",
+    "path": "src/neural_agent.rs",
+    "backup_path": ".lazarus_vault/4fa6981daf51.bak",
+    "timestamp": 1776554841
+  },
+  {
+    "hash": "73c0ccef2c9ee0a840c05b6e0c2fb9f14e4e7cfc9a793ace8c21338ccfe72082",
+    "path": "src/server.rs",
+    "backup_path": ".lazarus_vault/73c0ccef2c9e.bak",
+    "timestamp": 1776554841
+  }
+]

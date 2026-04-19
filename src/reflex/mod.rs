@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2026 Donald Ball
  *
  * Licensed under the Apache License, Version 2.0 (the "License");

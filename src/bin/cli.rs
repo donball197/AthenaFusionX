@@ -1,23 +1,7 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
 use anyhow::Result;
 use nexus_singularity::{cli, memory, neural_agent, task_manager};
 use std::sync::Arc;
+use std::io::{self, Write};
 use tokio::sync::{broadcast, Mutex};
 
 #[tokio::main]
@@ -26,14 +10,11 @@ async fn main() -> Result<()> {
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY missing");
     let client = reqwest::Client::new();
 
-    // SUTURE: Binary needs its own broadcast channel for streaming
     let (tx, _) = broadcast::channel(16);
-
     let agent = Arc::new(neural_agent::MicroAgent::init(tx.clone())?);
     let memory_palace = memory::MemoryPalace::new(".nexus_memory.db").await?;
     let memory = Arc::new(Mutex::new(memory_palace));
 
-    // Simple CLI logic for the standalone bin
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         println!("Usage: nexus <directive>");
@@ -41,13 +22,33 @@ async fn main() -> Result<()> {
     }
 
     let raw_directive = args[1..].join(" ");
-    let enriched_directive = cli::inject_workspace_dna(&raw_directive);
+    let enriched = cli::inject_workspace_dna(&raw_directive);
 
-    println!("\x1b[36m>> [CLI_UPLINK] Sending directive to NEXUS Cortex...\x1b[0m");
+    println!("\x1b[36m>> [NEXUS] Directive received. Processing...\x1b[0m");
 
-    // SUTURE: Added the 6th argument (tx)
-    let _ =
-        task_manager::send_task(agent, &client, &api_key, &enriched_directive, memory, tx).await;
+    let mut rx = tx.subscribe();
 
+    let printer = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&msg) {
+                // ⚡ SUTURE: Print raw streams live to terminal. 
+                // Ignore bulk THOUGHT/EXECUTOR broadcasts since task_manager already println!s them.
+                if val["type"].as_str() == Some("NEURAL_STREAM") {
+                    if let Some(text) = val["payload"].as_str() {
+                        print!("{}", text);
+                        io::stdout().flush().ok();
+                    }
+                }
+            }
+        }
+    });
+
+    let _ = task_manager::send_task(
+        agent, &client, &api_key, &enriched, memory, tx
+    ).await;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    printer.abort();
+    println!("\n\x1b[32m>> [DONE]\x1b[0m");
     Ok(())
 }

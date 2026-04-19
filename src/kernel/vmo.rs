@@ -53,11 +53,11 @@ impl Drop for Vmo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::ffi::NativeOps;
+    use crate::kernel::ffi::NativeKernelOps;
 
     #[test]
     fn test_vmo_cow_integrity() {
-        let ops = Arc::new(NativeOps::new());
+        let ops = Arc::new(NativeKernelOps);
         let parent = Vmo::new(ops.clone(), 4096).unwrap();
         
         // Create the Ghost Clone

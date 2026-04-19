@@ -6,6 +6,7 @@ pub enum KernelError {
     VmoCloneFailed { parent: u32, size: usize },
     InvalidArgs,
     RegistryFull,
+    AlignmentAnomaly { address: usize },
 }
 
 impl std::fmt::Display for KernelError {

@@ -1,19 +1,59 @@
 use crate::agent_protocol::AgentAction;
 use crate::memory::MemoryPalace;
+use crate::lazarus_vault::LazarusVault;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::process::Command;
 use tokio::fs;
+use std::path::Path;
 
 pub struct Executor;
 
 impl Executor {
-    pub async fn execute_handle(actions: Vec<AgentAction>, _memory: Arc<Mutex<MemoryPalace>>) -> Result<Vec<String>, String> {
+    pub async fn execute_handle(
+        actions: Vec<AgentAction>,
+        memory: Arc<Mutex<MemoryPalace>>,
+    ) -> Result<Vec<String>, String> {
         let mut results = Vec::new();
 
         for action in actions {
             match action {
+                AgentAction::SearchMemory { query } => {
+                    let palace = memory.lock().await;
+                    let search_result = if query.to_uppercase().contains("RANDOM") {
+                        palace.fetch_random_strands(10).await
+                    } else {
+                        palace.search_memories(&query).await
+                    };
+                    match search_result {
+                        Ok(strands) => {
+                            let mut out = format!("MEMORY_SEARCH for '{}':\n", query);
+                            if strands.is_empty() {
+                                out.push_str("No neural strands found.");
+                            }
+                            for s in strands {
+                                out.push_str(&format!(
+                                    "[{}] Dir: {} | Res: {}\n",
+                                    s.timestamp, s.directive, s.result
+                                ));
+                            }
+                            results.push(out);
+                        }
+                        Err(e) => results.push(format!("SEARCH_ERROR: {}", e)),
+                    }
+                }
+
                 AgentAction::ExecuteCommand { command } => {
+                    let blocked = [
+                        "rm -rf /", "mkfs", "dd if=/dev/random of=/dev/sd",
+                        ":(){ :|:& };:", "/etc/shadow", "chmod 777 /",
+                        "curl | bash", "wget | bash", "sudo rm -rf",
+                    ];
+                    if blocked.iter().any(|&b| command.contains(b)) {
+                        results.push(format!("FIREWALL_BLOCK: Dangerous pattern in '{}'", command));
+                        continue;
+                    }
+
                     let output = Command::new("sh")
                         .arg("-c")
                         .arg(&command)
@@ -23,28 +63,72 @@ impl Executor {
 
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    
-                    let mut res = String::new();
-                    if !stdout.is_empty() { res.push_str(&stdout); }
-                    if !stderr.is_empty() { 
-                        if !res.is_empty() { res.push('\n'); }
-                        res.push_str(&format!("STDERR: {}", stderr)); 
+
+                    let stdout_is_empty = stdout.is_empty();
+                    let stderr_is_empty = stderr.is_empty();
+
+                    if !stdout_is_empty && !stderr_is_empty {
+                        results.push(format!("{}\n{}", stdout, stderr));
+                    } else if !stdout_is_empty {
+                        results.push(stdout);
+                    } else if !stderr_is_empty {
+                        results.push(stderr);
+                    } else {
+                        results.push(format!("OK (exit: {})", output.status.code().unwrap_or(-1)));
                     }
-                    if res.is_empty() { res.push_str("Command executed silently."); }
-                    
-                    results.push(res);
-                },
-                AgentAction::WriteFile { path, content } => {
-                    fs::write(&path, &content).await.map_err(|e| e.to_string())?;
-                    results.push(format!("File '{}' written successfully.", path));
-                },
-                AgentAction::SystemStatus { data } => {
-                    // Logs or processes the JSON telemetry payload from the Ghost
-                    results.push(format!("SYSTEM_STATUS_LOGGED: {}", data));
-                },
-                AgentAction::Halt => {
-                    results.push("HALT_SIGNAL".to_string());
                 }
+
+                AgentAction::VmoPulse => {
+                    let handle = unsafe { crate::kernel::zx_vmo_create_native(4096) };
+                    crate::kernel::register_handle(
+                        handle,
+                        crate::kernel::HandleType::Vmo(handle),
+                    );
+                    results.push(format!("VMO_PULSE: 0x{:x}", handle));
+                }
+
+                AgentAction::WriteFile { path, content } => {
+                    let blocked_paths = ["src/kernel", "Cargo.toml", "/etc/", "/bin/", "/usr/"];
+                    if blocked_paths.iter().any(|&p| path.contains(p)) {
+                        results.push(format!("DNA_BLOCK: Write forbidden to '{}'", path));
+                        continue;
+                    }
+                    if let Some(parent) = Path::new(&path).parent() {
+                        if !parent.as_os_str().is_empty() {
+                            fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+                        }
+                    }
+                    fs::write(&path, &content).await.map_err(|e| e.to_string())?;
+                    results.push(format!("FILE_WRITTEN: '{}'", path));
+                }
+
+                AgentAction::ExportReport { title, content } => {
+                    fs::create_dir_all("exports").await.map_err(|e| e.to_string())?;
+                    let safe_title = title
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+                        .collect::<String>();
+                    let filename = format!("exports/AUDIT_{}.md", safe_title);
+                    fs::write(&filename, content).await.map_err(|e| e.to_string())?;
+                    results.push(format!("EXPORT_SUCCESS: {}", filename));
+                }
+
+                // ⚡ SUTURE: Aligned signature for LazarusVault::auto_snapshot
+                AgentAction::LazarusSnapshot { path, tag } => {
+                    let tag_str = tag.unwrap_or_else(|| "ghost_auto".to_string());
+                    match LazarusVault::auto_snapshot(&path, &tag_str).await {
+                        Ok(_) => {
+                            results.push(format!("LAZARUS_SNAPSHOT_CREATED: {} | Tag: {}", path, tag_str));
+                        }
+                        Err(e) => results.push(format!("LAZARUS_FAULT: {}", e)),
+                    }
+                }
+
+                AgentAction::Halt => {
+                    results.push("SEQUENCE_HALTED".to_string());
+                    break;
+                }
+
             }
         }
         Ok(results)

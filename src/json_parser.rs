@@ -1,38 +1,56 @@
 /**
- * Project Nexus Singularity - Neural Action Extractor (Hardened)
- * v2.1.2 - Supports Multi-line and Array-based Action DNA
+ * Project Nexus Singularity - Neural Action Extractor (Finality)
+ * v2.7.0 - Context-Aware String Sanitization
  */
 use crate::agent_protocol::AgentAction;
 use anyhow::{Result, anyhow};
 use regex::Regex;
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
-    // ⚡ SUTURE: Added (?s) flag for DotAll mode (matches newlines)
     let re = Regex::new(r"(?s)<ACTION>(.*?)</ACTION>").unwrap();
-    let mut actions = Vec::new();
+    let caps: Vec<_> = re.captures_iter(response).collect();
 
-    for cap in re.captures_iter(response) {
-        let json_str = cap[1].trim();
-        let clean_json = json_str.trim_start_matches("```json")
-                                 .trim_start_matches("```")
-                                 .trim_end_matches("```")
-                                 .trim();
+    if caps.is_empty() {
+        return response.contains("<ACTION>")
+            .then(|| Err(anyhow!("PROTOCOL_VIOLATION: Malformed tags.")))
+            .unwrap_or(Ok(Vec::new()));
+    }
 
-        // ⚡ SUTURE: First attempt to parse as a Vec (Array)
-        if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(clean_json) {
-            actions.extend(vec);
-        } 
-        // Second attempt to parse as a single AgentAction (Object)
-        else if let Ok(single) = serde_json::from_str::<AgentAction>(clean_json) {
-            actions.push(single);
+    let raw_json = caps.last().unwrap()[1].trim();
+    let clean_json = raw_json.trim_start_matches("```json")
+                             .trim_start_matches("```")
+                             .trim_end_matches("```")
+                             .trim();
+
+    // ⚡ SMART SUTURE: Context-Aware Newline Escaping
+    // We only escape newlines if they occur inside double quotes.
+    let mut sanitized = String::new();
+    let mut in_string = false;
+    let mut chars = clean_json.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '"' { in_string = !in_string; }
+        if c == '\n' && in_string {
+            sanitized.push_str("\\n");
+        } else if c == '\r' {
+            continue;
         } else {
-            println!("!! [PARSER_FAULT] Invalid Action DNA (Syntax Error): {}", clean_json);
+            sanitized.push(c);
         }
     }
 
-    if actions.is_empty() && response.contains("<ACTION>") {
-        return Err(anyhow!("PROTOCOL_VIOLATION: Malformed DNA inside tags."));
+    // 1. Attempt standard parse
+    if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(&sanitized) {
+        return Ok(vec);
+    } 
+
+    // 2. Deep Clean Fallback (Locate Array)
+    if let (Some(start), Some(end)) = (sanitized.find('['), sanitized.rfind(']')) {
+        let deep_clean = &sanitized[start..=end];
+        if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(deep_clean) {
+            return Ok(vec);
+        }
     }
 
-    Ok(actions)
+    Err(anyhow!("PROTOCOL_VIOLATION: Strict Schema Mismatch in Sanitized DNA."))
 }

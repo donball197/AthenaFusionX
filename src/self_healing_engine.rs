@@ -1,13 +1,9 @@
-/**
- * Copyright 2026 Donald Ball
- * Project Nexus Singularity - v2.2 (Arbiter + Memory API Sync)
- */
-
 use crate::{
     arbiter_agent::ArbiterAgent,
     inquisitor::Inquisitor,
     memory::MemoryPalace,
     mission_planner::{Mission, MissionStep, StepStatus},
+    scheduler::NexusTask,
     server::AppState,
     thermal_governor::ThermalGovernor,
 };
@@ -17,14 +13,8 @@ use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HealingLayer {
-    Kernel,
-    Backend,
-    Frontend,
-    Swarm,
-}
+pub enum HealingLayer { Kernel, Backend, Frontend, Swarm, MemoryPressure, OrphanedModules }
 
-#[derive(Debug)]
 pub struct HealingIssue {
     pub layer: HealingLayer,
     pub description: String,
@@ -33,157 +23,70 @@ pub struct HealingIssue {
 
 pub struct SelfHealingEngine {
     state: Arc<AppState>,
-    memory: Arc<Mutex<MemoryPalace>>,
     governor: ThermalGovernor,
 }
 
 impl SelfHealingEngine {
-    pub fn new(state: Arc<AppState>, memory: Arc<Mutex<MemoryPalace>>) -> Self {
-        Self { state, memory, governor: ThermalGovernor::new() }
+    pub fn new(state: Arc<AppState>, _memory: Arc<Mutex<MemoryPalace>>) -> Self {
+        Self { state, governor: ThermalGovernor::new() }
     }
 
     pub async fn ignite_autonomic_loop(self) {
-        println!("\x1b[36m>> [SELF-HEALING v2.2] Autonomic Loop Started (4GB safe)\x1b[0m");
+        println!("\x1b[36m>> [SELF-HEALING v2.2] Scheduler-Integrated Autonomic Loop Active\x1b[0m");
 
         loop {
             self.governor.apply_cooldown().await;
 
-            let mut monitor = self.state.monitor.lock().await; let vitals = monitor.get_vitals();
+            let vitals = {
+                let mut monitor = self.state.monitor.lock().await;
+                monitor.get_vitals()
+            };
 
-            // Resource guard for Lenovo Duet 4GB
-            if vitals.cpu_load > 0.65 || vitals.temperature > 68.0 || vitals.ram_gb > 3.2 {
-                sleep(Duration::from_secs(90)).await;
-                continue;
+            if vitals.cpu_load > 0.80 || vitals.temperature > 68.0 || vitals.ram_gb > vitals.total_ram_gb * 0.82 {
+                let _ = self.state.scheduler_tx.send(NexusTask {
+                    payload: "THROTTLE_SEMAPHORE".into(),
+                    priority: 0,
+                }).await;
+                println!("\x1b[33m[HEALING] High pressure — scheduler throttled\x1b[0m");
             }
 
             let issues = self.diagnose().await;
-
             for issue in issues {
-                let priority = self.calculate_priority(&issue, &vitals).await;
-
-                if priority <= 0.52 {
-                    println!(
-                        ">> [SELF-HEALING] Issue priority {:.2} below threshold — skipping.",
-                        priority
-                    );
-                    continue;
-                }
-
-                // ⚡ SUTURE: Updated Arbiter API Binding (1 Argument)
                 let arbiter = ArbiterAgent::new(self.state.agent.clone());
+                if let Ok(verdict) = arbiter.analyze_directive(&self.state.api_key, &issue.description, &vitals).await {
+                    if !verdict.can_proceed { continue; }
 
-                // ⚡ SUTURE: Passing 'vitals' to the new Heuristic Judge
-                match arbiter.analyze_directive(&self.state.api_key, &issue.description, &vitals).await {
-                    Ok(report) => {
-                        if !report.can_proceed {
-                            println!(
-                                "\x1b[33m>> [ARBITER] Healing blocked (score {}): {}\x1b[0m",
-                                report.risk_score, report.recommendation
-                            );
-                            continue;
-                        }
-                        println!(
-                            "\x1b[32m>> [ARBITER] Authorized (score {}): {}\x1b[0m",
-                            report.risk_score, report.recommendation
-                        );
-                    }
-                    Err(e) => {
-                        println!(
-                            "\x1b[33m>> [ARBITER] Analysis failed ({}), using fallback gate.\x1b[0m",
-                            e
-                        );
-                        // Fallback: only proceed if CVSS is below critical
-                        if issue.cvss >= 9.0 {
-                            println!(">> [ARBITER] CVSS >= 9.0 — blocking without Arbiter confirmation.");
-                            continue;
-                        }
-                    }
+                    let mission = self.create_mission(&issue).await;
+                    let _ = self.state.scheduler_tx.send(NexusTask {
+                        payload: format!("HEAL: {:?}", issue.layer),
+                        priority: 2,
+                    }).await;
+
+                    let _ = crate::mission_planner::MissionPlanner::execute(&self.state, mission).await;
                 }
-
-                let mission = self.create_mission(&issue).await;
-                let _ = crate::mission_planner::MissionPlanner::execute(&self.state, mission).await;
             }
 
-            self.record_cycle().await;
-            sleep(Duration::from_secs(75)).await;
+            sleep(Duration::from_secs(120)).await;
         }
     }
 
     async fn diagnose(&self) -> Vec<HealingIssue> {
         let mut issues = Vec::new();
-
         if let Ok(log) = Inquisitor::audit_backend() {
             if log != "NOMINAL" {
-                issues.push(HealingIssue {
-                    layer: HealingLayer::Backend,
-                    description: log,
-                    cvss: 7.5,
-                });
-            }
-        }
-        if let Ok(log) = Inquisitor::audit_ui() {
-            if log != "NOMINAL" {
-                issues.push(HealingIssue {
-                    layer: HealingLayer::Frontend,
-                    description: log,
-                    cvss: 6.8,
-                });
+                issues.push(HealingIssue { layer: HealingLayer::Backend, description: log, cvss: 7.0 });
             }
         }
         issues
-    }
-
-    async fn calculate_priority(
-        &self,
-        issue: &HealingIssue,
-        vitals: &crate::system_monitor::Vitals,
-    ) -> f32 {
-        let base = issue.cvss / 10.0;
-        let thermal_factor = if vitals.temperature > 65.0 { 0.6 } else { 1.0 };
-        base * thermal_factor * 0.78
     }
 
     async fn create_mission(&self, issue: &HealingIssue) -> Mission {
         Mission {
             id: format!("heal-{}", Utc::now().timestamp()),
             goal: format!("Repair {:?}", issue.layer),
-            steps: vec![
-                MissionStep {
-                    id: 1,
-                    description: "Lazarus pre-snapshot".into(),
-                    action: None,
-                    status: StepStatus::Pending,
-                    result: None,
-                },
-                MissionStep {
-                    id: 2,
-                    description: format!("Fix {:?}", issue.layer),
-                    action: None,
-                    status: StepStatus::Pending,
-                    result: None,
-                },
-                MissionStep {
-                    id: 3,
-                    description: "Validate repair".into(),
-                    action: None,
-                    status: StepStatus::Pending,
-                    result: None,
-                },
-            ],
+            steps: vec![MissionStep { id: 1, description: "Lazarus check".into(), action: None, status: StepStatus::Pending, result: None }],
             created_at: Utc::now().to_rfc3339(),
             completed: false,
         }
-    }
-
-    async fn record_cycle(&self) {
-        let palace = self.memory.lock().await;
-        // ⚡ SUTURE: Cleaned the phantom float argument. Exactly 3 arguments.
-        let _ = palace
-            .store_memory(
-                "SelfHealingEngine",
-                "autonomic_cycle",
-                "Completed diagnostic + repair pass with Arbiter gating"
-            )
-            .await;
     }
 }

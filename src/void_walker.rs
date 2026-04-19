@@ -1,21 +1,13 @@
-/**
- * Copyright 2026 Donald Ball
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- */
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct VoidWalker;
 
 impl VoidWalker {
-    /// Deep-scans the project to ensure every .rs file is linked to the module tree.
     pub fn identify_orphans() -> Vec<String> {
         let mut orphans = Vec::new();
         let mut declared_mods = Vec::new();
 
-        // 1. Map the entire Module Tree starting from roots
         let root_files = ["src/main.rs", "src/lib.rs"];
         for root in &root_files {
             if let Ok(content) = fs::read_to_string(root) {
@@ -23,19 +15,21 @@ impl VoidWalker {
             }
         }
 
-        // 2. Recursive Scan of the physical filesystem
         let mut all_files = Vec::new();
         let _ = Self::visit_dirs(Path::new("src"), &mut all_files);
 
-        // 3. Cross-reference absolute paths to prevent name collisions
+        // ⚡ SUTURE: Ignore common build directories to prevent endless snapshot spam
+        let ignore_dirs = ["target", "ziggy-llm", "node_modules", ".lazarus_vault", "ui/dist"];
+
         for file_path in all_files {
             let path_str = file_path.to_string_lossy().to_string();
             
-            // Safe Zone: Entry points and standalone binaries
-            if path_str.contains("/bin/") || path_str.ends_with("main.rs") || path_str.ends_with("lib.rs") || path_str.ends_with("mod.rs") {
+            if ignore_dirs.iter().any(|d| path_str.contains(d)) {
                 continue;
             }
-
+            if path_str.ends_with("mod.rs") || path_str.contains("/bin/") {
+                continue;
+            }
             if !declared_mods.iter().any(|m| path_str.ends_with(m)) {
                 orphans.push(path_str);
             }
@@ -43,15 +37,12 @@ impl VoidWalker {
         orphans
     }
 
-    /// Recursively traces mod declarations to find their associated files
     fn trace_module_tree(current_file: &Path, content: &str, whitelist: &mut Vec<String>) {
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
                 if let Some(mod_name) = trimmed.split_whitespace().nth(if trimmed.starts_with("pub") { 2 } else { 1 }) {
                     let name = mod_name.trim_end_matches(';');
-                    
-                    // Predict potential file paths for this module
                     let parent = current_file.parent().unwrap_or(Path::new(""));
                     let possible_paths = vec![
                         parent.join(format!("{}.rs", name)),
@@ -64,7 +55,6 @@ impl VoidWalker {
                             let path_key = path.to_string_lossy().to_string();
                             if !whitelist.contains(&path_key) {
                                 whitelist.push(path_key);
-                                // Follow the rabbit hole: Read and trace the sub-module
                                 if let Ok(sub_content) = fs::read_to_string(&path) {
                                     Self::trace_module_tree(&path, &sub_content, whitelist);
                                 }

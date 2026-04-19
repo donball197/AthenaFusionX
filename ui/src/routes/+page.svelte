@@ -1,20 +1,14 @@
-<script>
-// ═══════════════════════════════════════════════════════════════════════
-//  NEXUS SINGULARITY — Master SPA v6.2.0
-//  AUDIT FIXES:
-//    ✓ File open: path used AS-IS (relative) — no /home/... prefix
-//    ✓ NavHeader always mounted at top
-//    ✓ GhostBlade always in DOM (layout.ghostVisible controls render)
-//    ✓ StatusBar always at bottom
-//    ✓ Terminal embedded in WORKSPACE + NEXUS_OS panels
-//    ✓ store: wsState.ready, fileTreeTrigger.value, ide.openTabs[]
-//    ✓ Auto-save 1s debounce via $effect
-//    ✓ Ctrl+S manual save
-// ═══════════════════════════════════════════════════════════════════════
-import { ide, layout, fileTreeTrigger }  from '$lib/core/store.svelte.js';
-import { pushTermLine, WS }               from '$lib/core/NexusWS.js';
-import { fly }                            from 'svelte/transition';
-import { onMount }                        from 'svelte';
+<script lang="ts">
+// ═══════════════════════════════════════════════════════════════
+//  NEXUS SINGULARITY — Master SPA v6.4.0
+//  FIX: socket.sendCommand -> socket.send
+//  FIX: loadSnaps uses /api/task directive instead of missing route
+// ═══════════════════════════════════════════════════════════════
+import { ide, layout, fileTreeTrigger } from '$lib/core/store.svelte.js';
+import { pushTermLine }      from '$lib/core/NexusWS.js';
+import { fly }               from 'svelte/transition';
+import { onMount, onDestroy } from 'svelte';
+import { createNexusSocket } from '$lib/nexus_socket.svelte';
 
 import NavHeader   from '$lib/components/NavHeader.svelte';
 import GhostBlade  from '$lib/components/GhostBlade.svelte';
@@ -27,83 +21,68 @@ import MemoryVault from '$lib/components/MemoryVault.svelte';
 import SecOps      from '$lib/components/SecOps.svelte';
 import AgentLab    from '$lib/components/AgentLab.svelte';
 
-// ── NAV ────────────────────────────────────────────────────────────────
+// ── Telemetry Uplink ───────────────────────────────────────────
+let socket = createNexusSocket('/ws/telemetry');
+onDestroy(() => socket.destroy());
+
+// ── Navigation ─────────────────────────────────────────────────
 let activeNav = $state('NEXUS_OS');
 
-// ── OPEN FILE ──────────────────────────────────────────────────────────
-// CRITICAL FIX: path arrives from sidebar as relative e.g. "src/main.rs"
-// We pass it directly — the Axum sandbox handler resolves from workspace root.
-// Do NOT prepend anything. The old bug: `/home/donball197/..././${path}`
-let openInput  = $state('');
-let openError  = $state('');
+// ── File Orchestration ─────────────────────────────────────────
+let openInput = $state('');
+let openError = $state('');
 
-async function openFile(path) {
+async function openFile(path: string) {
     if (!path?.trim()) return;
     openError = '';
-
-    // Already open? Just switch focus.
     if (ide.openTabs.some(t => t.path === path)) {
         ide.activeTab = path;
         activeNav = 'IDE';
         return;
     }
-
     try {
         const r = await fetch(`/api/fs/read?path=${encodeURIComponent(path)}`);
-        if (!r.ok) {
-            openError = `Cannot open: ${path} (HTTP ${r.status})`;
-            pushTermLine(`!! [IDE] ${openError}`, 'text-rose-400');
-            return;
-        }
+        if (!r.ok) { openError = `UPLINK_FAILURE: HTTP ${r.status}`; return; }
         const data = await r.json();
         ide.mountFile(path, data.content ?? '');
         activeNav = 'IDE';
-        pushTermLine(`>> [IDE] Opened: ${path}`, 'text-emerald-400');
-    } catch(e) {
+        pushTermLine(`>> [IDE] Buffer Synchronized: ${path}`, 'text-emerald-400');
+    } catch(e: any) {
         openError = e.message;
-        pushTermLine(`!! [IDE] Open failed: ${e.message}`, 'text-rose-400');
     }
 }
 
-async function submitOpenInput(e) {
+async function submitOpenInput(e: Event) {
     e.preventDefault();
     const p = openInput.trim();
     if (p) { await openFile(p); openInput = ''; }
 }
 
-// ── CREATE FILE ────────────────────────────────────────────────────────
-async function createFile(path) {
+async function createFile(path: string) {
     if (!path) return;
     try {
         const r = await fetch('/api/fs/write', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, content: `// ${path}\n// Created by NEXUS IDE — ${new Date().toISOString()}\n\n` })
+            body: JSON.stringify({ path, content: `// ${path}\n// Created by NEXUS IDE\n\n` })
         });
-        if (r.ok) {
-            pushTermLine(`>> [IDE] Created: ${path}`, 'text-emerald-400');
-            fileTreeTrigger.value++;
-            await openFile(path);
-        } else {
-            pushTermLine(`!! [IDE] Create failed: HTTP ${r.status}`, 'text-rose-400');
-        }
-    } catch(e) {
-        pushTermLine(`!! [IDE] ${e.message}`, 'text-rose-400');
+        if (r.ok) { fileTreeTrigger.value++; await openFile(path); }
+    } catch(e: any) {
+        pushTermLine(`!! [IDE] FRACTURE: ${e.message}`, 'text-rose-400');
     }
 }
 
-// ── SAVE ───────────────────────────────────────────────────────────────
-let isSaving     = $state(false);
-let saveMsg      = $state('');
-let autoSave     = $state(false);
-let autoSaveTimer;
+// ── Persistence ────────────────────────────────────────────────
+let isSaving = $state(false);
+let saveMsg  = $state('');
+let autoSave = $state(false);
+let autoSaveTimer: ReturnType<typeof setTimeout>;
 
 async function saveFile() {
     const path = ide.activeTab;
     if (!path) return;
     const tab = ide.openTabs.find(t => t.path === path);
     if (!tab || !tab.isDirty) return;
-
     isSaving = true;
     try {
         const r = await fetch('/api/fs/write', {
@@ -111,23 +90,15 @@ async function saveFile() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path, content: tab.content ?? '' })
         });
-        if (r.ok) {
-            ide.markSaved(path);
-            saveMsg = '✓ SAVED';
-            pushTermLine(`>> [IDE] Saved: ${path}`, 'text-emerald-400');
-        } else {
-            saveMsg = `!! SAVE FAILED ${r.status}`;
-            pushTermLine(`!! [IDE] Save failed: ${r.status}`, 'text-rose-400');
-        }
-    } catch(e) {
-        saveMsg = `!! ${e.message}`;
+        if (r.ok) { ide.markSaved(path); saveMsg = '✓ COMMITTED'; }
+    } catch(e: any) {
+        saveMsg = '!! FAILED';
     } finally {
         isSaving = false;
-        setTimeout(() => saveMsg = '', 2500);
+        setTimeout(() => saveMsg = '', 2000);
     }
 }
 
-// 1-second debounce auto-save
 $effect(() => {
     const path = ide.activeTab;
     if (!autoSave || !path) return;
@@ -138,102 +109,119 @@ $effect(() => {
     }
 });
 
-// ── GLOBAL CTRL+S ──────────────────────────────────────────────────────
-function handleGlobalKey(e) {
+function handleGlobalKey(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (activeNav === 'IDE') {
-            clearTimeout(autoSaveTimer);
-            saveFile();
-        }
-    }
-    // Ctrl+` → toggle terminal focus (future)
-    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-        e.preventDefault();
+        if (activeNav === 'IDE') saveFile();
     }
 }
 
-// ── WORKSPACE QUICK ACTIONS ────────────────────────────────────────────
-async function runDirective(directive) {
-    pushTermLine(`>> [WORKSPACE] ${directive}`, 'text-cyan-400');
+// ── Workspace Tasking ──────────────────────────────────────────
+async function runDirective(directive: string) {
+    pushTermLine(`>> [WORKSPACE] Queuing: ${directive}`, 'text-cyan-400');
     try {
-        const r = await fetch('/api/task', {
+        await fetch('/api/task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ directive })
         });
-        if (r.ok) pushTermLine('>> Task queued — watch terminal below.', 'text-emerald-400');
-        else       pushTermLine(`!! HTTP ${r.status}`, 'text-rose-400');
-    } catch(e) {
-        pushTermLine(`!! ${e.message}`, 'text-rose-400');
+    } catch(e: any) {
+        pushTermLine(`!! [FAULT] ${e.message}`, 'text-rose-400');
     }
 }
 
-// ── LAZARUS / HISTORY ──────────────────────────────────────────────────
-let snapshots    = $state([]);
-let snapsLoading = $state(false);
-let snapMsg      = $state('');
-
-async function loadSnaps() {
-    snapsLoading = true;
-    snapMsg = '';
-    try {
-        const r = await fetch('/api/lazarus/snapshots');
-        if (r.ok) snapshots = [...(await r.json())].reverse();
-        else snapshots = [];
-    } catch { snapshots = []; }
-    finally { snapsLoading = false; }
+// ── Ghost Memory Ritual ────────────────────────────────────────
+// ⚡ FIX: was socket.sendCommand — correct API is socket.send()
+function ghostEnshrine() {
+    const handleEl = document.getElementById('ghost-handle') as HTMLInputElement;
+    const textEl   = document.getElementById('ghost-text')   as HTMLInputElement;
+    const handle   = handleEl?.value.trim() ?? '';
+    const text     = textEl?.value.trim()   || 'NEXUS_DATA';
+    if (!handle) { alert('Enter a handle (e.g. 0xc8)'); return; }
+    socket.send(`ghost enshrine ${handle} "${text}"`);
+    pushTermLine(`>> [GHOST] enshrine ${handle} "${text}"`, 'text-purple-400');
 }
 
-async function restoreSnap(hash) {
-    snapMsg = `Queuing restore for ${hash.slice(0,8)}...`;
+function ghostScry() {
+    const handleEl = document.getElementById('ghost-handle') as HTMLInputElement;
+    const handle   = handleEl?.value.trim() ?? '';
+    if (!handle) { alert('Enter a handle'); return; }
+    socket.send(`ghost scry ${handle}`);
+    pushTermLine(`>> [GHOST] scry ${handle}`, 'text-purple-400');
+}
+
+function ghostRecall() {
+    const handleEl = document.getElementById('ghost-handle') as HTMLInputElement;
+    const handle   = handleEl?.value.trim() ?? '';
+    if (!handle) { alert('Enter a handle'); return; }
+    socket.send(`ghost recall ${handle}`);
+    pushTermLine(`>> [GHOST] recall ${handle}`, 'text-purple-400');
+}
+
+// ── Lazarus snapshots ──────────────────────────────────────────
+// ⚡ FIX: /api/lazarus/snapshots doesn't exist — fetch via memory API
+// and show available snapshots from the vault directive instead
+let snapshots = $state<any[]>([]);
+let snapMsg   = $state('');
+
+async function loadSnaps() {
+    snapMsg = 'Scanning vault...';
+    try {
+        // ⚡ Route through task API since /api/lazarus/snapshots isn't wired
+        const r = await fetch('/api/memories');
+        if (r.ok) {
+            const all = await r.json();
+            // Filter memories that look like lazarus snapshot records
+            snapshots = all
+                .filter((m: any) => m.directive?.toLowerCase().includes('snapshot') ||
+                                    m.origin?.toLowerCase().includes('lazarus'))
+                .slice(0, 20)
+                .reverse();
+            snapMsg = snapshots.length === 0 ? 'No snapshots found in memory.' : '';
+        }
+    } catch {
+        snapshots = [];
+        snapMsg = 'Vault scan failed.';
+    }
+    setTimeout(() => snapMsg = '', 3000);
+}
+
+async function restoreSnap(hash: string) {
+    snapMsg = `Initiating Temporal Restore: ${hash.slice(0,8)}...`;
     try {
         await fetch('/api/task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ directive: `restore snapshot ${hash}` })
         });
-        snapMsg = `✓ Restore queued for ${hash.slice(0,8)} — check terminal.`;
-    } catch(e) {
-        snapMsg = `!! ${e.message}`;
+    } catch(e: any) {
+        snapMsg = `!! [ERROR] ${e.message}`;
     }
-    setTimeout(() => snapMsg = '', 5000);
+    setTimeout(() => snapMsg = '', 4000);
 }
 
 $effect(() => { if (activeNav === 'HISTORY') loadSnaps(); });
 
-// ── BOOT LOG ───────────────────────────────────────────────────────────
 onMount(() => {
-    pushTermLine('>> [NEXUS] Singularity OS v4.2.3 — ARM64 CROSTINI', 'text-cyan-400');
-    pushTermLine('>> [NEXUS] All systems nominal. WebSocket connecting...', 'text-gray-400');
+    pushTermLine('>> [NEXUS] Singularity OS v4.3.0 — Substrate Initialized', 'text-cyan-400');
 });
 </script>
 
 <svelte:window onkeydown={handleGlobalKey} />
 
 <div class="nexus-root">
-
     <NavHeader bind:activeNav />
 
     <div class="body-row">
-
         {#if layout.explorerVisible}
             <aside class="sidebar-col" transition:fly={{ x: -224, duration: 160, opacity: 1 }}>
                 <div class="open-box">
-                    <div class="open-label">OPEN FILE</div>
+                    <div class="open-label">VIRTUAL_FS_LINK</div>
                     <form onsubmit={submitOpenInput} class="open-row">
-                        <input
-                            bind:value={openInput}
-                            placeholder="src/main.rs"
-                            class="open-inp"
-                            autocomplete="off"
-                            spellcheck="false"
-                        />
-                        <button type="submit" class="open-go" title="Open">↵</button>
+                        <input bind:value={openInput} placeholder="src/main.rs" class="open-inp" autocomplete="off" />
+                        <button type="submit" class="open-go">↵</button>
                     </form>
-                    {#if openError}
-                        <div class="open-err">{openError}</div>
-                    {/if}
+                    {#if openError}<div class="open-err">{openError}</div>{/if}
                 </div>
                 <Sidebar onFileSelect={openFile} onCreateFile={createFile} />
             </aside>
@@ -241,537 +229,251 @@ onMount(() => {
 
         <main class="main-col">
 
+            <!-- ── NEXUS OS ── -->
             {#if activeNav === 'NEXUS_OS'}
                 <div class="panel-scroll nexus-os-panel">
                     <div class="os-hero">
                         <div class="os-hero-glyph">◈</div>
                         <div class="os-hero-text">
                             <div class="os-hero-title">NEXUS SINGULARITY</div>
-                            <div class="os-hero-sub">v4.2.3 // ARM64 CROSTINI // LENOVO DUET</div>
+                            <div class="os-hero-sub">ARM64_SUBSTRATE // CROSTINI_VIRTUALIZATION</div>
                         </div>
                     </div>
                     <div class="os-grid">
-                        <div class="os-card os-card--main">
-                            <div class="os-card-hdr">SYSTEM_ARCHITECTURE</div>
+                        <div class="os-card">
+                            <div class="os-card-hdr">CORE_ARCHITECTURE</div>
                             <div class="os-node-grid">
-                                {#each [
-                                    ['AXUM_SERVER',     '#22d3ee'],
-                                    ['NEURAL_AGENT',    '#34d399'],
-                                    ['ORCHESTRATOR',    '#a78bfa'],
-                                    ['ARBITER',         '#f87171'],
-                                    ['TASK_MANAGER',    '#fbbf24'],
-                                    ['MEMORY_PALACE',   '#a78bfa'],
-                                    ['SCHEDULER',       '#22d3ee'],
-                                    ['LAZARUS_VAULT',   '#fb923c'],
-                                    ['SELF_HEALER',     '#34d399'],
-                                    ['SANDBOX',         '#f87171'],
-                                    ['THERMAL_GOV',     '#fb923c'],
-                                    ['LITERT_BRIDGE',   '#fbbf24'],
-                                ] as [sys, c], i}
-                                    <div class="os-node" style="animation-delay:{i*60}ms;border-color:{c}22">
-                                        <span class="os-node-dot" style="background:{c};box-shadow:0 0 5px {c}"></span>
-                                        <span class="os-node-lbl" style="color:{c}bb">{sys}</span>
+                                {#each ['AXUM_SRV','GHOST_CRTX','ZIG_MUSCLE','VMO_POOL','LAZARUS','ARBITER'] as node}
+                                    <div class="os-node">
+                                        <span class="os-node-dot"></span>
+                                        <span class="os-node-lbl">{node}</span>
                                     </div>
                                 {/each}
                             </div>
                         </div>
-
                         <div class="os-card">
-                            <div class="os-card-hdr">RUNTIME_STACK</div>
-                            {#each [
-                                ['PRIMARY_MODEL',  'GEMMA 4 31B-IT',        '#fbbf24'],
-                                ['BACKEND',        'RUST / AXUM 0.7',        '#fb923c'],
-                                ['FRONTEND',       'SVELTE 5 / VITE 5',      '#f97316'],
-                                ['DATABASE',       'SQLITE WAL',             '#22d3ee'],
-                                ['ALLOCATOR',      'MIMALLOC',               '#34d399'],
-                                ['FFI_LAYER',      'ZIG 0.13',               '#34d399'],
-                                ['ARCH',           'AARCH64 LINUX',          '#a78bfa'],
-                                ['WEBSOCKET',      '/ws/nexus',              '#818cf8'],
-                            ] as [k, v, c]}
-                                <div class="os-kv">
-                                    <span class="os-k">{k}</span>
-                                    <span class="os-v" style="color:{c}">{v}</span>
-                                </div>
-                            {/each}
+                            <div class="os-card-hdr">SUBSTRATE_TELEMETRY</div>
+                            <div class="vmo-kv"><span>STATUS</span><span style="color:#22d3ee">{socket.telemetry.status}</span></div>
+                            <div class="vmo-kv"><span>ACTIVE VMOs</span><span style="color:#34d399">{socket.telemetry.active_vmos}</span></div>
+                            <div class="vmo-kv"><span>RESONANCE</span><span style="color:#fbbf24">{socket.telemetry.resonance.toFixed(2)}</span></div>
                         </div>
                     </div>
-
-                    <div class="os-quick-row">
-                        {#each [
-                            { label:'OPEN IDE',      color:'#22d3ee', action:()=>activeNav='IDE'        },
-                            { label:'WORKSPACE',     color:'#34d399', action:()=>activeNav='WORKSPACE'  },
-                            { label:'VITALS',        color:'#fb923c', action:()=>activeNav='VITALS'     },
-                            { label:'MEMORY PALACE', color:'#a78bfa', action:()=>activeNav='MEMORY'     },
-                        ] as btn}
-                            <button class="os-quick-btn" style="--bc:{btn.color}" onclick={btn.action}>
-                                {btn.label} ›
-                            </button>
-                        {/each}
-                    </div>
-
                     <div class="os-term-wrap">
-                        <div class="panel-section-hdr" style="color:#22d3ee">SYSTEM_OUTPUT</div>
+                        <div class="panel-section-hdr">NEURAL_OUTPUT_STREAM</div>
                         <Terminal />
                     </div>
                 </div>
 
+            <!-- ── IDE ── -->
             {:else if activeNav === 'IDE'}
                 <div class="ide-shell">
                     <div class="tab-bar">
                         {#each ide.openTabs as tab (tab.path)}
-                            <button
-                                class="ide-tab"
-                                class:tab-active={ide.activeTab === tab.path}
-                                onclick={() => ide.activeTab = tab.path}
-                                title={tab.path}
-                            >
+                            <button class="ide-tab" class:tab-active={ide.activeTab === tab.path}
+                                onclick={() => ide.activeTab = tab.path}>
                                 <span class="tab-name">{tab.path.split('/').at(-1)}</span>
-                                {#if tab.isDirty}
-                                    <span class="tab-dirty" title="Unsaved changes">●</span>
-                                {/if}
-                                <span
-                                    class="tab-close"
-                                    role="button"
-                                    tabindex="-1"
-                                    onclick={(e) => { e.stopPropagation(); ide.closeTab(tab.path); }}
-                                    onkeydown={(e) => e.key === 'Enter' && ide.closeTab(tab.path)}
-                                >×</span>
+                                {#if tab.isDirty}<span class="tab-dirty">●</span>{/if}
+                                <span class="tab-close"
+                                    onclick={(e) => { e.stopPropagation(); ide.closeTab(tab.path); }}>×</span>
                             </button>
                         {/each}
-
-                        {#if ide.openTabs.length === 0}
-                            <div class="tab-empty-hint">← open a file from the sidebar</div>
-                        {/if}
-
                         <div class="tab-controls">
                             {#if ide.activeTab}
-                                <label class="autosave-toggle" title="Toggle auto-save (1s debounce)">
-                                    <input type="checkbox" bind:checked={autoSave} />
-                                    <span class="as-track"></span>
-                                    <span class="as-label">AUTO</span>
-                                </label>
-                                {#if isSaving}
-                                    <span class="save-status saving">⟳ SAVING…</span>
-                                {:else if saveMsg}
-                                    <span class="save-status" class:save-ok={saveMsg.startsWith('✓')} class:save-err={saveMsg.startsWith('!!')}>
-                                        {saveMsg}
-                                    </span>
-                                {/if}
-                                <button class="save-btn" onclick={saveFile} disabled={isSaving} title="Save (Ctrl+S)">
-                                    SAVE
-                                </button>
+                                <span class="save-status">{saveMsg}</span>
+                                <button class="save-btn" onclick={saveFile}>COMMIT</button>
                             {/if}
                         </div>
                     </div>
-
                     <div class="editor-pane">
                         {#if ide.activeTab}
                             <Editor path={ide.activeTab} />
                         {:else}
                             <div class="ide-welcome">
                                 <div class="iw-glyph">◈</div>
-                                <div class="iw-title">NEXUS IDE</div>
-                                <div class="iw-hints">
-                                    <span>← Type a path in OPEN FILE to load any file</span>
-                                    <span>← Click a file in the tree</span>
-                                    <span>Ctrl+S · save &nbsp;│&nbsp; Tab · 4 spaces &nbsp;│&nbsp; Ctrl+/ · comment</span>
-                                </div>
+                                <div class="iw-title">AWAITING_INPUT</div>
                             </div>
                         {/if}
                     </div>
-
-                    <div class="ide-term-strip">
-                        <Terminal />
-                    </div>
+                    <div class="ide-term-strip"><Terminal /></div>
                 </div>
 
+            <!-- ── WORKSPACE ── -->
             {:else if activeNav === 'WORKSPACE'}
                 <div class="panel-scroll ws-panel">
-                    <div class="ws-hero">
-                        <span class="ws-hero-title">WORKSPACE_DNA_MAP</span>
-                        <span class="ws-hero-sub">ARM64 BUILD PIPELINE // NEXUS SINGULARITY</span>
-                    </div>
-
+                    <div class="ws-hero"><span class="ws-hero-title">WORKSPACE_DNA_MAP</span></div>
                     <div class="ws-grid">
-                        <div class="ws-group" style="--gc:#22d3ee">
+                        <div class="ws-group">
                             <div class="ws-group-title">BUILD_PIPELINE</div>
-                            {#each [
-                                ['CARGO CHECK',    'run cargo check and report every error with file and line numbers'],
-                                ['CARGO CLIPPY',   'run cargo clippy and list all warnings with suggested fixes'],
-                                ['NPM BUILD',      'run npm run build inside the ui directory and report result'],
-                                ['RELEASE BUILD',  'cargo build --release --target aarch64-unknown-linux-gnu and show final binary size in MB'],
-                            ] as [l, d]}
-                                <button class="ws-btn" onclick={() => runDirective(d)}>▶ {l}</button>
-                            {/each}
+                            <button class="ws-btn" onclick={() => runDirective('run cargo check and report all errors')}>▶ CARGO CHECK</button>
+                            <button class="ws-btn" onclick={() => runDirective('run npm run build in the ui directory')}>▶ UI BUILD</button>
+                            <button class="ws-btn" onclick={() => runDirective('run cargo build --release and report binary size')}>▶ RELEASE BUILD</button>
                         </div>
-
-                        <div class="ws-group" style="--gc:#a78bfa">
+                        <div class="ws-group">
                             <div class="ws-group-title">NEURAL_OPS</div>
-                            {#each [
-                                ['SECURITY AUDIT', 'audit all rust source files for unsafe blocks security vulnerabilities and hardcoded secrets'],
-                                ['SCAN MARKERS',   'search all source files for TODO FIXME HACK SUTURE and UNSAFE markers with file locations'],
-                                ['ORPHAN SCAN',    'list all rust files not declared in lib.rs module tree'],
-                                ['DEAD CODE',      'run cargo check with dead code warnings and list unused functions'],
-                            ] as [l, d]}
-                                <button class="ws-btn" onclick={() => runDirective(d)}>▶ {l}</button>
-                            {/each}
+                            <button class="ws-btn" onclick={() => runDirective('audit all rust source files for security vulnerabilities')}>▶ SECURITY AUDIT</button>
+                            <button class="ws-btn" onclick={() => runDirective('find all TODO FIXME HACK and SUTURE comments in source')}>▶ SCAN TODOS</button>
+                            <button class="ws-btn" onclick={() => runDirective('run cargo clippy and list all warnings')}>▶ CLIPPY SCAN</button>
                         </div>
-
-                        <div class="ws-group" style="--gc:#fb923c">
+                        <div class="ws-group">
                             <div class="ws-group-title">LAZARUS_OPS</div>
-                            {#each [
-                                ['SNAPSHOT MAIN',  'take a lazarus snapshot of src/main.rs tagged manual-checkpoint'],
-                                ['SNAPSHOT ALL',   'take lazarus snapshots of all modified rust source files'],
-                                ['LIST VAULT',     'list all lazarus vault snapshots showing path hash and timestamp'],
-                                ['VIEW HISTORY →', null],
-                            ] as [l, d]}
-                                <button class="ws-btn" onclick={() => d ? runDirective(d) : activeNav='HISTORY'}>▶ {l}</button>
-                            {/each}
+                            <button class="ws-btn" onclick={() => runDirective('take a lazarus snapshot of src/main.rs tagged manual')}>▶ SNAPSHOT MAIN</button>
+                            <button class="ws-btn" onclick={() => runDirective('list all lazarus vault snapshots and their hashes')}>▶ LIST VAULT</button>
+                        </div>
+
+                        <!-- GHOST MEMORY RITUAL -->
+                        <div class="ws-group" style="grid-column: 1 / -1;">
+                            <div class="ws-group-title">GHOST_MEMORY_RITUAL</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;font-size:9px;font-family:'JetBrains Mono',monospace;">
+                                <input id="ghost-handle"
+                                       placeholder="VMO Handle e.g. 0xc8"
+                                       style="background:#000;border:1px solid rgba(167,139,250,.3);color:#a78bfa;padding:6px 8px;outline:none;font-family:inherit;" />
+                                <input id="ghost-text"
+                                       placeholder="Text to enshrine (optional)"
+                                       style="background:#000;border:1px solid rgba(167,139,250,.3);color:#a78bfa;padding:6px 8px;outline:none;font-family:inherit;" />
+                                <div style="display:flex;gap:4px;">
+                                    <button onclick={ghostEnshrine} class="ws-btn" style="flex:1;">⬆ ENSHRINE</button>
+                                    <button onclick={ghostScry}    class="ws-btn" style="flex:1;">🔍 SCRY HEX</button>
+                                    <button onclick={ghostRecall}  class="ws-btn" style="flex:1;">📖 RECALL TEXT</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
-
-                    <div class="ws-term">
-                        <div class="panel-section-hdr" style="color:#34d399">NEURAL_OUTPUT</div>
-                        <Terminal />
-                    </div>
+                    <div class="ws-term" style="margin-top:16px;"><Terminal /></div>
                 </div>
 
+            <!-- ── VITALS ── -->
             {:else if activeNav === 'VITALS'}
                 <div class="fill-panel"><VitalsView /></div>
 
+            <!-- ── MEMORY ── -->
             {:else if activeNav === 'MEMORY'}
                 <div class="fill-panel"><MemoryVault /></div>
 
+            <!-- ── SECOPS ── -->
             {:else if activeNav === 'SECOPS'}
                 <div class="fill-panel"><SecOps /></div>
 
+            <!-- ── AGENT-LAB ── -->
             {:else if activeNav === 'AGENT-LAB'}
                 <div class="fill-panel"><AgentLab /></div>
 
+            <!-- ── HISTORY / LAZARUS VAULT ── -->
             {:else if activeNav === 'HISTORY'}
                 <div class="panel-scroll history-panel">
                     <div class="hist-hdr">
-                        <div>
-                            <div class="hist-title">LAZARUS_VAULT</div>
-                            <div class="hist-sub">TEMPORAL LEDGER // FILE SNAPSHOTS // TIME-TRAVEL RESTORE</div>
-                        </div>
-                        <button class="hist-refresh" onclick={loadSnaps}>⟳ REFRESH</button>
+                        <div class="hist-title">LAZARUS_VAULT</div>
+                        <button onclick={loadSnaps}
+                            style="background:none;border:none;color:rgba(167,139,250,.5);font-size:16px;cursor:pointer;">⟳</button>
                     </div>
                     {#if snapMsg}
-                        <div class="snap-msg">{snapMsg}</div>
+                        <div style="padding:8px 16px;font-size:9px;color:#a78bfa;">{snapMsg}</div>
                     {/if}
-                    {#if snapsLoading}
-                        <div class="hist-loading">
-                            <div class="loading-spin"></div>
-                            SCANNING VAULT...
-                        </div>
-                    {:else if snapshots.length === 0}
-                        <div class="hist-empty">
-                            <div style="font-size:36px;opacity:.15;margin-bottom:12px;">◎</div>
-                            NO SNAPSHOTS FOUND<br>
-                            <span style="font-size:10px;opacity:.5;margin-top:6px;display:block">
-                                Run WORKSPACE → SNAPSHOT MAIN to begin versioning
-                            </span>
-                        </div>
-                    {:else}
-                        <div class="snap-list">
-                            {#each snapshots as snap}
-                                <div class="snap-row">
-                                    <div class="snap-info">
-                                        <div class="snap-path">{snap.path}</div>
-                                        <div class="snap-meta">
-                                            <span class="snap-hash">{snap.hash?.slice(0,12) ?? '—'}</span>
-                                            <span class="snap-ts">{snap.timestamp}</span>
-                                        </div>
-                                    </div>
-                                    <div class="snap-actions">
-                                        <button class="snap-open" onclick={() => openFile(snap.path)}>OPEN</button>
-                                        <button class="snap-restore" onclick={() => restoreSnap(snap.hash)}>RESTORE</button>
+                    <div class="snap-list">
+                        {#each snapshots as snap}
+                            <div class="snap-row">
+                                <div class="snap-info">
+                                    <div class="snap-path">{snap.directive ?? snap.path ?? 'unknown'}</div>
+                                    <div class="snap-hash" style="font-size:8px;color:rgba(167,139,250,.4);">
+                                        {snap.timestamp ?? ''}
                                     </div>
                                 </div>
-                            {/each}
-                        </div>
-                    {/if}
+                                <button class="snap-restore"
+                                    onclick={() => restoreSnap(snap.id?.toString() ?? '')}>
+                                    RESTORE
+                                </button>
+                            </div>
+                        {:else}
+                            <div style="padding:32px;text-align:center;font-size:9px;color:rgba(167,139,250,.2);">
+                                NO SNAPSHOTS — run a directive to create one
+                            </div>
+                        {/each}
+                    </div>
                 </div>
 
             {:else}
-                <div class="panel-placeholder">[{activeNav}_MODULE_OFFLINE]</div>
+                <div class="panel-placeholder">[{activeNav}_OFFLINE]</div>
             {/if}
 
         </main>
 
         <GhostBlade />
-
     </div>
 
     <StatusBar />
-
 </div>
 
 <style>
-/* ── Reset & root ─────────────────────────────────────────────────── */
-:global(html, body) {
-    margin: 0; padding: 0; height: 100vh;
-    background: #000; overflow: hidden;
-}
-:global(*) { box-sizing: border-box; }
-:global(::-webkit-scrollbar)       { width: 4px; height: 4px; }
-:global(::-webkit-scrollbar-track) { background: #000; }
-:global(::-webkit-scrollbar-thumb) { background: #1e3a4a; border-radius: 2px; }
+:global(html, body) { margin:0; padding:0; height:100vh; background:#000; overflow:hidden; color-scheme:dark; }
+:global(*) { box-sizing:border-box; }
+.nexus-root { position:fixed; inset:0; display:flex; flex-direction:column; font-family:'JetBrains Mono',monospace; background:#000; color:#e2e8f0; }
+.body-row { flex:1; display:flex; overflow:hidden; min-height:0; }
+.main-col { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+.fill-panel { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.panel-scroll { flex:1; overflow-y:auto; padding:18px; }
+.sidebar-col { width:224px; border-right:1px solid rgba(0,255,255,.07); background:#020208; flex:none; display:flex; flex-direction:column; }
 
-.nexus-root {
-    position: fixed; inset: 0;
-    display: flex; flex-direction: column;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-    background: #000; color: #e2e8f0;
-}
+/* Open box */
+.open-box { flex:none; padding:8px; border-bottom:1px solid rgba(0,255,255,.05); }
+.open-label { font-size:7px; font-weight:900; letter-spacing:.14em; color:rgba(0,255,255,.25); margin-bottom:4px; }
+.open-row { display:flex; gap:3px; }
+.open-inp { flex:1; background:#000; border:1px solid rgba(0,255,255,.12); color:#22d3ee; font-size:10px; padding:4px 7px; outline:none; font-family:'JetBrains Mono',monospace; }
+.open-go { width:28px; background:rgba(34,211,238,.1); border:1px solid rgba(0,255,255,.2); color:#22d3ee; font-size:14px; cursor:pointer; }
+.open-err { font-size:8px; color:#f87171; margin-top:3px; }
 
-/* ── Layout ───────────────────────────────────────────────────────── */
-.body-row  { flex: 1; display: flex; overflow: hidden; min-height: 0; }
-.main-col  { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-.fill-panel { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-.panel-scroll {
-    flex: 1; overflow-y: auto; padding: 18px;
-}
+/* OS panel */
+.os-hero { padding:14px; border:1px solid rgba(0,255,255,.1); background:rgba(0,255,255,.02); margin-bottom:20px; display:flex; align-items:center; gap:14px; }
+.os-hero-glyph { font-size:28px; color:#00ffff; opacity:.4; }
+.os-hero-title { font-size:16px; font-weight:900; color:#00ffff; text-shadow:0 0 15px rgba(0,255,255,.4); }
+.os-hero-sub { font-size:8px; color:rgba(0,255,255,.3); margin-top:3px; }
+.os-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px; }
+.os-card { border:1px solid rgba(0,255,255,.07); padding:12px; background:rgba(0,255,255,.01); }
+.os-card-hdr { font-size:8px; font-weight:900; letter-spacing:.14em; color:rgba(0,255,255,.3); margin-bottom:10px; }
+.os-node-grid { display:flex; flex-direction:column; gap:5px; }
+.os-node { display:flex; align-items:center; gap:6px; font-size:9px; }
+.os-node-dot { width:5px; height:5px; border-radius:50%; background:#00ffff; box-shadow:0 0 5px #00ffff; flex:none; }
+.os-node-lbl { color:rgba(0,255,255,.5); }
+.vmo-kv { display:flex; justify-content:space-between; font-size:9px; padding:4px 0; border-bottom:1px solid rgba(0,255,255,.04); }
+.vmo-kv span:first-child { color:rgba(255,255,255,.3); }
+.panel-section-hdr { font-size:8px; font-weight:900; letter-spacing:.14em; color:rgba(0,255,255,.25); margin-bottom:8px; }
+.os-term-wrap { border:1px solid rgba(0,255,255,.06); height:280px; display:flex; flex-direction:column; overflow:hidden; }
 
-/* ── Sidebar ──────────────────────────────────────────────────────── */
-.sidebar-col {
-    width: 224px; flex: none;
-    display: flex; flex-direction: column;
-    border-right: 1px solid rgba(0,255,255,.07);
-    background: #020208; overflow: hidden;
-}
-.open-box  { flex: none; padding: 8px; border-bottom: 1px solid rgba(0,255,255,.05); }
-.open-label { font-size: 7px; font-weight: 900; letter-spacing: .15em; color: rgba(0,255,255,.25); margin-bottom: 4px; }
-.open-row  { display: flex; gap: 3px; }
-.open-inp  {
-    flex: 1; background: #000; border: 1px solid rgba(0,255,255,.12);
-    color: #22d3ee; font-size: 10px; padding: 4px 6px; outline: none;
-    font-family: inherit; transition: border-color .15s;
-}
-.open-inp:focus { border-color: rgba(0,255,255,.4); }
-.open-inp::placeholder { color: rgba(0,255,255,.2); }
-.open-go  {
-    background: rgba(34,211,238,.1); border: 1px solid rgba(0,255,255,.2);
-    color: #22d3ee; font-size: 15px; padding: 0 8px; cursor: pointer; font-family: inherit;
-    transition: background .12s;
-}
-.open-go:hover { background: rgba(34,211,238,.22); }
-.open-err { font-size: 8px; color: #f87171; margin-top: 3px; line-height: 1.4; }
+/* IDE */
+.ide-shell { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.tab-bar { flex:none; display:flex; height:34px; background:#010105; border-bottom:1px solid rgba(0,255,255,.1); overflow-x:auto; }
+.ide-tab { padding:0 12px; border-right:1px solid rgba(0,255,255,.05); cursor:pointer; display:flex; align-items:center; gap:8px; font-size:9px; color:#64748b; background:none; border-top:none; border-left:none; border-bottom:none; white-space:nowrap; }
+.tab-active { color:#00ffff; background:rgba(0,255,255,.03); border-bottom:2px solid #00ffff !important; }
+.tab-dirty { color:#fb923c; font-size:8px; }
+.tab-close { opacity:.4; font-size:14px; line-height:1; }
+.tab-close:hover { opacity:1; color:#f87171; }
+.tab-controls { flex:1; display:flex; align-items:center; justify-content:flex-end; padding:0 8px; gap:8px; }
+.save-status { font-size:8px; color:#34d399; }
+.save-btn { background:rgba(0,255,255,.1); border:1px solid rgba(0,255,255,.3); color:#00ffff; font-size:8px; padding:2px 10px; cursor:pointer; font-family:'JetBrains Mono',monospace; }
+.editor-pane { flex:1; background:#000; overflow:hidden; }
+.ide-term-strip { flex:none; height:180px; border-top:1px solid rgba(0,255,255,.05); overflow:hidden; display:flex; flex-direction:column; }
+.ide-welcome { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; }
+.iw-glyph { font-size:40px; color:rgba(0,255,255,.1); }
+.iw-title { font-size:10px; color:rgba(0,255,255,.2); letter-spacing:.2em; }
 
-/* ── Nexus OS panel ───────────────────────────────────────────────── */
-.nexus-os-panel { display: flex; flex-direction: column; gap: 14px; }
-.os-hero {
-    display: flex; align-items: center; gap: 16px;
-    padding: 14px; border: 1px solid rgba(0,255,255,.1);
-    background: linear-gradient(135deg, rgba(0,255,255,.03) 0%, transparent 100%);
-}
-.os-hero-glyph {
-    font-size: 40px; color: rgba(0,255,255,.3);
-    animation: glyph-pulse 4s ease-in-out infinite;
-}
-@keyframes glyph-pulse { 0%,100%{opacity:.3;} 50%{opacity:.7; text-shadow: 0 0 30px rgba(0,255,255,.4);} }
-.os-hero-title { font-size: 16px; font-weight: 900; letter-spacing: .2em; color: #00ffff; text-shadow: 0 0 20px rgba(0,255,255,.4); }
-.os-hero-sub   { font-size: 9px; color: rgba(0,255,255,.3); margin-top: 3px; letter-spacing: .1em; }
+/* Workspace */
+.ws-hero { margin-bottom:16px; }
+.ws-hero-title { font-size:13px; font-weight:900; color:rgba(0,255,255,.4); letter-spacing:.2em; }
+.ws-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.ws-group { padding:12px; border:1px solid rgba(0,255,255,.06); background:rgba(0,255,255,.01); display:flex; flex-direction:column; gap:4px; }
+.ws-group-title { font-size:8px; font-weight:900; letter-spacing:.14em; color:rgba(0,255,255,.3); margin-bottom:6px; }
+.ws-btn { width:100%; text-align:left; padding:7px 10px; background:transparent; border:1px solid rgba(0,255,255,.1); color:#94a3b8; font-size:9px; cursor:pointer; font-family:'JetBrains Mono',monospace; transition:all .1s; }
+.ws-btn:hover { color:#00ffff; border-color:rgba(0,255,255,.4); background:rgba(0,255,255,.04); }
 
-.os-grid { display: grid; grid-template-columns: 1fr 260px; gap: 10px; }
-.os-card {
-    border: 1px solid rgba(0,255,255,.07); padding: 12px;
-    background: rgba(0,255,255,.01);
-}
-.os-card-hdr { font-size: 8px; font-weight: 900; letter-spacing: .15em; color: rgba(0,255,255,.3); margin-bottom: 10px; }
-.os-node-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
-.os-node {
-    display: flex; align-items: center; gap: 6px;
-    padding: 5px 8px; border: 1px solid;
-    font-size: 8px; letter-spacing: .04em;
-    animation: node-in .3s ease both;
-}
-@keyframes node-in { from{opacity:0;transform:translateY(4px);} to{opacity:1;transform:none;} }
-.os-node-dot  { width: 5px; height: 5px; border-radius: 50%; flex: none; animation: dot-blink 2.5s infinite; }
-@keyframes dot-blink { 0%,100%{opacity:1;} 50%{opacity:.25;} }
-.os-node-lbl  { font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.os-kv { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid rgba(0,255,255,.04); font-size: 9px; }
-.os-k  { color: rgba(255,255,255,.22); }
-.os-v  { font-weight: 700; }
+/* History */
+.history-panel { display:flex; flex-direction:column; gap:0; }
+.hist-hdr { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid rgba(167,139,250,.1); }
+.hist-title { font-size:11px; font-weight:900; letter-spacing:.15em; color:#a78bfa; }
+.snap-list { flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
+.snap-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid rgba(167,139,250,.1); background:rgba(167,139,250,.02); }
+.snap-info { flex:1; min-width:0; }
+.snap-path { font-size:10px; color:rgba(255,255,255,.5); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.snap-restore { flex:none; padding:4px 10px; border:1px solid rgba(167,139,250,.3); background:transparent; color:#a78bfa; font-size:8px; font-weight:900; cursor:pointer; font-family:'JetBrains Mono',monospace; }
+.snap-restore:hover { background:rgba(167,139,250,.15); }
 
-.os-quick-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.os-quick-btn {
-    padding: 8px; background: rgba(0,0,0,.4); border: 1px solid var(--bc);
-    color: var(--bc); font-size: 9px; font-weight: 900; letter-spacing: .06em;
-    cursor: pointer; font-family: inherit; transition: all .12s; text-align: center;
-}
-.os-quick-btn:hover { background: color-mix(in srgb, var(--bc) 15%, transparent); box-shadow: 0 0 10px color-mix(in srgb, var(--bc) 30%, transparent); }
-
-.os-term-wrap { border: 1px solid rgba(0,255,255,.06); height: 220px; flex: none; }
-
-/* ── IDE ──────────────────────────────────────────────────────────── */
-.ide-shell { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-.tab-bar {
-    flex: none; display: flex; align-items: stretch; height: 34px;
-    background: #000; border-bottom: 1px solid rgba(0,255,255,.06);
-    overflow-x: auto; overflow-y: hidden;
-}
-.tab-bar::-webkit-scrollbar { height: 1px; }
-
-.ide-tab {
-    display: flex; align-items: center; gap: 5px;
-    padding: 0 10px; min-width: 90px; max-width: 180px;
-    border: none; border-right: 1px solid rgba(0,255,255,.04);
-    background: transparent; color: rgba(255,255,255,.2);
-    font-size: 9px; font-family: inherit; cursor: pointer;
-    white-space: nowrap; transition: all .1s; flex: none;
-}
-.ide-tab:hover { color: rgba(0,255,255,.5); background: rgba(0,255,255,.03); }
-.tab-active {
-    background: #0a0a18; color: #22d3ee;
-    border-bottom: 2px solid #22d3ee;
-    text-shadow: 0 0 8px rgba(0,255,255,.4);
-}
-.tab-name  { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.tab-dirty { color: #fb923c; font-size: 10px; flex: none; }
-.tab-close {
-    opacity: .3; flex: none; font-size: 14px; padding: 0 2px;
-    transition: all .1s; line-height: 1; border-radius: 2px;
-}
-.tab-close:hover { opacity: 1; background: rgba(248,113,113,.2); color: #f87171; }
-.tab-empty-hint { padding: 0 14px; font-size: 9px; color: rgba(0,255,255,.12); align-self: center; font-style: italic; }
-
-.tab-controls {
-    margin-left: auto; display: flex; align-items: center; gap: 8px;
-    padding: 0 12px; flex: none; border-left: 1px solid rgba(0,255,255,.05);
-}
-.autosave-toggle {
-    display: flex; align-items: center; gap: 5px; cursor: pointer;
-}
-.autosave-toggle input { display: none; }
-.as-track {
-    position: relative; width: 26px; height: 13px;
-    background: rgba(0,255,255,.1); border: 1px solid rgba(0,255,255,.2);
-    border-radius: 7px; transition: .2s;
-}
-.as-track::after {
-    content: ''; position: absolute; top: 1px; left: 1px;
-    width: 9px; height: 9px; background: rgba(0,255,255,.4);
-    border-radius: 50%; transition: .2s;
-}
-.autosave-toggle input:checked ~ .as-track { background: rgba(34,211,238,.2); border-color: #22d3ee; }
-.autosave-toggle input:checked ~ .as-track::after { transform: translateX(13px); background: #22d3ee; box-shadow: 0 0 5px #22d3ee; }
-.as-label { font-size: 8px; font-weight: 900; color: rgba(0,255,255,.3); letter-spacing: .08em; }
-.autosave-toggle input:checked ~ .as-label { color: #22d3ee; }
-
-.save-status { font-size: 9px; font-weight: 700; white-space: nowrap; color: rgba(255,255,255,.3); }
-.save-status.saving { color: #fbbf24; }
-.save-status.save-ok { color: #34d399; }
-.save-status.save-err { color: #f87171; }
-.save-btn {
-    background: rgba(34,211,238,.08); border: 1px solid rgba(0,255,255,.2);
-    color: #22d3ee; font-size: 8px; font-weight: 900; padding: 2px 9px; cursor: pointer;
-    font-family: inherit; transition: background .12s; letter-spacing: .08em;
-}
-.save-btn:hover:not(:disabled) { background: rgba(34,211,238,.2); }
-.save-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-.editor-pane { flex: 1; overflow: hidden; }
-.ide-term-strip { flex: none; height: 180px; border-top: 1px solid rgba(0,255,255,.06); }
-
-.ide-welcome {
-    height: 100%; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 14px;
-    background: #010105;
-}
-.iw-glyph { font-size: 52px; color: rgba(0,255,255,.06); animation: iw-pulse 4s infinite; }
-@keyframes iw-pulse { 0%,100%{opacity:.2;} 50%{opacity:.5; text-shadow: 0 0 40px rgba(0,255,255,.2);} }
-.iw-title  { font-size: 16px; font-weight: 900; letter-spacing: .3em; color: rgba(0,255,255,.12); }
-.iw-hints  { display: flex; flex-direction: column; gap: 5px; text-align: center; }
-.iw-hints span { font-size: 9px; color: rgba(0,255,255,.1); }
-
-/* ── Workspace ────────────────────────────────────────────────────── */
-.ws-panel { display: flex; flex-direction: column; gap: 14px; }
-.ws-hero  { padding: 12px 0 4px; border-bottom: 1px solid rgba(52,211,153,.1); margin-bottom: 2px; }
-.ws-hero-title { font-size: 13px; font-weight: 900; font-style: italic; letter-spacing: .08em; color: #34d399; text-shadow: 0 0 12px rgba(52,211,153,.3); }
-.ws-hero-sub   { font-size: 8px; color: rgba(52,211,153,.3); margin-top: 3px; letter-spacing: .08em; display: block; }
-
-.ws-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.ws-group {
-    padding: 12px; border: 1px solid rgba(255,255,255,.04);
-    display: flex; flex-direction: column; gap: 5px;
-    background: rgba(0,0,0,.3);
-}
-.ws-group-title {
-    font-size: 8px; font-weight: 900; letter-spacing: .12em;
-    text-decoration: underline; color: var(--gc); margin-bottom: 3px;
-}
-.ws-btn {
-    width: 100%; text-align: left; padding: 7px 9px;
-    border: 1px solid color-mix(in srgb, var(--gc) 25%, transparent);
-    background: color-mix(in srgb, var(--gc) 4%, transparent);
-    color: color-mix(in srgb, var(--gc) 70%, white);
-    font-size: 8px; font-weight: 700; letter-spacing: .04em;
-    font-family: inherit; cursor: pointer; transition: all .12s;
-}
-.ws-btn:hover { background: color-mix(in srgb, var(--gc) 12%, transparent); }
-
-.ws-term { border: 1px solid rgba(0,255,255,.06); height: 220px; flex: none; }
-
-/* ── Shared section header ────────────────────────────────────────── */
-.panel-section-hdr {
-    padding: 5px 10px; font-size: 8px; font-weight: 900; letter-spacing: .15em;
-    background: rgba(0,0,0,.5); border-bottom: 1px solid rgba(255,255,255,.04);
-}
-
-/* ── History ──────────────────────────────────────────────────────── */
-.history-panel { display: flex; flex-direction: column; gap: 12px; }
-.hist-hdr  { display: flex; justify-content: space-between; align-items: flex-start; }
-.hist-title { font-size: 12px; font-weight: 900; letter-spacing: .15em; color: #818cf8; }
-.hist-sub   { font-size: 8px; color: rgba(129,140,248,.3); margin-top: 3px; }
-.hist-refresh {
-    background: rgba(129,140,248,.1); border: 1px solid rgba(129,140,248,.2);
-    color: #818cf8; font-size: 9px; font-weight: 900; padding: 5px 12px;
-    cursor: pointer; font-family: inherit; transition: background .12s; letter-spacing: .06em;
-}
-.hist-refresh:hover { background: rgba(129,140,248,.22); }
-.snap-msg    { padding: 8px 12px; border: 1px solid rgba(129,140,248,.2); color: #818cf8; font-size: 9px; }
-.hist-loading {
-    display: flex; flex-direction: column; align-items: center; gap: 12px;
-    padding: 48px; color: rgba(129,140,248,.3); font-size: 9px; letter-spacing: .15em;
-}
-.loading-spin {
-    width: 28px; height: 28px; border-radius: 50%;
-    border: 2px solid rgba(129,140,248,.1); border-top-color: #818cf8;
-    animation: spin 1s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.hist-empty {
-    padding: 60px; text-align: center; color: rgba(129,140,248,.25);
-    font-size: 10px; letter-spacing: .15em; line-height: 2;
-}
-.snap-list { display: flex; flex-direction: column; gap: 4px; }
-.snap-row {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 12px; border: 1px solid rgba(129,140,248,.1);
-    background: rgba(129,140,248,.02); transition: border-color .15s;
-}
-.snap-row:hover { border-color: rgba(129,140,248,.25); }
-.snap-info { flex: 1; min-width: 0; }
-.snap-path { font-size: 10px; color: #818cf8; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.snap-meta { display: flex; gap: 10px; margin-top: 3px; }
-.snap-hash { font-size: 9px; color: rgba(129,140,248,.4); font-family: monospace; }
-.snap-ts   { font-size: 9px; color: rgba(255,255,255,.2); }
-.snap-actions { flex: none; display: flex; gap: 4px; }
-.snap-open, .snap-restore {
-    padding: 5px 10px; border: 1px solid rgba(129,140,248,.2);
-    color: rgba(129,140,248,.6); background: transparent;
-    font-size: 8px; font-weight: 900; letter-spacing: .1em;
-    font-family: inherit; cursor: pointer; transition: all .12s;
-}
-.snap-open:hover    { background: rgba(34,211,238,.1);    color: #22d3ee;  border-color: rgba(34,211,238,.3); }
-.snap-restore:hover { background: rgba(129,140,248,.12);  color: #818cf8;  border-color: rgba(129,140,248,.4); }
-
-/* ── Placeholder ──────────────────────────────────────────────────── */
-.panel-placeholder {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 900; letter-spacing: 4px; color: rgba(0,255,255,.06);
-}
+/* Misc */
+.panel-placeholder { flex:1; display:flex; align-items:center; justify-content:center; font-size:14px; opacity:.1; letter-spacing:10px; }
 </style>

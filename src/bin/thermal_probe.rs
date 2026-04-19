@@ -1,23 +1,16 @@
 /**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Project Nexus Singularity - Thermal Probe v1.9.7
+ * Diagnostic binary for ARM64 substrate
  */
-
-
 use nexus_singularity::resonator::ResonatorCore;
 
 fn main() {
-    let temp = ResonatorCore::read_thermal_temp();
-    println!("THERMAL_STATE:{:.2}", temp);
+    // 1. Instantiate the Resonator (which now holds the ThermalGovernor)
+    let core = ResonatorCore::new();
+
+    // 2. Pulse the hardware via the instance
+    let temp = core.read_thermal_temp();
+
+    // 3. Raw output for shell script consumption
+    println!("{:.1}", temp);
 }

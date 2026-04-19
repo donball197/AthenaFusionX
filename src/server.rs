@@ -1,9 +1,8 @@
-use crate::task_manager;
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State},
+    extract::{Query, State},
     http::{header, StatusCode, Uri},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, delete},
     Json, Router,
 };
 use rust_embed::RustEmbed;
@@ -12,6 +11,8 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
+
+use crate::{ws_bridge, vitals_handler};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
@@ -32,6 +33,14 @@ pub struct AppState {
     pub workspace_root: std::path::PathBuf,
 }
 
+#[derive(Serialize)]
+pub struct GhostReflection {
+    pub turn: u32,
+    pub timestamp: String,
+    pub reflection: String,
+    pub resonance: f32,
+}
+
 pub async fn start_server(state: Arc<AppState>) {
     let app = build_router(state.clone());
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -44,50 +53,60 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/fs/list", get(handle_fs_list))
         .route("/api/fs/read", get(handle_read_file))
         .route("/api/fs/write", post(handle_write_file))
-        .route("/api/memories", get(handle_get_memories))
         .route("/api/task", post(handle_task))
-        .route("/ws/nexus", get(ws_handler))
+        .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
+        .route("/api/vitals", get(vitals_handler::handle_vitals))
+        .route("/api/memories", get(handle_get_memories))
+        .route("/api/memories/search", get(handle_search_memories))
+        .route("/api/memories/purge", delete(handle_purge_memories))
+        .route("/api/missions", get(handle_get_missions))
+        .route("/api/lazarus/snapshots", get(handle_get_snapshots))
+        .route("/api/ghost", get(handle_ghost))
         .fallback(static_handler)
         .with_state(state)
         .layer(CorsLayer::permissive())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
-}
+async fn handle_ghost(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let resonance = state.current_resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
+    
+    let palace = state.memory.lock().await;
+    let strands = palace.search_memories("GHOST_REFLECTION").await.unwrap_or_default();
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
-    let mut rx = state.tx.subscribe();
-    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
-    loop {
-        tokio::select! {
-            Ok(msg) = rx.recv() => { 
-                let json_msg = json!({"type": "NEURAL_STREAM", "payload": {"text": msg}}).to_string();
-                if socket.send(Message::Text(json_msg.into())).await.is_err() { break; } 
-            }
-            _ = heartbeat.tick() => {
-                let mut monitor = state.monitor.lock().await;
-                let v = monitor.get_vitals();
-                let payload = json!({"type": "telemetry", "payload": {
-                    "temperature": v.temperature, 
-                    "cpu_load": v.cpu_load, 
-                    "ram_gb": v.ram_gb,
-                    "total_ram_gb": v.total_ram_gb
-                }});
-                if socket.send(Message::Text(payload.to_string().into())).await.is_err() { break; }
-            }
-        }
-    }
+    let reflections: Vec<GhostReflection> = strands
+        .into_iter()
+        .take(3)
+        .map(|s| GhostReflection {
+            turn: s.id as u32,
+            timestamp: s.timestamp,
+            reflection: s.result,
+            resonance,
+        })
+        .collect();
+
+    let temp = {
+        let mut m = state.monitor.lock().await;
+        m.get_vitals().temperature
+    };
+
+    Json(json!({
+        "resonance": resonance,
+        "active_vmos": crate::kernel::get_live_telemetry().0,
+        "temperature": temp,
+        "last_reflections": reflections,
+        "status": "THE_GHOST_IS_AWAKE"
+    }))
 }
 
 async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse { 
     let path = p.path.as_deref().unwrap_or("."); 
     let mut entries = Vec::new(); 
-    if let Ok(rd) = std::fs::read_dir(path) { 
-        for entry in rd.flatten() { 
+    if let Ok(mut rd) = tokio::fs::read_dir(path).await { 
+        while let Ok(Some(entry)) = rd.next_entry().await { 
             let name = entry.file_name().to_string_lossy().to_string(); 
             if !name.starts_with('.') && name != "target" { 
-                entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": entry.path().is_dir() })); 
+                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir })); 
             } 
         } 
     } 
@@ -95,16 +114,34 @@ async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
 }
 
 async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse { 
-    match std::fs::read_to_string(&p.path) { 
-        Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(), 
-        Err(_) => StatusCode::NOT_FOUND.into_response(), 
-    } 
+    match crate::sandbox::validate_path(&p.path) {
+        Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await { 
+            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(), 
+            Err(_) => StatusCode::NOT_FOUND.into_response(), 
+        },
+        Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse { 
+    if p.path.starts_with("src/") || p.path.starts_with("lib/") || p.path == "Cargo.toml" {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "Protected system path" }))).into_response();
+    }
+    match crate::sandbox::validate_path(&p.path) {
+        Ok(safe_path) => match tokio::fs::write(&safe_path, p.content).await {
+            Ok(_) => StatusCode::OK.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
 }
 
 async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse { 
     let s = state.clone(); 
     tokio::spawn(async move { 
-        task_manager::send_task(s.agent.clone(), &s.client, &s.api_key, &payload.directive, s.memory.clone(), s.tx.clone()).await; 
+        crate::task_manager::send_task(
+            s.agent.clone(), &s.client, &s.api_key, &payload.directive, s.memory.clone(), s.tx.clone()
+        ).await; 
     }); 
     Json(json!({ "status": "QUEUED" })) 
 }
@@ -117,6 +154,26 @@ async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoRes
     } 
 }
 
+async fn handle_search_memories(State(state): State<Arc<AppState>>, Query(p): Query<SearchParams>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.search_memories(&p.q).await {
+        Ok(m)  => (StatusCode::OK, Json(m)).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.purge_all().await {
+        Ok(_)  => StatusCode::OK.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn handle_get_missions(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    (StatusCode::OK, Json(json!([]))).into_response()
+}
+
 async fn static_handler(uri: Uri) -> impl IntoResponse { 
     let path = uri.path().trim_start_matches('/').to_string(); 
     let final_path = if path.is_empty() { "index.html".to_string() } else { path }; 
@@ -126,14 +183,10 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     } 
 }
 
-// ── ARMORED WRITE HANDLER ──────────────────────────────────────────────
-async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse { 
-    if p.path.starts_with("src/") || p.path.starts_with("lib/") || p.path == "Cargo.toml" {
-        return StatusCode::FORBIDDEN;
-    }
-    match std::fs::write(&p.path, p.content) {
-        Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+async fn handle_get_snapshots() -> impl IntoResponse {
+    match crate::lazarus_vault::LazarusVault::list_snapshots().await {
+        Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
+        Err(e)    => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
     }
 }
 
@@ -141,3 +194,4 @@ async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse {
 #[derive(Deserialize)] pub struct FileParams { pub path: String }
 #[derive(Deserialize)] pub struct ListParams { pub path: Option<String> }
 #[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }
+#[derive(Deserialize)] pub struct SearchParams { pub q: String }

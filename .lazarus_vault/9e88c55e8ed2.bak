@@ -1,0 +1,54 @@
+use std::io::{self, Write};
+use std::sync::Arc;
+use crate::server::AppState;
+use crate::task_manager;
+
+pub fn inject_workspace_dna(directive: &str) -> String {
+    let strict_schema = r#"
+[CRITICAL KERNEL OVERRIDE]
+Identity: Ghost of NEXUS (Sovereign ARM64 Micro-Agent).
+RULE: Output ONLY a single JSON array of Serde AgentActions inside <ACTION> tags.
+
+[AVAILABLE AGENT_ACTIONS]
+1. {"type": "vmo_pulse"} -> Allocates 4096 bytes of secure memory.
+2. {"type": "execute_command", "command": "cmd"} -> Host bash execution.
+3. {"type": "write_file", "path": "path", "content": "text"} -> File writing.
+4. {"type": "halt"} -> Mandatory sequence termination.
+"#;
+    format!("SYSTEM_CONTEXT: [SOVEREIGN_MODE]\n{}\n\nDIRECTIVE: {}", strict_schema, directive)
+}
+
+pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
+    let stdin = io::stdin();
+    let mut input = String::new();
+
+    // ⚡ REACTIVE STREAMING: Immediate stdout flush
+    let mut rx = state.tx.subscribe();
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&msg) {
+                if let Some(text) = val["payload"].as_str() {
+                    print!("{}", text);
+                    io::stdout().flush().ok();
+                }
+            }
+        }
+    });
+
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        print!("\r\x1b[K\x1b[1;32mNEXUS_OS >> \x1b[0m");
+        io::stdout().flush()?;
+        
+        input.clear();
+        if stdin.read_line(&mut input)? == 0 { break; }
+        let directive = input.trim().to_string();
+        if directive.is_empty() { continue; }
+
+        let s = state.clone();
+        task_manager::send_task(
+            s.agent.clone(), &s.client, &s.api_key, &directive, s.memory.clone(), s.tx.clone()
+        ).await;
+    }
+    Ok(())
+}

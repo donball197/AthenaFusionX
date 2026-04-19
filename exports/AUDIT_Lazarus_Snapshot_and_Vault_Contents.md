@@ -1,0 +1,1 @@
+Snapshot of src/executor.rs created as src/executor.rs.lazarus_firewall_relaxed. Vault contents: [list of files from ls command]

@@ -1,0 +1,1 @@
+VMO Pulse allocated. Clone operation completed. Active VMO count: 2.

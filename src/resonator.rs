@@ -1,36 +1,32 @@
 /**
- * Project Nexus Singularity v1.9 - Resonator Core
- * Frequency: 528Hz Pulse Logic
+ * Project Nexus Singularity v1.9.7 - Hardened Resonator
+ * Frequency: 528Hz Pulse Logic | Substrate-Linked
  */
-use std::fs;
+use crate::thermal_governor::ThermalGovernor;
 
 pub struct ResonatorCore {
     pub frequency: u32,
+    governor: ThermalGovernor,
 }
 
 impl ResonatorCore {
     pub fn new() -> Self {
-        Self { frequency: 528 }
+        Self { 
+            frequency: 528,
+            governor: ThermalGovernor::new(),
+        }
     }
 
     pub fn sync(&self) {
-        println!("\x1b[1;34m>> [RESONATOR] Frequency Locked: {}Hz\x1b[0m", self.frequency);
+        let status = self.governor.get_status();
+        println!("\x1b[1;34m>> [RESONATOR] Frequency Locked: {}Hz | Thermal: {}\x1b[0m", 
+            self.frequency, status);
     }
 
-    // Thermal read logic mapped for ARM64 Linux / Crostini
-    pub fn read_thermal_temp() -> f32 {
-        match fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
-            Ok(val) => {
-                let raw_temp: f32 = val.trim().parse().unwrap_or(45000.0);
-                raw_temp / 1000.0 // Convert millidegrees to standard Celsius
-            },
-            Err(_) => {
-                // Fail-safe if the container prison locks down hardware access
-                45.5
-            }
-        }
+    /// Optimized thermal read utilizing the Governor's pooled logic
+    pub fn read_thermal_temp(&self) -> f32 {
+        self.governor.read_temp()
     }
 }
 
-// Alias for universal compatibility across the crate
 pub type Resonator = ResonatorCore;

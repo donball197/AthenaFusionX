@@ -1,60 +1,93 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
-// src/bin/global_audit.rs - Native Hierarchical Map-Reduce Auditor
 use anyhow::Result;
 use std::fs;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use nexus_singularity::neural_agent::{MicroAgent, ContextPacket};
+use walkdir::WalkDir;
 
 struct Domain {
     name: &'static str,
     paths: Vec<&'static str>,
 }
 
-fn read_domain_files(paths: &[&str]) -> String {
-    let mut payload = String::new();
-    for path_str in paths {
-        let path = Path::new(path_str);
-        if path.is_file() {
-            if let Ok(content) = fs::read_to_string(path) {
-                payload.push_str(&format!("\n--- FILE: {} ---\n{}\n", path_str, content));
-            }
-        } else if path.is_dir() {
-            // Basic flat directory read for UI/Kernel
-            if let Ok(entries) = fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let file_path = entry.path();
-                    if file_path.is_file() {
-                        if let Some(ext) = file_path.extension().and_then(|s| s.to_str()) {
-                            if matches!(ext, "rs" | "svelte" | "js" | "ts" | "zig") {
-                                if let Ok(content) = fs::read_to_string(&file_path) {
-                                    payload.push_str(&format!("\n--- FILE: {} ---\n{}\n", file_path.display(), content));
-                                }
-                            }
+async fn analyze_domain_hierarchical(
+    domain: &Domain,
+    agent: &Arc<MicroAgent>,
+    client: &reqwest::Client,
+    api_key: &str
+) -> Result<String> {
+    let mut file_stack = Vec::new();
+    let mut current_batch = String::new();
+    let mut batch_summaries = Vec::new();
+    let max_batch_chars = 30_000;
+
+    println!("\x1b[36m[*] Hierarchical Scan: {}\x1b[0m", domain.name);
+
+    for path in &domain.paths {
+        for entry in WalkDir::new(path).into_iter().flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                    if matches!(ext, "rs" | "svelte" | "js" | "ts" | "zig" | "json") {
+                        if p.to_string_lossy().contains("node_modules") || p.to_string_lossy().contains("-lock.json") {
+                            continue;
                         }
+                        file_stack.push(p.to_owned());
                     }
                 }
             }
         }
     }
-    payload
+
+    for file_path in file_stack {
+        if let Ok(content) = fs::read_to_string(&file_path) {
+            let entry_text = format!("\n--- FILE: {} ---\n{}\n", file_path.display(), content);
+            if current_batch.len() + entry_text.len() > max_batch_chars {
+                let summary = request_batch_summary(agent, client, api_key, &current_batch, domain.name).await?;
+                batch_summaries.push(summary);
+                current_batch.clear();
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+            current_batch.push_str(&entry_text);
+        }
+    }
+
+    if !current_batch.is_empty() {
+        let summary = request_batch_summary(agent, client, api_key, &current_batch, domain.name).await?;
+        batch_summaries.push(summary);
+    }
+
+    println!("    -> Reducing {} batch summaries into Domain Report...", batch_summaries.len());
+    let synthesis_prompt = format!(
+        "Synthesize these sector summaries into a single, dense architectural report for the {} domain.\n\n{}",
+        domain.name, batch_summaries.join("\n\n---\n\n")
+    );
+
+    let (domain_report, _) = agent.prepare_and_run(
+        client, api_key, &synthesis_prompt, ContextPacket::default(), 0.4, None
+    ).await?;
+
+    Ok(domain_report)
+}
+
+async fn request_batch_summary(
+    agent: &Arc<MicroAgent>,
+    client: &reqwest::Client,
+    api_key: &str,
+    content: &str,
+    domain_name: &str
+) -> Result<String> {
+    println!("    -> Mapping batch ({} bytes)...", content.len());
+    let prompt = format!(
+        "Analyze this code batch from the {} domain. Provide a dense technical summary.\n\n{}",
+        domain_name, content
+    );
+    let ctx = ContextPacket {
+        system_prompt: Some("You are a Lead Architect. Provide a concise technical summary.".into()),
+        ..Default::default()
+    };
+    let (summary, _) = agent.prepare_and_run(client, api_key, &prompt, ctx, 0.3, None).await?;
+    Ok(summary)
 }
 
 #[tokio::main]
@@ -65,74 +98,33 @@ async fn main() -> Result<()> {
     let (tx, _) = broadcast::channel(16);
     let agent = Arc::new(MicroAgent::init(tx)?);
 
-    println!("\x1b[35m>> [NEXUS] INITIATING NATIVE HIERARCHICAL AUDIT (RATE-LIMITED)\x1b[0m");
+    println!("\x1b[35m>> [NEXUS] INITIATING HIERARCHICAL RECURSIVE AUDIT\x1b[0m");
 
     let domains = vec![
         Domain { name: "UI", paths: vec!["ui/src"] },
-        Domain { name: "KERNEL", paths: vec!["src/kernel", "src/reflex"] },
+        Domain { name: "KERNEL", paths: vec!["src/kernel"] },
         Domain { name: "CORTEX", paths: vec!["src/neural_agent.rs", "src/task_manager.rs", "src/orchestrator.rs"] },
         Domain { name: "INFRASTRUCTURE", paths: vec!["src/server.rs", "src/executor.rs", "src/lazarus_vault.rs"] },
     ];
 
-    let mut grand_synthesis_payload = String::from("=== GLOBAL SYSTEM ARCHITECTURE ===\n\n");
-
-    // 1. THE MAP PHASE
+    let mut domain_reports = Vec::new();
     for domain in domains {
-        println!("\n\x1b[36m[*] Mapping Domain: {}\x1b[0m", domain.name);
-        let code_payload = read_domain_files(&domain.paths);
-        
-        if code_payload.is_empty() {
-            println!("    -> No readable code found. Skipping.");
-            continue;
-        }
-
-        println!("    -> Compiling {} sector via Gemma API...", domain.name);
-        
-        let prompt = format!(
-            "Analyze the following codebase section for the {} domain.\n\
-            Provide a dense, highly technical summary of its architectural role, key structs/functions, and any logic bottlenecks.\n\n\
-            CODE:\n{}", domain.name, code_payload
-        );
-
-        let ctx = ContextPacket {
-            system_prompt: Some("You are a Senior Systems Architect. Output a concise technical summary. No pleasantries.".into()),
-            ..Default::default()
-        };
-
-        match agent.prepare_and_run(&client, &api_key, &prompt, ctx, 0.3, None).await {
-            Ok((summary, _)) => {
-                grand_synthesis_payload.push_str(&format!("--- {} DOMAIN SUMMARY ---\n{}\n\n", domain.name, summary));
-                println!("    -> Domain summarized successfully.");
-            }
-            Err(e) => println!("\x1b[31m    -> API Failure on {}: {}\x1b[0m", domain.name, e),
-        }
-
-        println!("\x1b[90m    [+] Cooling down API token window (15s)...\x1b[0m");
-        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+        let report = analyze_domain_hierarchical(&domain, &agent, &client, &api_key).await?;
+        domain_reports.push(format!("### {} DOMAIN REPORT\n{}", domain.name, report));
+        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
     }
 
-    // 2. THE REDUCE PHASE
-    println!("\n\x1b[35m[*] Initiating Grand Synthesis...\x1b[0m");
-    
     let synth_prompt = format!(
-        "You are the Lead Architect. Review these domain summaries and provide a unified 'Grand Synthesis' of the entire system architecture. \
-        Identify how the domains interact and point out any cross-domain fracture points.\n\n{}", 
-        grand_synthesis_payload
+        "Perform a Grand Synthesis of the system architecture based on these reports. Identify systemic vulnerabilities.\n\n{}",
+        domain_reports.join("\n\n")
     );
 
-    let synth_ctx = ContextPacket {
-        system_prompt: Some("You are the NEXUS Sovereign AI. Output a highly structured, systemic analysis.".into()),
-        ..Default::default()
-    };
-
-    match agent.prepare_and_run(&client, &api_key, &synth_prompt, synth_ctx, 0.7, None).await {
+    match agent.prepare_and_run(&client, &api_key, &synth_prompt, ContextPacket::default(), 0.7, None).await {
         Ok((final_report, _)) => {
-            println!("\n\x1b[32m=== [GLOBAL SYNTHESIS REPORT] ===\x1b[0m\n{}", final_report);
             std::fs::write(".nexus_global_synthesis.md", final_report)?;
-            println!("\n\x1b[32m>> [GLOBAL AUDIT COMPLETE] Report saved to .nexus_global_synthesis.md\x1b[0m");
+            println!("\x1b[32m>> [GLOBAL AUDIT COMPLETE] Report saved to .nexus_global_synthesis.md\x1b[0m");
         }
         Err(e) => println!("\x1b[31m>> Synthesis API Failure: {}\x1b[0m", e),
     }
-
     Ok(())
 }

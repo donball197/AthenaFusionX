@@ -3,84 +3,85 @@ use std::sync::Arc;
 use crate::server::AppState;
 use crate::task_manager;
 
-#[derive(Debug, Clone)]
-pub enum HostMuscle {
-    ChromebookCrostini,
-    MotorolaTermux,
-    GenericARM64,
-}
-
-pub fn detect_host_muscle() -> HostMuscle {
-    if std::path::Path::new("/usr/bin/cicerone").exists() {
-        HostMuscle::ChromebookCrostini
-    } else if std::path::Path::new("/data/data/com.termux").exists() {
-        HostMuscle::MotorolaTermux
-    } else {
-        HostMuscle::GenericARM64
-    }
-}
-
-pub fn get_muscle_string(muscle: &HostMuscle) -> &'static str {
-    match muscle {
-        HostMuscle::ChromebookCrostini => "CHROMEBOOK [NATIVE LINUX/CROSTINI]",
-        HostMuscle::MotorolaTermux => "MOTOROLA [TERMUX/ANDROID]",
-        HostMuscle::GenericARM64 => "GENERIC ARM64 SUBSTRATE",
-    }
-}
-
 pub fn inject_workspace_dna(directive: &str) -> String {
-    let strict_schema = r#"
-[STRICT JSON SCHEMA REQUIRED]
-You are bound by the Serde AgentAction protocol. You must output actions EXACTLY in this format, including the "type" field.
+    let directive = directive.trim();
+    if directive.is_empty() { return String::new(); }
 
-1. To run a terminal command:
-{"type": "execute_command", "command": "your_command_here"}
+    let schema = r#"
+[CRITICAL KERNEL OVERRIDE]
+You are NEXUS, an autonomous AI operating directly on a Linux ARM64 system. You are NOT a roleplay character. You are a real software agent.
 
-2. To write or overwrite a file:
-{"type": "write_file", "path": "file_path", "content": "file_content"}
+RULES:
+- Output reasoning in <THOUGHT></THOUGHT> tags (keep it brief — 2-3 sentences max).
+- You MUST output your final decision as a JSON array inside <ACTION></ACTION> tags.
+- If asked to summarize data, use "export_report" to deliver the answer, followed IMMEDIATELY by "halt".
+- Never output raw text outside the THOUGHT and ACTION tags.
 
-3. To log system telemetry:
-{"type": "system_status", "data": {"key": "value"}}
-
-4. To stop (MANDATORY immediately after an action):
-{"type": "halt"}
-
-DO NOT invent new commands, target keys, or parameters. Use ONLY the exact structures above.
+[AVAILABLE AGENT_ACTIONS]
+{"type": "execute_command", "command": "cmd"}            — Executes a real bash command.
+{"type": "lazarus_snapshot", "path": "p", "tag": "t"}    — Takes a secure cryptographic backup of a file.
+{"type": "vmo_pulse"}                                    — Allocates 4096 bytes of memory.
+{"type": "write_file", "path": "path", "content": "txt"} — Writes a file to disk.
+{"type": "search_memory", "query": "q"}                  — Searches neural memory.
+{"type": "export_report", "title": "t", "content": "c"}  — Delivers an answer or summary to the user.
+{"type": "halt"}                                         — Ends the sequence. REQUIRED after a task is finished.
 "#;
-    format!("SYSTEM_CONTEXT: [SOVEREIGN_MODE]\n{}\n\nDIRECTIVE: {}", strict_schema, directive)
+
+    format!("SYSTEM_CONTEXT: [SOVEREIGN_MODE]\n{}\n\nDIRECTIVE: {}", schema, directive)
 }
 
 pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
-    // Wait for server logs to settle
-    tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
-    
     let stdin = io::stdin();
     let mut input = String::new();
+    let mut rx = state.tx.subscribe();
+    
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&msg) {
+                match val["type"].as_str().unwrap_or("") {
+                    "NEURAL_STREAM" => {
+                        if let Some(text) = val["payload"].as_str() {
+                            print!("{}", text);
+                            io::stdout().flush().ok();
+                        }
+                    }
+                    "NEURAL_THOUGHT" => {
+                        if let Some(text) = val["payload"].as_str() {
+                            if text.len() < 500 {
+                                print!("\x1b[34m{}\x1b[0m", text);
+                                io::stdout().flush().ok();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     loop {
         print!("\r\x1b[K\x1b[1;32mNEXUS_OS >> \x1b[0m");
         io::stdout().flush()?;
-        
         input.clear();
-        if stdin.read_line(&mut input)? == 0 { break; }
-        
-        let directive = input.trim();
-        if directive.is_empty() { continue; }
-        
-        if directive == "exit" || directive == "halt" { break; }
 
-        let enriched = inject_workspace_dna(directive);
+        if stdin.read_line(&mut input)? == 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            continue;
+        }
+
+        let directive = input.trim().to_string();
+        if directive.is_empty() { continue; }
+        if directive == "exit" || directive == "quit" { break; }
+
+        let enriched = inject_workspace_dna(&directive);
+        if enriched.is_empty() { continue; }
+
+        println!("\x1b[36m>> [CORTEX UPLINK] Executing...\x1b[0m");
         let s = state.clone();
-        tokio::spawn(async move {
-            task_manager::send_task(
-                s.agent.clone(),
-                &s.client,
-                &s.api_key,
-                &enriched,
-                s.memory.clone(),
-                s.tx.clone()
-            ).await;
-        });
+        task_manager::send_task(s.agent.clone(), &s.client, &s.api_key, &enriched, s.memory.clone(), s.tx.clone()).await;
+        println!();
     }
     Ok(())
 }
