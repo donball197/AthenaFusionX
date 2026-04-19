@@ -56,6 +56,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/task", post(handle_task))
         .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
         .route("/api/vitals", get(vitals_handler::handle_vitals))
+        .route("/api/vmos", axum::routing::get(crate::vmo_handler::handle_get_vmos))
         .route("/api/memories", get(handle_get_memories))
         .route("/api/memories/search", get(handle_search_memories))
         .route("/api/memories/purge", delete(handle_purge_memories))
