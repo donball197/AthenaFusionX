@@ -15,3 +15,4 @@ pub mod system_monitor; pub mod task_manager; pub mod thermal_governor;
 pub mod vision; pub mod vitals_handler; pub mod void_walker; pub mod ws_bridge; 
 pub mod ziggy_llm;
 pub mod vmo_handler;
+pub mod logic_engine;

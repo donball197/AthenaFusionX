@@ -1,13 +1,8 @@
 [package]
 name = "nexus_singularity"
-default-run = "nexus_singularity"
-version = "1.9.0"
+version = "2.3.1"
 edition = "2021"
 rust-version = "1.80"
-
-[features]
-default = []
-vision = []
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
@@ -39,10 +34,8 @@ sysinfo = "0.36.1"
 lazy_static = "1.5.0"
 
 [profile.release]
-opt-level = 2
-lto = false
-codegen-units = 32
-panic = "abort"
-strip = true
-debug = false
-incremental = false
+opt-level = "z"      # ⚡ Optimize for smallest binary size
+lto = true           # ⚡ Link-Time Optimization (merges code across files)
+panic = "abort"     # ⚡ Removes error-recovery bloat (saves space)
+codegen-units = 1    # ⚡ Maximum focus for the compiler
+strip = true         # ⚡ Physically remove debug symbols

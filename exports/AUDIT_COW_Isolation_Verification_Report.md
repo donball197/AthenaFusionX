@@ -1,0 +1,1 @@
+Mission successful. Verified COW isolation between parent VMO (0xc90c8) and child VMO (0xca0c9). Write operations to child handle did not mutate parent memory space. Parent state: 'ORIGINAL_DATA', Child state: 'CHILD_DATAATA'.

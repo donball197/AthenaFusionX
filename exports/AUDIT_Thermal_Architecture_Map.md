@@ -1,0 +1,1 @@
+Scanning thermal paths... [Data pending execution output]

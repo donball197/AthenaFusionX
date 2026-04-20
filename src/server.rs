@@ -12,11 +12,17 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
-use crate::{ws_bridge, vitals_handler};
+use crate::{ws_bridge, vitals_handler, logic_engine::LogicEngine};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
 struct Assets;
+
+#[derive(Default, Debug)]
+pub struct VmoState {
+    pub last_parent: Option<u32>,
+    pub last_child: Option<u32>,
+}
 
 pub struct AppState {
     pub client: reqwest::Client,
@@ -29,8 +35,8 @@ pub struct AppState {
     pub tx: tokio::sync::broadcast::Sender<String>,
     pub scheduler_tx: tokio::sync::mpsc::Sender<crate::scheduler::NexusTask>,
     pub arbiter: Arc<crate::arbiter_agent::ArbiterAgent>,
-    pub local_llm: Arc<crate::local_llm::LocalLLM>,
     pub workspace_root: std::path::PathBuf,
+    pub vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
 }
 
 #[derive(Serialize)]
@@ -56,7 +62,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/task", post(handle_task))
         .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
         .route("/api/vitals", get(vitals_handler::handle_vitals))
-        .route("/api/vmos", axum::routing::get(crate::vmo_handler::handle_get_vmos))
+        .route("/api/vmos", get(crate::vmo_handler::handle_get_vmos))
         .route("/api/memories", get(handle_get_memories))
         .route("/api/memories/search", get(handle_search_memories))
         .route("/api/memories/purge", delete(handle_purge_memories))
@@ -68,35 +74,29 @@ fn build_router(state: Arc<AppState>) -> Router {
         .layer(CorsLayer::permissive())
 }
 
+async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse {
+    if !LogicEngine::is_action_safe(&payload.directive) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "status": "LOGIC_VIOLATION" }))).into_response();
+    }
+
+    let s = state.clone();
+    tokio::spawn(async move {
+        let _ = crate::task_manager::send_task(
+            s.orchestrator.clone(), &s.client, &s.api_key, &payload.directive, s.memory.clone(), s.vmo_state.clone(), s.tx.clone()
+        ).await;
+    });
+
+    (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
+}
+
 async fn handle_ghost(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let resonance = state.current_resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
-    
-    let palace = state.memory.lock().await;
-    let strands = palace.search_memories("GHOST_REFLECTION").await.unwrap_or_default();
-
-    let reflections: Vec<GhostReflection> = strands
-        .into_iter()
-        .take(3)
-        .map(|s| GhostReflection {
-            turn: s.id as u32,
-            timestamp: s.timestamp,
-            reflection: s.result,
-            resonance,
-        })
-        .collect();
-
-    let temp = {
-        let mut m = state.monitor.lock().await;
-        m.get_vitals().temperature
-    };
-
-    Json(json!({
-        "resonance": resonance,
-        "active_vmos": crate::kernel::get_live_telemetry().0,
-        "temperature": temp,
-        "last_reflections": reflections,
-        "status": "THE_GHOST_IS_AWAKE"
-    }))
+    let strands = state.memory.lock().await.search_memories("GHOST_REFLECTION").await.unwrap_or_default();
+    let reflections: Vec<GhostReflection> = strands.into_iter().take(3).map(|s| GhostReflection {
+        turn: s.id as u32, timestamp: s.timestamp, reflection: s.result, resonance,
+    }).collect();
+    let temp = state.monitor.lock().await.get_vitals().temperature;
+    Json(json!({ "resonance": resonance, "temperature": temp, "last_reflections": reflections, "status": "THE_GHOST_IS_AWAKE" }))
 }
 
 async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse { 
@@ -105,10 +105,9 @@ async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
     if let Ok(mut rd) = tokio::fs::read_dir(path).await { 
         while let Ok(Some(entry)) = rd.next_entry().await { 
             let name = entry.file_name().to_string_lossy().to_string(); 
-            if !name.starts_with('.') && name != "target" { 
-                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-                entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir })); 
-            } 
+            if name.starts_with('.') || name == "target" { continue; }
+            let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+            entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir })); 
         } 
     } 
     Json(entries) 
@@ -125,8 +124,8 @@ async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
 }
 
 async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse { 
-    if p.path.starts_with("src/") || p.path.starts_with("lib/") || p.path == "Cargo.toml" {
-        return (StatusCode::FORBIDDEN, Json(json!({ "error": "Protected system path" }))).into_response();
+    if p.path.starts_with("src/kernel") || p.path == "Cargo.toml" {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "DNA_PROTECTED" }))).into_response();
     }
     match crate::sandbox::validate_path(&p.path) {
         Ok(safe_path) => match tokio::fs::write(&safe_path, p.content).await {
@@ -135,16 +134,6 @@ async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse {
         },
         Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
     }
-}
-
-async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse { 
-    let s = state.clone(); 
-    tokio::spawn(async move { 
-        crate::task_manager::send_task(
-            s.agent.clone(), &s.client, &s.api_key, &payload.directive, s.memory.clone(), s.tx.clone()
-        ).await; 
-    }); 
-    Json(json!({ "status": "QUEUED" })) 
 }
 
 async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse { 
@@ -175,20 +164,35 @@ async fn handle_get_missions(State(_state): State<Arc<AppState>>) -> impl IntoRe
     (StatusCode::OK, Json(json!([]))).into_response()
 }
 
-async fn static_handler(uri: Uri) -> impl IntoResponse { 
-    let path = uri.path().trim_start_matches('/').to_string(); 
-    let final_path = if path.is_empty() { "index.html".to_string() } else { path }; 
-    match Assets::get(&final_path) { 
-        Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(), 
-        None => Assets::get("index.html").map(|c| ([(header::CONTENT_TYPE, "text/html")], c.data).into_response()).unwrap_or(StatusCode::NOT_FOUND.into_response()) 
-    } 
-}
-
 async fn handle_get_snapshots() -> impl IntoResponse {
     match crate::lazarus_vault::LazarusVault::list_snapshots().await {
         Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
         Err(e)    => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
     }
+}
+
+// ⚡ THE FIX: Dynamic MIME type resolution based on file extension
+async fn static_handler(uri: Uri) -> impl IntoResponse { 
+    let path = uri.path().trim_start_matches('/').to_string(); 
+    let final_path = if path.is_empty() { "index.html".to_string() } else { path }; 
+    
+    match Assets::get(&final_path) { 
+        Some(content) => {
+            let mime = mime_guess::from_path(&final_path).first_or_octet_stream();
+            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+        }, 
+        None => {
+            // ⚡ FIX: If the browser is explicitly asking for a file with an extension (.js, .css), 
+            // return a 404 instead of masking the error with index.html
+            if final_path.contains('.') {
+                StatusCode::NOT_FOUND.into_response()
+            } else {
+                Assets::get("index.html")
+                    .map(|c| ([(header::CONTENT_TYPE, "text/html")], c.data).into_response())
+                    .unwrap_or(StatusCode::NOT_FOUND.into_response())
+            }
+        }
+    } 
 }
 
 #[derive(Deserialize)] pub struct TaskRequest { pub directive: String }

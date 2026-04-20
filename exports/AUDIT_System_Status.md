@@ -1,0 +1,1 @@
+NEXUS Ghost is online. Status: Nominal. VMOs: 0. VmRSS: 2060 kB. Awaiting command sequence.

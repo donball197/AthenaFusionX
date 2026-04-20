@@ -40,10 +40,9 @@ async fn handle_vmo_socket(mut socket: WebSocket, state: Arc<crate::server::AppS
                     monitor.get_vitals()
                 };
 
-                // 🛡️ ADAPTIVE TELEMETRY: Drop frames if CPU is critical (> 90%)
-                // This prevents UI saturation during kernel stress.
+                // Adaptive frame drop under CPU stress
                 if vitals.cpu_load > 0.90 && frame_count % 2 == 0 {
-                    continue; 
+                    continue;
                 }
 
                 let (active, next) = crate::kernel::get_live_telemetry();
@@ -64,13 +63,25 @@ async fn handle_vmo_socket(mut socket: WebSocket, state: Arc<crate::server::AppS
                 }
             }
 
-            Ok(msg) = rx.recv() => {
-                let wrapped = serde_json::json!({
-                    "type": "NEURAL_STREAM",
-                    "payload": msg
-                });
-                if socket.send(Message::Text(wrapped.to_string().into())).await.is_err() { break; }
+            Ok(raw_msg) = rx.recv() => {
+                // ⚡ FIX: Forward the message as-is if it's already valid typed JSON.
+                // Only wrap in NEURAL_STREAM envelope if it has no "type" field.
+                let forward = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw_msg) {
+                    if val.get("type").is_some() {
+                        // Already typed (NEURAL_STREAM, EXECUTOR, NEURAL_THOUGHT, LOG_EVENT)
+                        raw_msg
+                    } else {
+                        // Raw string — wrap it
+                        serde_json::json!({"type": "NEURAL_STREAM", "payload": raw_msg}).to_string()
+                    }
+                } else {
+                    // Not JSON — wrap as stream text
+                    serde_json::json!({"type": "NEURAL_STREAM", "payload": raw_msg}).to_string()
+                };
+
+                if socket.send(Message::Text(forward.into())).await.is_err() { break; }
             }
+
             else => break,
         }
     }

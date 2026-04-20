@@ -1,0 +1,68 @@
+use std::io::{self, Write};
+use std::sync::Arc;
+use crate::server::AppState;
+use crate::task_manager;
+
+pub fn inject_workspace_dna(directive: &str) -> String {
+    let directive = directive.trim();
+    if directive.is_empty() { return String::new(); }
+
+    let schema = r#"
+[CRITICAL KERNEL OVERRIDE]
+You are NEXUS, an autonomous AI operating directly on a Linux ARM64 system.
+
+RULES:
+- Output reasoning in <THOUGHT></THOUGHT> tags (2-3 sentences max).
+- Output final decision as JSON array in <ACTION></ACTION> tags.
+- Use "export_report" then "halt" when a mission is complete.
+
+[AVAILABLE AGENT_ACTIONS]
+{"type": "execute_command", "command": "cmd"}                  — Executes a bash command.
+{"type": "vmo_pulse"}                                          — Allocates 4096 bytes of memory.
+{"type": "vmo_clone", "parent_handle": "0xc8"}                 — Clones a VMO handle for Copy-On-Write.
+{"type": "vmo_write", "handle": "0xc8", "data": "HEX_STRING"}  — Writes data directly into the Zig VMO matrix.
+{"type": "vmo_read", "handle": "0xc8"}                         — Reads data directly from the Zig VMO matrix.
+{"type": "write_file", "path": "path", "content": "txt"}       — Writes a standard file to disk.
+{"type": "export_report", "title": "t", "content": "c"}        — Delivers an answer.
+{"type": "halt"}                                               — Ends the sequence.
+"#;
+
+    format!("SYSTEM_CONTEXT: [SOVEREIGN_MODE]\n{}\n\nDIRECTIVE: {}", schema, directive)
+}
+
+pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
+    let stdin = io::stdin();
+    let mut input = String::new();
+    let mut rx = state.tx.subscribe();
+    
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&msg) {
+                if val["type"] == "NEURAL_STREAM" {
+                    if let Some(text) = val["payload"].as_str() { print!("{}", text); io::stdout().flush().ok(); }
+                } else if val["type"] == "NEURAL_THOUGHT" {
+                    if let Some(text) = val["payload"].as_str() { print!("\x1b[34m{}\x1b[0m", text); io::stdout().flush().ok(); }
+                }
+            }
+        }
+    });
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    loop {
+        print!("\r\x1b[K\x1b[1;32mNEXUS_OS >> \x1b[0m");
+        io::stdout().flush()?;
+        input.clear();
+        if stdin.read_line(&mut input)? == 0 { tokio::time::sleep(tokio::time::Duration::from_millis(500)).await; continue; }
+        let directive = input.trim().to_string();
+        if directive.is_empty() { continue; }
+        if directive == "exit" || directive == "quit" { break; }
+        let enriched = inject_workspace_dna(&directive);
+        if enriched.is_empty() { continue; }
+        println!("\x1b[36m>> [CORTEX UPLINK] Executing...\x1b[0m");
+        let s = state.clone();
+        task_manager::send_task(s.agent.clone(), &s.client, &s.api_key, &enriched, s.memory.clone(), s.tx.clone()).await;
+        println!();
+    }
+    Ok(())
+}

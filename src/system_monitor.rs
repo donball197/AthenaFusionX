@@ -1,4 +1,4 @@
-use sysinfo::{System, Components};
+use sysinfo::System;
 
 pub struct Vitals {
     pub ram_gb: f64,
@@ -19,27 +19,24 @@ impl SystemMonitor {
     }
 
     pub fn get_vitals(&mut self) -> Vitals {
-        // Refresh system state
         self.sys.refresh_memory();
         self.sys.refresh_cpu_all();
 
         let total_mem = self.sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-        let used_mem = self.sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-        
-        // v0.31+ Thermal API: Components is now a separate refreshed list
-        let components = Components::new_with_refreshed_list();
-        let temp = components.iter()
-            .find(|c| c.label().contains("CPU") || c.label().contains("Package"))
-            .map(|c| c.temperature().unwrap_or(0.0))
-            .unwrap_or(0.0);
+        let used_mem  = self.sys.used_memory()  as f64 / 1024.0 / 1024.0 / 1024.0;
+        let load      = self.sys.global_cpu_usage() / 100.0;
 
-        let load = self.sys.global_cpu_usage() / 100.0;
+        // ⚡ PUMP: Push real CPU load into the Zig kernel for synthetic thermal model
+        unsafe { crate::kernel::ffi::set_substrate_load(load); }
+
+        // Synthetic temperature: 30°C idle → 70°C full load
+        let temp = (load * 40.0) + 30.0;
 
         Vitals {
-            ram_gb: used_mem,
+            ram_gb:       used_mem,
             total_ram_gb: total_mem,
-            temperature: temp,
-            cpu_load: load,
+            temperature:  temp,
+            cpu_load:     load,
         }
     }
 }

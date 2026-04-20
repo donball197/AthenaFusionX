@@ -17,8 +17,7 @@ extern "C" {
     pub fn zx_vmo_read_native(handle: u32, offset: usize, buffer: *mut u8, size: usize) -> i32;
     pub fn muscle_get_active_vmos() -> u32;
     pub fn muscle_get_next_handle() -> u32;
-    
-    // ⚡ TELEMETRY FFI
+    pub fn set_substrate_load(load: f32);
     pub fn zx_vmo_get_info(handle: u32, out_info: *mut VmoInfo) -> i32;
     pub fn zx_vmo_get_all_handles(out_handles: *mut u32, max_count: usize) -> usize;
 }
@@ -29,28 +28,20 @@ pub trait KernelOps: Send + Sync {
     fn handle_close(&self, handle: u32);
     fn get_active_vmos(&self) -> u32;
     fn get_next_handle(&self) -> u32;
+    fn set_substrate_load(&self, load: f32);
+    fn vmo_get_info(&self, handle: u32, out_info: *mut VmoInfo) -> i32;
+    fn vmo_get_all_handles(&self, out_handles: *mut u32, max_count: usize) -> usize;
 }
 
 pub struct NativeKernelOps;
 
 impl KernelOps for NativeKernelOps {
-    fn vmo_create(&self, size: usize) -> u32 {
-        unsafe { zx_vmo_create_native(size) }
-    }
-
-    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32 {
-        unsafe { zx_vmo_clone_native(parent_handle, size) }
-    }
-
-    fn handle_close(&self, handle: u32) {
-        unsafe { zx_handle_close_native(handle) }
-    }
-    
-    fn get_active_vmos(&self) -> u32 {
-        unsafe { muscle_get_active_vmos() }
-    }
-    
-    fn get_next_handle(&self) -> u32 {
-        unsafe { muscle_get_next_handle() }
-    }
+    fn vmo_create(&self, size: usize) -> u32 { unsafe { zx_vmo_create_native(size) } }
+    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32 { unsafe { zx_vmo_clone_native(parent_handle, size) } }
+    fn handle_close(&self, handle: u32) { unsafe { zx_handle_close_native(handle) } }
+    fn get_active_vmos(&self) -> u32 { unsafe { muscle_get_active_vmos() } }
+    fn get_next_handle(&self) -> u32 { unsafe { muscle_get_next_handle() } }
+    fn set_substrate_load(&self, load: f32) { unsafe { set_substrate_load(load); } }
+    fn vmo_get_info(&self, handle: u32, out_info: *mut VmoInfo) -> i32 { unsafe { zx_vmo_get_info(handle, out_info) } }
+    fn vmo_get_all_handles(&self, out_handles: *mut u32, max_count: usize) -> usize { unsafe { zx_vmo_get_all_handles(out_handles, max_count) } }
 }

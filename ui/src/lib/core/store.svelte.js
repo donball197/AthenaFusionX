@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-//  NEXUS SINGULARITY — Reactive Store v6.3.0
+//  NEXUS SINGULARITY — Commercial Reactive Store v7.0.0
 // ════════════════════════════════════════════════════════════════
 
 export const wsState = $state({ ready: false, latency: 0 });
@@ -10,6 +10,17 @@ export const systemVitals = $state({
     total_ram_gb: 4.0,
     temperature:  0,
     resonance:    0,
+});
+
+export const neuralInventory = $state({
+    // ⚡ SEATED FROM SCOUT_MODELS.SH
+    models: [
+        { id: 'gemini-2.5-pro', name: 'ORCHESTRATOR_PRO', limit: '1M', tier: 'ELITE', task: 'Deep Architecture' },
+        { id: 'gemma-4-31b-it', name: 'SOVEREIGN_DENSE', limit: '256K', tier: 'INDUSTRIAL', task: 'Kernel Surgery' },
+        { id: 'gemma-4-26b-a4b-it', name: 'SOVEREIGN_MOE', limit: '256K', tier: 'PRODUCTION', task: 'Logic/Coding' },
+        { id: 'gemini-2.0-flash-lite', name: 'COURIER_LITE', limit: '1M', tier: 'UTILITY', task: 'Rapid Scraping' },
+        { id: 'gemini-robotics-er-1.5', name: 'ROBOTICS_CORE', limit: '1M', tier: 'HARDWARE', task: 'ROS/Motion Control' }
+    ]
 });
 
 export const terminalState = $state({
@@ -50,7 +61,6 @@ export const layout = $state({
     explorerVisible:    true,
     ghostVisible:       true,
     ghostCortexVisible: false,
-    // ⚡ FIX: TacticalBlade.svelte toggles these
     visorVisible:       false,
     autopilotActive:    false,
 });

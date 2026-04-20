@@ -1,0 +1,1 @@
+To restore 'alpha.txt', use: lazarus_restore --tag pre_corruption --file alpha.txt

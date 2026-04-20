@@ -1,6 +1,6 @@
 /**
- * Project Nexus Singularity - v4.7.2 Memory Palace
- * Qualified FTS5 Search // Ambiguity Remediation
+ * Project Nexus Singularity - v4.7.5 Memory Palace
+ * Optimization: SQLite WAL mode for high-resonance concurrency.
  */
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Row};
@@ -27,6 +27,8 @@ impl MemoryPalace {
             .connect(&format!("sqlite:{}", db_path))
             .await?;
         
+        // ⚡ EVOLUTION: Enable Write-Ahead Logging
+        // This prevents the "Database is Locked" errors during multi-turn missions.
         sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
 
         let palace = Self { pool };
@@ -81,7 +83,6 @@ impl MemoryPalace {
         }).collect())
     }
 
-    // ⚡ REMEDIATION: Qualified Column Names to resolve ambiguity
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
         let rows = sqlx::query("SELECT n.id, n.origin, n.directive, n.result, n.timestamp 
                                 FROM neural_context n

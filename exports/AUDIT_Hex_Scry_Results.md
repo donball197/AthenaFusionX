@@ -1,0 +1,1 @@
+Parent offset 0: SECURE_ROOT | Clone offset 0: GHOST_PULSE. Copy-On-Write successful: memory divergence confirmed at shared address.

@@ -1,0 +1,1 @@
+Scribed GHOST_PULSE to child handle 0xcb0ca. Read sequence complete.

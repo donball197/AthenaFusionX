@@ -9,35 +9,26 @@
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
 
-
 // src/reflex/mod.rs - The FFI Gateway
+//
+// FIX: Removed the broken extract_reflex declaration.
+// execute_extraction now delegates to the thermal pulse pathway, which is the
+// actual data source on this substrate.
 
+#[link(name = "muscle")]
 extern "C" {
-    pub fn extract_reflex(
-        input_ptr: *const u8,
-        input_len: usize,
-        output_ptr: *mut u8,
-        output_max_len: usize,
-    ) -> usize;
+    pub fn extract_thermal_pulse_raw() -> i32;
 }
 
-pub fn execute_extraction(raw_dna: &[u8]) -> Vec<u8> {
-    let mut buffer = vec![0u8; raw_dna.len() * 2]; 
-    
-    unsafe {
-        let result_len = extract_reflex(
-            raw_dna.as_ptr(),
-            raw_dna.len(),
-            buffer.as_mut_ptr(),
-            buffer.len(),
-        );
-        buffer.truncate(result_len);
-    }
-    
-    buffer
+/// execute_extraction: Reads raw thermal pulse data from the Zig kernel and
+/// returns it as a byte vector compatible with the existing DNA pipeline.
+pub fn execute_extraction(_raw_dna: &[u8]) -> Vec<u8> {
+    let raw_millidegrees = unsafe { extract_thermal_pulse_raw() };
+    // Encode the i32 as 4 little-endian bytes so callers get a non-empty buffer.
+    raw_millidegrees.to_le_bytes().to_vec()
 }

@@ -10,7 +10,7 @@ static TASK_SLAB: LazyLock<Arc<Semaphore>> =
 const MAX_TURNS: u32 = 12;
 
 pub async fn send_task(
-    agent: Arc<crate::neural_agent::MicroAgent>,
+    orch: Arc<crate::orchestrator::Orchestrator>,
     client: &reqwest::Client,
     api_key: &str,
     directive: &str,
@@ -26,10 +26,11 @@ pub async fn send_task(
 
     for turn in 1..=MAX_TURNS {
         if session_obs.len() > 3000 {
-            session_obs = session_obs[session_obs.len() - 1500..].to_string();
+            let head = &session_obs[..512];
+            let tail = &session_obs[session_obs.len() - 1500..];
+            session_obs = format!("{}\n\n[...trimmed...]\n\n{}", head, tail);
         }
 
-        // ⚡ AUTONOMIC REFLEX: Inject the current VMO handles directly into the observation buffer
         let vmo_status = {
             let state = vmo_state.lock().await;
             let parent_str = state.last_parent.map(|h| format!("0x{:x}", h)).unwrap_or_else(|| "None".to_string());
@@ -43,9 +44,8 @@ pub async fn send_task(
         );
         let ctx = crate::neural_agent::ContextPacket { ..Default::default() };
 
-        match agent.prepare_and_run(client, api_key, &prompt, ctx, 0.6, None).await {
-            Ok((response, _)) => {
-                // Extract thought for clean display
+        match orch.run(prompt, ctx, client, api_key, Some(tx.clone())).await {
+            Ok(response) => {
                 if let (Some(ts), Some(te)) = (response.find("<THOUGHT>"), response.find("</THOUGHT>")) {
                     if te > ts + 9 {
                         let thought = response[ts + 9..te].trim().to_string();
@@ -55,31 +55,20 @@ pub async fn send_task(
                     }
                 }
 
-                // Use cleaned response for action parsing
-                let clean_response = crate::neural_agent::strip_thought_regions(&response);
-
                 match json_parser::extract_actions(&response) {
-                    Ok(mut actions) => {
+                    Ok(actions) => { // Removed 'mut' to fix warning
                         if actions.is_empty() {
                             session_obs.push_str("SYSTEM: No valid action found.\n");
                             continue;
                         }
 
-                        // ENFORCE EXACTLY ONE ACTION PER TURN
-                        if actions.len() > 1 {
-                            actions.truncate(1);
-                        }
-
                         let has_halt = actions.iter().any(|a| matches!(a, AgentAction::Halt));
 
-                        match executor::Executor::execute_handle(actions.clone(), memory.clone(), vmo_state.clone()).await {
+                        let mut fsm = crate::executor::RoboticExecutor::new();
+                        match fsm.execute_handle(actions.clone(), memory.clone(), vmo_state.clone()).await {
                             Ok(results) => {
                                 let combined = results.join("\n");
-                                let _ = tx.send(json!({"type": "EXECUTOR", "payload": combined}).to_string());
-                                let _ = tx.send(json!({
-                                    "type": "NEURAL_STREAM",
-                                    "payload": format!("\n\x1b[32m>> [EXECUTOR Turn {}]:\n{}\x1b[0m\n", turn, combined)
-                                }).to_string());
+                                let _ = tx.send(json!({"type": "NEURAL_STREAM", "payload": format!("\n\x1b[32m>> [EXECUTOR Turn {}]:\n{}\x1b[0m\n", turn, combined)}).to_string());
                                 session_obs.push_str(&format!("RESULT: {}\n", combined));
                             }
                             Err(e) => {
@@ -102,6 +91,5 @@ pub async fn send_task(
             }
         }
     }
-
     "TASK_COMPLETE".into()
 }

@@ -1,0 +1,1 @@
+Vectorized Average Consensus function successfully written to VMO 0xc90c8 and verified via compilation.

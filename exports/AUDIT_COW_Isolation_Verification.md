@@ -1,0 +1,1 @@
+Successfully wrote 'CHILD_DATA' to cloned VMO 0xca0c9. Verified 0xca0c9 contains 'CHILD_DATA' while parent 0xc90c8 remains 'PARENT_DATA', confirming COW isolation.

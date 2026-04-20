@@ -1,0 +1,1 @@
+Audit complete. Identified potential risks: 'sudo' usage in prepare-duet.sh, setup_mobile_dna.sh, and maintenance_report.sh; 'chmod' usage in prepare-duet.sh. No high-criticality command injections detected in initial scan.

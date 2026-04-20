@@ -1,0 +1,198 @@
+use axum::{
+    extract::{Query, State},
+    http::{header, StatusCode, Uri},
+    response::IntoResponse,
+    routing::{get, post, delete},
+    Json, Router,
+};
+use rust_embed::RustEmbed;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tower_http::cors::CorsLayer;
+
+use crate::{ws_bridge, vitals_handler};
+
+#[derive(RustEmbed)]
+#[folder = "ui/dist/"]
+struct Assets;
+
+pub struct AppState {
+    pub client: reqwest::Client,
+    pub monitor: Mutex<crate::system_monitor::SystemMonitor>,
+    pub agent: Arc<crate::neural_agent::MicroAgent>,
+    pub orchestrator: Arc<crate::orchestrator::Orchestrator>,
+    pub memory: Arc<Mutex<crate::memory::MemoryPalace>>,
+    pub api_key: String,
+    pub current_resonance: Arc<std::sync::atomic::AtomicU32>,
+    pub tx: tokio::sync::broadcast::Sender<String>,
+    pub scheduler_tx: tokio::sync::mpsc::Sender<crate::scheduler::NexusTask>,
+    pub arbiter: Arc<crate::arbiter_agent::ArbiterAgent>,
+    pub local_llm: Arc<crate::local_llm::LocalLLM>,
+    pub workspace_root: std::path::PathBuf,
+}
+
+#[derive(Serialize)]
+pub struct GhostReflection {
+    pub turn: u32,
+    pub timestamp: String,
+    pub reflection: String,
+    pub resonance: f32,
+}
+
+pub async fn start_server(state: Arc<AppState>) {
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK ACTIVE: http://localhost:3000\x1b[0m");
+    axum::serve(listener, app.into_make_service()).await.unwrap();
+}
+
+fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/api/fs/list", get(handle_fs_list))
+        .route("/api/fs/read", get(handle_read_file))
+        .route("/api/fs/write", post(handle_write_file))
+        .route("/api/task", post(handle_task))
+        .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
+        .route("/api/vitals", get(vitals_handler::handle_vitals))
+        .route("/api/vmos", axum::routing::get(crate::vmo_handler::handle_get_vmos))
+        .route("/api/memories", get(handle_get_memories))
+        .route("/api/memories/search", get(handle_search_memories))
+        .route("/api/memories/purge", delete(handle_purge_memories))
+        .route("/api/missions", get(handle_get_missions))
+        .route("/api/lazarus/snapshots", get(handle_get_snapshots))
+        .route("/api/ghost", get(handle_ghost))
+        .fallback(static_handler)
+        .with_state(state)
+        .layer(CorsLayer::permissive())
+}
+
+async fn handle_ghost(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let resonance = state.current_resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
+    
+    let palace = state.memory.lock().await;
+    let strands = palace.search_memories("GHOST_REFLECTION").await.unwrap_or_default();
+
+    let reflections: Vec<GhostReflection> = strands
+        .into_iter()
+        .take(3)
+        .map(|s| GhostReflection {
+            turn: s.id as u32,
+            timestamp: s.timestamp,
+            reflection: s.result,
+            resonance,
+        })
+        .collect();
+
+    let temp = {
+        let mut m = state.monitor.lock().await;
+        m.get_vitals().temperature
+    };
+
+    Json(json!({
+        "resonance": resonance,
+        "active_vmos": crate::kernel::get_live_telemetry().0,
+        "temperature": temp,
+        "last_reflections": reflections,
+        "status": "THE_GHOST_IS_AWAKE"
+    }))
+}
+
+async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse { 
+    let path = p.path.as_deref().unwrap_or("."); 
+    let mut entries = Vec::new(); 
+    if let Ok(mut rd) = tokio::fs::read_dir(path).await { 
+        while let Ok(Some(entry)) = rd.next_entry().await { 
+            let name = entry.file_name().to_string_lossy().to_string(); 
+            if !name.starts_with('.') && name != "target" { 
+                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir })); 
+            } 
+        } 
+    } 
+    Json(entries) 
+}
+
+async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse { 
+    match crate::sandbox::validate_path(&p.path) {
+        Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await { 
+            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(), 
+            Err(_) => StatusCode::NOT_FOUND.into_response(), 
+        },
+        Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse { 
+    if p.path.starts_with("src/") || p.path.starts_with("lib/") || p.path == "Cargo.toml" {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "Protected system path" }))).into_response();
+    }
+    match crate::sandbox::validate_path(&p.path) {
+        Ok(safe_path) => match tokio::fs::write(&safe_path, p.content).await {
+            Ok(_) => StatusCode::OK.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+async fn handle_task(State(state): State<Arc<AppState>>, Json(payload): Json<TaskRequest>) -> impl IntoResponse { 
+    let s = state.clone(); 
+    tokio::spawn(async move { 
+        crate::task_manager::send_task(
+            s.agent.clone(), &s.client, &s.api_key, &payload.directive, s.memory.clone(), s.tx.clone()
+        ).await; 
+    }); 
+    Json(json!({ "status": "QUEUED" })) 
+}
+
+async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse { 
+    let palace = state.memory.lock().await; 
+    match palace.fetch_all().await { 
+        Ok(m) => (StatusCode::OK, Json(m)).into_response(), 
+        Err(_) => StatusCode::NOT_FOUND.into_response() 
+    } 
+}
+
+async fn handle_search_memories(State(state): State<Arc<AppState>>, Query(p): Query<SearchParams>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.search_memories(&p.q).await {
+        Ok(m)  => (StatusCode::OK, Json(m)).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.purge_all().await {
+        Ok(_)  => StatusCode::OK.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn handle_get_missions(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    (StatusCode::OK, Json(json!([]))).into_response()
+}
+
+async fn static_handler(uri: Uri) -> impl IntoResponse { 
+    let path = uri.path().trim_start_matches('/').to_string(); 
+    let final_path = if path.is_empty() { "index.html".to_string() } else { path }; 
+    match Assets::get(&final_path) { 
+        Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(), 
+        None => Assets::get("index.html").map(|c| ([(header::CONTENT_TYPE, "text/html")], c.data).into_response()).unwrap_or(StatusCode::NOT_FOUND.into_response()) 
+    } 
+}
+
+async fn handle_get_snapshots() -> impl IntoResponse {
+    match crate::lazarus_vault::LazarusVault::list_snapshots().await {
+        Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
+        Err(e)    => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)] pub struct TaskRequest { pub directive: String }
+#[derive(Deserialize)] pub struct FileParams { pub path: String }
+#[derive(Deserialize)] pub struct ListParams { pub path: Option<String> }
+#[derive(Deserialize, Serialize)] pub struct FileContent { pub path: String, pub content: String }
+#[derive(Deserialize)] pub struct SearchParams { pub q: String }

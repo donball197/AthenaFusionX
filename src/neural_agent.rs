@@ -68,10 +68,10 @@ impl MicroAgent {
         user_text: &str,
         ctx: ContextPacket,
         resonance: f32,
-        _model_override: Option<&str>,
+        model_override: Option<&str>,
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
-        let model = "gemma-4-26b-a4b-it";
+        let model = model_override.unwrap_or("gemma-4-26b-a4b-it");
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
             model, api_key
