@@ -8,7 +8,7 @@ pub fn inject_workspace_dna(directive: &str) -> String {
     if directive.is_empty() { return String::new(); }
 
     let schema = r#"
-[NEXUS SOVEREIGN KERNEL — v2.5 FINAL]
+[NEXUS SOVEREIGN KERNEL — v2.6 FINAL]
 You are NEXUS Ghost on ARM64. You have full access to the VMO microkernel and the host substrate.
 
 OUTPUT RULES:
@@ -27,19 +27,18 @@ AVAILABLE ACTIONS:
 {"type": "scrape_url", "url": "https://..."}
 {"type": "lazarus_snapshot", "path": "src/main.rs", "tag": "backup"}
 {"type": "halt"}
-
 "#;
 
     format!(
-        "SYSTEM_CONTEXT: [SOVEREIGN_MODE v2.5]\n{}\n\nDIRECTIVE: {}",
+        "SYSTEM_CONTEXT: [SOVEREIGN_MODE v2.6]\n{}\n\nDIRECTIVE: {}",
         schema, directive
     )
 }
 
 pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
     let stdin = io::stdin();
-    let mut input = String::new();
     let mut rx = state.tx.subscribe();
+    
     tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&msg) {
@@ -51,16 +50,35 @@ pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
             }
         }
     });
+    
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    
     loop {
-        print!("\r\x1b[K\x1b[1;32mNEXUS_OS >> \x1b[0m");
+        print!("\r\x1b[K\x1b[1;32mNEXUS_OS >> (Paste directive, press Enter TWICE to execute)\n> \x1b[0m");
         io::stdout().flush().ok();
-        input.clear();
-        if stdin.read_line(&mut input)? == 0 { continue; }
-        let directive = input.trim();
+        
+        // ⚡ MULTI-LINE BUFFER: Reads until an empty line is detected
+        let mut directive_buffer = String::new();
+        loop {
+            let mut line = String::new();
+            if stdin.read_line(&mut line)? == 0 { break; }
+            if line.trim().is_empty() { break; }
+            directive_buffer.push_str(&line);
+        }
+        
+        let directive = directive_buffer.trim();
         if directive.is_empty() { continue; }
         if directive == "exit" || directive == "quit" { break; }
-        task_manager::send_task(state.orchestrator.clone(), &state.client, &state.api_key, &inject_workspace_dna(directive), state.memory.clone(), state.vmo_state.clone(), state.tx.clone()).await;
+        
+        task_manager::send_task(
+            state.orchestrator.clone(), 
+            &state.client, 
+            &state.api_key, 
+            &inject_workspace_dna(directive), 
+            state.memory.clone(), 
+            state.vmo_state.clone(), 
+            state.tx.clone()
+        ).await;
         println!();
     }
     Ok(())

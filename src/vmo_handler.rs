@@ -8,7 +8,7 @@ pub async fn handle_get_vmos() -> impl IntoResponse {
     let mut vmo_list = Vec::new();
     for i in 0..count {
         let mut info = crate::kernel::ffi::VmoInfo {
-            handle: 0, size: 0, committed_pages: 0, is_cow: false, parent_handle: 0
+            handle: 0, size: 0, committed_pages: 0, is_cow: 0, parent_handle: 0
         };
         let res = unsafe { crate::kernel::ffi::zx_vmo_get_info(handles[i], &mut info) };
         

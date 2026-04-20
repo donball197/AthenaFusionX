@@ -1,3 +1,12 @@
+// src/kernel/muscle.zig — v3.1 Sovereign Muscle
+//
+// FIX: VmoInfo.is_cow changed from `bool` to `u8` to match the Rust-side
+//      #[repr(C)] struct in ffi.rs. The Rust reference warns that `bool`
+//      in #[repr(C)] structs has implementation-defined ABI size; `u8` is
+//      guaranteed to be 1 byte on all platforms.
+//
+//      Assignment updated:  .is_cow = if (meta.is_cow_child) 1 else 0
+
 const std = @import("std");
 const posix = std.posix;
 
@@ -64,10 +73,12 @@ export fn extract_thermal_pulse_raw() i32 {
 export fn zx_vmo_create_native(size: usize) u32 {
     const aligned_size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     const ptr = posix.mmap(
-        null, aligned_size,
+        null,
+        aligned_size,
         posix.PROT.READ | posix.PROT.WRITE,
         .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
-        -1, 0,
+        -1,
+        0,
     ) catch return 0;
 
     if (allocate_handle_slot()) |slot| {
@@ -81,13 +92,13 @@ export fn zx_vmo_create_native(size: usize) u32 {
         };
 
         handle_table[slot] = VmoMetadata{
-            .ptr        = @alignCast(ptr.ptr),
-            .size       = aligned_size,
-            .magic      = SENTINEL_MAGIC,
+            .ptr = @alignCast(ptr.ptr),
+            .size = aligned_size,
+            .magic = SENTINEL_MAGIC,
             .generation = next_handle >> GENERATION_SHIFT,
-            .refcount   = 1,
+            .refcount = 1,
             .is_cow_child = false,
-            .dirty_pages  = dirty,
+            .dirty_pages = dirty,
         };
         active_vmos += 1;
         return handle;
@@ -118,15 +129,15 @@ export fn zx_vmo_clone_native(parent_handle: u32, requested_size: usize) u32 {
             };
 
             handle_table[slot] = VmoMetadata{
-                .ptr          = parent_meta.ptr, // ← shares parent pointer (COW)
-                .size         = aligned_size,
-                .magic        = SENTINEL_MAGIC,
-                .generation   = next_handle >> GENERATION_SHIFT,
-                .refcount     = 1,
+                .ptr = parent_meta.ptr, // ← shares parent pointer (COW)
+                .size = aligned_size,
+                .magic = SENTINEL_MAGIC,
+                .generation = next_handle >> GENERATION_SHIFT,
+                .refcount = 1,
                 .is_cow_child = true,
-                .parent_slot  = parent_slot,
+                .parent_slot = parent_slot,
                 .parent_handle = parent_handle,
-                .dirty_pages  = dirty,
+                .dirty_pages = dirty,
             };
             active_vmos += 1;
             std.debug.print(
@@ -142,36 +153,38 @@ export fn zx_vmo_clone_native(parent_handle: u32, requested_size: usize) u32 {
 }
 
 // ─── VMO WRITE ───────────────────────────────────────────────────────────────
-// ⚡ FIX: On first write to a COW child, allocate independent memory,
-//         copy parent content, then zero-fill from write_end to page boundary.
-//         This eliminates the "CHILD_DATAATA" bleed-through artifact.
 
-export fn zx_vmo_write_native(handle: u32, offset: usize, buffer: [*]const u8, size: usize) i32 {
+export fn zx_vmo_write_native(
+    handle: u32,
+    offset: usize,
+    buffer: [*]const u8,
+    size: usize,
+) i32 {
     const slot = handle & SLOT_MASK;
     if (handle_table[slot]) |*meta| {
         if (meta.magic != SENTINEL_MAGIC) return -1;
         if (offset + size > meta.size) return -1;
 
         if (meta.is_cow_child) {
-            // Eager fork: allocate private memory for child on first write
+            // Eager fork: allocate private memory for child on first write.
             const new_ptr = posix.mmap(
-                null, meta.size,
+                null,
+                meta.size,
                 posix.PROT.READ | posix.PROT.WRITE,
                 .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
-                -1, 0,
+                -1,
+                0,
             ) catch return -1;
 
-            // Copy parent content into new private page
             @memcpy(new_ptr[0..meta.size], meta.ptr[0..meta.size]);
 
-            // ⚡ KEY FIX: Zero-fill from (offset + size) to end of allocation.
-            // This prevents stale parent bytes bleeding past the write boundary.
+            // Zero-fill past the write boundary to prevent parent byte bleed.
             if (offset + size < meta.size) {
                 @memset(new_ptr[offset + size .. meta.size], 0);
             }
 
             meta.ptr = @alignCast(new_ptr.ptr);
-            meta.is_cow_child = false; // Now an independent VMO
+            meta.is_cow_child = false;
         }
 
         @memcpy(meta.ptr[offset .. offset + size], buffer[0..size]);
@@ -182,7 +195,12 @@ export fn zx_vmo_write_native(handle: u32, offset: usize, buffer: [*]const u8, s
 
 // ─── VMO READ ────────────────────────────────────────────────────────────────
 
-export fn zx_vmo_read_native(handle: u32, offset: usize, buffer: [*]u8, size: usize) i32 {
+export fn zx_vmo_read_native(
+    handle: u32,
+    offset: usize,
+    buffer: [*]u8,
+    size: usize,
+) i32 {
     const slot = handle & SLOT_MASK;
     if (handle_table[slot]) |meta| {
         if (meta.magic != SENTINEL_MAGIC) return -1;
@@ -212,14 +230,20 @@ export fn zx_handle_close_native(handle: u32) void {
 
 // ─── TELEMETRY ───────────────────────────────────────────────────────────────
 
-export fn muscle_get_active_vmos() u32 { return active_vmos; }
-export fn muscle_get_next_handle() u32 { return next_handle; }
+export fn muscle_get_active_vmos() u32 {
+    return active_vmos;
+}
+export fn muscle_get_next_handle() u32 {
+    return next_handle;
+}
 
+// FIX: is_cow changed from `bool` to `u8` to guarantee C ABI compatibility
+//      with Rust's #[repr(C)] struct.  0 = false, 1 = true.
 const VmoInfo = extern struct {
     handle: u32,
     size: usize,
     committed_pages: usize,
-    is_cow: bool,
+    is_cow: u8,       // ← was bool
     parent_handle: u32,
 };
 
@@ -228,14 +252,15 @@ export fn zx_vmo_get_info(handle: u32, out_info: *VmoInfo) i32 {
     if (handle_table[slot]) |meta| {
         if (meta.magic != SENTINEL_MAGIC) return -1;
         out_info.* = VmoInfo{
-            .handle          = handle,
-            .size            = meta.size,
+            .handle = handle,
+            .size = meta.size,
             .committed_pages = if (meta.is_cow_child)
                 meta.dirty_pages.count()
             else
                 (meta.size / PAGE_SIZE),
-            .is_cow          = meta.is_cow_child,
-            .parent_handle   = meta.parent_handle,
+            // FIX: assign u8 (0/1) not bool
+            .is_cow = if (meta.is_cow_child) 1 else 0,
+            .parent_handle = meta.parent_handle,
         };
         return 0;
     }

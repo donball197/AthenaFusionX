@@ -1,3 +1,9 @@
+// src/main.rs — v3.1
+// UPGRADES over v2.3.1:
+//   ADDED: dream_cycle::start_daydream spawned as a background task
+//   ADDED: KnowledgeBroker::refresh_atlas called on startup
+//   ADDED: Metrics initialisation on boot
+
 use nexus_singularity::server::{AppState, start_server, VmoState};
 use nexus_singularity::cli::run_cli_loop;
 use std::sync::Arc;
@@ -6,10 +12,14 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
-    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v2.0.2)\x1b[0m");
+    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.1.0)\x1b[0m");
     dotenvy::dotenv().ok();
 
-    let api_key = env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
+    // ── METRICS INIT ─────────────────────────────────────────────────────────
+    nexus_singularity::metrics::init_metrics();
+
+    let api_key =
+        env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
     let (tx, _) = broadcast::channel(256);
 
     let memory = Arc::new(Mutex::new(
@@ -17,25 +27,34 @@ async fn main() {
             .await
             .unwrap(),
     ));
+
     let agent = Arc::new(
         nexus_singularity::neural_agent::MicroAgent::init(tx.clone()).unwrap(),
     );
 
-    // ⚡ VmoState resets every boot — no stale handles from prior sessions
+    // VmoState resets every boot — no stale handles from prior sessions.
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
 
-    let orch = Arc::new(
-        nexus_singularity::orchestrator::Orchestrator::new(
+    // ── SWARM ORCHESTRATOR ───────────────────────────────────────────────────
+    let orch = Arc::new(nexus_singularity::orchestrator::Orchestrator::new(
         agent.clone(),
-        Some(Arc::new(nexus_singularity::swarm::swarm_core::SwarmCore::new(vec![
-            nexus_singularity::swarm::swarm_node::SwarmNode::new("Alpha", agent.clone()),
-            nexus_singularity::swarm::swarm_node::SwarmNode::new("Beta", agent.clone()),
-            nexus_singularity::swarm::swarm_node::SwarmNode::new("Gamma", agent.clone()),
-        ])))
-    ),
-    );
-
-    // Suppress unused mpsc import — scheduler_tx is a dummy channel in CLI mode
+        Some(Arc::new(
+            nexus_singularity::swarm::swarm_core::SwarmCore::new(vec![
+                nexus_singularity::swarm::swarm_node::SwarmNode::new(
+                    "Alpha",
+                    agent.clone(),
+                ),
+                nexus_singularity::swarm::swarm_node::SwarmNode::new(
+                    "Beta",
+                    agent.clone(),
+                ),
+                nexus_singularity::swarm::swarm_node::SwarmNode::new(
+                    "Gamma",
+                    agent.clone(),
+                ),
+            ]),
+        )),
+    ));
 
     let scheduler_tx = nexus_singularity::scheduler::MasterSupervisor::ignite(
         tx.clone(),
@@ -65,11 +84,37 @@ async fn main() {
         vmo_state,
     });
 
+    // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────────
     let s_state = state.clone();
     tokio::spawn(async move {
         start_server(s_state).await;
     });
 
+    // ── BACKGROUND: DREAM CYCLE ──────────────────────────────────────────────
+    // Synthesises memory strands into system insights every 15 minutes.
+    let dream_memory = state.memory.clone();
+    let dream_agent = state.agent.clone();
+    let dream_key = api_key.clone();
+    tokio::spawn(async move {
+        nexus_singularity::dream_cycle::start_daydream(
+            dream_memory,
+            dream_agent,
+            dream_key,
+        )
+        .await;
+    });
+
+    // ── BACKGROUND: KNOWLEDGE BROKER ────────────────────────────────────────
+    // Indexes the project's public symbols on startup so context-injection in
+    // the CLI and API handler has a fresh atlas.
+    tokio::spawn(async move {
+        nexus_singularity::broker::KnowledgeBroker::refresh_atlas().await;
+        println!(
+            "\x1b[34m>> [BROKER] Project atlas indexed.\x1b[0m"
+        );
+    });
+
+    // ── FOREGROUND: CLI LOOP ─────────────────────────────────────────────────
     if let Err(e) = run_cli_loop(state).await {
         eprintln!("!! [FATAL] CLI crashed: {}", e);
     }

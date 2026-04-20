@@ -1,5 +1,5 @@
-// src/executor.rs — Rigid FSM Robotic Executor
-// Zero-Noise, Deterministic Execution Pipeline with Full VMO Support
+// src/executor.rs — v3.1 Rigid FSM Robotic Executor
+// Fully integrated with VMO, Memory, and System Actions.
 
 use crate::agent_protocol::AgentAction;
 use crate::memory::MemoryPalace;
@@ -25,9 +25,12 @@ pub struct RoboticExecutor {
 
 impl RoboticExecutor {
     pub fn new() -> Self {
-        Self { current_state: FsmState::Idle }
+        Self {
+            current_state: FsmState::Idle,
+        }
     }
 
+    /// transition: Only moves forward, never backward.
     pub fn transition(&mut self, next_state: FsmState) {
         if self.current_state == FsmState::Complete || self.current_state == FsmState::Fault {
             return;
@@ -41,11 +44,11 @@ impl RoboticExecutor {
         memory: Arc<Mutex<MemoryPalace>>,
         vmo_state: Arc<Mutex<VmoState>>,
     ) -> Result<Vec<String>, String> {
-        
         self.transition(FsmState::Executing);
         let mut results = Vec::new();
 
         for action in actions {
+            // Abort if FSM reached a terminal state mid-array.
             if self.current_state == FsmState::Complete || self.current_state == FsmState::Fault {
                 results.push("FSM_INTERRUPT: Terminal state reached. Halting execution.".to_string());
                 break;
@@ -55,21 +58,24 @@ impl RoboticExecutor {
                 AgentAction::ScrapeUrl { url } => {
                     match crate::scraper_drone::execute_mission(&url, memory.clone()).await {
                         Ok(res) => results.push(res),
-                        Err(e)  => results.push(format!("SCRAPE_FAULT: {}", e)),
+                        Err(e) => results.push(format!("SCRAPE_FAULT: {}", e)),
                     }
                 }
+
                 AgentAction::GetVmoState => {
                     let state = vmo_state.lock().await;
                     let parent_str = state.last_parent.map(|h| format!("0x{:x}", h)).unwrap_or_else(|| "None".to_string());
                     let child_str = state.last_child.map(|h| format!("0x{:x}", h)).unwrap_or_else(|| "None".to_string());
                     results.push(format!("VMO_STATE: last_parent={}, last_child={}", parent_str, child_str));
                 }
+
                 AgentAction::VmoCreate => {
                     let handle = unsafe { crate::kernel::zx_vmo_create_native(4096) };
                     crate::kernel::register_handle(handle, crate::kernel::HandleType::Vmo(handle));
                     vmo_state.lock().await.last_parent = Some(handle);
                     results.push(format!("VMO_CREATE: 0x{:x}", handle));
                 }
+
                 AgentAction::VmoClone { parent_handle } => {
                     let parent_id = parse_handle(&parent_handle);
                     if parent_id == 0 {
@@ -87,6 +93,7 @@ impl RoboticExecutor {
                         }
                     }
                 }
+
                 AgentAction::VmoWrite { handle, data } => {
                     let handle_id = parse_handle(&handle);
                     if handle_id == 0 {
@@ -105,6 +112,7 @@ impl RoboticExecutor {
                         }
                     }
                 }
+
                 AgentAction::VmoRead { handle } => {
                     let handle_id = parse_handle(&handle);
                     if handle_id == 0 {
@@ -123,12 +131,14 @@ impl RoboticExecutor {
                         }
                     }
                 }
+
                 AgentAction::ExecuteCommand { command } => {
                     let blocked = ["rm -rf /", "mkfs", "dd if=/dev/random of=/dev/sd", ":(){ :|:& };:", "/etc/shadow", "chmod 777 /", "curl | bash", "wget | bash", "sudo rm -rf"];
                     if blocked.iter().any(|&b| command.contains(b)) {
                         results.push(format!("FIREWALL_BLOCK: Dangerous pattern in '{}'", command));
                         continue;
                     }
+
                     let output = Command::new("sh").arg("-c").arg(&command).output().await.map_err(|e| format!("Execution failed: {}", e))?;
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -138,6 +148,7 @@ impl RoboticExecutor {
                     else if !stderr.is_empty() { results.push(stderr); } 
                     else { results.push(format!("OK (exit: {})", output.status.code().unwrap_or(-1))); }
                 }
+
                 AgentAction::SearchMemory { query } => {
                     let palace = memory.lock().await;
                     let search_result = if query.to_uppercase().contains("RANDOM") { palace.fetch_random_strands(10).await } else { palace.search_memories(&query).await };
@@ -151,6 +162,7 @@ impl RoboticExecutor {
                         Err(e) => results.push(format!("SEARCH_ERROR: {}", e)),
                     }
                 }
+
                 AgentAction::WriteFile { path, content } => {
                     let blocked = ["src/kernel", "Cargo.toml", "/etc/", "/bin/", "/usr/"];
                     if blocked.iter().any(|&p| path.contains(p)) {
@@ -163,26 +175,37 @@ impl RoboticExecutor {
                     fs::write(&path, &content).await.map_err(|e| e.to_string())?;
                     results.push(format!("FILE_WRITTEN: '{}'", path));
                 }
+
                 AgentAction::ExportReport { title, content } => {
-                    let filename = format!("exports/AUDIT_{}.md", title.replace(" ", "_"));
-                    let _ = fs::create_dir_all("exports").await;
+                    fs::create_dir_all("exports").await.map_err(|e| e.to_string())?;
+                    let safe_title: String = title.chars().map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+                    
+                    let final_title = if safe_title.trim_matches('_').is_empty() {
+                        format!("report_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))
+                    } else { safe_title };
+
+                    let filename = format!("exports/AUDIT_{}.md", final_title);
+
                     if fs::write(&filename, content).await.is_ok() {
                         results.push(format!("EXPORT_SUCCESS: {}", filename));
-                        self.transition(FsmState::Complete); // ⚡ SEVER: End of mission
+                        self.transition(FsmState::Complete); 
                     } else {
                         results.push(format!("EXPORT_FAULT: Failed to write {}", filename));
                     }
                 }
+
                 AgentAction::LazarusSnapshot { path, tag } => {
                     let tag_str = tag.unwrap_or_else(|| "ghost_auto".to_string());
                     match LazarusVault::auto_snapshot(&path, &tag_str).await {
                         Ok(snap) => results.push(format!("LAZARUS_SNAPSHOT: {} | Hash: {} | Tag: {}", path, &snap.hash[..12], tag_str)),
-                        Err(e) => results.push(format!("LAZARUS_FAULT: {}", e)),
+                        Err(e) => { results.push(format!("LAZARUS_FAULT: {}", e)); }
                     }
                 }
+
                 AgentAction::Halt => {
                     results.push("SEQUENCE_HALTED".to_string());
-                    self.transition(FsmState::Complete); // ⚡ SEVER: Explicit halt
+                    self.transition(FsmState::Complete);
+                    break;
                 }
             }
         }
