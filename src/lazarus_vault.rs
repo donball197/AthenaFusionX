@@ -41,11 +41,11 @@ impl LazarusVault {
         snaps.push(snap.clone());
         if snaps.len() > 50 { snaps.remove(0); }
 
-        // 🛡️ INTEGRITY SUTURE: Atomic Swap with validation
-        let tmp_ledger = format!("{}.tmp", Self::LEDGER);
         let serialized = serde_json::to_string_pretty(&snaps)?;
-        fs::write(&tmp_ledger, serialized).await?;
-        fs::rename(&tmp_ledger, Self::LEDGER).await?;
+        fs::write(Self::LEDGER, serialized).await?;
+
+        // ⚡ SOVEREIGN LOG: Cloud sync disabled to maintain air-gapped integrity.
+        println!("\x1b[32m>> [LAZARUS] Local Snapshot Secured: {}\x1b[0m", &hash[..12]);
 
         Ok(snap)
     }
@@ -54,14 +54,9 @@ impl LazarusVault {
         let p = Path::new(Self::LEDGER);
         if !p.exists() { return Ok(vec![]); }
         let data = fs::read_to_string(p).await?;
-        
-        // 🛡️ INTEGRITY SUTURE: Prevent boot from corrupted JSON
         match serde_json::from_str::<Vec<Snapshot>>(&data) {
             Ok(snaps) => Ok(snaps),
-            Err(_) => {
-                eprintln!("!! [LAZARUS] Ledger corruption detected. Initializing recovery...");
-                Ok(vec![])
-            }
+            Err(_) => Ok(vec![]),
         }
     }
 

@@ -55,3 +55,4 @@ vault/models/
 Thumbs.db
 .direnv/
 .env
+.gcp_key.json
