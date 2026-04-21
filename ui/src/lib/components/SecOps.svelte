@@ -13,6 +13,8 @@
             });
             if (r.ok) pushTermLine('>> Task queued — check terminal.', 'text-emerald-400');
             else pushTermLine(`!! HTTP ${r.status}`, 'text-rose-400');
+        } catch (e) {
+            pushTermLine(`!! [FAULT]: ${e.message}`, 'text-rose-400');
         } finally {
             scanning = false;
         }
@@ -54,20 +56,11 @@
                     onclick={()=>run(op.d)} 
                     disabled={scanning} 
                     style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.06);background:rgba(248,113,113,.02);cursor:pointer;transition:background .15s;text-align:left;width:100%;{scanning?'opacity:.5;cursor:not-allowed':''}" 
-                    onmouseover={(e)=>!scanning&&(e.currentTarget.style.background='rgba(248,113,113,.06)')} 
-                    onmouseout={(e)=>e.currentTarget.style.background='rgba(248,113,113,.02)'}
-                    onfocus={(e)=>!scanning&&(e.currentTarget.style.background='rgba(248,113,113,.06)')}
-                    onblur={(e)=>e.currentTarget.style.background='rgba(248,113,113,.02)'}
                 >
                     <span style="flex:1;font-size:9px;font-weight:900;letter-spacing:.08em;color:{op.c};font-family:'JetBrains Mono',monospace;">{op.l}</span>
                     <span style="font-size:14px;color:rgba(255,255,255,.2);">›</span>
                 </button>
             {/each}
-        </div>
-
-        <div style="display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid rgba(248,113,113,.15);background:rgba(248,113,113,.04);font-size:9px;color:rgba(248,113,113,.6);line-height:1.5;">
-            <span style="flex:none;color:#f87171;">⚠</span>
-            <span>All sandbox escapes trigger immediate kernel-level thread termination via ZIRCON_IPC. Unauthorized access will be logged and reported.</span>
         </div>
     </div>
 </div>

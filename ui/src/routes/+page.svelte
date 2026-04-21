@@ -269,13 +269,13 @@ onMount(() => {
                 <div class="ide-shell">
                     <div class="tab-bar">
                         {#each ide.openTabs as tab (tab.path)}
-                            <button class="ide-tab" class:tab-active={ide.activeTab === tab.path}
-                                onclick={() => ide.activeTab = tab.path}>
+                            <div class="ide-tab" role="tab" class:tab-active={ide.activeTab === tab.path}
+                                onclick={() => ide.activeTab = tab.path} onkeydown={(e) => e.key === "Enter" && (ide.activeTab = tab.path)}>
                                 <span class="tab-name">{tab.path.split('/').at(-1)}</span>
                                 {#if tab.isDirty}<span class="tab-dirty">●</span>{/if}
-                                <span class="tab-close"
-                                    onclick={(e) => { e.stopPropagation(); ide.closeTab(tab.path); }}>×</span>
-                            </button>
+                                <button type="button" class="tab-close" aria-label="Close tab" 
+                                          onclick={(e) => { e.stopPropagation(); ide.closeTab(tab.path); }}>×</button>
+                            </div>
                         {/each}
                         <div class="tab-controls">
                             {#if ide.activeTab}

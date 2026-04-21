@@ -1,77 +1,112 @@
-// ════════════════════════════════════════════════════════════════
-//  NEXUS SINGULARITY — Commercial Reactive Store v7.0.0
-// ════════════════════════════════════════════════════════════════
+// ui/src/lib/core/store.svelte.js — v3.4 Decoupled Reactive Store
+import { nexusWS } from './NexusWS';
 
-export const wsState = $state({ ready: false, latency: 0 });
-
-export const systemVitals = $state({
-    cpu_load:     0,
-    ram_gb:       0,
-    total_ram_gb: 4.0,
-    temperature:  0,
-    resonance:    0,
+// ─── STATE OBJECTS ──────────────────────────────────────────────
+export const layout = $state({
+    sidebarOpen: true,
+    explorerVisible: true,
+    ghostVisible: true,
+    ghostCortexVisible: true,
+    activeTab: 'WORKSPACE',
+    showVitals: true
 });
 
-export const neuralInventory = $state({
-    // ⚡ SEATED FROM SCOUT_MODELS.SH
-    models: [
-        { id: 'gemini-2.5-pro', name: 'ORCHESTRATOR_PRO', limit: '1M', tier: 'ELITE', task: 'Deep Architecture' },
-        { id: 'gemma-4-31b-it', name: 'SOVEREIGN_DENSE', limit: '256K', tier: 'INDUSTRIAL', task: 'Kernel Surgery' },
-        { id: 'gemma-4-26b-a4b-it', name: 'SOVEREIGN_MOE', limit: '256K', tier: 'PRODUCTION', task: 'Logic/Coding' },
-        { id: 'gemini-2.0-flash-lite', name: 'COURIER_LITE', limit: '1M', tier: 'UTILITY', task: 'Rapid Scraping' },
-        { id: 'gemini-robotics-er-1.5', name: 'ROBOTICS_CORE', limit: '1M', tier: 'HARDWARE', task: 'ROS/Motion Control' }
-    ]
+export const wsState = $state({
+    status: 'DISCONNECTED',
+    get ready() { return this.status === 'CONNECTED'; }
+});
+
+export const systemVitals = $state({
+    cpu_load: 0,
+    ram_gb: 0,
+    total_ram_gb: 4,
+    temperature: 0,
+    load: 0,
+    resonance: 0
 });
 
 export const terminalState = $state({
     logs: [],
-    isGhostTyping: false,
-    buffers: { GHOST_CORTEX: '', SYSTEM_LOG: '' },
+    buffers: { GHOST_CORTEX: '' },
+    isGhostTyping: false
 });
 
 export const ide = $state({
-    openTabs: [],
     activeTab: null,
-    mountFile(path, content) {
-        const existing = this.openTabs.find(t => t.path === path);
-        if (existing) { this.activeTab = path; return; }
-        this.openTabs.push({ path, content, isDirty: false });
-        this.activeTab = path;
-    },
-    updateContent(path, content) {
-        const tab = this.openTabs.find(t => t.path === path);
-        if (tab && tab.content !== content) {
-            tab.content = content;
-            tab.isDirty = true;
+    openTabs: [],
+    mountFile: (path, content) => {
+        if (!ide.openTabs.find(t => t.path === path)) {
+            ide.openTabs.push({ path, content, isDirty: false });
         }
+        ide.activeTab = path;
     },
-    markSaved(path) {
-        const tab = this.openTabs.find(t => t.path === path);
+    closeTab: (path) => {
+        ide.openTabs = ide.openTabs.filter(t => t.path !== path);
+        if (ide.activeTab === path) ide.activeTab = ide.openTabs[0]?.path || null;
+    },
+    updateContent: (path, content) => {
+        const tab = ide.openTabs.find(t => t.path === path);
+        if (tab) { tab.content = content; tab.isDirty = true; }
+    },
+    markSaved: (path) => {
+        const tab = ide.openTabs.find(t => t.path === path);
         if (tab) tab.isDirty = false;
-    },
-    closeTab(path) {
-        this.openTabs = this.openTabs.filter(t => t.path !== path);
-        if (this.activeTab === path) {
-            this.activeTab = this.openTabs.at(-1)?.path ?? null;
-        }
-    },
+    }
 });
 
-export const layout = $state({
-    explorerVisible:    true,
-    ghostVisible:       true,
-    ghostCortexVisible: false,
-    visorVisible:       false,
-    autopilotActive:    false,
+export const neuralInventory = $state({ 
+    models: [{name: 'Gemma 4-31b', tier: 'SOVEREIGN', task: 'REASONING'}] 
 });
-
+export const vmoTelemetry = $state({ active_vmos: 0 });
 export const fileTreeTrigger = $state({ value: 0 });
 
-export const vmoTelemetry = $state({
-    connected:   false,
-    status:      'DISCONNECTED',
-    active_vmos: 0,
-    next_handle: '0x00',
-    resonance:   0.0,
-    logs:        [],
+// ─── LOG RELAY HOOK ─────────────────────────────────────────────
+// This registers our state-mutating function into the socket relay
+// without requiring NexusWS.js to import us.
+nexusWS.registerLogHandler((message, cls) => {
+    terminalState.logs.push({
+        timestamp: new Date().toLocaleTimeString(),
+        message,
+        cls
+    });
+    if (terminalState.logs.length > 100) terminalState.logs.shift();
 });
+
+// ─── SOVEREIGN FSM LOGIC ─────────────────────────────────────────
+function createNexusStore() {
+    let fsmState = $state('IDLE'); 
+    let alignment = $state({ alpha: 0, beta: 0, gamma: 0 });
+
+    nexusWS.onMessage((msg) => {
+        wsState.status = 'CONNECTED';
+
+        if (msg.type === 'NEURAL_THOUGHT') {
+            terminalState.buffers.GHOST_CORTEX = msg.payload;
+        } else if (msg.type === 'NEURAL_STREAM') {
+            // Use the internal relay logic
+            const cls = msg.payload.includes('ERROR') ? 'text-rose-400' : '';
+            // Manually push to trigger the same logic as pushTermLine
+            terminalState.logs.push({
+                timestamp: new Date().toLocaleTimeString(),
+                message: msg.payload,
+                cls
+            });
+            if (terminalState.logs.length > 100) terminalState.logs.shift();
+
+            if (msg.payload.includes('EXECUTOR Turn')) fsmState = 'EXECUTING';
+            if (msg.payload.includes('SEQUENCE_HALTED')) fsmState = 'COMPLETE';
+            if (msg.payload.includes('ERROR') || msg.payload.includes('FAULT')) fsmState = 'FAULT';
+        } else if (msg.type === 'VITALS_PULSE') {
+            systemVitals.cpu_load = msg.payload.cpu || 0;
+            systemVitals.temperature = msg.payload.temp || 0;
+            systemVitals.ram_gb = msg.payload.ram || 0;
+        }
+    });
+
+    return {
+        get fsmState() { return fsmState; },
+        get alignment() { return alignment; }
+    };
+}
+
+export const nexusStore = createNexusStore();

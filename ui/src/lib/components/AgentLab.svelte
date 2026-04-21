@@ -1,52 +1,56 @@
 <script>
     import { pushTermLine } from '$lib/core/NexusWS.js';
-    let missions=$state([]),loading=$state(false),directive=$state('');
-    const AGENTS=Array.from({length:12},(_,i)=>({id:i,name:`DRONE_${String(i).padStart(2,'0')}`,status:i<3?'ACTIVE':i<6?'STANDBY':'IDLE',task:i<3?['SCANNING','HEALING','AUDITING'][i]:null}));
-    const SC={ACTIVE:'#34d399',STANDBY:'#fbbf24',IDLE:'#374151'};
-    async function loadMissions(){loading=true;try{const r=await fetch('/api/missions');if(r.ok)missions=await r.json();}finally{loading=false;}}
-    async function broadcast(){const d=directive.trim();if(!d)return;directive='';pushTermLine(`>> [SWARM] Broadcasting: ${d}`,'text-amber-400');try{await fetch('/api/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({directive:`[SWARM_TASK] ${d}`})});}catch(e){}}
-    loadMissions();
+    import { vmoTelemetry } from '$lib/core/store.svelte.js';
+
+    let missions = $state([]);
+    let loading = $state(false);
+    let directive = $state('');
+
+    const AGENTS = Array.from({length: 12}, (_, i) => ({
+        id: i,
+        name: `DRONE_${String(i).padStart(2, '0')}`,
+        status: i < 3 ? 'ACTIVE' : i < 6 ? 'STANDBY' : 'IDLE'
+    }));
+
+    async function broadcast() {
+        const d = directive.trim();
+        if (!d) return;
+        pushTermLine(`>> [SWARM] Broadcasting: ${d}`, 'text-amber-400');
+        directive = '';
+        try {
+            await fetch('/api/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ directive: `[SWARM_TASK] ${d}` })
+            });
+        } catch (e) {
+            pushTermLine(`!! [SWARM_FAULT]: ${e.message}`, 'text-rose-400');
+        }
+    }
 </script>
-<div style="display:flex;flex-direction:column;height:100%;background:#02030a;font-family:'JetBrains Mono',monospace;">
-    <div style="flex:none;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(251,191,36,.1);background:#03040f;">
-        <div>
-            <div style="font-size:11px;font-weight:900;letter-spacing:.15em;color:#fbbf24;text-shadow:0 0 10px rgba(251,191,36,.4);">SWARM_REFLEX_LAB</div>
-            <div style="font-size:8px;color:rgba(251,191,36,.3);margin-top:3px;">MULTI-AGENT ORCHESTRATION // NODE_COUNT: {AGENTS.length}</div>
-        </div>
-        <button onclick={loadMissions} style="background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.2);color:#fbbf24;font-size:14px;padding:4px 10px;cursor:pointer;">⟳</button>
+
+<div class="swarm-lab h-full flex flex-col bg-[#02030a] font-mono">
+    <div class="header flex justify-between items-center p-4 border-b border-amber-500/10">
+        <div class="title text-amber-500 font-bold tracking-widest text-xs">SWARM_REFLEX_LAB</div>
+        <div class="meta text-[8px] text-amber-900">NODE_COUNT: {AGENTS.length} | ACTIVE_VMO: {vmoTelemetry.active_vmos}</div>
     </div>
-    <div style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
-            {#each AGENTS as a}
-                <div style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid {SC[a.status]}22;background:rgba(0,0,0,.3);">
-                    <span style="width:8px;height:8px;border-radius:50%;background:{SC[a.status]};box-shadow:0 0 6px {SC[a.status]};flex:none;display:block;"></span>
-                    <div style="min-width:0;">
-                        <div style="font-size:8px;font-weight:900;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{a.name}</div>
-                        <div style="font-size:7px;font-weight:700;color:{SC[a.status]};">{a.status}</div>
-                        {#if a.task}<div style="font-size:7px;color:rgba(251,191,36,.5);">{a.task}</div>{/if}
-                    </div>
+    
+    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+        <div class="grid grid-cols-3 gap-2">
+            {#each AGENTS as agent}
+                <div class="agent-card p-2 border border-white/5 bg-black/40 flex items-center gap-2">
+                    <div class="pulse-dot w-2 h-2 rounded-full" style="background: {agent.status === 'ACTIVE' ? '#34d399' : '#374151'}"></div>
+                    <div class="text-[8px] text-gray-500">{agent.name}</div>
                 </div>
             {/each}
         </div>
-        <div style="border:1px solid rgba(251,191,36,.1);padding:10px;background:rgba(251,191,36,.02);">
-            <div style="font-size:8px;font-weight:900;letter-spacing:.15em;color:rgba(251,191,36,.4);margin-bottom:8px;">ACTIVE_MISSIONS</div>
-            {#if loading}<div style="font-size:9px;color:rgba(255,255,255,.2);text-align:center;padding:12px;">SCANNING...</div>
-            {:else if missions.length===0}<div style="font-size:9px;color:rgba(255,255,255,.15);text-align:center;padding:12px;">NO ACTIVE MISSIONS</div>
-            {:else}
-                {#each missions as m}
-                    <div style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid rgba(251,191,36,.06);font-size:9px;">
-                        <span style="color:rgba(251,191,36,.4);flex:none;">{m.id?.slice(0,8)}</span>
-                        <span style="flex:1;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{m.goal}</span>
-                        <span style="flex:none;color:#34d399;font-size:8px;">{m.status}</span>
-                    </div>
-                {/each}
-            {/if}
-        </div>
-        <div style="border:1px solid rgba(251,191,36,.1);padding:10px;">
-            <div style="font-size:8px;font-weight:900;letter-spacing:.15em;color:rgba(251,191,36,.4);margin-bottom:6px;">BROADCAST TO SWARM</div>
-            <div style="display:flex;gap:4px;">
-                <input bind:value={directive} onkeydown={(e)=>e.key==='Enter'&&broadcast()} placeholder="broadcast directive to all drones..." style="flex:1;background:#000;border:1px solid rgba(251,191,36,.2);color:#fbbf24;font-size:10px;padding:6px 8px;outline:none;font-family:'JetBrains Mono',monospace;" />
-                <button onclick={broadcast} style="background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);color:#fbbf24;font-size:8px;font-weight:900;padding:0 12px;cursor:pointer;font-family:'JetBrains Mono',monospace;">BROADCAST</button>
+
+        <div class="input-zone border border-amber-500/20 p-4">
+            <div class="text-[8px] text-amber-900 mb-2 underline">BROADCAST_DIRECTIVE</div>
+            <div class="flex gap-2">
+                <input bind:value={directive} onkeydown={(e) => e.key === 'Enter' && broadcast()} 
+                       class="flex-1 bg-black border border-amber-500/30 text-amber-500 text-[10px] p-2 outline-none" />
+                <button onclick={broadcast} class="bg-amber-900/20 border border-amber-500/40 text-amber-500 text-[8px] px-4 font-bold">SEND</button>
             </div>
         </div>
     </div>
