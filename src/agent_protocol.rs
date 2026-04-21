@@ -15,6 +15,7 @@ pub enum AgentTaskType {
     SystemCheck,
     NeuralInference,
     Command,
+    DevOps,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -57,6 +58,9 @@ pub enum AgentAction {
 
     #[serde(rename = "lazarus_snapshot")]
     LazarusSnapshot { path: String, tag: Option<String> },
+
+    #[serde(rename = "git_action")]
+    GitAction { command: String, message: Option<String> },
 
     #[serde(rename = "export_report")]
     ExportReport { title: String, content: String },

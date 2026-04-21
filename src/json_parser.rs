@@ -1,56 +1,51 @@
-/**
- * Project Nexus Singularity - Neural Action Extractor (Finality)
- * v2.7.0 - Context-Aware String Sanitization
- */
+// src/json_parser.rs — v2.9.0 Robust Owned Parser
 use crate::agent_protocol::AgentAction;
 use anyhow::{Result, anyhow};
 use regex::Regex;
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let re = Regex::new(r"(?s)<ACTION>(.*?)</ACTION>").unwrap();
-    let caps: Vec<_> = re.captures_iter(response).collect();
+    
+    // ⚡ FIX: Convert to owned String immediately to solve "does not live long enough"
+    let raw_content = match re.captures_iter(response).last() {
+        Some(cap) => cap[1].to_string(),
+        None => return Ok(Vec::new()),
+    };
 
-    if caps.is_empty() {
-        return response.contains("<ACTION>")
-            .then(|| Err(anyhow!("PROTOCOL_VIOLATION: Malformed tags.")))
-            .unwrap_or(Ok(Vec::new()));
+    let clean_json = raw_content.trim_start_matches("```json")
+                                .trim_start_matches("```")
+                                .trim_end_matches("```")
+                                .trim();
+
+    // 1. Attempt direct parse
+    if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(clean_json) {
+        return Ok(vec);
     }
 
-    let raw_json = caps.last().unwrap()[1].trim();
-    let clean_json = raw_json.trim_start_matches("```json")
-                             .trim_start_matches("```")
-                             .trim_end_matches("```")
-                             .trim();
-
-    // ⚡ SMART SUTURE: Context-Aware Newline Escaping
-    // We only escape newlines if they occur inside double quotes.
+    // 2. Resilience: Handle nested escaped quotes from grep/shell outputs
     let mut sanitized = String::new();
     let mut in_string = false;
-    let mut chars = clean_json.chars().peekable();
+    let mut escaped = false;
 
-    while let Some(c) = chars.next() {
+    for c in clean_json.chars() {
+        if escaped {
+            sanitized.push(c);
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            sanitized.push(c);
+            continue;
+        }
         if c == '"' { in_string = !in_string; }
         if c == '\n' && in_string {
             sanitized.push_str("\\n");
-        } else if c == '\r' {
-            continue;
         } else {
             sanitized.push(c);
         }
     }
 
-    // 1. Attempt standard parse
-    if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(&sanitized) {
-        return Ok(vec);
-    } 
-
-    // 2. Deep Clean Fallback (Locate Array)
-    if let (Some(start), Some(end)) = (sanitized.find('['), sanitized.rfind(']')) {
-        let deep_clean = &sanitized[start..=end];
-        if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(deep_clean) {
-            return Ok(vec);
-        }
-    }
-
-    Err(anyhow!("PROTOCOL_VIOLATION: Strict Schema Mismatch in Sanitized DNA."))
+    serde_json::from_str::<Vec<AgentAction>>(&sanitized)
+        .map_err(|e| anyhow!("JSON_DECODE_FRACTURE: {} | Check the format of your <ACTION> block.", e))
 }

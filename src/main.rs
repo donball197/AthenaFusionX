@@ -1,25 +1,21 @@
-// src/main.rs — v3.1
-// UPGRADES over v2.3.1:
-//   ADDED: dream_cycle::start_daydream spawned as a background task
-//   ADDED: KnowledgeBroker::refresh_atlas called on startup
-//   ADDED: Metrics initialisation on boot
-
+// src/main.rs — v3.3 [AUTONOMIC_IMMUNE_ACTIVE]
 use nexus_singularity::server::{AppState, start_server, VmoState};
 use nexus_singularity::cli::run_cli_loop;
+use nexus_singularity::orchestrator::Orchestrator;
+use nexus_singularity::arbiter_agent::ArbiterAgent;
+use nexus_singularity::self_healing_engine::SelfHealingEngine;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use std::env;
 
 #[tokio::main]
 async fn main() {
-    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.1.0)\x1b[0m");
+    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.3.0)\x1b[0m");
     dotenvy::dotenv().ok();
 
-    // ── METRICS INIT ─────────────────────────────────────────────────────────
     nexus_singularity::metrics::init_metrics();
 
-    let api_key =
-        env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
+    let api_key = env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
     let (tx, _) = broadcast::channel(256);
 
     let memory = Arc::new(Mutex::new(
@@ -32,29 +28,8 @@ async fn main() {
         nexus_singularity::neural_agent::MicroAgent::init(tx.clone()).unwrap(),
     );
 
-    // VmoState resets every boot — no stale handles from prior sessions.
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
-
-    // ── SWARM ORCHESTRATOR ───────────────────────────────────────────────────
-    let orch = Arc::new(nexus_singularity::orchestrator::Orchestrator::new(
-        agent.clone(),
-        Some(Arc::new(
-            nexus_singularity::swarm::swarm_core::SwarmCore::new(vec![
-                nexus_singularity::swarm::swarm_node::SwarmNode::new(
-                    "Alpha",
-                    agent.clone(),
-                ),
-                nexus_singularity::swarm::swarm_node::SwarmNode::new(
-                    "Beta",
-                    agent.clone(),
-                ),
-                nexus_singularity::swarm::swarm_node::SwarmNode::new(
-                    "Gamma",
-                    agent.clone(),
-                ),
-            ]),
-        )),
-    ));
+    let orch = Arc::new(Orchestrator::new());
 
     let scheduler_tx = nexus_singularity::scheduler::MasterSupervisor::ignite(
         tx.clone(),
@@ -76,45 +51,38 @@ async fn main() {
         api_key: api_key.clone(),
         current_resonance: Arc::new(std::sync::atomic::AtomicU32::new(50)),
         tx: tx.clone(),
-        scheduler_tx,
-        arbiter: Arc::new(nexus_singularity::arbiter_agent::ArbiterAgent::new(
-            agent.clone(),
-        )),
+        scheduler_tx: scheduler_tx.clone(),
+        arbiter: Arc::new(ArbiterAgent::new(agent.clone())),
         workspace_root: std::env::current_dir().unwrap_or_default(),
         vmo_state,
     });
 
-    // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────────
+    // ── BACKGROUND: HTTP SERVER ──
     let s_state = state.clone();
+    tokio::spawn(async move { start_server(s_state).await; });
+
+    // ── BACKGROUND: SELF-HEALING ENGINE ──
+    let h_state = state.clone();
+    let h_memory = h_state.memory.clone();
     tokio::spawn(async move {
-        start_server(s_state).await;
+        let engine = SelfHealingEngine::new(h_state, h_memory);
+        engine.ignite_autonomic_loop().await;
     });
 
-    // ── BACKGROUND: DREAM CYCLE ──────────────────────────────────────────────
-    // Synthesises memory strands into system insights every 15 minutes.
+    // ── BACKGROUND: DREAM CYCLE ──
     let dream_memory = state.memory.clone();
     let dream_agent = state.agent.clone();
     let dream_key = api_key.clone();
     tokio::spawn(async move {
-        nexus_singularity::dream_cycle::start_daydream(
-            dream_memory,
-            dream_agent,
-            dream_key,
-        )
-        .await;
+        nexus_singularity::dream_cycle::start_daydream(dream_memory, dream_agent, dream_key).await;
     });
 
-    // ── BACKGROUND: KNOWLEDGE BROKER ────────────────────────────────────────
-    // Indexes the project's public symbols on startup so context-injection in
-    // the CLI and API handler has a fresh atlas.
+    // ── BACKGROUND: KNOWLEDGE BROKER ──
     tokio::spawn(async move {
         nexus_singularity::broker::KnowledgeBroker::refresh_atlas().await;
-        println!(
-            "\x1b[34m>> [BROKER] Project atlas indexed.\x1b[0m"
-        );
+        println!("\x1b[34m>> [BROKER] Project atlas indexed.\x1b[0m");
     });
 
-    // ── FOREGROUND: CLI LOOP ─────────────────────────────────────────────────
     if let Err(e) = run_cli_loop(state).await {
         eprintln!("!! [FATAL] CLI crashed: {}", e);
     }

@@ -1,19 +1,3 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::memory::MemoryPalace;
 use nexus_singularity::mission_control::upgrade_command;
@@ -34,17 +18,15 @@ async fn main() -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<String>(128);
 
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
-    
     let monitor = tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new());
-    let orchestrator = Arc::new(Orchestrator::new(agent.clone(), None));
+    
+    // ⚡ FIX: Use the zero-argument constructor
+    let orchestrator = Arc::new(Orchestrator::new());
 
     let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;
     let memory = Arc::new(Mutex::new(memory_palace));
-
-    // ⚡ SUTURE: Initialize Working Memory for the upgrade session
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
 
-    // ⚡ FIXED: Now passing 8 arguments to ignite
     let scheduler_tx = scheduler::MasterSupervisor::ignite(
         tx.clone(),
         reqwest::Client::new(),
@@ -53,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(AtomicU32::new(0)),
         nexus_singularity::system_monitor::SystemMonitor::new(),
         memory.clone(),
-        vmo_state.clone(), // 8th slot
+        vmo_state.clone(),
     );
 
     let state = Arc::new(AppState {
@@ -68,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         tx: tx.clone(),
         scheduler_tx,
         workspace_root: std::env::current_dir()?,
-        vmo_state, // ⚡ FIXED: AppState field populated
+        vmo_state,
     });
 
     let result = upgrade_command(state).await;

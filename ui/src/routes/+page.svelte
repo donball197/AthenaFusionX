@@ -1,8 +1,6 @@
 <script lang="ts">
 // ═══════════════════════════════════════════════════════════════
-//  NEXUS SINGULARITY — Master SPA v6.4.0
-//  FIX: socket.sendCommand -> socket.send
-//  FIX: loadSnaps uses /api/task directive instead of missing route
+//  NEXUS SINGULARITY — Master SPA v6.5.0 [A11Y_LOCKED]
 // ═══════════════════════════════════════════════════════════════
 import { ide, layout, fileTreeTrigger } from '$lib/core/store.svelte.js';
 import { pushTermLine }      from '$lib/core/NexusWS.js';
@@ -25,10 +23,7 @@ import AgentLab    from '$lib/components/AgentLab.svelte';
 let socket = createNexusSocket('/ws/telemetry');
 onDestroy(() => socket.destroy());
 
-// ── Navigation ─────────────────────────────────────────────────
 let activeNav = $state('NEXUS_OS');
-
-// ── File Orchestration ─────────────────────────────────────────
 let openInput = $state('');
 let openError = $state('');
 
@@ -131,7 +126,6 @@ async function runDirective(directive: string) {
 }
 
 // ── Ghost Memory Ritual ────────────────────────────────────────
-// ⚡ FIX: was socket.sendCommand — correct API is socket.send()
 function ghostEnshrine() {
     const handleEl = document.getElementById('ghost-handle') as HTMLInputElement;
     const textEl   = document.getElementById('ghost-text')   as HTMLInputElement;
@@ -159,19 +153,15 @@ function ghostRecall() {
 }
 
 // ── Lazarus snapshots ──────────────────────────────────────────
-// ⚡ FIX: /api/lazarus/snapshots doesn't exist — fetch via memory API
-// and show available snapshots from the vault directive instead
 let snapshots = $state<any[]>([]);
 let snapMsg   = $state('');
 
 async function loadSnaps() {
     snapMsg = 'Scanning vault...';
     try {
-        // ⚡ Route through task API since /api/lazarus/snapshots isn't wired
         const r = await fetch('/api/memories');
         if (r.ok) {
             const all = await r.json();
-            // Filter memories that look like lazarus snapshot records
             snapshots = all
                 .filter((m: any) => m.directive?.toLowerCase().includes('snapshot') ||
                                     m.origin?.toLowerCase().includes('lazarus'))
@@ -228,8 +218,6 @@ onMount(() => {
         {/if}
 
         <main class="main-col">
-
-            <!-- ── NEXUS OS ── -->
             {#if activeNav === 'NEXUS_OS'}
                 <div class="panel-scroll nexus-os-panel">
                     <div class="os-hero">
@@ -264,18 +252,23 @@ onMount(() => {
                     </div>
                 </div>
 
-            <!-- ── IDE ── -->
             {:else if activeNav === 'IDE'}
                 <div class="ide-shell">
                     <div class="tab-bar">
                         {#each ide.openTabs as tab (tab.path)}
-                            <div class="ide-tab" role="tab" class:tab-active={ide.activeTab === tab.path}
-                                onclick={() => ide.activeTab = tab.path} onkeydown={(e) => e.key === "Enter" && (ide.activeTab = tab.path)}>
+                            <button 
+                                type="button"
+                                class="ide-tab" 
+                                role="tab" 
+                                aria-selected={ide.activeTab === tab.path}
+                                class:tab-active={ide.activeTab === tab.path}
+                                onclick={() => ide.activeTab = tab.path}>
                                 <span class="tab-name">{tab.path.split('/').at(-1)}</span>
                                 {#if tab.isDirty}<span class="tab-dirty">●</span>{/if}
-                                <button type="button" class="tab-close" aria-label="Close tab" 
-                                          onclick={(e) => { e.stopPropagation(); ide.closeTab(tab.path); }}>×</button>
-                            </div>
+                                <span class="tab-close" role="button" tabindex="0" aria-label="Close tab" 
+                                      onclick={(e) => { e.stopPropagation(); ide.closeTab(tab.path); }}
+                                      onkeydown={(e) => { if(e.key === "Enter") { e.stopPropagation(); ide.closeTab(tab.path); } }}>×</span>
+                            </button>
                         {/each}
                         <div class="tab-controls">
                             {#if ide.activeTab}
@@ -285,8 +278,7 @@ onMount(() => {
                         </div>
                     </div>
                     <div class="editor-pane">
-                        {#if ide.activeTab}
-                            <Editor path={ide.activeTab} />
+                        {#if ide.activeTab}<Editor path={ide.activeTab} />
                         {:else}
                             <div class="ide-welcome">
                                 <div class="iw-glyph">◈</div>
@@ -297,7 +289,6 @@ onMount(() => {
                     <div class="ide-term-strip"><Terminal /></div>
                 </div>
 
-            <!-- ── WORKSPACE ── -->
             {:else if activeNav === 'WORKSPACE'}
                 <div class="panel-scroll ws-panel">
                     <div class="ws-hero"><span class="ws-hero-title">WORKSPACE_DNA_MAP</span></div>
@@ -320,16 +311,11 @@ onMount(() => {
                             <button class="ws-btn" onclick={() => runDirective('list all lazarus vault snapshots and their hashes')}>▶ LIST VAULT</button>
                         </div>
 
-                        <!-- GHOST MEMORY RITUAL -->
                         <div class="ws-group" style="grid-column: 1 / -1;">
                             <div class="ws-group-title">GHOST_MEMORY_RITUAL</div>
                             <div style="display:flex;flex-direction:column;gap:6px;font-size:9px;font-family:'JetBrains Mono',monospace;">
-                                <input id="ghost-handle"
-                                       placeholder="VMO Handle e.g. 0xc8"
-                                       style="background:#000;border:1px solid rgba(167,139,250,.3);color:#a78bfa;padding:6px 8px;outline:none;font-family:inherit;" />
-                                <input id="ghost-text"
-                                       placeholder="Text to enshrine (optional)"
-                                       style="background:#000;border:1px solid rgba(167,139,250,.3);color:#a78bfa;padding:6px 8px;outline:none;font-family:inherit;" />
+                                <input id="ghost-handle" placeholder="VMO Handle e.g. 0xc8" class="ghost-ritual-inp" />
+                                <input id="ghost-text" placeholder="Text to enshrine (optional)" class="ghost-ritual-inp" />
                                 <div style="display:flex;gap:4px;">
                                     <button onclick={ghostEnshrine} class="ws-btn" style="flex:1;">⬆ ENSHRINE</button>
                                     <button onclick={ghostScry}    class="ws-btn" style="flex:1;">🔍 SCRY HEX</button>
@@ -341,64 +327,37 @@ onMount(() => {
                     <div class="ws-term" style="margin-top:16px;"><Terminal /></div>
                 </div>
 
-            <!-- ── VITALS ── -->
-            {:else if activeNav === 'VITALS'}
-                <div class="fill-panel"><VitalsView /></div>
-
-            <!-- ── MEMORY ── -->
-            {:else if activeNav === 'MEMORY'}
-                <div class="fill-panel"><MemoryVault /></div>
-
-            <!-- ── SECOPS ── -->
-            {:else if activeNav === 'SECOPS'}
-                <div class="fill-panel"><SecOps /></div>
-
-            <!-- ── AGENT-LAB ── -->
-            {:else if activeNav === 'AGENT-LAB'}
-                <div class="fill-panel"><AgentLab /></div>
-
-            <!-- ── HISTORY / LAZARUS VAULT ── -->
+            {:else if activeNav === 'VITALS'}<div class="fill-panel"><VitalsView /></div>
+            {:else if activeNav === 'MEMORY'}<div class="fill-panel"><MemoryVault /></div>
+            {:else if activeNav === 'SECOPS'}<div class="fill-panel"><SecOps /></div>
+            {:else if activeNav === 'AGENT-LAB'}<div class="fill-panel"><AgentLab /></div>
             {:else if activeNav === 'HISTORY'}
                 <div class="panel-scroll history-panel">
                     <div class="hist-hdr">
                         <div class="hist-title">LAZARUS_VAULT</div>
-                        <button onclick={loadSnaps}
-                            style="background:none;border:none;color:rgba(167,139,250,.5);font-size:16px;cursor:pointer;">⟳</button>
+                        <button onclick={loadSnaps} class="refresh-btn">⟳</button>
                     </div>
-                    {#if snapMsg}
-                        <div style="padding:8px 16px;font-size:9px;color:#a78bfa;">{snapMsg}</div>
-                    {/if}
+                    {#if snapMsg}<div class="snap-msg-box">{snapMsg}</div>{/if}
                     <div class="snap-list">
                         {#each snapshots as snap}
                             <div class="snap-row">
                                 <div class="snap-info">
                                     <div class="snap-path">{snap.directive ?? snap.path ?? 'unknown'}</div>
-                                    <div class="snap-hash" style="font-size:8px;color:rgba(167,139,250,.4);">
-                                        {snap.timestamp ?? ''}
-                                    </div>
+                                    <div class="snap-ts">{snap.timestamp ?? ''}</div>
                                 </div>
-                                <button class="snap-restore"
-                                    onclick={() => restoreSnap(snap.id?.toString() ?? '')}>
-                                    RESTORE
-                                </button>
+                                <button class="snap-restore" onclick={() => restoreSnap(snap.id?.toString() ?? '')}>RESTORE</button>
                             </div>
                         {:else}
-                            <div style="padding:32px;text-align:center;font-size:9px;color:rgba(167,139,250,.2);">
-                                NO SNAPSHOTS — run a directive to create one
-                            </div>
+                            <div class="snap-empty">NO SNAPSHOTS — run a directive to create one</div>
                         {/each}
                     </div>
                 </div>
-
             {:else}
                 <div class="panel-placeholder">[{activeNav}_OFFLINE]</div>
             {/if}
-
         </main>
-
         <GhostBlade />
     </div>
-
     <StatusBar />
 </div>
 
@@ -420,7 +379,29 @@ onMount(() => {
 .open-go { width:28px; background:rgba(34,211,238,.1); border:1px solid rgba(0,255,255,.2); color:#22d3ee; font-size:14px; cursor:pointer; }
 .open-err { font-size:8px; color:#f87171; margin-top:3px; }
 
-/* OS panel */
+/* IDE TABS */
+.tab-bar { flex:none; display:flex; height:34px; background:#010105; border-bottom:1px solid rgba(0,255,255,.1); overflow-x:auto; }
+.ide-tab { 
+    background: none; border: none; border-right: 1px solid rgba(0,255,255,.05);
+    padding:0 12px; cursor:pointer; display:flex; align-items:center; gap:8px; 
+    font-size:9px; color:#64748b; font-family: inherit; transition: all 0.15s;
+}
+.tab-active { color:#00ffff; background:rgba(0,255,255,.03); border-bottom:2px solid #00ffff !important; }
+.tab-name { white-space: nowrap; }
+.tab-dirty { color:#fb923c; font-size:8px; }
+.tab-close { opacity:.4; font-size:14px; line-height:1; padding: 2px 5px; }
+.tab-close:hover { opacity:1; color:#f87171; }
+
+.tab-controls { flex:1; display:flex; align-items:center; justify-content:flex-end; padding:0 8px; gap:8px; }
+.save-status { font-size:8px; color:#34d399; }
+.save-btn { background:rgba(0,255,255,.1); border:1px solid rgba(0,255,255,.3); color:#00ffff; font-size:8px; padding:2px 10px; cursor:pointer; font-family:'JetBrains Mono',monospace; }
+.editor-pane { flex:1; background:#000; overflow:hidden; }
+.ide-term-strip { flex:none; height:180px; border-top:1px solid rgba(0,255,255,.05); overflow:hidden; display:flex; flex-direction:column; }
+
+/* RITUAL */
+.ghost-ritual-inp { background:#000; border:1px solid rgba(167,139,250,.3); color:#a78bfa; padding:6px 8px; outline:none; font-family:inherit; }
+
+/* OS panel styles */
 .os-hero { padding:14px; border:1px solid rgba(0,255,255,.1); background:rgba(0,255,255,.02); margin-bottom:20px; display:flex; align-items:center; gap:14px; }
 .os-hero-glyph { font-size:28px; color:#00ffff; opacity:.4; }
 .os-hero-title { font-size:16px; font-weight:900; color:#00ffff; text-shadow:0 0 15px rgba(0,255,255,.4); }
@@ -437,25 +418,7 @@ onMount(() => {
 .panel-section-hdr { font-size:8px; font-weight:900; letter-spacing:.14em; color:rgba(0,255,255,.25); margin-bottom:8px; }
 .os-term-wrap { border:1px solid rgba(0,255,255,.06); height:280px; display:flex; flex-direction:column; overflow:hidden; }
 
-/* IDE */
-.ide-shell { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-.tab-bar { flex:none; display:flex; height:34px; background:#010105; border-bottom:1px solid rgba(0,255,255,.1); overflow-x:auto; }
-.ide-tab { padding:0 12px; border-right:1px solid rgba(0,255,255,.05); cursor:pointer; display:flex; align-items:center; gap:8px; font-size:9px; color:#64748b; background:none; border-top:none; border-left:none; border-bottom:none; white-space:nowrap; }
-.tab-active { color:#00ffff; background:rgba(0,255,255,.03); border-bottom:2px solid #00ffff !important; }
-.tab-dirty { color:#fb923c; font-size:8px; }
-.tab-close { opacity:.4; font-size:14px; line-height:1; }
-.tab-close:hover { opacity:1; color:#f87171; }
-.tab-controls { flex:1; display:flex; align-items:center; justify-content:flex-end; padding:0 8px; gap:8px; }
-.save-status { font-size:8px; color:#34d399; }
-.save-btn { background:rgba(0,255,255,.1); border:1px solid rgba(0,255,255,.3); color:#00ffff; font-size:8px; padding:2px 10px; cursor:pointer; font-family:'JetBrains Mono',monospace; }
-.editor-pane { flex:1; background:#000; overflow:hidden; }
-.ide-term-strip { flex:none; height:180px; border-top:1px solid rgba(0,255,255,.05); overflow:hidden; display:flex; flex-direction:column; }
-.ide-welcome { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; }
-.iw-glyph { font-size:40px; color:rgba(0,255,255,.1); }
-.iw-title { font-size:10px; color:rgba(0,255,255,.2); letter-spacing:.2em; }
-
 /* Workspace */
-.ws-hero { margin-bottom:16px; }
 .ws-hero-title { font-size:13px; font-weight:900; color:rgba(0,255,255,.4); letter-spacing:.2em; }
 .ws-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
 .ws-group { padding:12px; border:1px solid rgba(0,255,255,.06); background:rgba(0,255,255,.01); display:flex; flex-direction:column; gap:4px; }
@@ -463,17 +426,17 @@ onMount(() => {
 .ws-btn { width:100%; text-align:left; padding:7px 10px; background:transparent; border:1px solid rgba(0,255,255,.1); color:#94a3b8; font-size:9px; cursor:pointer; font-family:'JetBrains Mono',monospace; transition:all .1s; }
 .ws-btn:hover { color:#00ffff; border-color:rgba(0,255,255,.4); background:rgba(0,255,255,.04); }
 
-/* History */
-.history-panel { display:flex; flex-direction:column; gap:0; }
+/* History Panel */
 .hist-hdr { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid rgba(167,139,250,.1); }
 .hist-title { font-size:11px; font-weight:900; letter-spacing:.15em; color:#a78bfa; }
+.refresh-btn { background:none; border:none; color:rgba(167,139,250,.5); font-size:16px; cursor:pointer; }
+.snap-msg-box { padding:8px 16px; font-size:9px; color:#a78bfa; }
 .snap-list { flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
 .snap-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid rgba(167,139,250,.1); background:rgba(167,139,250,.02); }
 .snap-info { flex:1; min-width:0; }
 .snap-path { font-size:10px; color:rgba(255,255,255,.5); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.snap-ts { font-size:8px; color:rgba(167,139,250,.4); }
 .snap-restore { flex:none; padding:4px 10px; border:1px solid rgba(167,139,250,.3); background:transparent; color:#a78bfa; font-size:8px; font-weight:900; cursor:pointer; font-family:'JetBrains Mono',monospace; }
-.snap-restore:hover { background:rgba(167,139,250,.15); }
-
-/* Misc */
+.snap-empty { padding:32px; text-align:center; font-size:9px; color:rgba(167,139,250,.2); }
 .panel-placeholder { flex:1; display:flex; align-items:center; justify-content:center; font-size:14px; opacity:.1; letter-spacing:10px; }
 </style>

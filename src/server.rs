@@ -248,14 +248,8 @@ async fn handle_get_missions(
 }
 
 async fn handle_get_snapshots() -> impl IntoResponse {
-    match crate::lazarus_vault::LazarusVault::list_snapshots().await {
-        Ok(snaps) => (StatusCode::OK, Json(snaps)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    let snaps = crate::lazarus_vault::LazarusVault::list_snapshots();
+    (axum::http::StatusCode::OK, axum::Json(snaps)).into_response()
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {

@@ -1,71 +1,70 @@
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tokio::fs;
+// src/lazarus_vault.rs — v3.4 SOVEREIGN TEMPORAL VAULT
+use std::fs;
 use std::path::Path;
+use std::time::SystemTime;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Snapshot {
-    pub hash: String,
+    pub id: String,
     pub path: String,
-    pub backup_path: String,
-    pub timestamp: u64,
+    pub hash: String,
+    pub timestamp: String,
+    pub directive: String,
 }
 
 pub struct LazarusVault;
 
 impl LazarusVault {
-    const VAULT_DIR: &'static str = ".lazarus_vault";
-    const LEDGER: &'static str = ".lazarus_vault/ledger.json";
+    /// auto_snapshot: Async wrapper for the executor FSM.
+    pub async fn auto_snapshot(path: &str, tag: &str) -> Result<Snapshot, String> {
+        Self::snapshot_file(path, tag)
+    }
 
-    pub async fn auto_snapshot(path: &str, _tag: &str) -> anyhow::Result<Snapshot> {
-        let content = fs::read(path).await?;
-        let mut hasher = Sha256::new();
-        hasher.update(&content);
-        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    pub fn snapshot_file(filepath: &str, directive_tag: &str) -> Result<Snapshot, String> {
+        let content = fs::read_to_string(filepath).map_err(|e| format!("FS_READ_FAULT: {}", e))?;
+        
+        // ⚡ NATIVE DNA: Using standard library hasher to avoid external dependencies
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        let hash = format!("{:x}", hasher.finish());
 
-        let vault = Path::new(Self::VAULT_DIR);
-        if !vault.exists() { fs::create_dir_all(vault).await?; }
+        let vault_dir = ".nexus/vault";
+        fs::create_dir_all(vault_dir).map_err(|e| format!("DIR_FAULT: {}", e))?;
 
-        let backup_path = vault.join(format!("{}.bak", &hash[..12]));
-        fs::write(&backup_path, &content).await?;
+        let dest_path = format!("{}/{}", vault_dir, hash);
+        fs::write(&dest_path, &content).map_err(|e| format!("FS_WRITE_FAULT: {}", e))?;
 
         let snap = Snapshot {
+            id: hash.clone(),
+            path: filepath.to_string(),
             hash: hash.clone(),
-            path: path.to_string(),
-            backup_path: backup_path.to_string_lossy().to_string(),
-            timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
+            timestamp: format!("{:?}", SystemTime::now()),
+            directive: directive_tag.to_string(),
         };
-
-        let mut snaps = Self::list_snapshots().await.unwrap_or_default();
-        snaps.retain(|s| s.hash != hash);
-        snaps.push(snap.clone());
-        if snaps.len() > 50 { snaps.remove(0); }
-
-        let serialized = serde_json::to_string_pretty(&snaps)?;
-        fs::write(Self::LEDGER, serialized).await?;
-
-        // ⚡ SOVEREIGN LOG: Cloud sync disabled to maintain air-gapped integrity.
-        println!("\x1b[32m>> [LAZARUS] Local Snapshot Secured: {}\x1b[0m", &hash[..12]);
+        
+        let ledger_path = format!("{}/ledger.json", vault_dir);
+        let mut ledger: Vec<Snapshot> = vec![];
+        if Path::new(&ledger_path).exists() {
+            if let Ok(data) = fs::read_to_string(&ledger_path) {
+                ledger = serde_json::from_str(&data).unwrap_or_default();
+            }
+        }
+        ledger.push(snap.clone());
+        fs::write(ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).ok();
 
         Ok(snap)
     }
 
-    pub async fn list_snapshots() -> anyhow::Result<Vec<Snapshot>> {
-        let p = Path::new(Self::LEDGER);
-        if !p.exists() { return Ok(vec![]); }
-        let data = fs::read_to_string(p).await?;
-        match serde_json::from_str::<Vec<Snapshot>>(&data) {
-            Ok(snaps) => Ok(snaps),
-            Err(_) => Ok(vec![]),
+    pub fn list_snapshots() -> Vec<Snapshot> {
+        let ledger_path = ".nexus/vault/ledger.json";
+        if Path::new(ledger_path).exists() {
+            let data = fs::read_to_string(ledger_path).unwrap_or_default();
+            serde_json::from_str(&data).unwrap_or_default()
+        } else {
+            vec![]
         }
-    }
-
-    pub async fn restore_snapshot(hash_prefix: &str) -> anyhow::Result<String> {
-        let snaps = Self::list_snapshots().await?;
-        let snap = snaps.iter().find(|s| s.hash.starts_with(hash_prefix))
-            .ok_or_else(|| anyhow::anyhow!("Snapshot not found"))?;
-        let content = fs::read(&snap.backup_path).await?;
-        fs::write(&snap.path, content).await?;
-        Ok(format!(">> [LAZARUS] Restored {} from {}", snap.path, &snap.hash[..8]))
     }
 }
