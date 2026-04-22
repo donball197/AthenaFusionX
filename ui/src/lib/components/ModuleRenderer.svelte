@@ -1,11 +1,11 @@
 <script lang="ts">
     import { agentRegistry } from '../core/agent_module_registry.svelte.js';
-    import { pushTermLine } from '../core/NexusWS.js';
+    import { TaskService } from '$lib/services/TaskService.js';
     let { activeId } = $props<{ activeId: string }>();
     let m = $derived(agentRegistry.modules.find(x => x.id === activeId));
 
     async function fire(directive: string) {
-        pushTermLine(`>> [MODULE_INTENT] ${directive}`, 'text-cyan-400');
+        TaskService.log(`>> [MODULE_INTENT] ${directive}`, 'text-cyan-400');
         await fetch('/api/task', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({directive}) });
     }
 </script>

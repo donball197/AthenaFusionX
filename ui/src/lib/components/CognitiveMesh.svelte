@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import { cognitiveKernel, nodeRegistry, type KernelProcess } from "$lib/core/mesh_topology";
-    import { pushTermLine } from "$lib/core/NexusWS.js";
+    import { TaskService } from '$lib/services/TaskService.js';
 
     let activeCells: KernelProcess[] = $state([]);
     let wasmResult = $state<number | null>(null);
@@ -10,7 +10,7 @@
     async function handleGenesis(event: CustomEvent<string>) {
         const base64 = event.detail;
         try {
-            pushTermLine(">> [BROWSER_V8] Intercepted GENESIS payload. Instantiating WebAssembly...", "text-purple-400");
+            TaskService.log(">> [BROWSER_V8] Intercepted GENESIS payload. Instantiating WebAssembly...", "text-purple-400");
             const binaryString = window.atob(base64);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
@@ -30,12 +30,12 @@
                     state: "active"
                 });
                 
-                pushTermLine(`>> [BROWSER_V8] Execution Success! In: ${testInput.toFixed(2)} | Out: ${res.toFixed(2)}`, "text-emerald-400");
+                TaskService.log(`>> [BROWSER_V8] Execution Success! In: ${testInput.toFixed(2)} | Out: ${res.toFixed(2)}`, "text-emerald-400");
             } else {
-                pushTermLine("!! [BROWSER_V8] Error: execute_cell export missing.", "text-rose-400");
+                TaskService.log("!! [BROWSER_V8] Error: execute_cell export missing.", "text-rose-400");
             }
         } catch (e: any) {
-            pushTermLine(`!! [BROWSER_V8] Instantiation Fault: ${e.message}`, "text-rose-400");
+            TaskService.log(`!! [BROWSER_V8] Instantiation Fault: ${e.message}`, "text-rose-400");
         }
     }
 

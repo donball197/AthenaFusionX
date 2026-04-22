@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use crate::cluster::{ClusterMesh, ClusterNode};
+use crate::cluster::{ClusterNode};
 use crate::server::AppState;
 
 #[derive(Deserialize)]

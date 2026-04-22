@@ -1,7 +1,7 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { fly, fade } from 'svelte/transition';
-    import { pushTermLine } from '$lib/core/NexusWS.js';
+    import { TaskService } from '$lib/services/TaskService.js';
 
     let cluster = $state({ best_node: null, has_capacity: false });
     let wasmCells = $state([]);
@@ -36,7 +36,7 @@
     onDestroy(() => clearInterval(pollTimer));
 
     function executeCell(funcName, b64) {
-        pushTermLine(`>> [MESH] Forcing execution of ${funcName} across cluster...`, 'text-cyan-400');
+        TaskService.log(`>> [MESH] Forcing execution of ${funcName} across cluster...`, 'text-cyan-400');
         fetch('/api/task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

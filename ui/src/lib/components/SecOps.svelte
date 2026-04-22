@@ -1,20 +1,20 @@
 <script>
-    import { pushTermLine } from '$lib/core/NexusWS.js';
+    import { TaskService } from '$lib/services/TaskService.js';
     let scanning = $state(false);
     
     async function run(d) {
         scanning = true;
-        pushTermLine(`>> [SECOPS] ${d}`, 'text-rose-400');
+        TaskService.log(`>> [SECOPS] ${d}`, 'text-rose-400');
         try {
             const r = await fetch('/api/task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ directive: d })
             });
-            if (r.ok) pushTermLine('>> Task queued — check terminal.', 'text-emerald-400');
-            else pushTermLine(`!! HTTP ${r.status}`, 'text-rose-400');
+            if (r.ok) TaskService.log('>> Task queued — check terminal.', 'text-emerald-400');
+            else TaskService.log(`!! HTTP ${r.status}`, 'text-rose-400');
         } catch (e) {
-            pushTermLine(`!! [FAULT]: ${e.message}`, 'text-rose-400');
+            TaskService.log(`!! [FAULT]: ${e.message}`, 'text-rose-400');
         } finally {
             scanning = false;
         }

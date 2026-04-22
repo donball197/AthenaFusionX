@@ -1,3 +1,4 @@
+pub mod security;
 pub mod cluster_api;
 pub mod genesis_broker;
 pub mod wasm_forge;

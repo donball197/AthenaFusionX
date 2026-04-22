@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import { systemVitals, terminalState } from "$lib/core/store.svelte.js";
-    import { pushTermLine } from "$lib/core/NexusWS.js";
+    import { TaskService } from '$lib/services/TaskService.js';
 
     let wasmEngine = $state<any>(null);
     let hexGrid = $state<string[]>(Array(64).fill("00"));
@@ -17,16 +17,16 @@
 
     async function handleGenesis(event: CustomEvent<string>) {
         try {
-            pushTermLine(">> [TRINITY] Intercepting WASM logic core...", "text-purple-400");
+            TaskService.log(">> [TRINITY] Intercepting WASM logic core...", "text-purple-400");
             const binaryString = window.atob(event.detail);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
             
             const { instance } = await WebAssembly.instantiate(bytes.buffer);
             wasmEngine = instance.exports;
-            pushTermLine(">> [TRINITY] C-ABI bindings secured. Native logic online.", "text-emerald-400");
+            TaskService.log(">> [TRINITY] C-ABI bindings secured. Native logic online.", "text-emerald-400");
         } catch (e: any) {
-            pushTermLine(`!! [TRINITY] V8 Engine Fault: ${e.message}`, "text-rose-400");
+            TaskService.log(`!! [TRINITY] V8 Engine Fault: ${e.message}`, "text-rose-400");
         }
     }
 

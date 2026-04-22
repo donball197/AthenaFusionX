@@ -17,14 +17,14 @@
 
 <script>
     import { runTask } from '$lib/api.js';
-    import { pushTermLine } from '$lib/core/NexusWS.js';
+    import { TaskService } from '$lib/services/TaskService.js';
     let isAuditing = $state(false);
 
     async function igniteAudit() {
         isAuditing = true;
-        pushTermLine(">> [SECOPS] Initiating Bio-Dome Integrity Scan...", "text-cyan-400");
+        TaskService.log(">> [SECOPS] Initiating Bio-Dome Integrity Scan...", "text-cyan-400");
         const res = await runTask("Perform a comprehensive security audit of all .sh, .py, and .env files.");
-        pushTermLine(res.output);
+        TaskService.log(res.output);
         isAuditing = false;
     }
 </script>

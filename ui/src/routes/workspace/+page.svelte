@@ -16,10 +16,10 @@
 
 
 <script>
-    import { pushTermLine } from '$lib/core/NexusWS.js';
+    import { TaskService } from '$lib/services/TaskService.js';
 
     async function runDirective(directive) {
-        pushTermLine(`>> [WORKSPACE] Queuing: ${directive}`, 'text-cyan-400');
+        TaskService.log(`>> [WORKSPACE] Queuing: ${directive}`, 'text-cyan-400');
         try {
             const res = await fetch('/api/task', {
                 method: 'POST',
@@ -27,12 +27,12 @@
                 body: JSON.stringify({ directive })
             });
             if (res.ok) {
-                pushTermLine('>> [WORKSPACE] Task queued — watch terminal for output.', 'text-emerald-400');
+                TaskService.log('>> [WORKSPACE] Task queued — watch terminal for output.', 'text-emerald-400');
             } else {
-                pushTermLine(`!! [WORKSPACE] Server error: ${res.status}`, 'text-rose-400');
+                TaskService.log(`!! [WORKSPACE] Server error: ${res.status}`, 'text-rose-400');
             }
         } catch (e) {
-            pushTermLine(`!! [WORKSPACE] Fault: ${e.message}`, 'text-rose-400');
+            TaskService.log(`!! [WORKSPACE] Fault: ${e.message}`, 'text-rose-400');
         }
     }
 </script>
