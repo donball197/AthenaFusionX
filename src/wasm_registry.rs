@@ -81,11 +81,11 @@ impl WasmRegistry {
                 .execute(&self.pool)
                 .await?;
             Ok(Some(WasmCell {
-                name:        r.get("name"),
-                wasm_b64:    r.get("wasm_b64"),
+                name: r.get("name"),
+                wasm_b64: r.get("wasm_b64"),
                 source_code: r.get("source_code"),
-                created_at:  r.get("created_at"),
-                hit_count:   r.get("hit_count"),
+                created_at: r.get("created_at"),
+                hit_count: r.get("hit_count"),
             }))
         } else {
             Ok(None)
@@ -104,21 +104,18 @@ impl WasmRegistry {
         Ok(rows
             .into_iter()
             .map(|r| WasmCell {
-                name:        r.get("name"),
-                wasm_b64:    String::new(),
+                name: r.get("name"),
+                wasm_b64: String::new(),
                 source_code: r.get("source_code"),
-                created_at:  r.get("created_at"),
-                hit_count:   r.get("hit_count"),
+                created_at: r.get("created_at"),
+                hit_count: r.get("hit_count"),
             })
             .collect())
     }
 
     /// delete: Removes a named cell.
     pub async fn delete(&self, name: &str) -> Result<()> {
-        sqlx::query("DELETE FROM wasm_cells WHERE name = ?")
-            .bind(name)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("DELETE FROM wasm_cells WHERE name = ?").bind(name).execute(&self.pool).await?;
         Ok(())
     }
 }

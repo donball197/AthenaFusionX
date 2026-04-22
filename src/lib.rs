@@ -1,7 +1,7 @@
-pub mod wasm_forge;
 pub mod cluster_api;
-pub mod wasm_registry;
 pub mod genesis_broker;
+pub mod wasm_forge;
+pub mod wasm_registry;
 // ═══════════════════════════════════════════════════════════════════════
 //  PROJECT NEXUS SINGULARITY v0.2.2 - KERNEL DNA
 // ═══════════════════════════════════════════════════════════════════════

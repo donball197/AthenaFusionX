@@ -45,7 +45,7 @@ pub fn inject_workspace_dna(directive: &str) -> String {
         return String::new();
     }
 
-        let schema = r#"[NEXUS SOVEREIGN KERNEL — v4.4 DEVOPS FACTORY]
+    let schema = r#"[NEXUS SOVEREIGN KERNEL — v4.4 DEVOPS FACTORY]
 You are an autonomous DevOps agent on ARM64 Chromebook (4GB RAM).
 You manage source code, the Zig/Rust VMO microkernel, and Git.
 

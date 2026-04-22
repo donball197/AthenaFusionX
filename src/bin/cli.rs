@@ -1,17 +1,11 @@
 // src/bin/cli.rs — v4.3 NEXUS DevOps CLI Binary
 use anyhow::Result;
 use nexus_singularity::{
-    cli,
-    memory,
-    neural_agent,
-    task_manager,
-    server::VmoState,
-    orchestrator::Orchestrator,
-    cluster::ClusterMesh,
-    distributed_scheduler::DistributedScheduler,
+    cli, cluster::ClusterMesh, distributed_scheduler::DistributedScheduler, memory, neural_agent,
+    orchestrator::Orchestrator, server::VmoState, task_manager,
 };
-use std::sync::Arc;
 use std::io::{self, Write};
+use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
 #[tokio::main]
@@ -25,10 +19,10 @@ async fn main() -> Result<()> {
     let _agent = Arc::new(neural_agent::MicroAgent::init(tx.clone())?);
 
     let memory_palace = memory::MemoryPalace::new(".nexus_memory.db").await?;
-    let memory        = Arc::new(Mutex::new(memory_palace));
-    let vmo_state     = Arc::new(Mutex::new(VmoState::default()));
-    let orchestrator  = Arc::new(Orchestrator::new());
-    
+    let memory = Arc::new(Mutex::new(memory_palace));
+    let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+    let orchestrator = Arc::new(Orchestrator::new());
+
     // ⚡ V14: Initialize the Cluster for the CLI
     let cluster = Arc::new(ClusterMesh::new());
     let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
@@ -39,10 +33,12 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let raw_directive      = args[1..].join(" ");
+    let raw_directive = args[1..].join(" ");
     let enriched_directive = cli::inject_workspace_dna(&raw_directive);
 
-    println!("\x1b[36m>> [CLI_UPLINK] Directive → NEXUS Cortex (gemma-4-26b-a4b-it primary)\x1b[0m");
+    println!(
+        "\x1b[36m>> [CLI_UPLINK] Directive → NEXUS Cortex (gemma-4-26b-a4b-it primary)\x1b[0m"
+    );
 
     let mut rx = tx.subscribe();
 

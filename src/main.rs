@@ -72,7 +72,12 @@ async fn main() {
     // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────
     let hb_mesh = cluster.clone();
     tokio::spawn(async move {
-        nexus_singularity::heartbeat::start(hb_mesh, "DUET_CORE".into(), 3000).await;
+        nexus_singularity::heartbeat::start(
+            hb_mesh,
+            std::env::var("NEXUS_NODE_ID").unwrap_or_else(|_| "DUET_CORE".into()),
+            3000,
+        )
+        .await;
     });
 
     let s_state = state.clone();

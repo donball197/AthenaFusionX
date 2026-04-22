@@ -1,12 +1,12 @@
 use nexus_singularity::arbiter_agent::ArbiterAgent;
+use nexus_singularity::cluster::ClusterMesh;
+use nexus_singularity::distributed_scheduler::DistributedScheduler;
 use nexus_singularity::memory::MemoryPalace;
 use nexus_singularity::mission_control::upgrade_command;
 use nexus_singularity::neural_agent::MicroAgent;
 use nexus_singularity::orchestrator::Orchestrator;
 use nexus_singularity::scheduler;
 use nexus_singularity::server::{AppState, VmoState};
-use nexus_singularity::cluster::ClusterMesh;
-use nexus_singularity::distributed_scheduler::DistributedScheduler;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
 
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
     let monitor = tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new());
-    
+
     let orchestrator = Arc::new(Orchestrator::new());
 
     let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;

@@ -32,8 +32,7 @@ impl WasmRuntime {
         let func = instance
             .get_typed_func::<f32, f32>(&mut store, func_name)
             .map_err(|e| anyhow!("WASM_FUNC_MISSING [{}]: {}", func_name, e))?;
-        func.call(&mut store, input)
-            .map_err(|e| anyhow!("WASM_EXEC_FAULT [{}]: {}", func_name, e))
+        func.call(&mut store, input).map_err(|e| anyhow!("WASM_EXEC_FAULT [{}]: {}", func_name, e))
     }
 
     /// run_f64: f64 variant for higher-precision cells.
@@ -73,8 +72,6 @@ impl WasmRuntime {
     /// validate: Returns Ok(()) if bytes are a valid WASM module.
     pub fn validate(bytes: &[u8]) -> Result<()> {
         let engine = Engine::default();
-        Module::from_binary(&engine, bytes)
-            .map(|_| ())
-            .map_err(|e| anyhow!("WASM_INVALID: {}", e))
+        Module::from_binary(&engine, bytes).map(|_| ()).map_err(|e| anyhow!("WASM_INVALID: {}", e))
     }
 }

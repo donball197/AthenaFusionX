@@ -10,17 +10,17 @@ use crate::server::AppState;
 
 #[derive(Deserialize)]
 pub struct RegisterPayload {
-    pub id:   String,
+    pub id: String,
     pub host: String,
     pub port: u16,
-    pub cpu:  f32,
-    pub ram:  f32,
+    pub cpu: f32,
+    pub ram: f32,
 }
 
 #[derive(Serialize)]
 pub struct ClusterStatus {
-    pub node_count:    usize,
-    pub best_node_id:  Option<String>,
+    pub node_count: usize,
+    pub best_node_id: Option<String>,
     pub best_node_cpu: Option<f32>,
     pub best_node_ram: Option<f32>,
 }
@@ -31,20 +31,18 @@ pub async fn register_node(
     Json(payload): Json<RegisterPayload>,
 ) -> Json<Value> {
     state.cluster.register(ClusterNode {
-        id:        payload.id.clone(),
-        host:      payload.host,
-        port:      payload.port,
-        cpu:       payload.cpu,
-        ram:       payload.ram,
+        id: payload.id.clone(),
+        host: payload.host,
+        port: payload.port,
+        cpu: payload.cpu,
+        ram: payload.ram,
         last_seen: 0, // ClusterMesh::register sets this
     });
     Json(json!({ "ok": true, "registered": payload.id }))
 }
 
 /// GET /api/cluster/status — Returns cluster health summary.
-pub async fn cluster_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<Value> {
+pub async fn cluster_status(State(state): State<Arc<AppState>>) -> Json<Value> {
     // Count alive nodes (ClusterMesh filters stale ones in best_node)
     let best = state.cluster.best_node();
     Json(json!({
@@ -66,6 +64,6 @@ pub async fn list_wasm_cells() -> Json<Value> {
         Ok(reg) => match reg.list_all().await {
             Err(e) => Json(json!({ "error": e.to_string() })),
             Ok(cells) => Json(json!({ "cells": cells })),
-        }
+        },
     }
 }

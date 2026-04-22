@@ -14,13 +14,13 @@ pub struct Conductor;
 
 impl Conductor {
     pub async fn run_turn(
-        profile:  &AgentProfile,
-        prompt:   String,
-        turn:     usize,
-        orch:     &Orchestrator,
-        client:   &Client,
-        api_key:  &str,
-        tx:       Option<broadcast::Sender<String>>,
+        profile: &AgentProfile,
+        prompt: String,
+        turn: usize,
+        orch: &Orchestrator,
+        client: &Client,
+        api_key: &str,
+        tx: Option<broadcast::Sender<String>>,
     ) -> Result<String, String> {
         // FIX: Only escalate to 31b on turn > 6 (was > 3).
         // This keeps turns 1-6 on the 15 RPM MoE model,
@@ -28,16 +28,19 @@ impl Conductor {
         let model = if turn > 6 { "gemma-4-31b-it" } else { profile.primary_model };
 
         let ctx = ContextPacket {
-            system_prompt:  Some(profile.persona.clone()),
+            system_prompt: Some(profile.persona.clone()),
             model_override: Some(model.to_string()),
             ..Default::default()
         };
 
         if let Some(ref sender) = tx {
-            let _ = sender.send(json!({
-                "type": "NEURAL_THOUGHT",
-                "payload": format!("[UPLINK] → {} | 256K ctx | streaming SSE", model)
-            }).to_string());
+            let _ = sender.send(
+                json!({
+                    "type": "NEURAL_THOUGHT",
+                    "payload": format!("[UPLINK] → {} | 256K ctx | streaming SSE", model)
+                })
+                .to_string(),
+            );
         }
 
         let result = orch.run(prompt.clone(), ctx, client, api_key, tx.clone()).await;
@@ -50,17 +53,20 @@ impl Conductor {
                 || e.contains("RESOURCE_EXHAUSTED")
             {
                 if let Some(ref sender) = tx {
-                    let _ = sender.send(json!({
-                        "type": "NEURAL_THOUGHT",
-                        "payload": format!(
-                            "!! [CONDUCTOR] Model {} unstable/rate-limited. \
-                             Failover to gemma-4-26b-a4b-it...",
-                            model
-                        )
-                    }).to_string());
+                    let _ = sender.send(
+                        json!({
+                            "type": "NEURAL_THOUGHT",
+                            "payload": format!(
+                                "!! [CONDUCTOR] Model {} unstable/rate-limited. \
+                                 Failover to gemma-4-26b-a4b-it...",
+                                model
+                            )
+                        })
+                        .to_string(),
+                    );
                 }
                 let failover_ctx = ContextPacket {
-                    system_prompt:  Some(profile.persona.clone()),
+                    system_prompt: Some(profile.persona.clone()),
                     model_override: Some("gemma-4-26b-a4b-it".to_string()),
                     ..Default::default()
                 };

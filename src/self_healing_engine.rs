@@ -13,16 +13,15 @@ use crate::{
 };
 use chrono::Utc;
 use std::sync::{Arc, LazyLock};
-use tokio::sync::{Mutex, TryAcquireError};
 use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, TryAcquireError};
 use tokio::time::{sleep, Duration};
 
 /// COMPILE_LOCK: Prevents concurrent cargo check invocations.
-static COMPILE_LOCK: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(1)));
+static COMPILE_LOCK: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
 
 pub struct SelfHealingEngine {
-    state:    Arc<AppState>,
+    state: Arc<AppState>,
     governor: ThermalGovernor,
 }
 
@@ -44,17 +43,21 @@ impl SelfHealingEngine {
 
             // Substrate protection — throttle scheduler if stressed
             if vitals.temperature > 65.0 || vitals.ram_gb > (vitals.total_ram_gb * 0.85) {
-                let _ = self.state.scheduler_tx.send(
-                    NexusTask { payload: "THROTTLE_SEMAPHORE".into(), priority: 0 }
-                ).await;
+                let _ = self
+                    .state
+                    .scheduler_tx
+                    .send(NexusTask { payload: "THROTTLE_SEMAPHORE".into(), priority: 0 })
+                    .await;
                 println!("\x1b[33m[HEALING] System stress. Throttling scheduler.\x1b[0m");
                 continue; // Skip cargo check when already under pressure
             }
 
             // FIX: Gate cargo check behind CPU threshold
             if vitals.cpu_load > 0.5 {
-                println!("\x1b[33m[HEALING] CPU at {:.0}% — skipping cargo check.\x1b[0m",
-                    vitals.cpu_load * 100.0);
+                println!(
+                    "\x1b[33m[HEALING] CPU at {:.0}% — skipping cargo check.\x1b[0m",
+                    vitals.cpu_load * 100.0
+                );
                 continue;
             }
 
@@ -71,25 +74,25 @@ impl SelfHealingEngine {
                 Ok(_guard) => {
                     if let Ok(log) = Inquisitor::audit_backend() {
                         if log != "NOMINAL" {
-                            println!(
-                                "\x1b[31m[HEALING] Backend fracture detected.\x1b[0m"
-                            );
+                            println!("\x1b[31m[HEALING] Backend fracture detected.\x1b[0m");
                             let mission = Mission {
-                                id:         format!("heal-{}", Utc::now().timestamp()),
-                                goal:       "Repair Backend Fracture".into(),
-                                steps:      vec![MissionStep {
-                                    id:          1,
+                                id: format!("heal-{}", Utc::now().timestamp()),
+                                goal: "Repair Backend Fracture".into(),
+                                steps: vec![MissionStep {
+                                    id: 1,
                                     description: "Lazarus Restore Check".into(),
-                                    action:      None,
-                                    status:      StepStatus::Pending,
-                                    result:      None,
+                                    action: None,
+                                    status: StepStatus::Pending,
+                                    result: None,
                                 }],
                                 created_at: Utc::now().to_rfc3339(),
-                                completed:  false,
+                                completed: false,
                             };
                             let _ = crate::mission_planner::MissionPlanner::execute(
-                                &self.state, mission
-                            ).await;
+                                &self.state,
+                                mission,
+                            )
+                            .await;
                         } else {
                             println!("[HEALING] Backend nominal.");
                         }

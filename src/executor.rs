@@ -3,7 +3,6 @@
 //      needs to embed the raw string in context (fixes the loop).
 // NEW: ReadFile, WasmExecuteLocal, WasmStore, WasmLoad actions wired.
 // FIX: genesis_broker strips b64 from session_obs automatically.
-use base64::{engine::general_purpose, Engine as _};
 use crate::agent_protocol::AgentAction;
 use crate::distributed_scheduler::DistributedScheduler;
 use crate::genesis_broker;
@@ -12,6 +11,7 @@ use crate::memory::MemoryPalace;
 use crate::server::VmoState;
 use crate::wasm_registry::WasmRegistry;
 use crate::wasm_runtime::WasmRuntime;
+use base64::{engine::general_purpose, Engine as _};
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -35,11 +35,7 @@ pub struct RoboticExecutor {
 
 impl RoboticExecutor {
     pub fn new() -> Self {
-        Self {
-            current_state: FsmState::Idle,
-            stored_genesis: None,
-            last_func_hint: None,
-        }
+        Self { current_state: FsmState::Idle, stored_genesis: None, last_func_hint: None }
     }
 
     pub fn transition(&mut self, next_state: FsmState) {
@@ -59,14 +55,11 @@ impl RoboticExecutor {
         let mut raw_results: Vec<String> = Vec::new();
 
         for action in actions {
-            if self.current_state == FsmState::Complete
-                || self.current_state == FsmState::Fault
-            {
+            if self.current_state == FsmState::Complete || self.current_state == FsmState::Fault {
                 break;
             }
 
             match action {
-
                 // ── Shell ─────────────────────────────────────────────
                 AgentAction::ExecuteCommand { command } => {
                     let _ = LazarusVault::auto_snapshot("src/", "pre_cmd").await;
@@ -78,8 +71,12 @@ impl RoboticExecutor {
                         .map_err(|e| e.to_string())?;
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    if !stdout.is_empty() { raw_results.push(stdout); }
-                    if !stderr.is_empty() { raw_results.push(format!("STDERR: {}", stderr)); }
+                    if !stdout.is_empty() {
+                        raw_results.push(stdout);
+                    }
+                    if !stderr.is_empty() {
+                        raw_results.push(format!("STDERR: {}", stderr));
+                    }
                 }
 
                 // ── File I/O ──────────────────────────────────────────
@@ -108,9 +105,7 @@ impl RoboticExecutor {
                     }
                     match crate::sandbox::validate_path(&path) {
                         Ok(safe) => {
-                            tokio::fs::write(&safe, &content)
-                                .await
-                                .map_err(|e| e.to_string())?;
+                            tokio::fs::write(&safe, &content).await.map_err(|e| e.to_string())?;
                             raw_results.push(format!("FILE_WRITTEN: {}", path));
                         }
                         Err(e) => raw_results.push(format!("SANDBOX_VIOLATION: {}", e)),
@@ -119,22 +114,28 @@ impl RoboticExecutor {
 
                 // ── Git ───────────────────────────────────────────────
                 AgentAction::GitAction { command, message } => {
-                    let msg    = message.clone().unwrap_or_default();
-                    let target = msg.split_whitespace().last()
+                    let msg = message.clone().unwrap_or_default();
+                    let target = msg
+                        .split_whitespace()
+                        .last()
                         .unwrap_or("nexus-patch")
                         .trim_matches(|c| c == '\'' || c == '"' || c == '.');
                     let git_cmd = match command.as_str() {
-                        "status"   => "git status".to_string(),
-                        "branch"   => format!("git checkout -B {}", target),
+                        "status" => "git status".to_string(),
+                        "branch" => format!("git checkout -B {}", target),
                         "checkout" => format!("git checkout {}", target),
-                        "commit"   => format!("git add -A && git commit -m \"{}\"", msg),
-                        "push"     => "git push --set-upstream origin HEAD".to_string(),
-                        "diff"     => "git diff --staged".to_string(),
-                        "log"      => "git log --oneline -10".to_string(),
-                        _          => "git status".to_string(),
+                        "commit" => format!("git add -A && git commit -m \"{}\"", msg),
+                        "push" => "git push --set-upstream origin HEAD".to_string(),
+                        "diff" => "git diff --staged".to_string(),
+                        "log" => "git log --oneline -10".to_string(),
+                        _ => "git status".to_string(),
                     };
-                    let output = Command::new("sh").arg("-c").arg(&git_cmd)
-                        .output().await.map_err(|e| e.to_string())?;
+                    let output = Command::new("sh")
+                        .arg("-c")
+                        .arg(&git_cmd)
+                        .output()
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     raw_results.push(format!("GIT[{}]: {}", command, stdout));
@@ -147,9 +148,9 @@ impl RoboticExecutor {
                 AgentAction::LazarusSnapshot { path, tag } => {
                     let tag_str = tag.as_deref().unwrap_or("auto");
                     match LazarusVault::auto_snapshot(&path, tag_str).await {
-                        Ok(snap) => raw_results.push(
-                            format!("SNAPSHOT_OK: {} → {}", snap.path, snap.id)
-                        ),
+                        Ok(snap) => {
+                            raw_results.push(format!("SNAPSHOT_OK: {} → {}", snap.path, snap.id))
+                        }
                         Err(e) => raw_results.push(format!("SNAPSHOT_FAULT: {}", e)),
                     }
                 }
@@ -177,7 +178,8 @@ impl RoboticExecutor {
                             let _ws_payload = serde_json::json!({
                                 "type": "KERNEL_GENESIS",
                                 "payload": b64
-                            }).to_string();
+                            })
+                            .to_string();
 
                             raw_results.push("WASM_SYNTHESIS_COMPLETE".to_string());
                             // Push GENESIS_PAYLOAD for genesis_broker to intercept
@@ -188,59 +190,44 @@ impl RoboticExecutor {
                 }
 
                 // ── WasmExecuteLocal — uses stored b64, no raw string needed ──
-                AgentAction::WasmExecuteLocal { func_name, input } => {
-                    match &self.stored_genesis {
-                        None => raw_results.push(
-                            "WASM_EXEC_FAULT: No synthesized cell in memory. \
-                             Run synthesize_wasm first.".to_string()
-                        ),
-                        Some(b64) => {
-                            match general_purpose::STANDARD.decode(b64) {
-                                Err(e) => raw_results.push(format!("B64_FAULT: {}", e)),
-                                Ok(bytes) => {
-                                    match WasmRuntime::run_bytes(&bytes, &func_name, input) {
-                                        Ok(result) => {
-                                            raw_results.push(format!(
-                                                "WASM_LOCAL_RESULT: {}({}) = {}",
-                                                func_name, input, result
-                                            ));
-                                        }
-                                        Err(e) => raw_results.push(
-                                            format!("WASM_EXEC_FAULT: {}", e)
-                                        ),
-                                    }
-                                }
+                AgentAction::WasmExecuteLocal { func_name, input } => match &self.stored_genesis {
+                    None => raw_results.push(
+                        "WASM_EXEC_FAULT: No synthesized cell in memory. \
+                             Run synthesize_wasm first."
+                            .to_string(),
+                    ),
+                    Some(b64) => match general_purpose::STANDARD.decode(b64) {
+                        Err(e) => raw_results.push(format!("B64_FAULT: {}", e)),
+                        Ok(bytes) => match WasmRuntime::run_bytes(&bytes, &func_name, input) {
+                            Ok(result) => {
+                                raw_results.push(format!(
+                                    "WASM_LOCAL_RESULT: {}({}) = {}",
+                                    func_name, input, result
+                                ));
                             }
-                        }
-                    }
-                }
+                            Err(e) => raw_results.push(format!("WASM_EXEC_FAULT: {}", e)),
+                        },
+                    },
+                },
 
                 // ── WasmStore — persist named cell to registry ─────────
-                AgentAction::WasmStore { name, func_name } => {
-                    match &self.stored_genesis {
-                        None => raw_results.push(
-                            "WASM_STORE_FAULT: No cell in memory to store.".to_string()
-                        ),
-                        Some(b64) => {
-                            let source = self.last_func_hint
-                                .clone()
-                                .unwrap_or_else(|| func_name.clone());
-                            match WasmRegistry::new(".nexus_wasm_registry.db").await {
-                                Ok(reg) => match reg.store(&name, b64, &source).await {
-                                    Ok(_) => raw_results.push(
-                                        format!("WASM_STORED: {} → registry", name)
-                                    ),
-                                    Err(e) => raw_results.push(
-                                        format!("WASM_STORE_DB_FAULT: {}", e)
-                                    ),
-                                },
-                                Err(e) => raw_results.push(
-                                    format!("WASM_REGISTRY_OPEN_FAULT: {}", e)
-                                ),
-                            }
+                AgentAction::WasmStore { name, func_name } => match &self.stored_genesis {
+                    None => raw_results
+                        .push("WASM_STORE_FAULT: No cell in memory to store.".to_string()),
+                    Some(b64) => {
+                        let source =
+                            self.last_func_hint.clone().unwrap_or_else(|| func_name.clone());
+                        match WasmRegistry::new(".nexus_wasm_registry.db").await {
+                            Ok(reg) => match reg.store(&name, b64, &source).await {
+                                Ok(_) => {
+                                    raw_results.push(format!("WASM_STORED: {} → registry", name))
+                                }
+                                Err(e) => raw_results.push(format!("WASM_STORE_DB_FAULT: {}", e)),
+                            },
+                            Err(e) => raw_results.push(format!("WASM_REGISTRY_OPEN_FAULT: {}", e)),
                         }
                     }
-                }
+                },
 
                 // ── WasmLoad — load named cell and execute ─────────────
                 AgentAction::WasmLoad { name, func_name, input } => {
@@ -248,9 +235,8 @@ impl RoboticExecutor {
                         Err(e) => raw_results.push(format!("WASM_REGISTRY_FAULT: {}", e)),
                         Ok(reg) => match reg.get(&name).await {
                             Err(e) => raw_results.push(format!("WASM_LOAD_FAULT: {}", e)),
-                            Ok(None) => raw_results.push(
-                                format!("WASM_NOT_FOUND: '{}' not in registry", name)
-                            ),
+                            Ok(None) => raw_results
+                                .push(format!("WASM_NOT_FOUND: '{}' not in registry", name)),
                             Ok(Some(cell)) => {
                                 match general_purpose::STANDARD.decode(&cell.wasm_b64) {
                                     Err(e) => raw_results.push(format!("B64_FAULT: {}", e)),
@@ -264,45 +250,38 @@ impl RoboticExecutor {
                                                     name, func_name, input, result
                                                 ));
                                             }
-                                            Err(e) => raw_results.push(
-                                                format!("WASM_EXEC_FAULT: {}", e)
-                                            ),
+                                            Err(e) => {
+                                                raw_results.push(format!("WASM_EXEC_FAULT: {}", e))
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
+                        },
                     }
                 }
 
                 // ── Distributed WASM — alias-aware ────────────────────
                 AgentAction::ExecuteDistributedWasm { wasm_b64, func_name, input } => {
                     // Resolve alias if model used WASM_CELL_READY shorthand
-                    let resolved = genesis_broker::resolve_b64(
-                        &wasm_b64,
-                        self.stored_genesis.as_deref(),
-                    );
+                    let resolved =
+                        genesis_broker::resolve_b64(&wasm_b64, self.stored_genesis.as_deref());
                     match resolved {
                         None => raw_results.push(
                             "DIST_WASM_FAULT: No cell available. \
-                             Run synthesize_wasm or wasm_load first.".to_string()
+                             Run synthesize_wasm or wasm_load first."
+                                .to_string(),
                         ),
-                        Some(real_b64) => {
-                            match general_purpose::STANDARD.decode(&real_b64) {
-                                Err(e) => raw_results.push(format!("B64_FAULT: {}", e)),
-                                Ok(bytes) => {
-                                    match dist.execute(bytes, &func_name, input).await {
-                                        Ok(res) => raw_results.push(format!(
-                                            "CLUSTER_EXEC_SUCCESS: {}({}) = {}",
-                                            func_name, input, res
-                                        )),
-                                        Err(e) => raw_results.push(
-                                            format!("CLUSTER_EXEC_FAULT: {}", e)
-                                        ),
-                                    }
-                                }
-                            }
-                        }
+                        Some(real_b64) => match general_purpose::STANDARD.decode(&real_b64) {
+                            Err(e) => raw_results.push(format!("B64_FAULT: {}", e)),
+                            Ok(bytes) => match dist.execute(bytes, &func_name, input).await {
+                                Ok(res) => raw_results.push(format!(
+                                    "CLUSTER_EXEC_SUCCESS: {}({}) = {}",
+                                    func_name, input, res
+                                )),
+                                Err(e) => raw_results.push(format!("CLUSTER_EXEC_FAULT: {}", e)),
+                            },
+                        },
                     }
                 }
 

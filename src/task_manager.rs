@@ -14,8 +14,7 @@ use std::process::Command;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::{broadcast, Mutex, Semaphore};
 
-static TASK_SLAB: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(1)));
+static TASK_SLAB: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
 
 /// MAX_OBS: Maximum entries kept in session_obs.
 /// Oldest entries are pruned to prevent context window saturation.
@@ -33,14 +32,14 @@ fn get_current_branch() -> String {
 }
 
 pub async fn send_task(
-    orch:      Arc<crate::orchestrator::Orchestrator>,
-    client:    &reqwest::Client,
-    api_key:   &str,
+    orch: Arc<crate::orchestrator::Orchestrator>,
+    client: &reqwest::Client,
+    api_key: &str,
     directive: &str,
-    memory:    Arc<Mutex<crate::memory::MemoryPalace>>,
+    memory: Arc<Mutex<crate::memory::MemoryPalace>>,
     vmo_state: Arc<Mutex<crate::server::VmoState>>,
-    tx:        broadcast::Sender<String>,
-    dist:      Arc<DistributedScheduler>,
+    tx: broadcast::Sender<String>,
+    dist: Arc<DistributedScheduler>,
 ) -> String {
     let _permit = TASK_SLAB.clone().acquire_owned().await.expect("SLAB_LOCK_FAIL");
     let profile = IntelligentRouter::route(directive);
@@ -50,28 +49,35 @@ pub async fn send_task(
     let mut same_action_count = 0u8;
 
     for turn in 1..=profile.max_turns {
-        if fsm.current_state == FsmState::Complete
-            || fsm.current_state == FsmState::Fault
-        {
+        if fsm.current_state == FsmState::Complete || fsm.current_state == FsmState::Fault {
             break;
         }
 
-        let branch  = get_current_branch();
-        let prompt  = IntelligentRouter::build_prompt(directive, &profile, &session_obs);
+        let branch = get_current_branch();
+        let prompt = IntelligentRouter::build_prompt(directive, &profile, &session_obs);
 
-        let _ = tx.send(json!({
-            "type": "NEURAL_THOUGHT",
-            "payload": format!("── Turn {}/{} | Branch: {} ──", turn, profile.max_turns, branch)
-        }).to_string());
+        let _ = tx.send(
+            json!({
+                "type": "NEURAL_THOUGHT",
+                "payload": format!("── Turn {}/{} | Branch: {} ──", turn, profile.max_turns, branch)
+            })
+            .to_string(),
+        );
 
         match Conductor::run_turn(
-            &profile, prompt, turn as usize,
-            &orch, client, api_key, Some(tx.clone()),
-        ).await {
+            &profile,
+            prompt,
+            turn as usize,
+            &orch,
+            client,
+            api_key,
+            Some(tx.clone()),
+        )
+        .await
+        {
             Ok(response) => {
                 match json_parser::extract_actions(&response) {
                     Ok(actions) if !actions.is_empty() => {
-
                         // ── Loop guard ────────────────────────────────
                         let action_type = format!("{:?}", actions[0]);
                         let type_tag = action_type.split(' ').next().unwrap_or("").to_string();
@@ -88,10 +94,10 @@ pub async fn send_task(
                                 type_tag, same_action_count
                             ));
                             // Inject genesis alias hint if we're stuck in synthesis loop
-                            if type_tag.contains("SynthesizeWasm")
-                                && fsm.stored_genesis.is_some()
-                            {
-                                let hint = fsm.last_func_hint.clone()
+                            if type_tag.contains("SynthesizeWasm") && fsm.stored_genesis.is_some() {
+                                let hint = fsm
+                                    .last_func_hint
+                                    .clone()
                                     .unwrap_or_else(|| "execute_cell".to_string());
                                 genesis_broker::inject_alias(&mut session_obs, &hint);
                             }
@@ -99,13 +105,18 @@ pub async fn send_task(
                             break;
                         }
 
-                        match fsm.execute_handle(
-                            actions, memory.clone(), vmo_state.clone(), dist.clone()
-                        ).await {
+                        match fsm
+                            .execute_handle(
+                                actions,
+                                memory.clone(),
+                                vmo_state.clone(),
+                                dist.clone(),
+                            )
+                            .await
+                        {
                             Ok(results) => {
-                                let wasm_done = results.iter().any(|r|
-                                    r.contains("WASM_SYNTHESIS_COMPLETE")
-                                );
+                                let wasm_done =
+                                    results.iter().any(|r| r.contains("WASM_SYNTHESIS_COMPLETE"));
 
                                 for res in results {
                                     session_obs.push(res);
@@ -114,7 +125,9 @@ pub async fn send_task(
                                 // After synthesis, inject alias hint so model
                                 // knows to call wasm_execute_local next.
                                 if wasm_done {
-                                    let hint = fsm.last_func_hint.clone()
+                                    let hint = fsm
+                                        .last_func_hint
+                                        .clone()
                                         .unwrap_or_else(|| "execute_cell".to_string());
                                     genesis_broker::inject_alias(&mut session_obs, &hint);
                                     same_action_count = 0; // reset loop counter
@@ -131,17 +144,21 @@ pub async fn send_task(
                     }
                     _ => {
                         session_obs.push(
-                            "System: Mission target likely achieved or clarification needed.".into()
+                            "System: Mission target likely achieved or clarification needed."
+                                .into(),
                         );
                         break;
                     }
                 }
             }
             Err(e) => {
-                let _ = tx.send(json!({
-                    "type": "NEURAL_STREAM",
-                    "payload": format!("API_FAULT: {}", e)
-                }).to_string());
+                let _ = tx.send(
+                    json!({
+                        "type": "NEURAL_STREAM",
+                        "payload": format!("API_FAULT: {}", e)
+                    })
+                    .to_string(),
+                );
                 break;
             }
         }
