@@ -1,50 +1,56 @@
-//! NEXUS KERNEL — mod.rs v2.0
-//! Exports: ffi, HandleType, VmoHandle, register_handle, get_live_telemetry,
-//!          zx_vmo_create_native (re-export for crate::kernel::zx_vmo_create_native callers)
-use lazy_static::lazy_static;
-use parking_lot::RwLock;
-
-pub mod ffi;
 pub mod vmo;
 pub mod vmar;
 pub mod error;
+pub mod ffi;
 pub mod memory;
 pub mod realignment;
 
-// ── Handle type aliases ─────────────────────────────────────────────────
-pub type VmoHandle = u32;
+use std::collections::HashMap;
+use std::sync::RwLock;
+use lazy_static::lazy_static;
 
-#[derive(Debug, Clone, Copy)]
-pub enum HandleType {
-    Vmo(VmoHandle),
-}
+pub use ffi::{
+    zx_vmo_create_native, zx_handle_close_native, zx_vmo_write_native,
+    zx_vmo_read_native, muscle_get_active_vmos, muscle_get_next_handle,
+    zx_vmo_get_info, zx_vmo_get_all_handles
+};
 
-// ── Global handle registry ─────────────────────────────────────────────
 lazy_static! {
-    static ref HANDLE_REGISTRY: RwLock<Vec<VmoHandle>> = RwLock::new(Vec::new());
+    pub static ref HANDLE_REGISTRY: RwLock<HashMap<u32, HandleType>> = RwLock::new(HashMap::new());
 }
 
-/// register_handle: Inserts a new VMO handle into the sovereign registry.
-/// Uses if-let to handle RwLock poisoning gracefully instead of panicking.
-pub fn register_handle(handle: VmoHandle, _handle_type: HandleType) {
-    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-        reg.push(handle);
-    } else {
-        eprintln!("\x1b[31m[KERNEL] WARNING: HANDLE_REGISTRY RwLock poisoned — skipping insert for 0x{:x}\x1b[0m", handle);
+pub enum HandleType { Vmo(u32), Vmar(vmar::Vmar) }
+pub struct VmoGuard { pub id: u32 }
+
+impl Drop for VmoGuard {
+    fn drop(&mut self) {
+        if let Ok(mut reg) = HANDLE_REGISTRY.write() {
+            if reg.contains_key(&self.id) {
+                unsafe { zx_handle_close_native(self.id); }
+                reg.remove(&self.id);
+            }
+        }
     }
 }
 
-/// get_live_telemetry: Returns (active_vmo_count, next_expected_handle).
-/// Uses parking_lot's infallible read() — no unwrap needed.
-pub fn get_live_telemetry() -> (usize, usize) {
-    let reg = HANDLE_REGISTRY.read();
-    let active = reg.len();
-    (active, active + 1)
+pub fn get_live_telemetry() -> (u32, u32) { unsafe { (muscle_get_active_vmos(), muscle_get_next_handle()) } }
+
+pub fn close_handle(id: u32) -> bool {
+    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
+        if reg.contains_key(&id) { 
+            unsafe { zx_handle_close_native(id); } 
+            reg.remove(&id); 
+            true 
+        } else { 
+            false 
+        }
+    } else { 
+        false 
+    }
 }
 
-/// Convenience re-export so callers using `crate::kernel::zx_vmo_create_native`
-/// compile without modification.
-#[inline(always)]
-pub unsafe fn zx_vmo_create_native(size: usize) -> u32 {
-    ffi::zx_vmo_create_native(size as u32)
+pub fn register_handle(id: u32, h: HandleType) { 
+    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
+        reg.insert(id, h); 
+    }
 }

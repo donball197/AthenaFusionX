@@ -1,9 +1,9 @@
 <script>
     // NavHeader.svelte — v1.1
     // FIX: clock setInterval leaked — now cleared in onDestroy.
-    // FIX: wsState.ready replaced with wsReady $derived from store.
+    // FIX: wsState.ready replaced with wsState.ready $derived from store.
     import { onMount, onDestroy } from 'svelte';
-    import { layout, wsReady, systemVitals } from '$lib/core/store.svelte.js';
+    import { layout, wsState, systemVitals } from '$lib/core/store.svelte.js';
 
     let { activeNav = $bindable('WORKSPACE') } = $props();
 
@@ -51,8 +51,8 @@
             <span class="brand-n">NEXUS</span>
             <span class="brand-s">://</span>
             <span class="brand-v">SINGULARITY</span>
-            <!-- FIX: uses wsReady $derived instead of wsState.ready getter -->
-            <span class="brand-dot" class:dot-live={wsReady}></span>
+            <!-- FIX: uses wsState.ready $derived instead of wsState.ready getter -->
+            <span class="brand-dot" class:dot-live={wsState.ready}></span>
         </div>
     </div>
 
@@ -82,9 +82,9 @@
         </span>
         <span class="metric-sep">│</span>
         <span class="clock">{clockTime}</span>
-        <!-- FIX: uses wsReady $derived -->
-        <span class="ws-pill" class:ws-live={wsReady}>
-            {wsReady ? '● LIVE' : '○ OFFLINE'}
+        <!-- FIX: uses wsState.ready $derived -->
+        <span class="ws-pill" class:ws-live={wsState.ready}>
+            {wsState.ready ? '● LIVE' : '○ OFFLINE'}
         </span>
         <button class="ghost-toggle"
             onclick={() => layout.ghostVisible = !layout.ghostVisible}

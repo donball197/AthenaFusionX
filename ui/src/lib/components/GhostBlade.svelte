@@ -1,8 +1,8 @@
 <script>
     // GhostBlade.svelte — v1.1
-    // FIX: wsState.ready → wsReady $derived.
+    // FIX: wsState.ready → wsState.ready $derived.
     // FIX: isGhostTyping reset on new directive fire.
-    import { terminalState, layout, wsReady } from '$lib/core/store.svelte.js';
+    import { terminalState, layout, wsState } from '$lib/core/store.svelte.js';
 
     let directive = $state('');
     let sending   = $state(false);
@@ -111,14 +111,14 @@
             disabled={sending}
             aria-label="Directive input"
         ></textarea>
-        <!-- FIX: uses wsReady instead of wsState.ready -->
+        <!-- FIX: uses wsState.ready instead of wsState.ready -->
         <button class="fire-btn"
             class:fire-sending={sending}
             onclick={fire}
-            disabled={sending || !wsReady}>
+            disabled={sending || !wsState.ready}>
             {sending ? '⟳ PROCESSING...' : '▶ FIRE DIRECTIVE'}
         </button>
-        {#if !wsReady}
+        {#if !wsState.ready}
             <div class="offline-warn">⚠ NEURAL LINK OFFLINE</div>
         {/if}
     </div>

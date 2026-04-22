@@ -1,7 +1,7 @@
 <script>
     // StatusBar.svelte — v1.1
-    // FIX: wsState.ready replaced with wsReady $derived.
-    import { wsReady, ide, layout, systemVitals } from '$lib/core/store.svelte.js';
+    // FIX: wsState.ready replaced with wsState.ready $derived.
+    import { wsState, ide, layout, systemVitals } from '$lib/core/store.svelte.js';
 
     let path      = $derived(ide.activeTab ?? '');
     let lang      = $derived.by(() => {
@@ -19,9 +19,9 @@
 
 <footer class="status-bar">
     <div class="sb-left">
-        <!-- FIX: wsReady instead of wsState.ready -->
-        <span class="sb-item" class:sb-live={wsReady} class:sb-dead={!wsReady}>
-            {wsReady ? '● ONLINE' : '● OFFLINE'}
+        <!-- FIX: wsState.ready instead of wsState.ready -->
+        <span class="sb-item" class:sb-live={wsState.ready} class:sb-dead={!wsState.ready}>
+            {wsState.ready ? '● ONLINE' : '● OFFLINE'}
         </span>
         <span class="sb-sep">│</span>
         <span class="sb-item">NEXUS v4.3.0</span>

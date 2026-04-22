@@ -1,8 +1,4 @@
-// ui/src/lib/core/store.svelte.js — v3.7 Aligned Reactive Store
-// FIX: wsState.ready was a getter method on $state — Svelte 5 proxies
-//      do not support getter methods reactively. Replaced with $derived.
-// FIX: log buffer now uses slice(-180) instead of shift() to avoid
-//      triggering a full 200-node DOM re-render on every new message.
+// ui/src/lib/core/store.svelte.js — v3.8 Aligned Reactive Store
 import { nexusWS } from './NexusWS';
 
 export const layout = $state({
@@ -16,9 +12,15 @@ export const layout = $state({
     visorVisible:        false,
 });
 
-// FIX: removed getter method — use exported $derived instead
-export const wsState  = $state({ status: 'DISCONNECTED' });
-export const wsReady  = $derived(wsState.status === 'CONNECTED');
+// ⚡ SUTURE: Svelte 5 module constraint bypass.
+// Instead of a top-level exported $derived (illegal), we export a $state object.
+// Components can reactively check `wsState.ready`.
+export const wsState = $state({
+    status: 'DISCONNECTED',
+    get ready() {
+        return this.status === 'CONNECTED';
+    }
+});
 
 export const systemVitals = $state({
     cpu_load:     0,
@@ -73,7 +75,6 @@ export const vmoTelemetry = $state({ active_vmos: 0 });
 
 // ─── HANDLER REGISTRATION ────────────────────────────────────────────
 nexusWS.registerLogHandler((message, cls) => {
-    // FIX: slice(-180) instead of shift() — avoids full DOM re-render
     terminalState.logs = [
         ...terminalState.logs.slice(-179),
         { timestamp: new Date().toLocaleTimeString(), message, cls },
@@ -99,7 +100,6 @@ nexusWS.onMessage((msg) => {
             nexusWS.logHandlers.forEach(
                 h => h(`>> [FSM] ${msg.payload}`, 'text-emerald-400')
             );
-            // When a task completes, stop the ghost typing indicator
             if (String(msg.payload).includes('COMPLETE') ||
                 String(msg.payload).includes('HALTED')) {
                 terminalState.isGhostTyping = false;
@@ -107,7 +107,6 @@ nexusWS.onMessage((msg) => {
             break;
 
         default:
-            // HEARTBEAT uses type_id not type
             if (msg.type_id === 'HEARTBEAT') {
                 systemVitals.cpu_load     = msg.cpu_load     ?? systemVitals.cpu_load;
                 systemVitals.temperature  = msg.temperature  ?? systemVitals.temperature;
