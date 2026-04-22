@@ -1,4 +1,5 @@
 <script lang="ts">
+import { uplink } from '$lib/services/uplink.js';
 import { ide, layout, fileTreeTrigger } from '$lib/core/store.svelte.js';
 import { TaskService } from '$lib/services/TaskService.js';
 import { fly } from 'svelte/transition';
@@ -30,7 +31,6 @@ let openError = $state('');
 let activeDynamicId = $state("");
 
 onMount(() => {
-    // ⚡ V7 BOOTSTRAP
     agentRegistry.propose({ id: "sys_diag", label: "Sys Diagnostics", version: "1.0", type: "panel", render: { kind: "terminal", source: "Awaiting probe data...", actions: [{ label: "RUN CARGO CHECK", directive: "run cargo check" }] }, generatedBy: "v7_bootstrap" });
     TaskService.log('>> [NEXUS] Singularity OS v4.3.0 — Substrate Initialized', 'text-cyan-400');
 });
@@ -44,7 +44,7 @@ async function openFile(path: string) {
         return;
     }
     try {
-        const r = await fetch(`/api/fs/read?path=${encodeURIComponent(path)}`);
+        const r = await uplink.fetch(`/api/fs/read?path=${encodeURIComponent(path)}`);
         if (!r.ok) { openError = `UPLINK_FAILURE: HTTP ${r.status}`; return; }
         const data = await r.json();
         ide.mountFile(path, data.content ?? '');
@@ -64,11 +64,7 @@ async function submitOpenInput(e: Event) {
 async function createFile(path: string) {
     if (!path) return;
     try {
-        const r = await fetch('/api/fs/write', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, content: `// ${path}\n// Created by NEXUS IDE\n\n` })
-        });
+        const r = await uplink.post('/api/fs/write', { path, content: `// ${path}\n// Created by NEXUS IDE\n\n` });
         if (r.ok) { fileTreeTrigger.value++; await openFile(path); }
     } catch(e: any) {
         TaskService.log(`!! [IDE] FRACTURE: ${e.message}`, 'text-rose-400');

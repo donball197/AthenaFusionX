@@ -1,4 +1,5 @@
 <script>
+    import { uplink } from '$lib/services/uplink.js';
     import { ide } from '$lib/core/store.svelte.js';
     import { TaskService } from '$lib/services/TaskService.js';
     import Editor from '$lib/components/Editor.svelte';
@@ -16,11 +17,7 @@
         if (!tab || !tab.isDirty) return;
         isSaving = true;
         try {
-            const r = await fetch('/api/fs/write', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path, content: tab.content ?? '' })
-            });
+            const r = await uplink.post('/api/fs/write', { path, content: tab.content ?? '' });
             if (r.ok) { ide.markSaved(path); saveMsg = '✓ COMMITTED'; }
         } catch(e) {
             saveMsg = '!! FAILED';

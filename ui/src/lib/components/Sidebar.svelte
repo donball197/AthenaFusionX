@@ -1,4 +1,5 @@
 <script>
+import { uplink } from "$lib/services/uplink.js";
     // ════════════════════════════════════════════════════════════
     //  Sidebar — File tree + open/create controls
     // ════════════════════════════════════════════════════════════
@@ -30,7 +31,7 @@
         scanning = true;
         createErr = '';
         try {
-            const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+            const r = await uplink.fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
             if (r.ok) { files = await r.json(); currentPath = path; }
         } catch(e) { console.error('SIDEBAR_FAULT', e); }
         finally { scanning = false; }
@@ -60,7 +61,7 @@
             if (onCreateFile) {
                 await onCreateFile(fullPath);
             } else {
-                await fetch('/api/fs/write', {
+                await uplink.fetch('/api/fs/write', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: fullPath, content: '' })

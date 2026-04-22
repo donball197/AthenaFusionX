@@ -1,41 +1,47 @@
 <script>
-    // NavHeader.svelte — v1.1
-    // FIX: clock setInterval leaked — now cleared in onDestroy.
-    // FIX: wsState.ready replaced with wsState.ready $derived from store.
+    // NavHeader.svelte — v1.2
+    // FIX: 2-second grace period before showing OFFLINE — prevents
+    //      the green→grey→green flicker on every page load.
+    // FIX: clock interval cleared in onDestroy (was leaking).
     import { onMount, onDestroy } from 'svelte';
     import { layout, wsState, systemVitals } from '$lib/core/store.svelte.js';
 
     let { activeNav = $bindable('WORKSPACE') } = $props();
 
     const TABS = [
-        { id: 'NEXUS_OS',       color: '#00ffff' },
-        { id: 'IDE',            color: '#22d3ee' },
-        { id: 'WORKSPACE',      color: '#34d399' },
-        { id: 'VITALS',         color: '#fb923c' },
-        { id: 'MEMORY',         color: '#a78bfa' },
-        { id: 'SECOPS',         color: '#f87171' },
-        { id: 'AGENT-LAB',      color: '#fbbf24' },
-        { id: 'HISTORY',        color: '#818cf8' },
-        { id: 'DYNAMIC_UI',     color: '#e879f9' },
-        { id: 'COGNITIVE_MESH', color: '#f472b6' },
+        { id:'NEXUS_OS',       color:'#00ffff' },
+        { id:'IDE',            color:'#22d3ee' },
+        { id:'WORKSPACE',      color:'#34d399' },
+        { id:'VITALS',         color:'#fb923c' },
+        { id:'MEMORY',         color:'#a78bfa' },
+        { id:'SECOPS',         color:'#f87171' },
+        { id:'AGENT-LAB',      color:'#fbbf24' },
+        { id:'HISTORY',        color:'#818cf8' },
+        { id:'DYNAMIC_UI',     color:'#e879f9' },
+        { id:'COGNITIVE_MESH', color:'#f472b6' },
     ];
 
-    let clockTime = $state('00:00:00');
-    let _clockInterval;
+    let clockTime  = $state('00:00:00');
+    let showOnline = $state(false);  // grace period gate
+    let _clockInt;
+    let _graceTimer;
 
     onMount(() => {
-        clockTime = new Date().toLocaleTimeString('en-US', { hour12: false });
-        _clockInterval = setInterval(() => {
-            clockTime = new Date().toLocaleTimeString('en-US', { hour12: false });
+        clockTime = new Date().toLocaleTimeString('en-US', { hour12:false });
+        _clockInt = setInterval(() => {
+            clockTime = new Date().toLocaleTimeString('en-US', { hour12:false });
         }, 1000);
+        // Grace: don't show OFFLINE for the first 2s while WS connects
+        _graceTimer = setTimeout(() => { showOnline = true; }, 2000);
     });
+    onDestroy(() => { clearInterval(_clockInt); clearTimeout(_graceTimer); });
 
-    // FIX: clear interval on destroy to prevent memory leak
-    onDestroy(() => clearInterval(_clockInterval));
+    // Show live dot only after grace period + actually connected
+    let dotLive = $derived(showOnline && wsState.ready);
 
     let tempColor = $derived(
-        systemVitals.temperature > 70 ? '#f87171'  :
-        systemVitals.temperature > 55 ? '#fb923c'  : '#34d399'
+        systemVitals.temperature > 70 ? '#f87171' :
+        systemVitals.temperature > 55 ? '#fb923c' : '#34d399'
     );
 </script>
 
@@ -43,16 +49,14 @@
     <div class="nav-left">
         <button class="hamburger"
             onclick={() => layout.explorerVisible = !layout.explorerVisible}
-            title="Toggle sidebar"
-            aria-label="Toggle sidebar">
+            title="Toggle sidebar" aria-label="Toggle sidebar">
             <span></span><span></span><span></span>
         </button>
         <div class="brand">
             <span class="brand-n">NEXUS</span>
             <span class="brand-s">://</span>
             <span class="brand-v">SINGULARITY</span>
-            <!-- FIX: uses wsState.ready $derived instead of wsState.ready getter -->
-            <span class="brand-dot" class:dot-live={wsState.ready}></span>
+            <span class="brand-dot" class:dot-live={dotLive}></span>
         </div>
     </div>
 
@@ -70,47 +74,31 @@
 
     <div class="nav-right">
         <span class="metric" style="color:{tempColor}" title="Temperature">
-            🌡 {(systemVitals.temperature || 0).toFixed(1)}°C
+            🌡 {(systemVitals.temperature||0).toFixed(1)}°C
         </span>
         <span class="metric-sep">│</span>
         <span class="metric" style="color:#22d3ee" title="CPU Load">
-            ⚡ {((systemVitals.cpu_load || 0) * 100).toFixed(0)}%
+            ⚡ {((systemVitals.cpu_load||0)*100).toFixed(0)}%
         </span>
         <span class="metric-sep">│</span>
         <span class="metric" style="color:#a78bfa" title="RAM Used">
-            ◈ {(systemVitals.ram_gb || 0).toFixed(2)}GB
+            ◈ {(systemVitals.ram_gb||0).toFixed(2)}GB
         </span>
         <span class="metric-sep">│</span>
         <span class="clock">{clockTime}</span>
-        <!-- FIX: uses wsState.ready $derived -->
         <span class="ws-pill" class:ws-live={wsState.ready}>
-            {wsState.ready ? '● LIVE' : '○ OFFLINE'}
+            {!showOnline ? '○ INIT' : wsState.ready ? '● LIVE' : '○ OFFLINE'}
         </span>
         <button class="ghost-toggle"
             onclick={() => layout.ghostVisible = !layout.ghostVisible}
-            title="Toggle Ghost Cortex"
-            aria-label="Toggle Ghost Cortex">◈</button>
+            title="Toggle Ghost Cortex" aria-label="Toggle Ghost Cortex">◈</button>
     </div>
 </header>
 
 <style>
-    .nexus-nav {
-        flex: none; display: flex; align-items: center;
-        height: 42px; background: #02020c;
-        border-bottom: 1px solid rgba(0,255,255,.1);
-        padding: 0 10px; gap: 8px; user-select: none;
-        position: relative; z-index: 200;
-        background-image: repeating-linear-gradient(
-            0deg, transparent, transparent 3px,
-            rgba(0,255,255,.008) 3px, rgba(0,255,255,.008) 6px
-        );
-    }
+    .nexus-nav { flex:none; display:flex; align-items:center; height:42px; background:#02020c; border-bottom:1px solid rgba(0,255,255,.1); padding:0 10px; gap:8px; user-select:none; position:relative; z-index:200; background-image:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,255,255,.008) 3px,rgba(0,255,255,.008) 6px); }
     .nav-left { display:flex; align-items:center; gap:10px; flex:none; min-width:180px; }
-    .hamburger {
-        display:flex; flex-direction:column; gap:4px;
-        background:none; border:none; cursor:pointer; padding:4px;
-        opacity:.5; transition:opacity .15s;
-    }
+    .hamburger { display:flex; flex-direction:column; gap:4px; background:none; border:none; cursor:pointer; padding:4px; opacity:.5; transition:opacity .15s; }
     .hamburger:hover { opacity:1; }
     .hamburger span { display:block; width:18px; height:1.5px; background:#22d3ee; border-radius:1px; }
     .brand { display:flex; align-items:center; gap:4px; }

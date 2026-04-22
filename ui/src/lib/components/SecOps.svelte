@@ -1,4 +1,5 @@
 <script>
+    import { uplink } from "$lib/services/uplink.js";
     import { TaskService } from '$lib/services/TaskService.js';
     let scanning = $state(false);
     
@@ -6,7 +7,7 @@
         scanning = true;
         TaskService.log(`>> [SECOPS] ${d}`, 'text-rose-400');
         try {
-            const r = await fetch('/api/task', {
+            const r = await uplink.fetch('/api/task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ directive: d })

@@ -1,7 +1,15 @@
 <script>
-    // StatusBar.svelte — v1.1
-    // FIX: wsState.ready replaced with wsState.ready $derived.
+    // StatusBar.svelte — v1.2
+    // FIX: 2s grace period before showing OFFLINE (matches NavHeader).
+    // FIX: Temperature warning threshold 52°C → 58°C (more realistic).
+    import { onMount, onDestroy } from 'svelte';
     import { wsState, ide, layout, systemVitals } from '$lib/core/store.svelte.js';
+
+    let showStatus = $state(false); // grace gate
+    let _graceTimer;
+
+    onMount(() => { _graceTimer = setTimeout(() => showStatus = true, 2000); });
+    onDestroy(() => clearTimeout(_graceTimer));
 
     let path      = $derived(ide.activeTab ?? '');
     let lang      = $derived.by(() => {
@@ -13,15 +21,15 @@
     let isDirty   = $derived(ide.openTabs.find(t => t.path === path)?.isDirty ?? false);
     let tempColor = $derived(
         systemVitals.temperature > 68 ? '#f87171' :
-        systemVitals.temperature > 52 ? '#fb923c' : '#34d399'
+        systemVitals.temperature > 58 ? '#fb923c' : '#34d399'  // FIX: 52→58
     );
+    let isOnline  = $derived(showStatus ? wsState.ready : true); // show as online during grace
 </script>
 
 <footer class="status-bar">
     <div class="sb-left">
-        <!-- FIX: wsState.ready instead of wsState.ready -->
-        <span class="sb-item" class:sb-live={wsState.ready} class:sb-dead={!wsState.ready}>
-            {wsState.ready ? '● ONLINE' : '● OFFLINE'}
+        <span class="sb-item" class:sb-live={isOnline} class:sb-dead={showStatus && !isOnline}>
+            {!showStatus ? '● INIT' : isOnline ? '● ONLINE' : '● OFFLINE'}
         </span>
         <span class="sb-sep">│</span>
         <span class="sb-item">NEXUS v4.3.0</span>

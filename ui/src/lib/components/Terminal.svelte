@@ -1,4 +1,5 @@
 <script>
+    import { uplink } from "$lib/services/uplink.js";
     // ════════════════════════════════════════════════════════════
     //  Terminal — Live log feed + directive input
     // ════════════════════════════════════════════════════════════
@@ -22,7 +23,7 @@
         if (!d) return;
         inputVal = '';
         try {
-            await fetch('/api/task', {
+            await uplink.fetch('/api/task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ directive: d })

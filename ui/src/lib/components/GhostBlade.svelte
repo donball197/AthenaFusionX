@@ -1,7 +1,9 @@
 <script>
-    // GhostBlade.svelte — v1.1
-    // FIX: wsState.ready → wsState.ready $derived.
-    // FIX: isGhostTyping reset on new directive fire.
+    // GhostBlade.svelte — v1.2
+    // FIX: fire-btn is no longer disabled when !wsState.ready.
+    //      Directives go via HTTP POST to /api/task which works
+    //      whether the WS is connected or not.
+    // FIX: isGhostTyping reset correctly on new directive.
     import { terminalState, layout, wsState } from '$lib/core/store.svelte.js';
 
     let directive = $state('');
@@ -9,28 +11,30 @@
     let resonance = $state(0.5);
 
     const QUICK = [
-        { label: 'CARGO CHECK', d: 'run cargo check and show all errors' },
-        { label: 'NPM BUILD',   d: 'run npm run build in the ui directory' },
-        { label: 'AUDIT SRC',   d: 'audit all rust source files for security vulnerabilities' },
-        { label: 'SCAN TODOS',  d: 'find all TODO FIXME HACK and SUTURE comments' },
-        { label: 'LIST MEM',    d: 'list the 10 most recent memory strands' },
-        { label: 'GIT STATUS',  d: 'run git status and show all changed files' },
+        { label:'CARGO CHECK', d:'run cargo check and show all errors' },
+        { label:'NPM BUILD',   d:'run npm run build in the ui directory' },
+        { label:'AUDIT SRC',   d:'audit all rust source files for security vulnerabilities' },
+        { label:'SCAN TODOS',  d:'find all TODO FIXME HACK and SUTURE comments' },
+        { label:'LIST MEM',    d:'list the 10 most recent memory strands' },
+        { label:'GIT STATUS',  d:'run git status and show all changed files' },
     ];
 
     async function fire() {
         const d = directive.trim();
         if (!d || sending) return;
         sending = true;
-        // FIX: reset buffer + typing state before new directive
         terminalState.buffers.GHOST_CORTEX = '';
         terminalState.isGhostTyping = true;
         directive = '';
         try {
-            await fetch('/api/task', {
+            const res = await fetch('/api/task', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({ directive: d }),
             });
+            if (!res.ok) {
+                terminalState.isGhostTyping = false;
+            }
         } catch (e) {
             terminalState.isGhostTyping = false;
         } finally {
@@ -103,7 +107,13 @@
     </div>
 
     <div class="section directive-section">
-        <div class="section-hdr"><span>DIRECTIVE</span></div>
+        <div class="section-hdr">
+            <span>DIRECTIVE</span>
+            <!-- Soft WS warning — doesn't block sending -->
+            {#if !wsState.ready}
+                <span class="ws-warn" title="WS not connected — responses may be delayed">⚡ UPLINK</span>
+            {/if}
+        </div>
         <textarea bind:value={directive} onkeydown={onKey}
             class="dir-textarea"
             placeholder="Enter directive...&#10;Enter to send, Shift+Enter for newline"
@@ -111,16 +121,13 @@
             disabled={sending}
             aria-label="Directive input"
         ></textarea>
-        <!-- FIX: uses wsState.ready instead of wsState.ready -->
+        <!-- FIX: only disabled while HTTP request is in flight, not on !wsState.ready -->
         <button class="fire-btn"
             class:fire-sending={sending}
             onclick={fire}
-            disabled={sending || !wsState.ready}>
+            disabled={sending}>
             {sending ? '⟳ PROCESSING...' : '▶ FIRE DIRECTIVE'}
         </button>
-        {#if !wsState.ready}
-            <div class="offline-warn">⚠ NEURAL LINK OFFLINE</div>
-        {/if}
     </div>
 </aside>
 {:else}
@@ -141,9 +148,7 @@
     .ghost-name { font-size:9px; font-weight:900; letter-spacing:.12em; color:#a78bfa; }
     .ghost-close { background:none; border:none; color:rgba(167,139,250,.3); cursor:pointer; font-size:18px; line-height:1; padding:0 2px; transition:color .15s; }
     .ghost-close:hover { color:#f87171; }
-    .stream-area { flex:1; min-height:80px; max-height:180px; overflow-y:auto; padding:10px; background:#000; }
-    .stream-area::-webkit-scrollbar { width:2px; }
-    .stream-area::-webkit-scrollbar-thumb { background:#4c1d95; }
+    .stream-area { flex:1; min-height:80px; max-height:180px; overflow-y:auto; padding:10px; background:#000; scrollbar-width:thin; scrollbar-color:#4c1d95 transparent; }
     .stream-text { font-size:10.5px; color:#c4b5fd; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
     .stream-cur { color:#a78bfa; animation:blink .6s step-end infinite; }
     @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
@@ -160,6 +165,8 @@
     .section { flex:none; padding:8px 10px; border-top:1px solid rgba(167,139,250,.07); }
     .directive-section { flex:1; display:flex; flex-direction:column; gap:6px; min-height:0; }
     .section-hdr { display:flex; justify-content:space-between; align-items:center; font-size:7px; font-weight:900; letter-spacing:.14em; color:rgba(167,139,250,.3); margin-bottom:6px; }
+    .ws-warn { color:#fb923c; font-size:7px; animation:pulse 1.5s infinite; }
+    @keyframes pulse { 50%{opacity:.4;} }
     .res-val { font-weight:900; font-size:9px; }
     .res-slider { width:100%; height:3px; appearance:none; background:linear-gradient(to right,#34d399,#fbbf24,#f87171); border-radius:2px; outline:none; cursor:pointer; }
     .res-slider::-webkit-slider-thumb { appearance:none; width:12px; height:12px; border-radius:50%; background:#a78bfa; border:2px solid #000; cursor:pointer; box-shadow:0 0 6px rgba(167,139,250,.6); }
@@ -176,7 +183,6 @@
     .fire-btn.fire-sending { animation:fire-pulse .8s ease-in-out infinite alternate; }
     @keyframes fire-pulse { from{opacity:.5;} to{opacity:1;} }
     .fire-btn:disabled { opacity:.4; cursor:not-allowed; }
-    .offline-warn { font-size:8px; color:#fb923c; text-align:center; }
     .ghost-reopen { position:absolute; right:0; top:50%; transform:translateY(-50%); background:rgba(167,139,250,.1); border:1px solid rgba(167,139,250,.2); border-right:none; color:#a78bfa; padding:14px 5px; cursor:pointer; font-size:14px; writing-mode:vertical-rl; transition:background .15s; }
     .ghost-reopen:hover { background:rgba(167,139,250,.2); }
 </style>

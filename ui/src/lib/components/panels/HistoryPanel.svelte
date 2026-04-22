@@ -1,4 +1,5 @@
 <script>
+    import { uplink } from '$lib/services/uplink.js';
     import { onMount } from 'svelte';
 
     let snapshots = $state([]);
@@ -10,7 +11,7 @@
         loading = true;
         snapMsg = 'Scanning vault...';
         try {
-            const r = await fetch('/api/memories');
+            const r = await uplink.fetch('/api/memories');
             if (r.ok) {
                 const all = await r.json();
                 snapshots = all
@@ -32,11 +33,7 @@
         restoring = hash;
         snapMsg = `Initiating Temporal Restore: ${hash.slice(0,8)}...`;
         try {
-            await fetch('/api/task', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ directive: `restore snapshot ${hash}` })
-            });
+            await uplink.post('/api/task', { directive: `restore snapshot ${hash}` });
         } catch(e) {
             snapMsg = `!! [ERROR] ${e.message}`;
         } finally {

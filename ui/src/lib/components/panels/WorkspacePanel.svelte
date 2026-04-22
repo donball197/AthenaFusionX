@@ -1,4 +1,5 @@
 <script>
+    import { uplink } from '$lib/services/uplink.js';
     import { TaskService } from '$lib/services/TaskService.js';
     import { nexusSocket } from '$lib/nexus_socket.svelte';
     import Terminal from '$lib/components/Terminal.svelte';
@@ -6,11 +7,7 @@
     async function runDirective(directive) {
         TaskService.log(`>> [WORKSPACE] Queuing: ${directive}`, 'text-cyan-400');
         try {
-            await fetch('/api/task', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ directive })
-            });
+            await uplink.post('/api/task', { directive });
         } catch(e) {
             TaskService.log(`!! [FAULT] ${e.message}`, 'text-rose-400');
         }
