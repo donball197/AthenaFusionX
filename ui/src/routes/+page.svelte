@@ -19,6 +19,7 @@ import MemoryVault from '$lib/components/MemoryVault.svelte';
 import SecOps      from '$lib/components/SecOps.svelte';
 import AgentLab    from '$lib/components/AgentLab.svelte';
 import CognitiveMesh from "$lib/components/CognitiveMesh.svelte";
+import TrinityMatrix from "$lib/components/TrinityMatrix.svelte";
 import ModuleRenderer from "$lib/components/ModuleRenderer.svelte";
 import { agentRegistry } from "$lib/core/agent_module_registry.svelte.js";
 
@@ -348,7 +349,15 @@ onMount(() => {
                     <main style="flex:1; padding:10px;"><ModuleRenderer activeId={activeDynamicId} /></main>
                 </div>
             {:else if activeNav === "COGNITIVE_MESH"}
-                <div class="fill-panel"><CognitiveMesh /></div>
+                <div class="fill-panel" style="flex-direction: row; gap: 10px; padding: 10px;">
+                    <div style="flex: 1; border: 1px solid rgba(0,255,255,0.1);"><CognitiveMesh /></div>
+                    <div style="flex: 1; border: 1px solid rgba(167,139,250,0.2);"><TrinityMatrix /></div>
+                </div>
+                <div class="fill-panel" style="flex-direction: row; gap: 10px; padding: 10px;">
+                    <div style="flex: 1; border: 1px solid rgba(0,255,255,0.1);"><CognitiveMesh /></div>
+                    <div style="flex: 1; border: 1px solid rgba(167,139,250,0.2);"><TrinityMatrix /></div>
+                </div>
+
             {:else if activeNav === 'HISTORY'}
                 <div class="panel-scroll history-panel">
                     <div class="hist-hdr">
