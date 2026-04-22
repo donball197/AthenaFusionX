@@ -18,14 +18,20 @@ import VitalsView  from '$lib/components/VitalsView.svelte';
 import MemoryVault from '$lib/components/MemoryVault.svelte';
 import SecOps      from '$lib/components/SecOps.svelte';
 import AgentLab    from '$lib/components/AgentLab.svelte';
+import CognitiveMesh from "$lib/components/CognitiveMesh.svelte";
+import ModuleRenderer from "$lib/components/ModuleRenderer.svelte";
+import { agentRegistry } from "$lib/core/agent_module_registry.svelte.js";
 
 // ── Telemetry Uplink ───────────────────────────────────────────
 let socket = createNexusSocket('/ws/telemetry');
 onDestroy(() => socket.destroy());
+    // ⚡ V7 BOOTSTRAP
+    agentRegistry.propose({ id: "sys_diag", label: "Sys Diagnostics", version: "1.0", type: "panel", render: { kind: "terminal", source: "Awaiting probe data...", actions: [{ label: "RUN CARGO CHECK", directive: "run cargo check" }] }, generatedBy: "v7_bootstrap" });
 
 let activeNav = $state('NEXUS_OS');
 let openInput = $state('');
 let openError = $state('');
+let activeDynamicId = $state("");
 
 async function openFile(path: string) {
     if (!path?.trim()) return;
@@ -331,6 +337,18 @@ onMount(() => {
             {:else if activeNav === 'MEMORY'}<div class="fill-panel"><MemoryVault /></div>
             {:else if activeNav === 'SECOPS'}<div class="fill-panel"><SecOps /></div>
             {:else if activeNav === 'AGENT-LAB'}<div class="fill-panel"><AgentLab /></div>
+            {:else if activeNav === "DYNAMIC_UI"}
+                <div class="fill-panel" style="flex-direction:row;">
+                    <aside class="sidebar-col" style="width:200px; padding:10px; gap:8px;">
+                        <div class="panel-section-hdr">DYNAMIC MODULES</div>
+                        {#each agentRegistry.modules as m}
+                            <button class="ws-btn" onclick={() => activeDynamicId = m.id} style={activeDynamicId === m.id ? "border-color:#00ffff; color:#00ffff; background:rgba(0,255,255,0.05);" : ""}>◈ {m.label}</button>
+                        {/each}
+                    </aside>
+                    <main style="flex:1; padding:10px;"><ModuleRenderer activeId={activeDynamicId} /></main>
+                </div>
+            {:else if activeNav === "COGNITIVE_MESH"}
+                <div class="fill-panel"><CognitiveMesh /></div>
             {:else if activeNav === 'HISTORY'}
                 <div class="panel-scroll history-panel">
                     <div class="hist-hdr">

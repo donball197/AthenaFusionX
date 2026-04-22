@@ -1,3 +1,4 @@
+// src/agent_protocol.rs — v5.0 SOVEREIGN ACTION SCHEMA
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -64,6 +65,10 @@ pub enum AgentAction {
 
     #[serde(rename = "export_report")]
     ExportReport { title: String, content: String },
+
+    // ⚡ V14: WASM Synthesis Action
+    #[serde(rename = "synthesize_wasm")]
+    SynthesizeWasm { code: String },
 
     #[serde(rename = "halt")]
     Halt,

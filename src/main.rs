@@ -1,4 +1,5 @@
-// src/main.rs — v3.3 [AUTONOMIC_IMMUNE_ACTIVE]
+// src/main.rs — v3.4 [AUTONOMIC_IMMUNE_ACTIVE]
+// FIX: All bare .unwrap() replaced with .expect("<context message>")
 use nexus_singularity::server::{AppState, start_server, VmoState};
 use nexus_singularity::cli::run_cli_loop;
 use nexus_singularity::orchestrator::Orchestrator;
@@ -10,7 +11,7 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
-    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.3.0)\x1b[0m");
+    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.4.0)\x1b[0m");
     dotenvy::dotenv().ok();
 
     nexus_singularity::metrics::init_metrics();
@@ -21,11 +22,12 @@ async fn main() {
     let memory = Arc::new(Mutex::new(
         nexus_singularity::memory::MemoryPalace::new(".nexus_memory.db")
             .await
-            .unwrap(),
+            .expect("[MAIN] Fatal: cannot open MemoryPalace SQLite database"),
     ));
 
     let agent = Arc::new(
-        nexus_singularity::neural_agent::MicroAgent::init(tx.clone()).unwrap(),
+        nexus_singularity::neural_agent::MicroAgent::init(tx.clone())
+            .expect("[MAIN] Fatal: MicroAgent init failed"),
     );
 
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
@@ -42,6 +44,9 @@ async fn main() {
         vmo_state.clone(),
     );
 
+    let workspace_root = std::env::current_dir()
+        .expect("[MAIN] Fatal: cannot resolve current working directory");
+
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
         monitor: Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()),
@@ -53,15 +58,17 @@ async fn main() {
         tx: tx.clone(),
         scheduler_tx: scheduler_tx.clone(),
         arbiter: Arc::new(ArbiterAgent::new(agent.clone())),
-        workspace_root: std::env::current_dir().unwrap_or_default(),
+        workspace_root,
         vmo_state,
     });
 
-    // ── BACKGROUND: HTTP SERVER ──
+    // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────
     let s_state = state.clone();
-    tokio::spawn(async move { start_server(s_state).await; });
+    tokio::spawn(async move {
+        start_server(s_state).await;
+    });
 
-    // ── BACKGROUND: SELF-HEALING ENGINE ──
+    // ── BACKGROUND: SELF-HEALING ENGINE ─────────────────────────────────
     let h_state = state.clone();
     let h_memory = h_state.memory.clone();
     tokio::spawn(async move {
@@ -69,15 +76,16 @@ async fn main() {
         engine.ignite_autonomic_loop().await;
     });
 
-    // ── BACKGROUND: DREAM CYCLE ──
+    // ── BACKGROUND: DREAM CYCLE ──────────────────────────────────────────
     let dream_memory = state.memory.clone();
     let dream_agent = state.agent.clone();
     let dream_key = api_key.clone();
     tokio::spawn(async move {
-        nexus_singularity::dream_cycle::start_daydream(dream_memory, dream_agent, dream_key).await;
+        nexus_singularity::dream_cycle::start_daydream(dream_memory, dream_agent, dream_key)
+            .await;
     });
 
-    // ── BACKGROUND: KNOWLEDGE BROKER ──
+    // ── BACKGROUND: KNOWLEDGE BROKER ─────────────────────────────────────
     tokio::spawn(async move {
         nexus_singularity::broker::KnowledgeBroker::refresh_atlas().await;
         println!("\x1b[34m>> [BROKER] Project atlas indexed.\x1b[0m");

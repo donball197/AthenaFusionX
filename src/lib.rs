@@ -1,3 +1,4 @@
+pub mod wasm_forge;
 // ═══════════════════════════════════════════════════════════════════════
 //  PROJECT NEXUS SINGULARITY v0.2.2 - KERNEL DNA
 // ═══════════════════════════════════════════════════════════════════════
@@ -16,3 +17,6 @@ pub mod vision; pub mod vitals_handler; pub mod void_walker; pub mod ws_bridge;
 pub mod ziggy_llm;
 pub mod vmo_handler;
 pub mod logic_engine;
+pub mod router;
+pub mod token_ledger;
+pub mod conductor;

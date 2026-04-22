@@ -1,4 +1,5 @@
-// src/lazarus_vault.rs — v3.4 SOVEREIGN TEMPORAL VAULT
+// src/lazarus_vault.rs — v3.5 SOVEREIGN TEMPORAL VAULT
+// FIX: serde_json::to_string_pretty unwrap → graceful fallback.
 use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
@@ -24,9 +25,9 @@ impl LazarusVault {
     }
 
     pub fn snapshot_file(filepath: &str, directive_tag: &str) -> Result<Snapshot, String> {
-        let content = fs::read_to_string(filepath).map_err(|e| format!("FS_READ_FAULT: {}", e))?;
-        
-        // ⚡ NATIVE DNA: Using standard library hasher to avoid external dependencies
+        let content =
+            fs::read_to_string(filepath).map_err(|e| format!("FS_READ_FAULT: {}", e))?;
+
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
         let hash = format!("{:x}", hasher.finish());
@@ -44,7 +45,7 @@ impl LazarusVault {
             timestamp: format!("{:?}", SystemTime::now()),
             directive: directive_tag.to_string(),
         };
-        
+
         let ledger_path = format!("{}/ledger.json", vault_dir);
         let mut ledger: Vec<Snapshot> = vec![];
         if Path::new(&ledger_path).exists() {
@@ -53,7 +54,17 @@ impl LazarusVault {
             }
         }
         ledger.push(snap.clone());
-        fs::write(ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).ok();
+
+        // FIX: was serde_json::to_string_pretty(&ledger).unwrap()
+        match serde_json::to_string_pretty(&ledger) {
+            Ok(json_str) => {
+                fs::write(ledger_path, json_str)
+                    .map_err(|e| format!("LEDGER_WRITE_FAULT: {}", e))?;
+            }
+            Err(e) => {
+                eprintln!("[LAZARUS] Warning: could not serialise ledger — {}", e);
+            }
+        }
 
         Ok(snap)
     }
