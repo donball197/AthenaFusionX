@@ -1,10 +1,10 @@
 // src/scraper_drone.rs — v2.1
 // FIX: All .parse().unwrap() chains replaced with map_err / ?.
+use crate::memory::MemoryPalace;
 use anyhow::Result;
+use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use scraper::{Html, Selector};
-use crate::memory::MemoryPalace;
 
 pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Result<String> {
     // Build a browser-like client to avoid basic WAF blocks
@@ -17,9 +17,7 @@ pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Res
     );
     headers.insert(
         "Accept-Language",
-        "en-US,en;q=0.5"
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Header parse error: {}", e))?,
+        "en-US,en;q=0.5".parse().map_err(|e| anyhow::anyhow!("Header parse error: {}", e))?,
     );
 
     let client = reqwest::Client::builder()

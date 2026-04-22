@@ -1,10 +1,4 @@
-// src/bin/cli.rs — v4.1 NEXUS DevOps CLI Binary
-// Copyright 2026 Donald Ball — Apache 2.0
-//
-// FIX: `agent` variable was created but never directly used.
-//      Renamed to `_agent` — the init side-effect (metric registration,
-//      allocator warm-up) is preserved, warning is gone.
-
+// src/bin/cli.rs — v4.3 NEXUS DevOps CLI Binary
 use anyhow::Result;
 use nexus_singularity::{
     cli,
@@ -13,6 +7,8 @@ use nexus_singularity::{
     task_manager,
     server::VmoState,
     orchestrator::Orchestrator,
+    cluster::ClusterMesh,
+    distributed_scheduler::DistributedScheduler,
 };
 use std::sync::Arc;
 use std::io::{self, Write};
@@ -26,13 +22,16 @@ async fn main() -> Result<()> {
 
     let (tx, _) = broadcast::channel(16);
 
-    // _agent: init side-effect only — warms allocator and registers metrics.
     let _agent = Arc::new(neural_agent::MicroAgent::init(tx.clone())?);
 
     let memory_palace = memory::MemoryPalace::new(".nexus_memory.db").await?;
     let memory        = Arc::new(Mutex::new(memory_palace));
     let vmo_state     = Arc::new(Mutex::new(VmoState::default()));
     let orchestrator  = Arc::new(Orchestrator::new());
+    
+    // ⚡ V14: Initialize the Cluster for the CLI
+    let cluster = Arc::new(ClusterMesh::new());
+    let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -40,7 +39,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let raw_directive     = args[1..].join(" ");
+    let raw_directive      = args[1..].join(" ");
     let enriched_directive = cli::inject_workspace_dna(&raw_directive);
 
     println!("\x1b[36m>> [CLI_UPLINK] Directive → NEXUS Cortex (gemma-4-26b-a4b-it primary)\x1b[0m");
@@ -81,6 +80,7 @@ async fn main() -> Result<()> {
         memory,
         vmo_state,
         tx,
+        dist, // ⚡ Pass the scheduler to the FSM
     )
     .await;
 

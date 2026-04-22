@@ -12,8 +12,13 @@ pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
     }
 
     // ⚡ PRELIMINARY FILTER (Catching obvious garbage before touching the filesystem)
-    if requested_path.contains("..") || requested_path.contains('\0') || requested_path.starts_with('/') {
-        return Err(anyhow!("SECURITY VIOLATION: Absolute paths and traversal components forbidden"));
+    if requested_path.contains("..")
+        || requested_path.contains('\0')
+        || requested_path.starts_with('/')
+    {
+        return Err(anyhow!(
+            "SECURITY VIOLATION: Absolute paths and traversal components forbidden"
+        ));
     }
 
     let target = Path::new(requested_path);
@@ -34,8 +39,10 @@ pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
     }
 
     // ⚡ CANONICALIZATION (Resolving Symlinks on the existing base)
-    let canonical_base = existing_base.canonicalize().context("Failed to canonicalize base path")?;
-    let canonical_root = workspace_root.canonicalize().context("Failed to canonicalize workspace root")?;
+    let canonical_base =
+        existing_base.canonicalize().context("Failed to canonicalize base path")?;
+    let canonical_root =
+        workspace_root.canonicalize().context("Failed to canonicalize workspace root")?;
 
     // ⚡ THE SOVEREIGNTY CHECK
     if !canonical_base.starts_with(&canonical_root) {

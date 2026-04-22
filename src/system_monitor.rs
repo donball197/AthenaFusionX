@@ -23,20 +23,17 @@ impl SystemMonitor {
         self.sys.refresh_cpu_all();
 
         let total_mem = self.sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-        let used_mem  = self.sys.used_memory()  as f64 / 1024.0 / 1024.0 / 1024.0;
-        let load      = self.sys.global_cpu_usage() / 100.0;
+        let used_mem = self.sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+        let load = self.sys.global_cpu_usage() / 100.0;
 
         // ⚡ PUMP: Push real CPU load into the Zig kernel for synthetic thermal model
-        unsafe { crate::kernel::ffi::set_substrate_load(load); }
+        unsafe {
+            crate::kernel::ffi::set_substrate_load(load);
+        }
 
         // Synthetic temperature: 30°C idle → 70°C full load
         let temp = (load * 40.0) + 30.0;
 
-        Vitals {
-            ram_gb:       used_mem,
-            total_ram_gb: total_mem,
-            temperature:  temp,
-            cpu_load:     load,
-        }
+        Vitals { ram_gb: used_mem, total_ram_gb: total_mem, temperature: temp, cpu_load: load }
     }
 }

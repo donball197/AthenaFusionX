@@ -1,13 +1,13 @@
 // src/neural_agent.rs — v4.3 SOVEREIGN CORTEX
 // Alignment: Level 90 Multi-Turn Context Injection
-use anyhow::{Context, Result};
-use serde_json::{json, Value};
-use reqwest::Client;
-use std::sync::Mutex;
-use std::collections::VecDeque;
-use tokio::sync::broadcast;
-use futures_util::StreamExt;
 use crate::metrics::METRICS;
+use anyhow::{Context, Result};
+use futures_util::StreamExt;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Default, Clone)]
 pub struct ContextPacket {
@@ -39,18 +39,20 @@ impl MicroAgent {
         model_override: Option<&str>,
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
-        let model = model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-26b-a4b-it");
+        let model =
+            model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-26b-a4b-it");
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
 
         // ⚡ ENHANCED PROMPT ARCHITECTURE
         let mut full_context = String::new();
-        
+
         if let Some(sys) = ctx.system_prompt {
             full_context.push_str(&format!("SYSTEM: {}\n\n", sys));
         }
 
         if let Some(content) = ctx.current_content {
-            full_context.push_str(&format!("--- FILE CONTEXT [{}] ---\n{}\n\n", ctx.current_file, content));
+            full_context
+                .push_str(&format!("--- FILE CONTEXT [{}] ---\n{}\n\n", ctx.current_file, content));
         }
 
         if !ctx.recent_logs.is_empty() {
@@ -65,13 +67,14 @@ impl MicroAgent {
 
         let payload = json!({
             "contents": [{ "role": "user", "parts": [{ "text": combined_text }] }],
-            "generationConfig": { 
-                "temperature": (resonance * 1.2).clamp(0.05, 0.7), 
-                "maxOutputTokens": 4096 
+            "generationConfig": {
+                "temperature": (resonance * 1.2).clamp(0.05, 0.7),
+                "maxOutputTokens": 4096
             }
         });
 
-        let response = client.post(&url).json(&payload).send().await.context("API request failed")?;
+        let response =
+            client.post(&url).json(&payload).send().await.context("API request failed")?;
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
         let mut stream = response.bytes_stream();
@@ -83,13 +86,20 @@ impl MicroAgent {
                     let line_bytes: Vec<u8> = byte_buffer.drain(..=pos).collect();
                     let line = String::from_utf8_lossy(&line_bytes);
                     let clean = line.trim_start_matches("data: ").trim();
-                    if clean.is_empty() || clean == "[DONE]" { continue; }
-                    
+                    if clean.is_empty() || clean == "[DONE]" {
+                        continue;
+                    }
+
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                        if let Some(token) = val.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
+                        if let Some(token) = val
+                            .pointer("/candidates/0/content/parts/0/text")
+                            .and_then(|v| v.as_str())
+                        {
                             full_response.push_str(token);
                             // Live Broadcast to UI/CLI
-                            let _ = self.tx.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());
+                            let _ = self.tx.send(
+                                json!({"type": "NEURAL_STREAM", "payload": token}).to_string(),
+                            );
                         }
                     }
                 }

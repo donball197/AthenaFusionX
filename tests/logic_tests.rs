@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #[cfg(test)]
 mod tests {
     use nexus_singularity::hiram_core::Hiram;

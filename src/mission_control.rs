@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 // src/mission_control.rs - v4.0.0
 use crate::neural_agent::ContextPacket;
 pub fn build_mission_context(mission_id: &str, state_dump: &str) -> ContextPacket {

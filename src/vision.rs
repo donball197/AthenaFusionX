@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use reqwest::Client;

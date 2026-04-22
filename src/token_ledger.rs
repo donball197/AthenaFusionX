@@ -13,10 +13,10 @@
 //
 // Set NEXUS_RPM_OVERRIDE_26B / NEXUS_TPM_OVERRIDE_26B env vars to tune.
 
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use once_cell::sync::Lazy;
 
 #[derive(Debug, Clone)]
 pub struct ModelQuota {
@@ -27,14 +27,18 @@ pub struct ModelQuota {
 impl ModelQuota {
     fn for_model(model: &str) -> Self {
         match model {
-            m if m.contains("31b") => Self { rpm_limit: 2,  tpm_limit: 50_000 },
+            m if m.contains("31b") => Self { rpm_limit: 2, tpm_limit: 50_000 },
             m if m.contains("2.5-pro") => Self { rpm_limit: 5, tpm_limit: 250_000 },
             // gemma-4-26b-a4b-it and all other MoE models
             _ => Self {
                 rpm_limit: std::env::var("NEXUS_RPM_OVERRIDE_26B")
-                    .ok().and_then(|v| v.parse().ok()).unwrap_or(15),
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(15),
                 tpm_limit: std::env::var("NEXUS_TPM_OVERRIDE_26B")
-                    .ok().and_then(|v| v.parse().ok()).unwrap_or(1_000_000),
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1_000_000),
             },
         }
     }
@@ -43,7 +47,7 @@ impl ModelQuota {
 #[derive(Debug)]
 struct WindowEntry {
     timestamp: Instant,
-    tokens:    u32,
+    tokens: u32,
 }
 
 #[derive(Debug, Default)]
@@ -74,7 +78,9 @@ impl ModelWindow {
 
     /// Returns how many ms until the oldest entry expires (leaves the window)
     fn ms_until_slot_free(&self) -> u64 {
-        if self.entries.is_empty() { return 0; }
+        if self.entries.is_empty() {
+            return 0;
+        }
         let oldest = self.entries.iter().map(|e| e.timestamp).min().unwrap();
         let age = oldest.elapsed();
         if age >= Duration::from_secs(60) {
@@ -120,7 +126,10 @@ impl TokenLedger {
             let wait = window.ms_until_slot_free();
             println!(
                 "\x1b[33m[LEDGER] TPM ceiling hit for {} ({}/{}). Backoff {}ms\x1b[0m",
-                model, current_tpm + estimated_tokens, quota.tpm_limit, wait
+                model,
+                current_tpm + estimated_tokens,
+                quota.tpm_limit,
+                wait
             );
             return Err(wait);
         }
@@ -185,7 +194,8 @@ pub async fn wait_for_quota(model: &str, estimated_tokens: u32) {
                 let backoff = wait_ms + (2u64.saturating_pow(attempts.min(6)) * 200) + jitter;
                 println!(
                     "\x1b[33m[LEDGER] Waiting {}ms before retry (attempt {})\x1b[0m",
-                    backoff, attempts + 1
+                    backoff,
+                    attempts + 1
                 );
                 tokio::time::sleep(tokio::time::Duration::from_millis(backoff)).await;
                 attempts += 1;

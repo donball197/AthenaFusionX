@@ -7,10 +7,7 @@ pub struct DataAgent {
 
 impl DataAgent {
     pub fn new(id: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            vmo_handle: None,
-        }
+        Self { id: id.to_string(), vmo_handle: None }
     }
 
     /// Commands the muscle to carve out a 64KB sovereign vault

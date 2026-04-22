@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // src/bin/ui_audit.rs - Native UI Build Interrogator
 fn main() {
     println!(">> [INQUISITOR] Initiating UI Build Audit...");

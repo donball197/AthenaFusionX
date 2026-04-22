@@ -27,18 +27,15 @@ impl Vmo {
     pub fn clone(&self, _options: u32) -> Result<Self, KernelError> {
         // Future: Check _options for ZX_VMO_CHILD_SNAPSHOT
         let child_handle = self.ops.vmo_clone(self.handle, self.size);
-        
+
         if child_handle == 0 {
             Err(KernelError::VmoCloneFailed { parent: self.handle, size: self.size })
         } else {
-            println!("\x1b[36m[VMO] COW Clone Created — Handle {} → {} [RESONANCE: 1.00]\x1b[0m", 
-                self.handle, child_handle);
-            Ok(Self { 
-                handle: child_handle, 
-                size: self.size, 
-                refcount: 1, 
-                ops: self.ops.clone() 
-            })
+            println!(
+                "\x1b[36m[VMO] COW Clone Created — Handle {} → {} [RESONANCE: 1.00]\x1b[0m",
+                self.handle, child_handle
+            );
+            Ok(Self { handle: child_handle, size: self.size, refcount: 1, ops: self.ops.clone() })
         }
     }
 }
@@ -59,10 +56,10 @@ mod tests {
     fn test_vmo_cow_integrity() {
         let ops = Arc::new(NativeKernelOps);
         let parent = Vmo::new(ops.clone(), 4096).unwrap();
-        
+
         // Create the Ghost Clone
         let ghost_clone = parent.clone(0).unwrap();
-        
+
         // Assert handles are different but sizes are identical
         assert_ne!(parent.handle, ghost_clone.handle);
         assert_eq!(parent.size, ghost_clone.size);

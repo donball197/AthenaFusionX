@@ -17,11 +17,13 @@ impl Vmar {
         if offset + len > vmo.size {
             return Err(KernelError::InvalidArgs);
         }
-        
+
         let target_addr = self.addr + offset;
-        println!("\x1b[35m[VMAR] Mapping VMO handle {} to 0x{:X} [SIZE: {}]\x1b[0m", 
-            vmo.handle, target_addr, len);
-            
+        println!(
+            "\x1b[35m[VMAR] Mapping VMO handle {} to 0x{:X} [SIZE: {}]\x1b[0m",
+            vmo.handle, target_addr, len
+        );
+
         Ok(target_addr)
     }
 }

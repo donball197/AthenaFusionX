@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 // src/metrics.rs - v4.0 Atomic Sovereign (prometheus REMOVED permanently)
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};

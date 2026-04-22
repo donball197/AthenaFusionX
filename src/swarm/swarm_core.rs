@@ -1,8 +1,6 @@
 use crate::{
+    neural_agent::ContextPacket, swarm::arbiter::Arbiter, swarm::consensus::ConsensusEngine,
     swarm::swarm_node::SwarmNode,
-    swarm::consensus::ConsensusEngine,
-    swarm::arbiter::Arbiter,
-    neural_agent::ContextPacket,
 };
 
 pub struct SwarmCore {
@@ -31,9 +29,6 @@ impl SwarmCore {
         let consensus = ConsensusEngine::resolve(outputs.clone());
         let best = Arbiter::best(outputs);
 
-        Ok(format!(
-            "[SWARM CONSENSUS]\n{}\n\n[SWARM BEST]\n{}",
-            consensus, best
-        ))
+        Ok(format!("[SWARM CONSENSUS]\n{}\n\n[SWARM BEST]\n{}", consensus, best))
     }
 }

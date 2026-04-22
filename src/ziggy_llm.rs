@@ -9,7 +9,10 @@ static ZIGGY_LOCK: Mutex<()> = Mutex::const_new(());
 pub async fn execute_native_zig(code: &str) -> Result<String> {
     let _guard = ZIGGY_LOCK.lock().await;
 
-    let path = format!("/tmp/ziggy_runtime_{}.zig", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs());
+    let path = format!(
+        "/tmp/ziggy_runtime_{}.zig",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()
+    );
     fs::write(&path, code)?;
 
     let output = Command::new("zig").args(["run", "--optimize", "ReleaseFast", &path]).output()?;

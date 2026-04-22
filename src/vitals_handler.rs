@@ -1,7 +1,7 @@
+use crate::server::AppState;
 use axum::{extract::State, response::IntoResponse, Json};
 use serde_json::json;
 use std::sync::Arc;
-use crate::server::AppState;
 
 pub async fn handle_vitals(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut monitor = state.monitor.lock().await;

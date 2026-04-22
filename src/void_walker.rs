@@ -23,7 +23,7 @@ impl VoidWalker {
 
         for file_path in all_files {
             let path_str = file_path.to_string_lossy().to_string();
-            
+
             if ignore_dirs.iter().any(|d| path_str.contains(d)) {
                 continue;
             }
@@ -41,13 +41,17 @@ impl VoidWalker {
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
-                if let Some(mod_name) = trimmed.split_whitespace().nth(if trimmed.starts_with("pub") { 2 } else { 1 }) {
+                if let Some(mod_name) =
+                    trimmed.split_whitespace().nth(if trimmed.starts_with("pub") { 2 } else { 1 })
+                {
                     let name = mod_name.trim_end_matches(';');
                     let parent = current_file.parent().unwrap_or(Path::new(""));
                     let possible_paths = vec![
                         parent.join(format!("{}.rs", name)),
                         parent.join(name).join("mod.rs"),
-                        parent.join(current_file.file_stem().unwrap_or_default()).join(format!("{}.rs", name)),
+                        parent
+                            .join(current_file.file_stem().unwrap_or_default())
+                            .join(format!("{}.rs", name)),
                     ];
 
                     for path in possible_paths {

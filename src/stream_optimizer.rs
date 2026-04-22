@@ -2,7 +2,6 @@
  * Copyright 2026 Donald Ball
  * Project Nexus Singularity v0.2.2
  */
-
 use bytes::{Bytes, BytesMut};
 use futures_util::Stream;
 use std::pin::Pin;
@@ -16,11 +15,7 @@ pub struct NeuralChunker<S> {
 
 impl<S> NeuralChunker<S> {
     pub fn new(stream: S, chunk_size: usize) -> Self {
-        Self {
-            stream,
-            buffer: BytesMut::with_capacity(chunk_size * 2),
-            chunk_size,
-        }
+        Self { stream, buffer: BytesMut::with_capacity(chunk_size * 2), chunk_size }
     }
 }
 
@@ -48,7 +43,7 @@ where
         // Split the buffer at the chunk boundary or remaining length
         let split_at = std::cmp::min(self.buffer.len(), self.chunk_size);
         let chunk = self.buffer.split_to(split_at);
-        
+
         Poll::Ready(Some(Ok(String::from_utf8_lossy(&chunk).to_string())))
     }
 }

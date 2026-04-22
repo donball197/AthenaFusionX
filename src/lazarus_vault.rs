@@ -1,11 +1,11 @@
 // src/lazarus_vault.rs — v3.5 SOVEREIGN TEMPORAL VAULT
 // FIX: serde_json::to_string_pretty unwrap → graceful fallback.
+use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::SystemTime;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Snapshot {
@@ -25,8 +25,7 @@ impl LazarusVault {
     }
 
     pub fn snapshot_file(filepath: &str, directive_tag: &str) -> Result<Snapshot, String> {
-        let content =
-            fs::read_to_string(filepath).map_err(|e| format!("FS_READ_FAULT: {}", e))?;
+        let content = fs::read_to_string(filepath).map_err(|e| format!("FS_READ_FAULT: {}", e))?;
 
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);

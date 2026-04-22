@@ -1,4 +1,5 @@
-// src/agent_protocol.rs — v5.0 SOVEREIGN ACTION SCHEMA
+// src/agent_protocol.rs — v5.1 SOVEREIGN ACTION SCHEMA
+// NEW: ReadFile, WasmExecuteLocal, WasmStore, WasmLoad actions.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -36,6 +37,14 @@ pub enum AgentAction {
     #[serde(rename = "execute_command")]
     ExecuteCommand { command: String },
 
+    // NEW: ReadFile — reads a file and returns content as an observation
+    // Does NOT write anything. Safe for inspection before write_file.
+    #[serde(rename = "read_file")]
+    ReadFile { path: String },
+
+    #[serde(rename = "write_file")]
+    WriteFile { path: String, content: String },
+
     #[serde(rename = "vmo_create")]
     VmoCreate,
 
@@ -51,9 +60,6 @@ pub enum AgentAction {
     #[serde(rename = "get_vmo_state")]
     GetVmoState,
 
-    #[serde(rename = "write_file")]
-    WriteFile { path: String, content: String },
-
     #[serde(rename = "search_memory")]
     SearchMemory { query: String },
 
@@ -66,9 +72,26 @@ pub enum AgentAction {
     #[serde(rename = "export_report")]
     ExportReport { title: String, content: String },
 
-    // ⚡ V14: WASM Synthesis Action
+    // Synthesize a WASM cell from Rust code — returns GENESIS_PAYLOAD alias
     #[serde(rename = "synthesize_wasm")]
     SynthesizeWasm { code: String },
+
+    // Execute the most recently synthesized WASM cell by alias (no raw b64)
+    // Use this instead of execute_distributed_wasm after a synthesize_wasm.
+    #[serde(rename = "wasm_execute_local")]
+    WasmExecuteLocal { func_name: String, input: f32 },
+
+    // Store a synthesized WASM cell under a friendly name in the registry.
+    #[serde(rename = "wasm_store")]
+    WasmStore { name: String, func_name: String },
+
+    // Load a previously stored WASM cell by name and execute it.
+    #[serde(rename = "wasm_load")]
+    WasmLoad { name: String, func_name: String, input: f32 },
+
+    // Execute WASM on the distributed cluster (raw b64 or alias)
+    #[serde(rename = "execute_distributed_wasm")]
+    ExecuteDistributedWasm { wasm_b64: String, func_name: String, input: f32 },
 
     #[serde(rename = "halt")]
     Halt,

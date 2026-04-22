@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 use crate::kernel::error::KernelError;
 
 pub const CACHE_LINE_SIZE: usize = 64;

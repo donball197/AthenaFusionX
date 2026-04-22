@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 pub struct SafeBuffer {
     data: Vec<u8>,
     max_capacity: usize,

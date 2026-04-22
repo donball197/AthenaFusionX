@@ -32,8 +32,16 @@ pub trait KernelOps: Send + Sync {
 
 pub struct NativeKernelOps;
 impl KernelOps for NativeKernelOps {
-    fn vmo_create(&self, size: usize) -> u32 { unsafe { zx_vmo_create_native(size) } }
-    fn vmo_clone(&self, p: u32, s: usize) -> u32 { unsafe { zx_vmo_clone_native(p, s) } }
-    fn handle_close(&self, h: u32) { unsafe { zx_handle_close_native(h) } }
-    fn vmo_get_info(&self, h: u32, i: *mut VmoInfo) -> i32 { unsafe { zx_vmo_get_info(h, i) } }
+    fn vmo_create(&self, size: usize) -> u32 {
+        unsafe { zx_vmo_create_native(size) }
+    }
+    fn vmo_clone(&self, p: u32, s: usize) -> u32 {
+        unsafe { zx_vmo_clone_native(p, s) }
+    }
+    fn handle_close(&self, h: u32) {
+        unsafe { zx_handle_close_native(h) }
+    }
+    fn vmo_get_info(&self, h: u32, i: *mut VmoInfo) -> i32 {
+        unsafe { zx_vmo_get_info(h, i) }
+    }
 }

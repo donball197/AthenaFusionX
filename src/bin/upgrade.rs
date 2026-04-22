@@ -5,6 +5,8 @@ use nexus_singularity::neural_agent::MicroAgent;
 use nexus_singularity::orchestrator::Orchestrator;
 use nexus_singularity::scheduler;
 use nexus_singularity::server::{AppState, VmoState};
+use nexus_singularity::cluster::ClusterMesh;
+use nexus_singularity::distributed_scheduler::DistributedScheduler;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -20,12 +22,15 @@ async fn main() -> anyhow::Result<()> {
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
     let monitor = tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new());
     
-    // ⚡ FIX: Use the zero-argument constructor
     let orchestrator = Arc::new(Orchestrator::new());
 
     let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;
     let memory = Arc::new(Mutex::new(memory_palace));
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+
+    // ⚡ V14: Initialize the Cluster for the Upgrade Binary
+    let cluster = Arc::new(ClusterMesh::new());
+    let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
 
     let scheduler_tx = scheduler::MasterSupervisor::ignite(
         tx.clone(),
@@ -36,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
         nexus_singularity::system_monitor::SystemMonitor::new(),
         memory.clone(),
         vmo_state.clone(),
+        dist.clone(), // ⚡ Pass the distributed scheduler
     );
 
     let state = Arc::new(AppState {
@@ -51,6 +57,8 @@ async fn main() -> anyhow::Result<()> {
         scheduler_tx,
         workspace_root: std::env::current_dir()?,
         vmo_state,
+        cluster: cluster.clone(), // ⚡ Wire the cluster mesh
+        dist: dist.clone(),       // ⚡ Wire the distributed scheduler
     });
 
     let result = upgrade_command(state).await;

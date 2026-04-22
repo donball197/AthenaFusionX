@@ -1,13 +1,13 @@
 // src/main.rs — v3.4 [AUTONOMIC_IMMUNE_ACTIVE]
 // FIX: All bare .unwrap() replaced with .expect("<context message>")
-use nexus_singularity::server::{AppState, start_server, VmoState};
+use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::cli::run_cli_loop;
 use nexus_singularity::orchestrator::Orchestrator;
-use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::self_healing_engine::SelfHealingEngine;
+use nexus_singularity::server::{start_server, AppState, VmoState};
+use std::env;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
-use std::env;
 
 #[tokio::main]
 async fn main() {
@@ -31,6 +31,10 @@ async fn main() {
     );
 
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+    let cluster = Arc::new(nexus_singularity::cluster::ClusterMesh::new());
+    let dist = Arc::new(nexus_singularity::distributed_scheduler::DistributedScheduler::new(
+        cluster.clone(),
+    ));
     let orch = Arc::new(Orchestrator::new());
 
     let scheduler_tx = nexus_singularity::scheduler::MasterSupervisor::ignite(
@@ -42,10 +46,11 @@ async fn main() {
         nexus_singularity::system_monitor::SystemMonitor::new(),
         memory.clone(),
         vmo_state.clone(),
+        dist.clone(),
     );
 
-    let workspace_root = std::env::current_dir()
-        .expect("[MAIN] Fatal: cannot resolve current working directory");
+    let workspace_root =
+        std::env::current_dir().expect("[MAIN] Fatal: cannot resolve current working directory");
 
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
@@ -60,9 +65,16 @@ async fn main() {
         arbiter: Arc::new(ArbiterAgent::new(agent.clone())),
         workspace_root,
         vmo_state,
+        cluster: cluster.clone(),
+        dist: dist.clone(),
     });
 
     // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────
+    let hb_mesh = cluster.clone();
+    tokio::spawn(async move {
+        nexus_singularity::heartbeat::start(hb_mesh, "DUET_CORE".into(), 3000).await;
+    });
+
     let s_state = state.clone();
     tokio::spawn(async move {
         start_server(s_state).await;
@@ -81,8 +93,7 @@ async fn main() {
     let dream_agent = state.agent.clone();
     let dream_key = api_key.clone();
     tokio::spawn(async move {
-        nexus_singularity::dream_cycle::start_daydream(dream_memory, dream_agent, dream_key)
-            .await;
+        nexus_singularity::dream_cycle::start_daydream(dream_memory, dream_agent, dream_key).await;
     });
 
     // ── BACKGROUND: KNOWLEDGE BROKER ─────────────────────────────────────

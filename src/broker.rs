@@ -1,6 +1,6 @@
+use crate::factory::AgentFactory;
 use reqwest::Client;
 use serde_json::{json, Value};
-use crate::factory::AgentFactory;
 
 pub struct KnowledgeBroker;
 
@@ -10,10 +10,17 @@ impl KnowledgeBroker {
         println!("\x1b[34m>> [BROKER] DNA Structure indexed to local atlas.\x1b[0m");
     }
 
-    pub async fn query_atlas(api_key: &str, query: &str, atlas_context: &str) -> Result<String, String> {
+    pub async fn query_atlas(
+        api_key: &str,
+        query: &str,
+        atlas_context: &str,
+    ) -> Result<String, String> {
         let client = Client::new();
         let model = AgentFactory::select_model_for_mission("broker");
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", model, api_key);
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
         let prompt = format!("ATLAS CONTEXT:\n{}\n\nQUERY: {}", atlas_context, query);
         let payload = json!({ "contents": [{"parts": [{"text": prompt}]}] });
         let res = client.post(&url).json(&payload).send().await.map_err(|e| e.to_string())?;

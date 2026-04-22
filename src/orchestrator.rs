@@ -1,15 +1,17 @@
 // src/orchestrator.rs — v4.3 SOVEREIGN API BRIDGE
+use crate::neural_agent::ContextPacket;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
-use futures_util::StreamExt;
-use crate::neural_agent::ContextPacket;
 use std::time::Duration;
+use tokio::sync::broadcast;
 
 pub struct Orchestrator;
 
 impl Orchestrator {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn run(
         &self,
@@ -23,9 +25,15 @@ impl Orchestrator {
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
 
         let mut combined_text = String::new();
-        if let Some(ref sys) = ctx.system_prompt { combined_text.push_str(&format!("SYSTEM DIRECTIVE:\n{}\n\n", sys)); }
-        if let Some(ref content) = ctx.current_content { if !content.is_empty() { combined_text.push_str(&format!("CONTEXT:\n{}\n\n", content)); } }
-        
+        if let Some(ref sys) = ctx.system_prompt {
+            combined_text.push_str(&format!("SYSTEM DIRECTIVE:\n{}\n\n", sys));
+        }
+        if let Some(ref content) = ctx.current_content {
+            if !content.is_empty() {
+                combined_text.push_str(&format!("CONTEXT:\n{}\n\n", content));
+            }
+        }
+
         if !ctx.recent_logs.is_empty() {
             let logs = ctx.recent_logs.join("\n>> ");
             combined_text.push_str(&format!("RECENT OBSERVATIONS (TEAM LOGS):\n>> {}\n\n", logs));
@@ -49,8 +57,13 @@ impl Orchestrator {
             attempts += 1;
             match client.post(&url).json(&payload).timeout(Duration::from_secs(45)).send().await {
                 Ok(res) => {
-                    if !res.status().is_success() { 
-                        return Err(format!("API_FAULT [model={} status={}]: {}", model, res.status(), res.text().await.unwrap_or_default())); 
+                    if !res.status().is_success() {
+                        return Err(format!(
+                            "API_FAULT [model={} status={}]: {}",
+                            model,
+                            res.status(),
+                            res.text().await.unwrap_or_default()
+                        ));
                     }
 
                     let mut full_response = String::new();
@@ -63,12 +76,22 @@ impl Orchestrator {
                                 byte_buf.extend_from_slice(&chunk);
                                 while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
                                     let line_bytes: Vec<u8> = byte_buf.drain(..=pos).collect();
-                                    let clean = String::from_utf8_lossy(&line_bytes).trim_start_matches("data: ").trim().to_string();
-                                    if clean.is_empty() || clean == "[DONE]" { continue; }
+                                    let clean = String::from_utf8_lossy(&line_bytes)
+                                        .trim_start_matches("data: ")
+                                        .trim()
+                                        .to_string();
+                                    if clean.is_empty() || clean == "[DONE]" {
+                                        continue;
+                                    }
                                     if let Ok(val) = serde_json::from_str::<Value>(&clean) {
-                                        if let Some(token) = val.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
+                                        if let Some(token) = val
+                                            .pointer("/candidates/0/content/parts/0/text")
+                                            .and_then(|v| v.as_str())
+                                        {
                                             full_response.push_str(token);
-                                            if let Some(ref sender) = tx { let _ = sender.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string()); }
+                                            if let Some(ref sender) = tx {
+                                                let _ = sender.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());
+                                            }
                                         }
                                     }
                                 }
@@ -77,7 +100,7 @@ impl Orchestrator {
                         }
                     }
                     return Ok(full_response);
-                },
+                }
                 Err(e) => {
                     last_err = format!("NETWORK_FAULT (Attempt {}): {}", attempts, e);
                     if let Some(ref sender) = tx {
@@ -87,7 +110,7 @@ impl Orchestrator {
                 }
             }
         }
-        
+
         Err(last_err)
     }
 }

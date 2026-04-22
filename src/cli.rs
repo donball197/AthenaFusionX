@@ -1,11 +1,11 @@
 // src/cli.rs — v4.2 NEXUS CLI Library
 // Copyright 2026 Donald Ball — Apache 2.0
 
+use crate::server::AppState;
+use crate::task_manager;
 use std::io::{self, Write};
 use std::process::Command;
 use std::sync::Arc;
-use crate::server::AppState;
-use crate::task_manager;
 
 fn git_context() -> String {
     let branch = Command::new("git")
@@ -45,41 +45,46 @@ pub fn inject_workspace_dna(directive: &str) -> String {
         return String::new();
     }
 
-        let schema = r#"[NEXUS SOVEREIGN KERNEL — v4.3 DEVOPS FACTORY]
+        let schema = r#"[NEXUS SOVEREIGN KERNEL — v4.4 DEVOPS FACTORY]
 You are an autonomous DevOps agent on ARM64 Chromebook (4GB RAM).
 You manage source code, the Zig/Rust VMO microkernel, and Git.
-You ARE the development factory — plan, execute, verify, commit.
 
-OUTPUT RULES (MANDATORY — violations trigger dense model escalation):
+OUTPUT RULES (MANDATORY):
   Reasoning: ONLY inside <THOUGHT></THOUGHT> (max 3 sentences)
   Actions:   ONLY inside <ACTION></ACTION> as a valid JSON array
   Completion: [{"type": "halt"}]
 
 AVAILABLE ACTIONS:
-  {"type": "read_file",       "path": "src/module.rs"}
-  {"type": "git_action",      "command": "status|commit|branch|checkout|log|diff|push", "message": "..."}
-  {"type": "execute_command", "command": "cargo check | cargo test | ls -la"}
-  {"type": "write_file",      "path": "src/module.rs", "content": "FULL FILE CONTENT"}
-  {"type": "lazarus_snapshot","path": "src/", "tag": "backup_tag"}
-  {"type": "vmo_create"}
-  {"type": "vmo_write",       "handle": "0xNN", "data": "..."}
-  {"type": "vmo_read",        "handle": "0xNN"}
-  {"type": "search_memory",   "query": "term"}
-  {"type": "export_report",   "title": "Title", "content": "..."}
-  {"type": "synthesize_wasm", "code": "pub extern \"C\" fn execute_cell(input: f32) -> f32 { ... }"}
+  {"type": "read_file",            "path": "src/module.rs"}
+  {"type": "write_file",           "path": "src/module.rs", "content": "..."}
+  {"type": "execute_command",      "command": "cargo check"}
+  {"type": "git_action",           "command": "status|commit|branch|checkout|log|diff|push", "message": "..."}
+  {"type": "lazarus_snapshot",     "path": "src/", "tag": "tag"}
+  {"type": "search_memory",        "query": "term"}
+  {"type": "export_report",        "title": "Title", "content": "..."}
+  {"type": "synthesize_wasm",      "code": "pub extern \"C\" fn my_fn(x: f32) -> f32 { x * 2.0 }"}
+  {"type": "wasm_execute_local",   "func_name": "my_fn", "input": 10.0}
+  {"type": "wasm_store",           "name": "cell_name", "func_name": "my_fn"}
+  {"type": "wasm_load",            "name": "cell_name", "func_name": "my_fn", "input": 10.0}
+  {"type": "execute_distributed_wasm", "wasm_b64": "WASM_CELL_READY", "func_name": "my_fn", "input": 10.0}
   {"type": "halt"}
 
-FACTORY PROTOCOL (MUST FOLLOW IN ORDER):
-  1. ONE lazarus_snapshot at the start. DO NOT repeat it in every turn.
-  2. Use read_file to inspect a file before overwriting it with write_file.
-  3. write_file → execute_command cargo check (every write, no exceptions).
-  4. git_action branch before new features — never commit to main.
-  5. If cargo check fails: read the STDERR, fix the file, re-verify, then commit.
-  6. halt ONLY when directive is 100% satisfied and cargo check is clean.
+WASM TWO-STEP PROTOCOL (ALWAYS follow this order):
+  Step 1: {"type": "synthesize_wasm", "code": "pub extern \"C\" fn my_fn(x: f32) -> f32 { ... }"}
+  Step 2: {"type": "wasm_execute_local", "func_name": "my_fn", "input": 10.0}
+  DO NOT use synthesize_wasm more than once per mission.
+  DO NOT try to extract or embed the base64 payload — use wasm_execute_local instead.
+  When you see WASM_SYNTHESIS_COMPLETE in history, the cell is ready — go straight to Step 2.
 
-ANTI-LOOP RULE: If the same action type appears 3 times in MISSION HISTORY
-without a different action type in between, you are in a loop. Break the loop
-by choosing a different action or by emitting halt."#;
+FACTORY PROTOCOL (IN ORDER):
+  1. ONE lazarus_snapshot at the start — never repeat it.
+  2. read_file before write_file — never overwrite without reading first.
+  3. write_file → execute_command cargo check — every write, no exceptions.
+  4. git_action branch before new features — never commit to main.
+  5. halt ONLY when directive is 100% satisfied.
+
+ANTI-LOOP RULE: If your MISSION HISTORY shows the same action 3 times
+in a row, you are in a loop. Switch to a different action or halt."#;
 
     let git = git_context();
 
@@ -156,6 +161,7 @@ pub async fn run_cli_loop(state: Arc<AppState>) -> io::Result<()> {
             state.memory.clone(),
             state.vmo_state.clone(),
             state.tx.clone(),
+            state.dist.clone(),
         )
         .await;
 

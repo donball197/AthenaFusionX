@@ -13,8 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 use anyhow::Result;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -23,7 +21,6 @@ use tokio::process::Command;
 pub struct PodmanShield;
 
 impl PodmanShield {
-
     pub async fn spawn_expert_drone(drone_type: &str, workspace: &str) -> anyhow::Result<String> {
         let (image, name) = match drone_type {
             "secops" => ("docker.io/library/alpine:latest", "nexus_secops"),
@@ -35,12 +32,19 @@ impl PodmanShield {
 
         let output = tokio::process::Command::new("podman")
             .args([
-                "run", "-d",
-                "--name", name,
-                "--network", "none",
-                "--memory", "512m",
-                "-v", &format!("{}:/workspace:z", workspace),
-                image, "sleep", "infinity"
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--network",
+                "none",
+                "--memory",
+                "512m",
+                "-v",
+                &format!("{}:/workspace:z", workspace),
+                image,
+                "sleep",
+                "infinity",
             ])
             .output()
             .await?;

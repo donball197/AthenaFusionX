@@ -12,9 +12,7 @@ pub struct ConsensusEngine {
 impl ConsensusEngine {
     /// compare_weights: Ordering with graceful fallback for NaN / non-comparable.
     pub fn compare_weights(&self, other: &Self) -> Ordering {
-        self.weight
-            .partial_cmp(&other.weight)
-            .unwrap_or(Ordering::Equal)
+        self.weight.partial_cmp(&other.weight).unwrap_or(Ordering::Equal)
     }
 
     /// resolve: Pick the "best" string from a Vec by length heuristic.
@@ -43,10 +41,7 @@ impl AverageConsensus {
         Self {
             nodes: initial
                 .into_iter()
-                .map(|(name, state)| ConsensusNode {
-                    name: name.to_string(),
-                    local_state: state,
-                })
+                .map(|(name, state)| ConsensusNode { name: name.to_string(), local_state: state })
                 .collect(),
         }
     }
@@ -64,11 +59,7 @@ impl AverageConsensus {
     pub fn converge(&mut self, epsilon: f64, max_iterations: usize) {
         for _ in 0..max_iterations {
             let min = self.nodes.iter().map(|n| n.local_state).fold(f64::INFINITY, f64::min);
-            let max = self
-                .nodes
-                .iter()
-                .map(|n| n.local_state)
-                .fold(f64::NEG_INFINITY, f64::max);
+            let max = self.nodes.iter().map(|n| n.local_state).fold(f64::NEG_INFINITY, f64::max);
             if (max - min).abs() < 0.01 {
                 break;
             }

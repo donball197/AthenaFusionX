@@ -1,8 +1,8 @@
+use crate::agent_protocol::{AgentDirective, AgentStatus};
+use crate::agents::NexusAgent;
 use crate::kernel;
 use anyhow::Result;
 use async_trait::async_trait;
-use crate::agents::NexusAgent;
-use crate::agent_protocol::{AgentDirective, AgentStatus};
 
 pub struct ScribeAgent;
 
@@ -32,13 +32,17 @@ impl ScribeAgent {
                 println!("\x1b[1;30m--- [SCRY: 0x{:x} | Offset: {}] ---\x1b[0m", handle, offset);
                 for chunk in buffer.chunks(16) {
                     let hex: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
-                    let ascii: String = chunk.iter().map(|&b| {
-                        if b >= 32 && b <= 126 { b as char } else { '.' }
-                    }).collect();
+                    let ascii: String = chunk
+                        .iter()
+                        .map(|&b| if b >= 32 && b <= 126 { b as char } else { '.' })
+                        .collect();
                     println!("\x1b[35m{:32} \x1b[1;37m| {}\x1b[0m", hex, ascii);
                 }
             } else {
-                println!("\x1b[31m[SCRY] Access Denied: Handle 0x{:x} is opaque or invalid.\x1b[0m", handle);
+                println!(
+                    "\x1b[31m[SCRY] Access Denied: Handle 0x{:x} is opaque or invalid.\x1b[0m",
+                    handle
+                );
             }
         }
     }
@@ -46,8 +50,12 @@ impl ScribeAgent {
 
 #[async_trait]
 impl NexusAgent for ScribeAgent {
-    fn name(&self) -> &'static str { "scribe_io_expert" }
-    async fn status(&self) -> AgentStatus { AgentStatus::Idle }
+    fn name(&self) -> &'static str {
+        "scribe_io_expert"
+    }
+    async fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
     async fn execute(&self, _directive: AgentDirective) -> Result<String> {
         Ok("Scribe standing by for commutation.".to_string())
     }

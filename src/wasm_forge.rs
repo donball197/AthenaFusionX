@@ -1,4 +1,3 @@
-// src/wasm_forge.rs — V14 Recursive Self-Synthesis
 use anyhow::{anyhow, Result};
 use std::process::Command;
 use tokio::fs;
@@ -30,18 +29,10 @@ panic = "abort"
 "#;
         fs::write(format!("{}/Cargo.toml", build_dir), toml).await?;
 
-        // Extract just the inner logic if the LLM provided the whole function, 
-        // or wrap it if it provided raw math.
-        let safe_code = if logic_code.contains("fn execute_cell") {
-            logic_code.to_string()
-        } else {
-            format!("pub extern \"C\" fn execute_cell(input: f32) -> f32 {{ {} }}", logic_code)
-        };
-
-        let wrapped_code = format!("#[no_mangle]\n{}", safe_code);
+        // ⚡ V14: Training wheels removed. Direct passthrough.
+        let wrapped_code = format!("#[no_mangle]\n{}", logic_code);
         fs::write(format!("{}/src/lib.rs", build_dir), wrapped_code).await?;
 
-        // Ensure target is available
         let _ = Command::new("rustup").args(["target", "add", "wasm32-unknown-unknown"]).output();
 
         let output = Command::new("cargo")
