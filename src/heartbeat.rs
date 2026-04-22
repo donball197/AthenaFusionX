@@ -1,4 +1,4 @@
-use crate::cluster::{ClusterMesh, ClusterNode};
+use crate::cluster::{ClusterNode, ClusterMesh};
 use local_ip_address::local_ip;
 use std::sync::Arc;
 use sysinfo::System;
@@ -20,15 +20,27 @@ pub async fn start(mesh: Arc<ClusterMesh>, node_id: String, port: u16) {
             30.0
         };
 
-        let node =
-            ClusterNode { id: node_id.clone(), host: host.clone(), port, cpu, ram, last_seen: 0 };
+        // Calculate synthetic thermal pulse
+        let temp = (cpu / 100.0 * 40.0) + 30.0;
 
-        // Register to local mesh
+        let node = ClusterNode { 
+            id: node_id.clone(), 
+            host: host.clone(), 
+            port, 
+            cpu, 
+            ram, 
+            temp,
+            last_seen: 0 
+        };
+
         mesh.register(node.clone());
 
-        // Phone home to leader dashboard
         if let Some(url) = &leader_url {
-            let _ = client.post(format!("{}/api/cluster/register", url)).json(&node).send().await;
+            let _ = client.post(format!("{}/api/cluster/register", url))
+                .header("Authorization", "SOVEREIGN")
+                .json(&node)
+                .send()
+                .await;
         }
 
         sleep(Duration::from_secs(5)).await;

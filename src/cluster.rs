@@ -10,6 +10,7 @@ pub struct ClusterNode {
     pub port: u16,
     pub cpu: f32,
     pub ram: f32,
+    pub temp: f32,
     pub last_seen: u64,
 }
 

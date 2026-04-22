@@ -22,7 +22,7 @@ import CognitiveMesh from "$lib/components/CognitiveMesh.svelte";
 import TrinityMatrix from "$lib/components/TrinityMatrix.svelte";
 import ModuleRenderer from "$lib/components/ModuleRenderer.svelte";
 import { agentRegistry } from "$lib/core/agent_module_registry.svelte.js";
-import { nexusSocket } from '$lib/nexus_socket.svelte.ts';
+import { nexusSocket } from '$lib/nexus_socket.svelte';
 
 let activeNav = $state('NEXUS_OS');
 let openInput = $state('');

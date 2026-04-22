@@ -1,6 +1,6 @@
 <script>
     import { TaskService } from '$lib/services/TaskService.js';
-    import { nexusSocket } from '$lib/nexus_socket.svelte.ts';
+    import { nexusSocket } from '$lib/nexus_socket.svelte';
     import Terminal from '$lib/components/Terminal.svelte';
 
     async function runDirective(directive) {

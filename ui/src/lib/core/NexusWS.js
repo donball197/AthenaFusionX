@@ -1,22 +1,21 @@
-/* NexusWS.js — compatibility layer for store.svelte.js */
-import { terminalState } from './store.svelte.js';
+// NexusWS.js — v3.0 COMPATIBILITY SHIM (no WebSocket here)
+// The real WebSocket is in nexus_socket.svelte.ts.
+// This module exists only so legacy imports of pushTermLine still work.
+import { storeAddLog } from './store.svelte.js';
 
-let logHandlers = [];
+// pushTermLine: Used by TaskService.js and some components directly.
+export function pushTermLine(message, cls = 'text-gray-400') {
+    storeAddLog(message, cls);
+}
 
+// Stub nexusWS object so any legacy import of `nexusWS` doesn't crash.
 export const nexusWS = {
-    registerLogHandler(handler) {
-        logHandlers.push(handler);
-    },
-
-    triggerLog(message, cls = 'text-gray-400') {
-        terminalState.logs = [
-            ...terminalState.logs.slice(-179),
-            { timestamp: new Date().toLocaleTimeString(), message, cls }
-        ];
-        logHandlers.forEach(h => h(message, cls));
-    },
-
-    onMessage(handler) {
-        console.log('[NexusWS] onMessage registered (wired via layout)');
-    }
+    registerLogHandler() {},
+    onMessage() {},
+    send() {},
+    logHandlers: [],
 };
+
+export function connectWS() {
+    // No-op: connection is managed by nexus_socket.svelte.ts
+}
