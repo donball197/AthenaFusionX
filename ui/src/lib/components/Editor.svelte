@@ -1,15 +1,18 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
-    import { ide } from '$lib/core/store.svelte.js';
+    import { ide } from '$lib/core/store.svelte';
     import { EditorView, basicSetup } from 'codemirror';
     import { EditorState } from '@codemirror/state';
     import { rust } from '@codemirror/lang-rust';
     import { oneDark } from '@codemirror/theme-one-dark';
     import { vim } from '@replit/codemirror-vim';
+    import { Compartment } from '@codemirror/state';
 
-    let { path = '' } = $props();
+    let { path = '', vimEnabled = true } = $props();
     let container = $state();
     let view;
+    // Compartment allows dynamically reconfiguring extensions without recreating the editor
+    let vimCompartment = new Compartment();
 
     onMount(() => {
         const tab = ide.openTabs.find(t => t.path === path);
@@ -19,7 +22,7 @@
                 basicSetup,
                 rust(),
                 oneDark,
-                vim(),
+                vimCompartment.of(vimEnabled ? vim() : []),
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         ide.updateContent(path, update.state.doc.toString());
@@ -36,7 +39,16 @@
 
     onDestroy(() => { if (view) view.destroy(); });
 
-    // React to tab switching/content updates from Micro-Agents
+    // React to Vim toggle
+    $effect(() => {
+        if (view) {
+            view.dispatch({
+                effects: vimCompartment.reconfigure(vimEnabled ? vim() : [])
+            });
+        }
+    });
+
+    // React to tab switching/content updates
     $effect(() => {
         if (view && path) {
             const tab = ide.openTabs.find(t => t.path === path);

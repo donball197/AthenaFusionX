@@ -1,28 +1,32 @@
-// src/json_parser.rs — v3.0 Robust Owned Parser
-// FIX: Regex::new(...).unwrap() → compile-time panic-safe expect().
-// FIX: caps.last().unwrap() → safe match with early return.
+// src/json_parser.rs — v4.3 [CR_AND_UNICODE_ESCAPE_FIXED]
 use crate::agent_protocol::AgentAction;
 use anyhow::{anyhow, Result};
 use regex::Regex;
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
-    // Regex is a compile-time constant pattern — expect() gives a clear panic
-    // message at startup if the pattern is ever accidentally mutated.
-    let re = Regex::new(r"(?s)<ACTION>(.*?)</ACTION>")
-        .expect("[PARSER] ACTION regex pattern is invalid — this is a compile-time bug");
+    let mut raw_content = String::new();
 
-    // FIX: caps.last() instead of .captures() to get the final ACTION block.
-    // Using ok_or returns an empty vec (no actions) rather than panicking.
-    let raw_content = match re.captures_iter(response).last() {
-        Some(cap) => {
-            // cap[1] is the captured group; using .get(1) avoids the index panic.
-            match cap.get(1) {
-                Some(m) => m.as_str().to_string(),
-                None => return Ok(Vec::new()),
+    let re = Regex::new(r"(?s)<ACTION>(.*?)</ACTION>")
+        .expect("[PARSER] ACTION regex pattern is invalid");
+
+    if let Some(cap) = re.captures_iter(response).last() {
+        if let Some(m) = cap.get(1) {
+            raw_content = m.as_str().to_string();
+        }
+    }
+
+    // Fallback: find the last balanced [...] block
+    if raw_content.is_empty() {
+        if let Some(end) = response.rfind(']') {
+            if let Some(start) = response[..end].rfind('[') {
+                raw_content = response[start..=end].to_string();
             }
         }
-        None => return Ok(Vec::new()),
-    };
+    }
+
+    if raw_content.is_empty() {
+        return Err(anyhow!("No valid <ACTION> block or JSON array found in response."));
+    }
 
     let clean_json = raw_content
         .trim_start_matches("```json")
@@ -30,17 +34,18 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         .trim_end_matches("```")
         .trim();
 
-    // 1. Direct parse
+    // Fast path — try direct parse first
     if let Ok(vec) = serde_json::from_str::<Vec<AgentAction>>(clean_json) {
         return Ok(vec);
     }
 
-    // 2. Resilience: sanitise escaped newlines inside JSON strings
+    // Sanitise: fix bare newlines and carriage-returns inside JSON strings
     let mut sanitized = String::with_capacity(clean_json.len());
     let mut in_string = false;
     let mut escaped = false;
+    let mut chars = clean_json.chars().peekable();
 
-    for c in clean_json.chars() {
+    while let Some(c) = chars.next() {
         if escaped {
             sanitized.push(c);
             escaped = false;
@@ -54,18 +59,20 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         if c == '"' {
             in_string = !in_string;
         }
-        if c == '\n' && in_string {
-            sanitized.push_str("\\n");
+        if in_string {
+            match c {
+                '\n' => sanitized.push_str("\\n"),
+                '\r' => sanitized.push_str("\\r"),
+                '\t' => sanitized.push_str("\\t"),
+                _ => sanitized.push(c),
+            }
         } else {
             sanitized.push(c);
         }
     }
 
     serde_json::from_str::<Vec<AgentAction>>(&sanitized).map_err(|e| {
-        anyhow!(
-            "JSON_DECODE_FRACTURE: {} | Raw block was:\n{}",
-            e,
-            &clean_json[..clean_json.len().min(400)]
-        )
+        let preview = &clean_json[..clean_json.len().min(400)];
+        anyhow!("JSON_DECODE_FRACTURE: {} | Raw block:\n{}", e, preview)
     })
 }

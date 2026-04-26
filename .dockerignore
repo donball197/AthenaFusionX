@@ -1,0 +1,14 @@
+target/
+.git/
+node_modules/
+ui/node_modules/
+nexus_data/
+*.db
+*.db-shm
+*.db-wal
+vault/
+models/
+*.gguf
+*.bin
+*.tflite
+.cargo/

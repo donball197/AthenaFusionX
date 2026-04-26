@@ -1,3 +1,4 @@
+// src/kernel/mod.rs — v2.0 [SAFETY + COMMERCIAL]
 pub mod error;
 pub mod ffi;
 pub mod memory;
@@ -10,8 +11,9 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 pub use ffi::{
-    muscle_get_active_vmos, muscle_get_next_handle, zx_handle_close_native, zx_vmo_create_native,
-    zx_vmo_get_all_handles, zx_vmo_get_info, zx_vmo_read_native, zx_vmo_write_native,
+    muscle_get_active_vmos, muscle_get_next_handle, zx_handle_close_native,
+    zx_vmo_create_native, zx_vmo_get_all_handles, zx_vmo_get_info,
+    zx_vmo_read_native, zx_vmo_write_native,
 };
 
 lazy_static! {
@@ -22,6 +24,9 @@ pub enum HandleType {
     Vmo(u32),
     Vmar(vmar::Vmar),
 }
+
+/// RAII guard for safe handle management.
+/// Dropping automatically closes the handle if still registered.
 pub struct VmoGuard {
     pub id: u32,
 }
@@ -29,11 +34,10 @@ pub struct VmoGuard {
 impl Drop for VmoGuard {
     fn drop(&mut self) {
         if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-            if reg.contains_key(&self.id) {
-                unsafe {
-                    zx_handle_close_native(self.id);
-                }
-                reg.remove(&self.id);
+            if reg.remove(&self.id).is_some() {
+                // SAFETY: Handle was registered and we just removed it.
+                // Zig side guarantees close is idempotent.
+                unsafe { zx_handle_close_native(self.id); }
             }
         }
     }
@@ -43,24 +47,21 @@ pub fn get_live_telemetry() -> (u32, u32) {
     unsafe { (muscle_get_active_vmos(), muscle_get_next_handle()) }
 }
 
+pub fn register_handle(id: u32, h: HandleType) {
+    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
+        reg.insert(id, h);
+    }
+}
+
 pub fn close_handle(id: u32) -> bool {
     if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-        if reg.contains_key(&id) {
-            unsafe {
-                zx_handle_close_native(id);
-            }
-            reg.remove(&id);
+        if reg.remove(&id).is_some() {
+            unsafe { zx_handle_close_native(id); }
             true
         } else {
             false
         }
     } else {
         false
-    }
-}
-
-pub fn register_handle(id: u32, h: HandleType) {
-    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-        reg.insert(id, h);
     }
 }

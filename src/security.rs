@@ -1,32 +1,15 @@
-use axum::{
-    body::Body,
-    http::{Request, StatusCode, header},
-    middleware::Next,
-    response::Response,
-};
-use std::path::Path;
+use axum::{body::Body, http::{Request, StatusCode, header}, middleware::Next, response::Response};
+use crate::auth;
 
 pub async fn sovereign_auth_guard(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
-    let auth_header = req.headers().get(header::AUTHORIZATION);
-    
-    match auth_header {
-        Some(header) if header.to_str().unwrap_or("") == "SOVEREIGN" => {
-            Ok(next.run(req).await)
-        }
-        _ => {
-            println!("!! >> [SECOPS] UNAUTHORIZED: {} {}", req.method(), req.uri());
-            Err(StatusCode::UNAUTHORIZED)
-        }
-    }
-}
+    // ⚡ Allow the login endpoint to be accessed without a token
+    if req.uri().path() == "/api/auth/login" { return Ok(next.run(req).await); }
 
-pub fn is_path_safe(path_str: &str) -> bool {
-    let path = Path::new(path_str);
-    if path_str.contains("..") { return false; }
-    if path.is_absolute() { return false; }
-    let blacklisted = [".env", ".git", "target", "node_modules", ".ssh", ".nexus_memory.db"];
-    for restricted in blacklisted.iter() {
-        if path_str.contains(restricted) { return false; }
+    let provided = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("");
+
+    if auth::verify_token(provided).unwrap_or(false) {
+        Ok(next.run(req).await)
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
     }
-    true
 }

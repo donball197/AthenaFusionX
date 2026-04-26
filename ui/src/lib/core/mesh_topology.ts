@@ -1,8 +1,12 @@
 export type Node = { id: string; type: string; capacity: number; load: number; lastHeartbeat: number; };
+
 export const nodeRegistry = {
     nodes: new Map<string, Node>(),
     register(n: Node) { this.nodes.set(n.id, n); },
-    getAvailable() { return Array.from(this.nodes.values()).filter(n => Date.now() - n.lastHeartbeat < 5000); }
+    getAvailable(): Node[] { 
+        return Array.from(this.nodes.values() as IterableIterator<Node>)
+            .filter((n) => Date.now() - n.lastHeartbeat < 5000); 
+    }
 };
 
 export const kernel_dna: Record<string, any> = {
@@ -19,5 +23,5 @@ export const cognitiveKernel = {
             this.registry.set(id, { cell: kernel_dna[id], nodeId: nodes[0].id, state: "active" });
         }
     },
-    snapshot() { return Array.from(this.registry.values()); }
+    snapshot(): KernelProcess[] { return Array.from(this.registry.values() as IterableIterator<KernelProcess>); }
 };

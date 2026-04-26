@@ -1,6 +1,6 @@
 <script>
     import { uplink } from "$lib/services/uplink.js";
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { TaskService } from '$lib/services/TaskService';
     let scanning = $state(false);
     
     async function run(d) {

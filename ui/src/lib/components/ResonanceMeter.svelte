@@ -1,9 +1,9 @@
 <script>
     // ResonanceMeter.svelte — v2.0
     // FIX: Removed standalone WebSocket — was a 3rd concurrent connection
-    //      to /ws/telemetry alongside NexusWS.js and nexus_socket.svelte.ts.
+    //      to /ws/telemetry alongside NexusWS.js and nexus_socket.
     //      Now reads from the shared reactive store.
-    import { systemVitals, vmoTelemetry } from '$lib/core/store.svelte.js';
+    import { systemVitals, vmoTelemetry } from '$lib/core/store.svelte';
 
     let resonance  = $derived(systemVitals.resonance  || 0);
     let activeVmos = $derived(vmoTelemetry.active_vmos || 0);

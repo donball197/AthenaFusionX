@@ -3,7 +3,7 @@
     // FIX: 2s grace period before showing OFFLINE (matches NavHeader).
     // FIX: Temperature warning threshold 52°C → 58°C (more realistic).
     import { onMount, onDestroy } from 'svelte';
-    import { wsState, ide, layout, systemVitals } from '$lib/core/store.svelte.js';
+    import { wsState, ide, layout, systemVitals } from '$lib/core/store.svelte';
 
     let showStatus = $state(false); // grace gate
     let _graceTimer;

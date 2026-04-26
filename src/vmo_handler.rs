@@ -17,12 +17,16 @@ pub async fn handle_get_vmos() -> impl IntoResponse {
         let res = unsafe { crate::kernel::ffi::zx_vmo_get_info(handles[i], &mut info) };
 
         if res == 0 {
+            // ⚡ V17: Real-time Entropy Pull
+            let entropy = unsafe { crate::kernel::ffi::zx_vmo_calculate_entropy(handles[i]) };
+
             vmo_list.push(json!({
                 "handle": format!("0x{:x}", info.handle),
                 "size_bytes": info.size,
                 "committed_pages": info.committed_pages,
                 "memory_used_kb": (info.committed_pages * 4096) / 1024,
                 "is_cow": info.is_cow,
+                "entropy": format!("{:.4}", entropy),
                 "parent_handle": if info.parent_handle > 0 { format!("0x{:x}", info.parent_handle) } else { "None".to_string() }
             }));
         }

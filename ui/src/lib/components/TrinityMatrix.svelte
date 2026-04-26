@@ -4,8 +4,8 @@
     //      Discovers exported functions at load time and uses the first
     //      two available. Shows a clear warning if exports don't match.
     import { onMount, onDestroy } from "svelte";
-    import { systemVitals, terminalState } from "$lib/core/store.svelte.js";
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { systemVitals, terminalState } from "$lib/core/store.svelte";
+    import { TaskService } from '$lib/services/TaskService';
 
     let wasmEngine   = $state<Record<string, Function> | null>(null);
     let exportNames  = $state<string[]>([]);

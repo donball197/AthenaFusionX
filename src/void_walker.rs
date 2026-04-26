@@ -16,9 +16,9 @@ impl VoidWalker {
         }
 
         let mut all_files = Vec::new();
-        let _ = Self::visit_dirs(Path::new("src"), &mut all_files);
+        // FIX: Depth limit of 4 to prevent runaway recursion in deep /tmp dirs
+        let _ = Self::visit_dirs_shallow(Path::new("src"), &mut all_files, 0);
 
-        // ⚡ SUTURE: Ignore common build directories to prevent endless snapshot spam
         let ignore_dirs = ["target", "ziggy-llm", "node_modules", ".lazarus_vault", "ui/dist"];
 
         for file_path in all_files {
@@ -70,13 +70,15 @@ impl VoidWalker {
         }
     }
 
-    fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    fn visit_dirs_shallow(dir: &Path, files: &mut Vec<PathBuf>, depth: u8) -> std::io::Result<()> {
+        if depth > 4 { return Ok(()); } // Fallback constraint
+        
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_dir() {
-                    Self::visit_dirs(&path, files)?;
+                    Self::visit_dirs_shallow(&path, files, depth + 1)?;
                 } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
                     files.push(path);
                 }

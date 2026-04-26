@@ -1,27 +1,25 @@
+// pruner.zig — safer TensorFlow Lite integration
 const std = @import("std");
-const c = @cImport({@cInclude("tensorflow/lite/c/c_api.h");});
-
-// 128gate: Placed in the .bss section (Zero fragmentation, no stack overflow)
-var gate_buffer: [128 * 1024 * 1024]u8 = undefined;
+const c = @cImport({ @cInclude("tensorflow/lite/c/c_api.h"); });
 
 pub export fn pruner_summarize(ptr: [*]const u8, len: usize) [*]const u8 {
-    const m = c.TfLiteModelCreateFromFile("lib/pruner_model.tflite") orelse return ptr;
-    defer c.TfLiteModelDelete(m);
+    const model = c.TfLiteModelCreateFromFile("lib/pruner_model.tflite") orelse return ptr;
+    defer c.TfLiteModelDelete(model);
 
-    const o = c.TfLiteInterpreterOptionsCreate();
-    defer c.TfLiteInterpreterOptionsDelete(o);
-    c.TfLiteInterpreterOptionsSetNumThreads(o, 2);
+    const options = c.TfLiteInterpreterOptionsCreate() orelse return ptr;
+    defer c.TfLiteInterpreterOptionsDelete(options);
+    c.TfLiteInterpreterOptionsSetNumThreads(options, 2);
 
-    const i = c.TfLiteInterpreterCreate(m, o) orelse return ptr;
-    defer c.TfLiteInterpreterDelete(i);
+    const interpreter = c.TfLiteInterpreterCreate(model, options) orelse return ptr;
+    defer c.TfLiteInterpreterDelete(interpreter);
 
-    if (c.TfLiteInterpreterAllocateTensors(i) != 0) return ptr;
-    
-    const in_t = c.TfLiteInterpreterGetInputTensor(i, 0);
-    _ = c.TfLiteTensorCopyFromBuffer(in_t, ptr, len);
+    if (c.TfLiteInterpreterAllocateTensors(interpreter) != 0) return ptr;
 
-    if (c.TfLiteInterpreterInvoke(i) != 0) return ptr;
+    const input_tensor = c.TfLiteInterpreterGetInputTensor(interpreter, 0) orelse return ptr;
+    _ = c.TfLiteTensorCopyFromBuffer(input_tensor, ptr, len);
 
-    const out_t = c.TfLiteInterpreterGetOutputTensor(i, 0);
-    return @ptrCast(c.TfLiteTensorData(out_t));
+    if (c.TfLiteInterpreterInvoke(interpreter) != 0) return ptr;
+
+    const output_tensor = c.TfLiteInterpreterGetOutputTensor(interpreter, 0) orelse return ptr;
+    return @ptrCast(c.TfLiteTensorData(output_tensor) orelse return ptr);
 }

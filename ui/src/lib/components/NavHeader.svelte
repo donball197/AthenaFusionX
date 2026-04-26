@@ -4,7 +4,7 @@
     //      the green→grey→green flicker on every page load.
     // FIX: clock interval cleared in onDestroy (was leaking).
     import { onMount, onDestroy } from 'svelte';
-    import { layout, wsState, systemVitals } from '$lib/core/store.svelte.js';
+    import { layout, wsState, systemVitals } from '$lib/core/store.svelte';
 
     let { activeNav = $bindable('WORKSPACE') } = $props();
 

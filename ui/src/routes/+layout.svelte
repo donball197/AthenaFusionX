@@ -1,18 +1,19 @@
-<!--
-  +layout.svelte — v2.0 SINGLE WS BOOT POINT
-  FIX: Imports nexusSocket from nexus_socket.svelte.ts (the real WS).
-       connect() is called once in onMount.
-       destroy() is called in onDestroy to clean up on SPA unmount.
--->
-<script>
+<script lang="ts">
+    // +layout.svelte — v1.1 [SESSION_RESTORE]
+    // FIX: restoreSession() was never called — sessionStorage tokens were
+    //      lost on every page reload, forcing re-auth every time.
     import "../app.css";
-    import { nexusSocket } from '$lib/nexus_socket.svelte';
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy } from "svelte";
+    import { bootRuntime } from "$lib/core/runtime";
+    import { nexusSocket } from "$lib/core/socket";
+    import { restoreSession } from "$lib/stores/auth.svelte";
 
     let { children } = $props();
 
     onMount(() => {
-        nexusSocket.connect();
+        // Restore session token before booting runtime so uplink has auth
+        restoreSession();
+        bootRuntime();
     });
 
     onDestroy(() => {

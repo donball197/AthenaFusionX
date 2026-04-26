@@ -1,14 +1,18 @@
-// src/conductor.rs — v3.2 Resilient Conductor
-// FIX: Model escalation was triggering at turn>3, causing all 5 remaining
-//      turns to use gemma-4-31b-it (2 RPM limit) and exhaust quota.
-//      Now escalates only at turn>6 to preserve free-tier budget.
-// FIX: 429/RESOURCE_EXHAUSTED triggers failover, not just 500.
+// conductor.rs — v3.3
+// FIX: Failover to gemma-4-26b-a4b-it now calls wait_for_quota before
+//      issuing the retry request. The original skipped the ledger entirely
+//      on 429 errors, potentially hammering the same rate-limited endpoint.
+// FIX: Escalation threshold stays at turn > 6 (was accidentally lowered).
 use crate::neural_agent::ContextPacket;
 use crate::orchestrator::Orchestrator;
 use crate::router::AgentProfile;
+use crate::token_ledger::wait_for_quota;
 use reqwest::Client;
 use serde_json::json;
 use tokio::sync::broadcast;
+
+const FAILOVER_MODEL: &str = "gemma-4-26b-a4b-it";
+const ESTIMATED_TOKENS: u32 = 2_000;
 
 pub struct Conductor;
 
@@ -22,10 +26,10 @@ impl Conductor {
         api_key: &str,
         tx: Option<broadcast::Sender<String>>,
     ) -> Result<String, String> {
-        // FIX: Only escalate to 31b on turn > 6 (was > 3).
-        // This keeps turns 1-6 on the 15 RPM MoE model,
-        // preserving budget for the more critical late turns.
         let model = if turn > 6 { "gemma-4-31b-it" } else { profile.primary_model };
+
+        // Honour quota before every primary attempt
+        wait_for_quota(model, ESTIMATED_TOKENS).await;
 
         let ctx = ContextPacket {
             system_prompt: Some(profile.persona.clone()),
@@ -37,7 +41,7 @@ impl Conductor {
             let _ = sender.send(
                 json!({
                     "type": "NEURAL_THOUGHT",
-                    "payload": format!("[UPLINK] → {} | 256K ctx | streaming SSE", model)
+                    "payload": format!("[UPLINK] → {} | turn {}", model, turn)
                 })
                 .to_string(),
             );
@@ -45,7 +49,6 @@ impl Conductor {
 
         let result = orch.run(prompt.clone(), ctx, client, api_key, tx.clone()).await;
 
-        // Automatic failover on 500, 429, or RESOURCE_EXHAUSTED
         if let Err(ref e) = result {
             if e.contains("500")
                 || e.contains("INTERNAL")
@@ -57,17 +60,20 @@ impl Conductor {
                         json!({
                             "type": "NEURAL_THOUGHT",
                             "payload": format!(
-                                "!! [CONDUCTOR] Model {} unstable/rate-limited. \
-                                 Failover to gemma-4-26b-a4b-it...",
-                                model
+                                "!! [CONDUCTOR] {} unstable. Quota-checking failover to {}...",
+                                model, FAILOVER_MODEL
                             )
                         })
                         .to_string(),
                     );
                 }
+
+                // FIX: Check quota for failover model too
+                wait_for_quota(FAILOVER_MODEL, ESTIMATED_TOKENS).await;
+
                 let failover_ctx = ContextPacket {
                     system_prompt: Some(profile.persona.clone()),
-                    model_override: Some("gemma-4-26b-a4b-it".to_string()),
+                    model_override: Some(FAILOVER_MODEL.to_string()),
                     ..Default::default()
                 };
                 return orch.run(prompt, failover_ctx, client, api_key, tx).await;

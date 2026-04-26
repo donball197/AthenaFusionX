@@ -1,39 +1,16 @@
-use std::time::Duration;
-use tokio::time::sleep;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+FROM rust:alpine as builder
+RUN apk add --no-cache musl-dev gcc make sqlite-dev pkgconfig openssl-dev git
+WORKDIR /app
+COPY . .
+# ⚡ Purge any leaked host configs that force GNU targeting
+RUN rm -rf .cargo
+RUN cargo build --release -j 1
 
-mod server;
-mod auto_healer;
-mod drones;
-mod hiram;
-
-use drones::{DevOpsDrone, IndustrialDrone};
-use hiram::Hiram;
-use auto_healer::Diagnostic;
-
-#[tokio::main]
-async fn main() {
-    let state = Arc::new(Mutex::new(Vec::new()));
-    let hiram_arc = Arc::new(Mutex::new(Hiram::new()));
-    let healer_state = Arc::new(Mutex::new(Diagnostic::Ok));
-
-    // 4. AUTONOMOUS WATCHDOGS
-    tokio::spawn(async move {
-        loop {
-            let diag = crate::auto_healer::AutoHealer::run_diagnostic().await;
-            {
-                let mut hiram = hiram_arc.lock().await;
-                hiram.verify();
-            }
-            DevOpsDrone::run_background_check(".", "nexus-core");
-            let _ = IndustrialDrone::auto_throttle().await;
-
-            *healer_state.lock().await = diag;
-            sleep(Duration::from_secs(10)).await;
-        }
-    });
-
-    println!(">> [NEXUS] SYSTEMS GREEN. LISTENING ON PORT 3000.");
-    server::start_server(state).await;
-}
+FROM alpine:latest
+RUN apk add --no-cache libgcc libstdc++ openssl sqlite-libs ca-certificates
+WORKDIR /nexus
+COPY --from=builder /app/target/release/nexus_singularity /nexus/nexus
+COPY --from=builder /app/target/release/nexus_cli /nexus/nexus_cli
+RUN mkdir -p .nexus/vault .nexus/reports
+EXPOSE 3000
+CMD ["./nexus"]

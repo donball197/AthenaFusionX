@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  nexus_core:
+    build: .
+    container_name: nexus_singularity
+    ports:
+      - "3000:3000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NEXUS_AUTH_KEY=${NEXUS_AUTH_KEY}
+      - RUST_LOG=info,nexus_singularity=debug
+    volumes:
+      - ./nexus_data:/nexus/.nexus
+      - ./.nexus_memory.db:/nexus/.nexus_memory.db
+    restart: unless-stopped

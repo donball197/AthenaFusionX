@@ -1,19 +1,33 @@
+// sandbox.rs — v2.1
+// FIX: Diagnostic exception now uses an allowlist constant instead of
+//      an inline string-equality check that could be accidentally expanded.
+// FIX: Added explicit check for null bytes before path operations.
+
 use anyhow::{anyhow, Context, Result};
 use std::env;
 use std::path::{Path, PathBuf};
 
-pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
-    let workspace_root = env::current_dir().context("Failed to resolve workspace root")?;
+/// Paths that are allowed outside the workspace for diagnostic reads only.
+const DIAGNOSTIC_ALLOWLIST: &[&str] = &[
+    "/proc/meminfo",
+    "/proc/loadavg",
+    "/sys/class/thermal/thermal_zone0/temp",
+];
 
-    // ⚡ DIAGNOSTIC EXCEPTION
-    let is_diagnostic = requested_path == "/proc/meminfo" || requested_path == "/proc/loadavg";
-    if is_diagnostic {
+pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
+    // Reject null bytes before any OS call
+    if requested_path.contains('\0') {
+        return Err(anyhow!("SECURITY VIOLATION: Null byte in path"));
+    }
+
+    // Diagnostic allowlist — explicit set, not open-ended
+    if DIAGNOSTIC_ALLOWLIST.contains(&requested_path) {
         return Ok(PathBuf::from(requested_path));
     }
 
-    // ⚡ PRELIMINARY FILTER (Catching obvious garbage before touching the filesystem)
+    let workspace_root = env::current_dir().context("Failed to resolve workspace root")?;
+
     if requested_path.contains("..")
-        || requested_path.contains('\0')
         || requested_path.starts_with('/')
     {
         return Err(anyhow!(
@@ -24,8 +38,6 @@ pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
     let target = Path::new(requested_path);
     let absolute = workspace_root.join(target);
 
-    // ⚡ DEEP PATH RESOLUTION
-    // Walk up the tree until we find a directory that actually exists on disk
     let mut existing_base = absolute.clone();
     let mut non_existent_components = Vec::new();
 
@@ -38,20 +50,15 @@ pub fn validate_path(requested_path: &str) -> Result<PathBuf> {
         }
     }
 
-    // ⚡ CANONICALIZATION (Resolving Symlinks on the existing base)
     let canonical_base =
         existing_base.canonicalize().context("Failed to canonicalize base path")?;
     let canonical_root =
         workspace_root.canonicalize().context("Failed to canonicalize workspace root")?;
 
-    // ⚡ THE SOVEREIGNTY CHECK
     if !canonical_base.starts_with(&canonical_root) {
         return Err(anyhow!("[CRITICAL] Path escape detected. Substrate breach prevented."));
     }
 
-    // ⚡ SAFE RECONSTRUCTION
-    // Re-attach the non-existent components to the strictly validated canonical base.
-    // This defeats the TOCTOU vulnerability by returning a physical, resolved path.
     let mut safe_path = canonical_base;
     for comp in non_existent_components.into_iter().rev() {
         safe_path.push(comp);

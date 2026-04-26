@@ -1,26 +1,41 @@
-<script>
+<script lang="ts">
+    /**
+     * IdePanel.svelte — v1.3 [ZENITH_ALIGNMENT]
+     * Nexus Singularity - Core Editor Interface
+     */
     import { uplink } from '$lib/services/uplink.js';
-    import { ide } from '$lib/core/store.svelte.js';
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { ide } from '$lib/core/store.svelte';
+    import { onDestroy } from 'svelte';
     import Editor from '$lib/components/Editor.svelte';
     import Terminal from '$lib/components/Terminal.svelte';
 
-    let isSaving = $state(false);
-    let saveMsg  = $state('');
-    let autoSave = $state(false);
-    let autoSaveTimer;
+    let isSaving      = $state(false);
+    let saveMsg       = $state('');
+    let autoSave      = $state(false);
+    let enableVim     = $state(true);
+    let autoSaveTimer = $state<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-    async function saveFile() {
-        const path = ide.activeTab;
-        if (!path) return;
-        const tab = ide.openTabs.find(t => t.path === path);
+    onDestroy(() => { if (autoSaveTimer) clearTimeout(autoSaveTimer); });
+
+    async function saveFile(targetPath = ide.activeTab) {
+        if (!targetPath || isSaving) return;
+        const tab = ide.openTabs.find(t => t.path === targetPath);
         if (!tab || !tab.isDirty) return;
+
         isSaving = true;
         try {
-            const r = await uplink.post('/api/fs/write', { path, content: tab.content ?? '' });
-            if (r.ok) { ide.markSaved(path); saveMsg = '✓ COMMITTED'; }
-        } catch(e) {
-            saveMsg = '!! FAILED';
+            const r = await uplink.post('/api/fs/write', {
+                path:    targetPath,
+                content: tab.content ?? '',
+            });
+            if (r.ok) {
+                ide.markSaved(targetPath);
+                saveMsg = '✓ COMMITTED';
+            } else {
+                saveMsg = '!! FAILED';
+            }
+        } catch (e: any) {
+            saveMsg = '!! FRACTURE';
         } finally {
             isSaving = false;
             setTimeout(() => saveMsg = '', 2000);
@@ -32,15 +47,15 @@
         if (!autoSave || !path) return;
         const tab = ide.openTabs.find(t => t.path === path);
         if (tab?.isDirty && !isSaving) {
-            clearTimeout(autoSaveTimer);
-            autoSaveTimer = setTimeout(saveFile, 1000);
+            if (autoSaveTimer) clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => saveFile(path), 1000);
         }
     });
 
-    function handleKeydown(e) {
+    function handleKeydown(e: KeyboardEvent) {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
             e.preventDefault();
-            saveFile();
+            saveFile(ide.activeTab);
         }
     }
 </script>
@@ -65,14 +80,20 @@
             </button>
         {/each}
         <div class="tab-controls">
+            <button class="vim-toggle" class:on={enableVim} onclick={() => enableVim = !enableVim}>
+                VIM: {enableVim ? 'ON' : 'OFF'}
+            </button>
+            <button class="vim-toggle" class:on={autoSave} onclick={() => autoSave = !autoSave}>
+                AUTO: {autoSave ? 'ON' : 'OFF'}
+            </button>
             {#if ide.activeTab}
                 <span class="save-status">{saveMsg}</span>
-                <button class="save-btn" onclick={saveFile}>COMMIT</button>
+                <button class="save-btn" onclick={() => saveFile()}>COMMIT</button>
             {/if}
         </div>
     </div>
     <div class="editor-pane">
-        {#if ide.activeTab}<Editor path={ide.activeTab} />
+        {#if ide.activeTab}<Editor path={ide.activeTab} vimEnabled={enableVim} />
         {:else}
             <div class="ide-welcome">
                 <div class="iw-glyph">◈</div>
@@ -90,9 +111,11 @@
     .tab-active { color:#00ffff; background:rgba(0,255,255,.03); border-bottom:2px solid #00ffff !important; }
     .tab-name { white-space: nowrap; }
     .tab-dirty { color:#fb923c; font-size:8px; }
-    .tab-close { opacity:.4; font-size:14px; line-height:1; padding: 2px 5px; }
+    .tab-close { opacity:.4; font-size:14px; line-height:1; padding: 2px 5px; cursor: pointer; }
     .tab-close:hover { opacity:1; color:#f87171; }
-    .tab-controls { flex:1; display:flex; align-items:center; justify-content:flex-end; padding:0 8px; gap:8px; }
+    .tab-controls { flex:1; display:flex; align-items:center; justify-content:flex-end; padding:0 8px; gap:8px; border-left: 1px solid rgba(0,255,255,.1); }
+    .vim-toggle { background: transparent; border: 1px solid rgba(167,139,250,.3); color: rgba(167,139,250,.5); padding: 2px 6px; font-size: 8px; font-family: monospace; cursor: pointer; transition: 0.2s; border-radius: 2px; }
+    .vim-toggle.on { background: rgba(167,139,250,.1); color: #a78bfa; border-color: #a78bfa; }
     .save-status { font-size:8px; color:#34d399; }
     .save-btn { background:rgba(0,255,255,.1); border:1px solid rgba(0,255,255,.3); color:#00ffff; font-size:8px; padding:2px 10px; cursor:pointer; font-family:'JetBrains Mono',monospace; }
     .editor-pane { flex:1; background:#000; overflow:hidden; display:flex; align-items:center; justify-content:center; }

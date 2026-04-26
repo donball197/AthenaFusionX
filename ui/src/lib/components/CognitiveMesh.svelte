@@ -1,5 +1,5 @@
 <script>
-    import { systemVitals, vmoTelemetry } from '$lib/core/store.svelte.js';
+    import { systemVitals, vmoTelemetry } from '$lib/core/store.svelte';
     import { fly } from 'svelte/transition';
 
     let resFreq = $derived((systemVitals.resonance * 1000).toFixed(0));

@@ -1,5 +1,4 @@
 // src/main.rs — v3.4 [AUTONOMIC_IMMUNE_ACTIVE]
-// FIX: All bare .unwrap() replaced with .expect("<context message>")
 use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::cli::run_cli_loop;
 use nexus_singularity::orchestrator::Orchestrator;
@@ -18,6 +17,7 @@ async fn main() {
 
     let api_key = env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
     let (tx, _) = broadcast::channel(256);
+    nexus_singularity::logger::init_tracing(tx.clone());
 
     let memory = Arc::new(Mutex::new(
         nexus_singularity::memory::MemoryPalace::new(".nexus_memory.db")

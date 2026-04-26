@@ -1,5 +1,5 @@
 <script>
-    import { systemVitals } from '$lib/core/store.svelte.js';
+    import { systemVitals } from '$lib/core/store.svelte';
     let { resonance = 0.5 } = $props();
     
     // Scale pulse speed based on CPU load (0.0 to 1.0)

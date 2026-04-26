@@ -1,4 +1,4 @@
-// src/bin/cli.rs — v4.3 NEXUS DevOps CLI Binary
+// src/bin/cli.rs — v4.4 [ASYNC_DNA_FIXED]
 use anyhow::Result;
 use nexus_singularity::{
     cli, cluster::ClusterMesh, distributed_scheduler::DistributedScheduler, memory, neural_agent,
@@ -23,7 +23,6 @@ async fn main() -> Result<()> {
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
     let orchestrator = Arc::new(Orchestrator::new());
 
-    // ⚡ V14: Initialize the Cluster for the CLI
     let cluster = Arc::new(ClusterMesh::new());
     let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
 
@@ -34,7 +33,9 @@ async fn main() -> Result<()> {
     }
 
     let raw_directive = args[1..].join(" ");
-    let enriched_directive = cli::inject_workspace_dna(&raw_directive);
+    
+    // ⚡ FIX: Await the async DNA injection
+    let enriched_directive = cli::inject_workspace_dna(&raw_directive).await;
 
     println!(
         "\x1b[36m>> [CLI_UPLINK] Directive → NEXUS Cortex (gemma-4-26b-a4b-it primary)\x1b[0m"
@@ -62,6 +63,11 @@ async fn main() -> Result<()> {
                             println!("\n\x1b[32m>> [STATUS] {}\x1b[0m", text);
                         }
                     }
+                    "LOG_EVENT" => {
+                        if let Some(text) = val["payload"].as_str() {
+                            println!("\x1b[33m{}\x1b[0m", text);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -76,7 +82,7 @@ async fn main() -> Result<()> {
         memory,
         vmo_state,
         tx,
-        dist, // ⚡ Pass the scheduler to the FSM
+        dist,
     )
     .await;
 

@@ -1,4 +1,4 @@
-// src/arbiter_agent.rs — v3.3 Stateful Arbiter
+// src/arbiter_agent.rs — v3.5 [NORMALIZED_PATTERNS]
 use crate::neural_agent::MicroAgent;
 use std::sync::Arc;
 
@@ -11,7 +11,9 @@ impl ArbiterAgent {
         Self { agent }
     }
 
+    /// validate_action: All patterns are pre-lowercased to match normalization.
     pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
+        // All patterns must be lowercase — command is normalized before matching.
         let dangerous_patterns = [
             "rm -rf /",
             "mkfs",
@@ -20,9 +22,12 @@ impl ArbiterAgent {
             "/etc/shadow",
             "mv /etc/",
             ":(){ :|:& };:",
+            "dd if=/dev/zero",
+            "fork bomb",
         ];
 
         let normalized = command.to_lowercase();
+
         for pattern in dangerous_patterns.iter() {
             if normalized.contains(pattern) {
                 return Err(format!(
@@ -33,9 +38,23 @@ impl ArbiterAgent {
         }
 
         if normalized.contains("../../../") {
-            return Err("SANDBOX_VIOLATION: Directory traversal attempt blocked.".to_string());
+            return Err(
+                "SANDBOX_VIOLATION: Directory traversal attempt blocked.".to_string(),
+            );
         }
 
+        Ok(())
+    }
+
+    /// evaluate_entropy_delta: Blocks writes whose entropy shift exceeds threshold.
+    pub fn evaluate_entropy_delta(base_entropy: f32, new_entropy: f32) -> Result<(), String> {
+        let delta = (new_entropy - base_entropy).abs();
+        if delta > 0.5 {
+            return Err(format!(
+                "ENTROPY_ANOMALY: Delta of {:.4} exceeds 0.5 threshold. VMO write aborted.",
+                delta
+            ));
+        }
         Ok(())
     }
 
@@ -43,10 +62,11 @@ impl ArbiterAgent {
         if alpha_vector.len() != beta_vector.len() {
             return false;
         }
-        let mut diff: f32 = 0.0;
-        for i in 0..alpha_vector.len() {
-            diff += (alpha_vector[i] - beta_vector[i]).abs();
-        }
+        let diff: f32 = alpha_vector
+            .iter()
+            .zip(beta_vector.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
         diff < 0.5
     }
 }

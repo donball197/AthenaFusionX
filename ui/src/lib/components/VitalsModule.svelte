@@ -1,5 +1,5 @@
 <script>
-    import { systemVitals } from '$lib/core/store.svelte.js';
+    import { systemVitals } from '$lib/core/store.svelte';
     
     let cpuPercent = $derived((systemVitals.cpu_load * 100).toFixed(1));
     let ramVal = $derived(systemVitals.ram_gb || 0);

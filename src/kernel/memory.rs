@@ -1,17 +1,6 @@
 /**
  * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Licensed under the Apache License, Version 2.0
  */
 
 pub struct SafeBuffer {
@@ -26,9 +15,33 @@ impl SafeBuffer {
 
     pub fn write_safe(&mut self, payload: &[u8]) -> Result<(), String> {
         if self.data.len() + payload.len() > self.max_capacity {
-            return Err("MEMORY FAULT: Buffer overflow prevented by strict bounds check.".into());
+            return Err(format!(
+                "MEMORY FAULT: Buffer overflow prevented. Tried to write {} bytes, only {} remaining.",
+                payload.len(),
+                self.max_capacity.saturating_sub(self.data.len())
+            ));
         }
         self.data.extend_from_slice(payload);
         Ok(())
+    }
+
+    /// Returns current length.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Returns true if buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Clears the buffer, resetting it for reuse.
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
+
+    /// Returns a read-only slice of the buffer contents.
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data
     }
 }

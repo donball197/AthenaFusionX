@@ -1,5 +1,5 @@
 <script>
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { TaskService } from '$lib/services/TaskService';
     import { nexusSocket } from '$lib/nexus_socket.svelte.ts';
     import Terminal from '$lib/components/Terminal.svelte';
 

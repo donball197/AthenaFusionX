@@ -1,31 +1,22 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
 <script>
-    import { runTask } from '$lib/api.js';
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { uplink } from "$lib/services/uplink.js";
+    import { TaskService } from '$lib/services/TaskService';
     let isAuditing = $state(false);
 
     async function igniteAudit() {
         isAuditing = true;
         TaskService.log(">> [SECOPS] Initiating Bio-Dome Integrity Scan...", "text-cyan-400");
-        const res = await runTask("Perform a comprehensive security audit of all .sh, .py, and .env files.");
-        TaskService.log(res.output);
-        isAuditing = false;
+        
+        try {
+            await uplink.post('/api/intent', { 
+                intent_type: 'task.dispatch',
+                payload: { directive: "Perform a comprehensive security audit." }
+            });
+        } catch (e) {
+            TaskService.log(`!! [SECOPS] Audit Failed: ${e.message}`, "text-rose-400");
+        } finally {
+            isAuditing = false;
+        }
     }
 </script>
 
@@ -44,8 +35,5 @@
         <p>> PODMAN_SHIELD: ACTIVE</p>
         <p>> ZIRCON_IPC: NOMINAL</p>
         <p>> HOST_LEAK_PROTECTION: 100%</p>
-        <div class="mt-8 pt-4 border-t border-red-900/20">
-            <span class="text-red-500 font-bold">WARNING:</span> Any sandbox escape attempt will result in immediate kernel-level thread termination.
-        </div>
     </div>
 </div>

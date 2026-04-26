@@ -16,7 +16,7 @@
 
 
 <script>
-    import { systemVitals } from '$lib/core/store.svelte.js';
+    import { systemVitals } from '$lib/core/store.svelte';
     import Heartbeat from '$lib/components/Heartbeat.svelte';
     import VitalsModule from '$lib/components/VitalsModule.svelte';
 </script>

@@ -1,18 +1,12 @@
 <script>
-    // VitalsView.svelte — v2.2
-    // FIX: HTTP poll interval raised to 5000ms — WS HEARTBEAT at 800ms
-    //      already keeps systemVitals fresh. HTTP poll is just a fallback.
-    // FIX: Single interval drives both fetch and history push to halve
-    //      the timer count on this constrained device.
-    // FIX: ramMax $derived now uses Math.max guard against 0.
     import { onMount, onDestroy } from 'svelte';
-    import { systemVitals } from '$lib/core/store.svelte.js';
+    import { systemVitals } from '$lib/core/store.svelte';
 
     const MAX = 40;
     let cpuHist  = $state([]);
     let tempHist = $state([]);
     let ramHist  = $state([]);
-    let interval;
+    let pollTimer;
 
     async function tick() {
         // Push history first (always)
@@ -37,8 +31,36 @@
         }
     }
 
-    onMount(() => { tick(); interval = setInterval(tick, 5000); });
-    onDestroy(() => clearInterval(interval));
+    // FIX: Using recursive setTimeout to fully halt execution when hidden
+    function schedulePoll() {
+        clearTimeout(pollTimer);
+        if (document.visibilityState === 'visible') {
+            pollTimer = setTimeout(async () => {
+                await tick();
+                schedulePoll();
+            }, 5000);
+        }
+    }
+
+    function onVisChange() {
+        if (document.visibilityState === 'visible') {
+            tick();
+            schedulePoll();
+        } else {
+            clearTimeout(pollTimer);
+        }
+    }
+
+    onMount(() => {
+        tick();
+        schedulePoll();
+        document.addEventListener('visibilitychange', onVisChange);
+    });
+
+    onDestroy(() => {
+        clearTimeout(pollTimer);
+        document.removeEventListener('visibilitychange', onVisChange);
+    });
 
     let tc = $derived(
         systemVitals.temperature > 70 ? '#f87171' :

@@ -1,16 +1,12 @@
 <script>
-    // VmoTable.svelte — v1.2
-    // IMPROVE: Pauses polling via visibilitychange event listener so the
-    //          interval doesn't fire at all when the tab is hidden —
-    //          not just skip the fetch. Saves ~1 wakeup/2s on ARM64.
     import { onMount, onDestroy } from 'svelte';
     import { fly } from 'svelte/transition';
-    import { vmoTelemetry } from '$lib/core/store.svelte.js';
+    import { vmoTelemetry } from '$lib/core/store.svelte';
 
     let vmos        = $state([]);
     let loading     = $state(true);
     let errorMsg    = $state('');
-    let pollInterval;
+    let pollTimer;
 
     async function fetchVmos() {
         if (document.visibilityState === 'hidden') return;
@@ -30,18 +26,34 @@
         }
     }
 
+    // FIX: Using recursive setTimeout to fully halt V8 interval executions when hidden
+    function schedulePoll() {
+        clearTimeout(pollTimer);
+        if (document.visibilityState === 'visible') {
+            pollTimer = setTimeout(async () => {
+                await fetchVmos();
+                schedulePoll();
+            }, 2000);
+        }
+    }
+
     function onVisChange() {
-        if (document.visibilityState === 'visible') fetchVmos();
+        if (document.visibilityState === 'visible') {
+            fetchVmos();
+            schedulePoll();
+        } else {
+            clearTimeout(pollTimer);
+        }
     }
 
     onMount(() => {
         fetchVmos();
-        pollInterval = setInterval(fetchVmos, 2000);
+        schedulePoll();
         document.addEventListener('visibilitychange', onVisChange);
     });
 
     onDestroy(() => {
-        clearInterval(pollInterval);
+        clearTimeout(pollTimer);
         document.removeEventListener('visibilitychange', onVisChange);
     });
 </script>

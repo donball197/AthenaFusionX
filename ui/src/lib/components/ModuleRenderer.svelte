@@ -1,12 +1,11 @@
 <script lang="ts">
-    import { agentRegistry } from '../core/agent_module_registry.svelte.js';
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { agentRegistry } from '$lib/core/agent_module_registry.svelte';
+    import { TaskService } from '$lib/services/TaskService';
     let { activeId } = $props<{ activeId: string }>();
     let m = $derived(agentRegistry.modules.find(x => x.id === activeId));
 
     async function fire(directive: string) {
-        TaskService.log(`>> [MODULE_INTENT] ${directive}`, 'text-cyan-400');
-        await fetch('/api/task', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({directive}) });
+        TaskService.runDirective(directive, 'MODULE_INTENT');
     }
 </script>
 

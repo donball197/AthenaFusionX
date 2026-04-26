@@ -1,6 +1,6 @@
 <script>
-    import { ide } from '$lib/core/store.svelte.js';
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { ide } from '$lib/core/store.svelte';
+    import { TaskService } from '$lib/services/TaskService';
     import Editor from '$lib/components/Editor.svelte';
     import Terminal from '$lib/components/Terminal.svelte';
 

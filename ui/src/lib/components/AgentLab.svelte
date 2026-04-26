@@ -6,7 +6,7 @@
     // FIX: AbortController prevents stale fetch responses after destroy.
     import { onMount, onDestroy } from 'svelte';
     import { fly, fade } from 'svelte/transition';
-    import { TaskService } from '$lib/services/TaskService.js';
+    import { TaskService } from '$lib/services/TaskService';
 
     let cluster   = $state({ best_node: null, has_capacity: false });
     let wasmCells = $state([]);

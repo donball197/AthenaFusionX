@@ -18,9 +18,11 @@ extern "C" {
     pub fn muscle_get_active_vmos() -> u32;
     pub fn muscle_get_next_handle() -> u32;
     pub fn set_substrate_load(load: f32);
+    pub fn set_stress_mode(enabled: bool);
     pub fn extract_thermal_pulse_raw() -> i32;
     pub fn zx_vmo_get_info(handle: u32, out_info: *mut VmoInfo) -> i32;
     pub fn zx_vmo_get_all_handles(out_handles: *mut u32, max_count: usize) -> usize;
+    pub fn zx_vmo_calculate_entropy(handle: u32) -> f32;
 }
 
 pub trait KernelOps: Send + Sync {
@@ -28,6 +30,8 @@ pub trait KernelOps: Send + Sync {
     fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32;
     fn handle_close(&self, handle: u32);
     fn vmo_get_info(&self, handle: u32, out_info: *mut VmoInfo) -> i32;
+    fn set_stress(&self, enabled: bool);
+    fn calculate_entropy(&self, handle: u32) -> f32;
 }
 
 pub struct NativeKernelOps;
@@ -35,13 +39,24 @@ impl KernelOps for NativeKernelOps {
     fn vmo_create(&self, size: usize) -> u32 {
         unsafe { zx_vmo_create_native(size) }
     }
+
     fn vmo_clone(&self, p: u32, s: usize) -> u32 {
         unsafe { zx_vmo_clone_native(p, s) }
     }
+
     fn handle_close(&self, h: u32) {
-        unsafe { zx_handle_close_native(h) }
+        unsafe { zx_handle_close_native(h); } // SAFETY: Called only after registry removal
     }
+
     fn vmo_get_info(&self, h: u32, i: *mut VmoInfo) -> i32 {
         unsafe { zx_vmo_get_info(h, i) }
+    }
+
+    fn set_stress(&self, enabled: bool) {
+        unsafe { set_stress_mode(enabled); }
+    }
+
+    fn calculate_entropy(&self, h: u32) -> f32 {
+        unsafe { zx_vmo_calculate_entropy(h) }
     }
 }

@@ -1,0 +1,3 @@
+pub fn execute_task() {
+    let x = ; // Syntax error: missing expression
+}
