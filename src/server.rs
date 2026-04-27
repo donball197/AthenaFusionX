@@ -1,4 +1,4 @@
-// src/server.rs — v4.7.1 [STABILIZED_PROTOCOL + ASYNC_FS]
+// src/server.rs — v4.8.2 [CLEANUP_COMPLETE]
 use axum::{
     extract::{State, Query},
     http::{header, StatusCode, Uri},
@@ -21,7 +21,7 @@ struct Assets;
 
 pub struct AppState {
     pub client: reqwest::Client,
-    pub monitor: tokio::sync::Mutex<crate::system_monitor::SystemMonitor>,
+    pub monitor: Arc<tokio::sync::Mutex<crate::system_monitor::SystemMonitor>>,
     pub agent: Arc<crate::neural_agent::MicroAgent>,
     pub orchestrator: Arc<crate::orchestrator::Orchestrator>,
     pub memory: Arc<tokio::sync::Mutex<crate::memory::MemoryPalace>>,
@@ -34,6 +34,7 @@ pub struct AppState {
     pub vmo_state: Arc<tokio::sync::Mutex<crate::server::VmoState>>,
     pub cluster: Arc<crate::cluster::ClusterMesh>,
     pub dist: Arc<crate::distributed_scheduler::DistributedScheduler>,
+    pub governance_log: Arc<parking_lot::Mutex<crate::governance::protocol::GovernanceLog>>,
 }
 
 #[derive(Default, Debug)]
@@ -81,14 +82,21 @@ async fn unified_gateway(State(state): State<Arc<AppState>>, Json(intent): Json<
     (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
 }
 
+async fn metrics_handler() -> impl IntoResponse {
+    let metrics_text = crate::metrics::get_metrics_text();
+    ([(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")], metrics_text)
+}
+
 pub async fn start_server(state: Arc<AppState>) {
     let api_routes = Router::new()
         .route("/task", post(unified_gateway))
         .route("/intent", post(unified_gateway))
         .route("/vmos", get(crate::vmo_handler::handle_get_vmos))
         .route("/vitals", get(vitals_handler::handle_vitals))
+        .route("/metrics", get(metrics_handler))
         .route("/cluster/nodes", get(cluster_api::list_nodes))
-        // ⚡ RESTORED: ASYNC FS listing for the sidebar
+        .route("/cluster/forge", post(crate::edge_worker::run_remote_synthesis))
+        .route("/cluster/run", post(crate::edge_worker::run_remote_job))
         .route("/fs/list", get(|Query(q): Query<FsQuery>| async move {
             let path = q.path.unwrap_or_else(|| ".".into());
             let mut entries = Vec::new();
@@ -115,7 +123,6 @@ pub async fn start_server(state: Arc<AppState>) {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    // ⚡ FIX: Use tokio listener for proper async execution
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK BRIDGE LIVE: http://localhost:3000\x1b[0m");
     axum::serve(listener, app).await.unwrap();

@@ -7,9 +7,11 @@ use nexus_singularity::neural_agent::MicroAgent;
 use nexus_singularity::orchestrator::Orchestrator;
 use nexus_singularity::scheduler;
 use nexus_singularity::server::{AppState, VmoState};
+use nexus_singularity::governance::protocol::GovernanceLog;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
+use parking_lot::Mutex as SyncMutex;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -20,7 +22,9 @@ async fn main() -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<String>(128);
 
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
-    let monitor = tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new());
+    
+    // ⚡ FIX: Wrap monitor in Arc<Mutex<...>> to match AppState definition
+    let monitor = Arc::new(tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()));
 
     let orchestrator = Arc::new(Orchestrator::new());
 
@@ -28,9 +32,10 @@ async fn main() -> anyhow::Result<()> {
     let memory = Arc::new(Mutex::new(memory_palace));
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
 
-    // ⚡ V14: Initialize the Cluster for the Upgrade Binary
     let cluster = Arc::new(ClusterMesh::new());
     let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
+    
+    let governance_log = Arc::new(SyncMutex::new(GovernanceLog::init()));
 
     let scheduler_tx = scheduler::MasterSupervisor::ignite(
         tx.clone(),
@@ -41,12 +46,12 @@ async fn main() -> anyhow::Result<()> {
         nexus_singularity::system_monitor::SystemMonitor::new(),
         memory.clone(),
         vmo_state.clone(),
-        dist.clone(), // ⚡ Pass the distributed scheduler
+        dist.clone(),
     );
 
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
-        monitor,
+        monitor: monitor.clone(),
         agent: agent.clone(),
         orchestrator,
         arbiter: Arc::new(ArbiterAgent::new(agent)),
@@ -57,8 +62,9 @@ async fn main() -> anyhow::Result<()> {
         scheduler_tx,
         workspace_root: std::env::current_dir()?,
         vmo_state,
-        cluster: cluster.clone(), // ⚡ Wire the cluster mesh
-        dist: dist.clone(),       // ⚡ Wire the distributed scheduler
+        cluster,
+        dist,
+        governance_log,
     });
 
     let result = upgrade_command(state).await;

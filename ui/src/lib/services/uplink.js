@@ -1,15 +1,12 @@
-// uplink.js — v2.2 [TOKEN_GUARD + 415_FIX]
-// FIX: No longer sends 'SOVEREIGN' as an Authorization header value.
-//      Auth header is only injected when auth.token is a real JWT.
-// FIX: Content-Type is always set on POST requests.
-// FIX: AbortSignal supported on all methods.
-
+// uplink.js — v2.3 [BEARER_SUTURE]
 import { auth } from '$lib/stores/auth.svelte';
 
 function buildHeaders(extra = {}) {
     const headers = { 'Content-Type': 'application/json', ...extra };
     if (auth.token) {
-        headers['Authorization'] = auth.token;
+        // SUTURE: Added 'Bearer ' prefix to align with standard Axum/JWT extractors
+        // Ensure backend middleware strips this or verify_token handles it
+        headers['Authorization'] = `Bearer ${auth.token}`;
     }
     return headers;
 }
@@ -17,9 +14,19 @@ function buildHeaders(extra = {}) {
 async function request(url, options = {}) {
     const { headers: extraHeaders, ...rest } = options;
     const headers = buildHeaders(extraHeaders ?? {});
-    const res = await fetch(url, { ...rest, headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
-    return res;
+    
+    try {
+        const res = await fetch(url, { ...rest, headers });
+        
+        if (res.status === 401) {
+            console.warn(`!! [UPLINK] 401 Unauthorized at ${url}. Token invalid or missing.`);
+        }
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
+        return res;
+    } catch (e) {
+        throw e;
+    }
 }
 
 export const uplink = {
@@ -28,14 +35,5 @@ export const uplink = {
     put:      (url, body, signal)     => request(url, { method: 'PUT',   body: JSON.stringify(body), signal }),
     delete:   (url, signal)           => request(url, { method: 'DELETE', signal }),
     get:      (url, signal)           => request(url, { signal }),
-
-    async json(url, options = {}) {
-        const res = await request(url, options);
-        return res.json();
-    },
-
-    async postJSON(url, body, signal) {
-        const res = await request(url, { method: 'POST', body: JSON.stringify(body), signal });
-        return res.json();
-    },
+    json:     async (url, opts)       => (await request(url, opts)).json(),
 };

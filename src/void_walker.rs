@@ -11,12 +11,11 @@ impl VoidWalker {
         let root_files = ["src/main.rs", "src/lib.rs"];
         for root in &root_files {
             if let Ok(content) = fs::read_to_string(root) {
-                Self::trace_module_tree(Path::new(root), &content, &mut declared_mods);
+                Self::trace_module_tree(Path::new(root), &content, &mut declared_mods, 0);
             }
         }
 
         let mut all_files = Vec::new();
-        // FIX: Depth limit of 4 to prevent runaway recursion in deep /tmp dirs
         let _ = Self::visit_dirs_shallow(Path::new("src"), &mut all_files, 0);
 
         let ignore_dirs = ["target", "ziggy-llm", "node_modules", ".lazarus_vault", "ui/dist"];
@@ -24,12 +23,8 @@ impl VoidWalker {
         for file_path in all_files {
             let path_str = file_path.to_string_lossy().to_string();
 
-            if ignore_dirs.iter().any(|d| path_str.contains(d)) {
-                continue;
-            }
-            if path_str.ends_with("mod.rs") || path_str.contains("/bin/") {
-                continue;
-            }
+            if ignore_dirs.iter().any(|d| path_str.contains(d)) { continue; }
+            if path_str.ends_with("mod.rs") || path_str.contains("/bin/") { continue; }
             if !declared_mods.iter().any(|m| path_str.ends_with(m)) {
                 orphans.push(path_str);
             }
@@ -37,7 +32,15 @@ impl VoidWalker {
         orphans
     }
 
-    fn trace_module_tree(current_file: &Path, content: &str, whitelist: &mut Vec<String>) {
+    fn trace_module_tree(
+        current_file: &Path,
+        content: &str,
+        whitelist: &mut Vec<String>,
+        depth: u8,
+    ) {
+        const MAX_DEPTH: u8 = 8;
+        if depth > MAX_DEPTH { return; }
+        
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
@@ -49,18 +52,16 @@ impl VoidWalker {
                     let possible_paths = vec![
                         parent.join(format!("{}.rs", name)),
                         parent.join(name).join("mod.rs"),
-                        parent
-                            .join(current_file.file_stem().unwrap_or_default())
-                            .join(format!("{}.rs", name)),
+                        parent.join(current_file.file_stem().unwrap_or_default()).join(format!("{}.rs", name)),
                     ];
-
+                    
                     for path in possible_paths {
                         if path.exists() {
                             let path_key = path.to_string_lossy().to_string();
                             if !whitelist.contains(&path_key) {
                                 whitelist.push(path_key);
                                 if let Ok(sub_content) = fs::read_to_string(&path) {
-                                    Self::trace_module_tree(&path, &sub_content, whitelist);
+                                    Self::trace_module_tree(&path, &sub_content, whitelist, depth + 1);
                                 }
                             }
                         }
@@ -71,8 +72,7 @@ impl VoidWalker {
     }
 
     fn visit_dirs_shallow(dir: &Path, files: &mut Vec<PathBuf>, depth: u8) -> std::io::Result<()> {
-        if depth > 4 { return Ok(()); } // Fallback constraint
-        
+        if depth > 4 { return Ok(()); }
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;

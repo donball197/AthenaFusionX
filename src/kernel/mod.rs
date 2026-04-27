@@ -1,4 +1,4 @@
-// src/kernel/mod.rs — v2.0 [SAFETY + COMMERCIAL]
+// src/kernel/mod.rs — v2.1 [HARDENED_HANDLES]
 pub mod error;
 pub mod ffi;
 pub mod memory;
@@ -6,9 +6,9 @@ pub mod realignment;
 pub mod vmar;
 pub mod vmo;
 
-use lazy_static::lazy_static;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use lazy_static::lazy_static;
 
 pub use ffi::{
     muscle_get_active_vmos, muscle_get_next_handle, zx_handle_close_native,
@@ -17,6 +17,7 @@ pub use ffi::{
 };
 
 lazy_static! {
+    /// Optimized handle registry using parking_lot to reduce deadlock risk.
     pub static ref HANDLE_REGISTRY: RwLock<HashMap<u32, HandleType>> = RwLock::new(HashMap::new());
 }
 
@@ -26,19 +27,21 @@ pub enum HandleType {
 }
 
 /// RAII guard for safe handle management.
-/// Dropping automatically closes the handle if still registered.
 pub struct VmoGuard {
     pub id: u32,
 }
 
 impl Drop for VmoGuard {
     fn drop(&mut self) {
-        if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-            if reg.remove(&self.id).is_some() {
-                // SAFETY: Handle was registered and we just removed it.
-                // Zig side guarantees close is idempotent.
-                unsafe { zx_handle_close_native(self.id); }
-            }
+        // SAFETY: We remove from registry first, then close. 
+        // Zig side guarantees close is idempotent.
+        let was_registered = {
+            let mut reg = HANDLE_REGISTRY.write();
+            reg.remove(&self.id).is_some()
+        };
+
+        if was_registered {
+            unsafe { zx_handle_close_native(self.id); }
         }
     }
 }
@@ -48,19 +51,19 @@ pub fn get_live_telemetry() -> (u32, u32) {
 }
 
 pub fn register_handle(id: u32, h: HandleType) {
-    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-        reg.insert(id, h);
-    }
+    let mut reg = HANDLE_REGISTRY.write();
+    reg.insert(id, h);
 }
 
 pub fn close_handle(id: u32) -> bool {
-    if let Ok(mut reg) = HANDLE_REGISTRY.write() {
-        if reg.remove(&id).is_some() {
-            unsafe { zx_handle_close_native(id); }
-            true
-        } else {
-            false
-        }
+    let removed = {
+        let mut reg = HANDLE_REGISTRY.write();
+        reg.remove(&id).is_some()
+    };
+
+    if removed {
+        unsafe { zx_handle_close_native(id); }
+        true
     } else {
         false
     }

@@ -1,4 +1,4 @@
-// src/main.rs — v3.4 [AUTONOMIC_IMMUNE_ACTIVE]
+// src/main.rs — v3.6 [ARC_STABILIZED]
 use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::cli::run_cli_loop;
 use nexus_singularity::orchestrator::Orchestrator;
@@ -10,10 +10,8 @@ use tokio::sync::{broadcast, Mutex};
 
 #[tokio::main]
 async fn main() {
-    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.4.0)\x1b[0m");
+    println!("\x1b[1;36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.6.0)\x1b[0m");
     dotenvy::dotenv().ok();
-
-    nexus_singularity::metrics::init_metrics();
 
     let api_key = env::var("GEMINI_API_KEY").unwrap_or_else(|_| "UNSET".to_string());
     let (tx, _) = broadcast::channel(256);
@@ -30,11 +28,15 @@ async fn main() {
             .expect("[MAIN] Fatal: MicroAgent init failed"),
     );
 
+    let monitor = Arc::new(Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()));
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
     let cluster = Arc::new(nexus_singularity::cluster::ClusterMesh::new());
+    let governance_log = Arc::new(parking_lot::Mutex::new(nexus_singularity::governance::protocol::GovernanceLog::init()));
+    
     let dist = Arc::new(nexus_singularity::distributed_scheduler::DistributedScheduler::new(
         cluster.clone(),
     ));
+    
     let orch = Arc::new(Orchestrator::new());
 
     let scheduler_tx = nexus_singularity::scheduler::MasterSupervisor::ignite(
@@ -54,7 +56,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
-        monitor: Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()),
+        monitor: monitor.clone(),
         agent: agent.clone(),
         orchestrator: orch,
         memory: memory.clone(),
@@ -67,9 +69,10 @@ async fn main() {
         vmo_state,
         cluster: cluster.clone(),
         dist: dist.clone(),
+        governance_log: governance_log.clone(),
     });
 
-    // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────
+    // ── BACKGROUND: HEARTBEAT ──────────────────────────────────────────
     let hb_mesh = cluster.clone();
     tokio::spawn(async move {
         nexus_singularity::heartbeat::start(
@@ -80,6 +83,7 @@ async fn main() {
         .await;
     });
 
+    // ── BACKGROUND: HTTP SERVER ──────────────────────────────────────────
     let s_state = state.clone();
     tokio::spawn(async move {
         start_server(s_state).await;
@@ -94,17 +98,16 @@ async fn main() {
     });
 
     // ── BACKGROUND: DREAM CYCLE ──────────────────────────────────────────
-    let dream_memory = state.memory.clone();
-    let dream_agent = state.agent.clone();
-    let dream_key = api_key.clone();
+    let d_state = state.clone();
     tokio::spawn(async move {
-        nexus_singularity::dream_cycle::start_daydream(dream_memory, dream_agent, dream_key).await;
+        nexus_singularity::dream_cycle::start_daydream(d_state.memory.clone(), d_state.agent.clone(), d_state.api_key.clone()).await;
     });
 
-    // ── BACKGROUND: KNOWLEDGE BROKER ─────────────────────────────────────
+    // ── BACKGROUND: KNOWLEDGE BROKER & TELEMETRY ─────────────────────────
+    let b_state = state.clone();
     tokio::spawn(async move {
         nexus_singularity::broker::KnowledgeBroker::refresh_atlas().await;
-        println!("\x1b[34m>> [BROKER] Project atlas indexed.\x1b[0m");
+        nexus_singularity::telemetry_bridge::start_thermal_bridge(b_state.monitor.clone()).await;
     });
 
     if let Err(e) = run_cli_loop(state).await {

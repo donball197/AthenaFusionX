@@ -1,4 +1,4 @@
-// src/task_manager.rs — v4.6 [WARNING_FREE]
+// src/task_manager.rs — v4.7 [UNIT_VARIANT_ALIGNMENT]
 use crate::distributed_scheduler::DistributedScheduler;
 use crate::executor::{FsmState, RoboticExecutor};
 use crate::json_parser;
@@ -34,6 +34,7 @@ pub async fn send_task(
     let profile = IntelligentRouter::route(directive);
 
     for turn in 1..=max_turns() {
+        // FIX: Fault is now a unit variant, allowing direct comparison
         if fsm.current_state == FsmState::Complete || fsm.current_state == FsmState::Fault {
             break;
         }

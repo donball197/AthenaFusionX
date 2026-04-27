@@ -1,6 +1,3 @@
-/**
- * Project Nexus Singularity - v5.0 Memory Palace [HOLOGRAPHIC RECALL]
- */
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use std::path::Path;
@@ -62,6 +59,7 @@ impl MemoryPalace {
         Ok(())
     }
 
+    /// SUTURE: Atomic Transaction over FTS and Base Table
     pub async fn store_memory(
         &self,
         origin: &str,
@@ -71,12 +69,14 @@ impl MemoryPalace {
     ) -> Result<(), sqlx::Error> {
         let emb_str = embedding.map(|v| serde_json::to_string(&v).unwrap_or_default());
         
+        let mut tx = self.pool.begin().await?;
+
         let res = sqlx::query("INSERT INTO neural_context (origin, directive, result, embedding) VALUES (?, ?, ?, ?)")
             .bind(origin)
             .bind(directive)
             .bind(result)
             .bind(emb_str)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
 
         let row_id = res.last_insert_rowid();
@@ -84,8 +84,10 @@ impl MemoryPalace {
             .bind(row_id)
             .bind(directive)
             .bind(result)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+            
+        tx.commit().await?;
         Ok(())
     }
 

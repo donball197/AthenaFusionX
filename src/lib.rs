@@ -66,3 +66,4 @@ pub mod wasm_registry;
 pub mod wasm_runtime;
 pub mod ws_bridge;
 pub mod ziggy_llm;
+pub mod telemetry_bridge;
