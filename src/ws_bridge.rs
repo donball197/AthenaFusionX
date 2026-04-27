@@ -7,13 +7,36 @@ pub async fn ws_telemetry_handler(ws: WebSocketUpgrade, State(state): State<Arc<
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, _state: Arc<AppState>) {
-    // ⚡ FIX: Send valid JSON so the client doesn't explode on JSON.parse
+async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let init_msg = json!({
         "type": "LOG_EVENT",
         "payload": "TELEMETRY_LINK_ESTABLISHED",
         "cls": "text-emerald-400"
     }).to_string();
     
-    let _ = socket.send(Message::Text(init_msg.into())).await;
+    // Send the initial handshake
+    if socket.send(Message::Text(init_msg.into())).await.is_err() {
+        return;
+    }
+
+    // Subscribe to the global matrix broadcast channel
+    let mut rx = state.tx.subscribe();
+
+    // Trap the socket in a continuous multiplexing loop
+    loop {
+        tokio::select! {
+            // 1. Forward internal Cortex broadcasts to the Svelte frontend
+            Ok(msg) = rx.recv() => {
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break; // Connection severed by browser
+                }
+            }
+            // 2. Listen for the browser disconnecting
+            client_msg = socket.recv() => {
+                if client_msg.is_none() {
+                    break; // Browser closed the tab/socket
+                }
+            }
+        }
+    }
 }
