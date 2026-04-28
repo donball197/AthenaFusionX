@@ -1,4 +1,3 @@
-// src/token_ledger.rs — v1.3 [QUOTA_ENFORCED]
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -13,11 +12,9 @@ pub struct ModelQuota {
 impl ModelQuota {
     fn for_model(model: &str) -> Self {
         match model {
-            // Guarding Flash limits (e.g. 15 RPM / 1M TPM)
             m if m.contains("flash") => Self { rpm_limit: 15, tpm_limit: 1_000_000 },
-            // Higher limits for stable workhorses
-            m if m.contains("31b") => Self { rpm_limit: 20, tpm_limit: 2_000_000 },
-            _ => Self { rpm_limit: 15, tpm_limit: 1_000_000 },
+            m if m.contains("31b")   => Self { rpm_limit: 20, tpm_limit: 2_000_000 },
+            _                        => Self { rpm_limit: 15, tpm_limit: 1_000_000 },
         }
     }
 }
@@ -25,7 +22,7 @@ impl ModelQuota {
 #[derive(Debug)]
 struct WindowEntry {
     timestamp: Instant,
-    tokens: u32,
+    tokens:    u32,
 }
 
 #[derive(Debug, Default)]
@@ -39,7 +36,6 @@ impl ModelWindow {
         self.entries.retain(|e| e.timestamp > cutoff);
     }
 
-    /// Sums tokens used in the current 60s window.
     fn token_sum(&self) -> u32 {
         self.entries.iter().map(|e| e.tokens).sum()
     }
@@ -47,8 +43,7 @@ impl ModelWindow {
     fn ms_until_slot_free(&self) -> u64 {
         if self.entries.is_empty() { return 0; }
         let oldest = self.entries.iter().map(|e| e.timestamp).min().unwrap();
-        let age = oldest.elapsed();
-        (Duration::from_secs(60).saturating_sub(age)).as_millis() as u64 + 100
+        (Duration::from_secs(60).saturating_sub(oldest.elapsed())).as_millis() as u64 + 100
     }
 }
 
@@ -67,16 +62,8 @@ impl TokenLedger {
         let window = map.entry(model.to_string()).or_default();
         window.purge_stale();
 
-        // 1. Check RPM (Requests Per Minute)
-        if window.entries.len() as u32 >= quota.rpm_limit {
-            return Err(window.ms_until_slot_free());
-        }
-
-        // 2. Check TPM (Tokens Per Minute) - FIX: Field is now read here
-        let current_tpm = window.token_sum();
-        if current_tpm + estimated_tokens > quota.tpm_limit {
-            return Err(window.ms_until_slot_free());
-        }
+        if window.entries.len() as u32 >= quota.rpm_limit { return Err(window.ms_until_slot_free()); }
+        if window.token_sum() + estimated_tokens > quota.tpm_limit { return Err(window.ms_until_slot_free()); }
 
         window.entries.push(WindowEntry { timestamp: Instant::now(), tokens: estimated_tokens });
         Ok(())
@@ -93,7 +80,7 @@ pub async fn wait_for_quota(model: &str, estimated_tokens: u32) {
             Err(wait_ms) => {
                 let jitter = (generate_seed() % 500) as u64;
                 println!(
-                    "\x1b[33m[LEDGER] {} ceiling hit. Waiting {}ms (attempt {})...\x1b[0m", 
+                    "\x1b[33m[LEDGER] {} ceiling hit. Waiting {}ms (attempt {})...\x1b[0m",
                     model, wait_ms + jitter, attempts + 1
                 );
                 tokio::time::sleep(Duration::from_millis(wait_ms + jitter)).await;
@@ -104,11 +91,36 @@ pub async fn wait_for_quota(model: &str, estimated_tokens: u32) {
     }
 }
 
-/// generate_seed: Basic XORShift-style entropy for jitter
+fn http_rpm_limit() -> u32 {
+    std::env::var("NEXUS_HTTP_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(60)
+}
+
+static HTTP_WINDOWS: Lazy<Mutex<HashMap<String, Vec<Instant>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn http_check(ip: &str) -> Result<(), u64> {
+    let limit = http_rpm_limit();
+    let cutoff = Instant::now() - Duration::from_secs(60);
+
+    let mut map = HTTP_WINDOWS.lock().unwrap();
+    let window = map.entry(ip.to_string()).or_default();
+    window.retain(|&ts| ts > cutoff);
+
+    if window.len() as u32 >= limit {
+        let oldest = *window.first().unwrap();
+        let wait = (Duration::from_secs(60).saturating_sub(oldest.elapsed())).as_millis() as u64;
+        return Err(wait + 100);
+    }
+
+    window.push(Instant::now());
+    Ok(())
+}
+
 fn generate_seed() -> u64 {
     let t = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos();
     let ptr = &t as *const u128 as u64;
     let mut x = (t as u64) ^ ptr;
-    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
     x
 }

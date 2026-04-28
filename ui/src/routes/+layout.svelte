@@ -1,24 +1,14 @@
-<script lang="ts">
-    // +layout.svelte — v1.1 [SESSION_RESTORE]
-    // FIX: restoreSession() was never called — sessionStorage tokens were
-    //      lost on every page reload, forcing re-auth every time.
-    import "../app.css";
-    import { onMount, onDestroy } from "svelte";
-    import { bootRuntime } from "$lib/core/runtime";
-    import { nexusSocket } from "$lib/core/socket";
-    import { restoreSession } from "$lib/stores/auth.svelte";
-
+<script>
+    import { auth, bootAuth } from '$lib/stores/auth.svelte';
+    import { onMount } from 'svelte';
     let { children } = $props();
-
-    onMount(() => {
-        // Restore session token before booting runtime so uplink has auth
-        restoreSession();
-        bootRuntime();
-    });
-
-    onDestroy(() => {
-        nexusSocket.destroy();
-    });
+    onMount(() => bootAuth());
 </script>
 
-{@render children()}
+{#if auth.isInitialized}
+    {@render children()}
+{:else}
+    <div style="height:100vh;width:100vw;background:black;color:#00ffff;display:flex;align-items:center;justify-content:center;font-family:monospace;">
+        NEURAL HANDSHAKE IN PROGRESS...
+    </div>
+{/if}

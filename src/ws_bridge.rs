@@ -1,3 +1,4 @@
+// src/ws_bridge.rs — v2.0 [GHOST_DOM_ENABLED]
 use axum::{extract::ws::{Message, WebSocket, WebSocketUpgrade}, extract::State, response::Response};
 use std::sync::Arc;
 use crate::server::AppState;
@@ -31,9 +32,17 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     break; // Connection severed by browser
                 }
             }
-            // 2. Listen for the browser disconnecting
+            // 2. Listen for frontend telemetry (Ghost DOM) or disconnects
             client_msg = socket.recv() => {
-                if client_msg.is_none() {
+                if let Some(Ok(Message::Text(txt))) = client_msg {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&txt) {
+                        if json["type"] == "GHOST_DOM_STATE" {
+                            // Inject the UI state directly into the tracing layer
+                            // which forwards it into the agent's context buffer
+                            tracing::info!("[GHOST_DOM] Frontend State: {}", json["payload"]);
+                        }
+                    }
+                } else if client_msg.is_none() {
                     break; // Browser closed the tab/socket
                 }
             }

@@ -1,4 +1,3 @@
-// src/agent_protocol.rs — v4.8 [FULLY RECONCILED]
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -16,26 +15,17 @@ pub struct AgentDirective {
     pub priority: u8,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]
-#[derive(PartialEq)]
 pub enum AgentAction {
-    #[serde(rename = "propose_evolution")] ProposeEvolution { target: String, diff: String, risk: f32 },
-    #[serde(rename = "synthesize_policy")] SynthesizePolicy { id: String, logic: String, objective: String },
-    #[serde(rename = "execute_command")] ExecuteCommand { command: String },
-    #[serde(rename = "read_file")] ReadFile { path: String },
-    #[serde(rename = "write_file")] WriteFile { path: String, content: String },
-    #[serde(rename = "search_memory")] SearchMemory { query: String },
-    #[serde(rename = "vmo_create")] VmoCreate { size: usize },
-    #[serde(rename = "vmo_write")] VmoWrite { handle: String, data: String },
-    #[serde(rename = "calculate_entropy")] CalculateEntropy { handle: String },
-    #[serde(rename = "lazarus_snapshot")] LazarusSnapshot { path: String, tag: Option<String> },
-    #[serde(rename = "export_report")] ExportReport { title: String, content: String },
-    #[serde(rename = "analyze_image")] AnalyzeImage { path: String, query: String },
-    #[serde(rename = "propose_ui_module")] ProposeUiModule { id: String, label: String, kind: String, source: String, directive: String },
-    #[serde(rename = "set_stress_test")] SetStressTest { enabled: bool },
-    #[serde(rename = "synthesize_wasm")] SynthesizeWasm { code: String },
-    #[serde(rename = "wasm_execute_local")] WasmExecuteLocal { func_name: String, input: f32 },
-    #[serde(rename = "wasm_load")] WasmLoad { name: String, func_name: String, input: f32 },
-    #[serde(rename = "halt")] Halt,
+    #[serde(rename = "execute_command")] ExecuteCommand { command: String, reasoning: String },
+    #[serde(rename = "read_file")] ReadFile { path: String, reasoning: String },
+    #[serde(rename = "write_file")] WriteFile { path: String, content: String, reasoning: String },
+    #[serde(rename = "search_memory")] SearchMemory { query: String, reasoning: String },
+    #[serde(rename = "vmo_create")] VmoCreate { size: usize, reasoning: String },
+    #[serde(rename = "calculate_entropy")] CalculateEntropy { handle: String, reasoning: String },
+    #[serde(rename = "lazarus_snapshot")] LazarusSnapshot { path: String, tag: Option<String>, reasoning: String },
+    #[serde(rename = "export_report")] ExportReport { title: String, content: String, reasoning: String },
+    #[serde(rename = "fetch_ui_snapshot")] FetchUiSnapshot { reasoning: String },
+    #[serde(rename = "halt")] Halt { reasoning: String },
 }

@@ -1,4 +1,3 @@
-// src/kernel/mod.rs — v2.1 [HARDENED_HANDLES]
 pub mod error;
 pub mod ffi;
 pub mod memory;
@@ -17,8 +16,8 @@ pub use ffi::{
 };
 
 lazy_static! {
-    /// Optimized handle registry using parking_lot to reduce deadlock risk.
-    pub static ref HANDLE_REGISTRY: RwLock<HashMap<u32, HandleType>> = RwLock::new(HashMap::new());
+    pub static ref HANDLE_REGISTRY: RwLock<HashMap<u32, HandleType>> =
+        RwLock::new(HashMap::new());
 }
 
 pub enum HandleType {
@@ -26,15 +25,12 @@ pub enum HandleType {
     Vmar(vmar::Vmar),
 }
 
-/// RAII guard for safe handle management.
 pub struct VmoGuard {
-    pub id: u32,
+    pub id: u32, 
 }
 
 impl Drop for VmoGuard {
     fn drop(&mut self) {
-        // SAFETY: We remove from registry first, then close. 
-        // Zig side guarantees close is idempotent.
         let was_registered = {
             let mut reg = HANDLE_REGISTRY.write();
             reg.remove(&self.id).is_some()
@@ -51,8 +47,7 @@ pub fn get_live_telemetry() -> (u32, u32) {
 }
 
 pub fn register_handle(id: u32, h: HandleType) {
-    let mut reg = HANDLE_REGISTRY.write();
-    reg.insert(id, h);
+    HANDLE_REGISTRY.write().insert(id, h);
 }
 
 pub fn close_handle(id: u32) -> bool {
@@ -60,7 +55,6 @@ pub fn close_handle(id: u32) -> bool {
         let mut reg = HANDLE_REGISTRY.write();
         reg.remove(&id).is_some()
     };
-
     if removed {
         unsafe { zx_handle_close_native(id); }
         true

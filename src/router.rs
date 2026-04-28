@@ -80,7 +80,7 @@ impl IntelligentRouter {
                 primary_model: "gemma-4-31b-it", // ⚡ High-reasoning model
                 max_turns: 8,
                 budget: ContextBudget::doctor(),
-                persona: "IDENTITY: NEXUS Repo Doctor. Goal: Diagnose and patch compilation errors. RULE: You MUST output a valid JSON array inside an <ACTION> block. WORKFLOW: 1. read_file on the failing file. 2. write_file with the corrected code. 3. execute_command with 'cargo check' to verify. 4. halt only when integrity passes.".into(),
+                persona: "IDENTITY: NEXUS Repo Doctor. Goal: Diagnose and patch compilation errors. RULE: You MUST output ONLY a valid JSON array. WORKFLOW: 1. read_file on the failing file. 2. write_file with the corrected code. 3. execute_command with 'cargo check' to verify. 4. halt only when integrity passes.".into(),
             },
             DirectiveClass::WasmForge => AgentProfile {
                 class: DirectiveClass::WasmForge,
@@ -94,14 +94,14 @@ impl IntelligentRouter {
                 primary_model: "gemma-4-26b-a4b-it",
                 max_turns: 6,
                 budget: ContextBudget::minimal(),
-                persona: "IDENTITY: NEXUS DevOps. Goal: Substrate maintenance. RULE: You MUST execute operations using the <ACTION> JSON array.".into(),
+                persona: "IDENTITY: NEXUS DevOps. Goal: Substrate maintenance. RULE: You MUST execute operations using ONLY a valid JSON array where every object has a 'type' field.".into(),
             },
             _ => AgentProfile {
                 class: DirectiveClass::General,
                 primary_model: "gemma-4-26b-a4b-it",
                 max_turns: 8,
                 budget: ContextBudget::standard(),
-                persona: "IDENTITY: NEXUS Sovereign Agent. Goal: Fulfill the directive. RULE: You MUST execute operations using the <ACTION> JSON array. NEVER output conversational text outside of <THOUGHT>.".into(),
+                persona: "IDENTITY: NEXUS Sovereign Agent. Goal: Fulfill the directive. RULE: You MUST execute operations using ONLY a valid JSON array where every object has a 'type' field. NEVER output conversational text. Output ONLY JSON.".into(),
             },
         }
     }
@@ -109,7 +109,7 @@ impl IntelligentRouter {
     pub fn build_prompt(directive: &str, profile: &AgentProfile, obs: &[String]) -> String {
         let history = obs.iter().map(|o| format!(">> {}", o)).collect::<Vec<_>>().join("\n");
         format!(
-            "{}\n\nMISSION HISTORY:\n{}\n\nCURRENT OBJECTIVE: {}\n\nNEXT STEP (Output <THOUGHT> then <ACTION> JSON array):",
+            "{}\n\nMISSION HISTORY:\n{}\n\nCURRENT OBJECTIVE: {}\n\nNEXT STEP (Output ONLY a valid JSON array):",
             profile.persona, history, directive
         )
     }

@@ -1,5 +1,5 @@
-// src/executor.rs — v8.1 [SEARCH_RESTORED]
 use crate::agent_protocol::AgentAction;
+use crate::arbiter_agent::ArbiterAgent;
 use crate::distributed_scheduler::DistributedScheduler;
 use crate::genesis_broker;
 use crate::lazarus_vault::LazarusVault;
@@ -10,9 +10,8 @@ use crate::wasm_runtime::WasmRuntime;
 use crate::vision;
 use base64::{engine::general_purpose, Engine as _};
 use std::sync::Arc;
-use tokio::process::Command;
 use tokio::sync::{broadcast, Mutex};
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum FsmState { Idle, Executing, Complete, Fault }
@@ -24,10 +23,14 @@ pub struct RoboticExecutor {
     pub last_func_hint:   Option<String>,
     pub api_key:          String,
     pub tx:               broadcast::Sender<String>,
+    pub workspace_root:   String,
 }
 
 impl RoboticExecutor {
     pub fn new(api_key: String, tx: broadcast::Sender<String>) -> Self {
+        let workspace_root = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "/tmp/nexus_workspace".to_string());
         Self {
             current_state: FsmState::Idle,
             unverified_writes: false,
@@ -35,6 +38,7 @@ impl RoboticExecutor {
             last_func_hint: None,
             api_key,
             tx,
+            workspace_root,
         }
     }
 
@@ -47,20 +51,41 @@ impl RoboticExecutor {
 
     pub async fn execute_handle(
         &mut self,
-        actions:   Vec<AgentAction>,
-        memory:    Arc<Mutex<MemoryPalace>>,
+        actions:    Vec<AgentAction>,
+        memory:     Arc<Mutex<MemoryPalace>>,
         _vmo_state: Arc<Mutex<VmoState>>,
-        dist:      Arc<DistributedScheduler>,
+        dist:       Arc<DistributedScheduler>,
     ) -> anyhow::Result<Vec<String>> {
         self.transition(FsmState::Executing);
         let mut raw_results: Vec<String> = Vec::new();
 
         for action in actions {
-            if self.current_state == FsmState::Complete || self.current_state == FsmState::Fault { 
-                break; 
+            if self.current_state == FsmState::Complete || self.current_state == FsmState::Fault {
+                break;
             }
 
             match action {
+                AgentAction::ExecuteCommand { command } => {
+                    if let Err(e) = ArbiterAgent::validate_action("execute_command", &command) {
+                        warn!("ARBITER_BLOCK: {}", e);
+                        raw_results.push(format!("BLOCKED: {}", e));
+                        self.transition(FsmState::Fault);
+                        break;
+                    }
+
+                    match crate::podman::PodmanShield::execute(&command) {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout);
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            raw_results.push(format!("CMD_OUT: {}\nCMD_ERR: {}", stdout, stderr));
+                        },
+                        Err(e) => {
+                            error!("SHIELD_FAULT: {}", e);
+                            raw_results.push(format!("CMD_ERR: {}", e));
+                        }
+                    }
+                }
+
                 AgentAction::SearchMemory { query } => {
                     let q_vec = crate::vector_bridge::get_embedding(&self.api_key, &query).await.unwrap_or_default();
                     let palace = memory.lock().await;
@@ -124,6 +149,7 @@ impl RoboticExecutor {
                 AgentAction::WriteFile { path, content } => {
                     if let Ok(safe_path) = crate::sandbox::validate_path(&path) {
                         if std::fs::write(&safe_path, &content).is_ok() {
+                            self.unverified_writes = true;
                             raw_results.push(format!("WRITE_OK: {}", safe_path.display()));
                         }
                     } else {
@@ -139,11 +165,6 @@ impl RoboticExecutor {
                     }
                 }
 
-                AgentAction::ExecuteCommand { command } => {
-                    let out = Command::new("sh").arg("-c").arg(&command).output().await?;
-                    raw_results.push(format!("CMD_OUT: {}", String::from_utf8_lossy(&out.stdout)));
-                }
-
                 AgentAction::LazarusSnapshot { path, tag } => {
                     let t = tag.as_deref().unwrap_or("auto");
                     if let Ok(snap) = LazarusVault::auto_snapshot(&path, t).await {
@@ -151,17 +172,24 @@ impl RoboticExecutor {
                     }
                 }
 
+                AgentAction::FetchUiSnapshot => {
+                    let _ = self.tx.send(serde_json::json!({"type": "REQUEST_UI_SNAPSHOT"}).to_string());
+                    raw_results.push("UI_SNAPSHOT_REQUESTED: Broadcast sent. Await frontend telemetry in the next turn's observations.".into());
+                }
+
                 AgentAction::Halt => {
                     self.transition(FsmState::Complete);
                     break;
                 }
 
-                _ => { raw_results.push("ACTION_ACKNOWLEDGED".into()); }
+                _ => raw_results.push("ACTION_ACKNOWLEDGED".into()),
             }
         }
 
         let (clean, b64_opt) = genesis_broker::extract(&raw_results);
-        if let Some(b64) = b64_opt { self.stored_genesis = Some(b64); }
+        if let Some(b64) = b64_opt {
+            self.stored_genesis = Some(b64);
+        }
         Ok(clean)
     }
 }

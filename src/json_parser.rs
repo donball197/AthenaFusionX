@@ -1,47 +1,24 @@
-use anyhow::{Context, Result};
-use serde_json::Value;
+use anyhow::{anyhow, Result};
 use crate::agent_protocol::AgentAction;
+use regex::Regex;
+use once_cell::sync::Lazy;
+
+static ARRAY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[\s*\{[\s\S]*?\}\s*\]").unwrap());
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let mut text = response.trim().to_string();
+    text = text.replace("```json", "").replace("```", "").replace("\n", " ").trim().to_string();
 
-    // Strip common LLM wrappers and tags
-    text = text
-        .replace("<THOUGHT>", "")
-        .replace("</THOUGHT>", "")
-        .replace("<ACTION>", "")
-        .replace("</ACTION>", "")
-        .trim()
-        .to_string();
-
-    // Try to find the last JSON array (most robust method)
-    if let Some(start) = text.rfind('[') {
-        let candidate = &text[start..];
-        if let Ok(actions) = serde_json::from_str::<Vec<Value>>(candidate) {
-            let parsed: Vec<AgentAction> = actions
-                .into_iter()
-                .filter_map(|v| serde_json::from_value(v).ok())
-                .collect();
-            if !parsed.is_empty() {
-                return Ok(parsed);
-            }
+    if let Some(m) = ARRAY_RE.find(&text) {
+        if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(m.as_str()) {
+            if !actions.is_empty() { return Ok(actions); }
         }
     }
-
-    // Full parse fallback
-    if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&text) {
-        return Ok(actions);
-    }
-
-    // Last-ditch effort: any JSON array in the text
-    if let Some(pos) = text.find('[') {
-        if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&text[pos..]) {
-            return Ok(actions);
+    if let (Some(start), Some(end)) = (text.find('['), text.rfind(']')) {
+        let candidate = &text[start..=end];
+        if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(candidate) {
+            if !actions.is_empty() { return Ok(actions); }
         }
     }
-
-    Err(anyhow::anyhow!(
-        "JSON_DECODE_FRACTURE: Could not extract actions. First 200 chars: {}",
-        text.chars().take(200).collect::<String>()
-    ))
+    Err(anyhow!("PARSER_FRACTURE: No valid action array found."))
 }
