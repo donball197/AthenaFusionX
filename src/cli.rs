@@ -1,6 +1,8 @@
 // src/cli.rs — v6.3 [STRICT_JSON_TYPE + GHOST_GUARD]
 use crate::task_manager;
 use std::io::{self, Write};
+use tokio::io::{self as tokio_io, AsyncBufReadExt};
+
 use std::sync::Arc;
 
 pub async fn inject_workspace_dna(directive: &str) -> String {
@@ -46,12 +48,13 @@ Now execute the directive. Output ONLY the JSON array."#.to_string()
 }
 
 pub async fn run_cli_loop(state: Arc<crate::server::AppState>) -> io::Result<()> {
-    let stdin = io::stdin();
+    let stdin = tokio_io::stdin();
+    let mut reader = tokio_io::BufReader::new(stdin);
     loop {
         print!("\n\x1b[1;32mNEXUS_FACTORY >> \x1b[0m");
         io::stdout().flush().ok();
         let mut input = String::new();
-        if stdin.read_line(&mut input)? == 0 { break; }
+        if reader.read_line(&mut input).await? == 0 { break; }
         let trimmed = input.trim();
         if trimmed.is_empty() { continue; }
         if trimmed == "exit" || trimmed == "quit" {

@@ -3,7 +3,7 @@
 use crate::agent_protocol::AgentAction;
 use crate::arbiter_agent::ArbiterAgent;
 use crate::distributed_scheduler::DistributedScheduler;
-use crate::server::VmoState;
+use crate::shared_state::VmoState;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;

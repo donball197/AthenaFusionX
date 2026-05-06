@@ -1,0 +1,2837 @@
+
+[36m========================================
+[FILE: Cargo.toml]
+========================================[0m
+[workspace]
+members = [
+    "crates/runtime_core",
+    "crates/identity",
+    "crates/memory_graph",
+    "crates/economy",
+    "crates/protocol",
+    "crates/mesh",
+    "crates/payments",
+    "crates/marketplace",
+    "crates/billing",
+    "bins/cli",
+    "bins/node",
+    "bins/ide_backend"
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "3.0.0"
+
+[workspace.dependencies]
+tokio = { version = "1.44", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+codegen-units = 256
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/kernel/muscle.zig]
+========================================[0m
+//! NEXUS SINGULARITY — ZIG MUSCLE v3.2 (2026)
+//! Fix: Added missing zx_vmo_create_native and aligned symbols for Rust LLD
+const std = @import("std");
+const posix = std.posix;
+const Thread = std.Thread;
+
+const PAGE_SIZE: usize = 4096;
+const MAX_SLOTS: usize = 4096;
+const SLOT_MASK: u32 = MAX_SLOTS - 1;
+const SENTINEL_MAGIC: u32 = 0xDEADC0DE;
+const GENERATION_SHIFT: u5 = 12;
+const SHARD_COUNT: usize = 16;
+const SHARD_MASK: u32 = SHARD_COUNT - 1;
+
+var shard_mutexes: [SHARD_COUNT]Thread.Mutex = [_]Thread.Mutex{.{}} ** SHARD_COUNT;
+var active_vmos: u32 = 0;
+var next_handle: u32 = 0xc8;
+
+const VmoMetadata = struct {
+    ptr:           [*]align(PAGE_SIZE) u8,
+    size:          usize,
+    magic:         u32,
+    generation:    u32,
+    refcount:      u32,
+    is_cow_child:  bool,
+    parent_handle: u32,
+};
+
+const VmoInfo = extern struct {
+    handle:          u32,
+    size:            usize,
+    committed_pages: usize,
+    is_cow:          u8,
+    parent_handle:   u32,
+};
+
+var handle_table: [MAX_SLOTS]?VmoMetadata = [_]?VmoMetadata{null} ** MAX_SLOTS;
+var current_load: f32 = 0.0;
+var stress_mode: bool = false;
+
+inline fn shard_for(h: u32) usize { return @intCast(h & SHARD_MASK); }
+inline fn decode_slot(h: u32) usize { return @intCast(h & SLOT_MASK); }
+inline fn decode_generation(h: u32) u32 { return h >> GENERATION_SHIFT; }
+
+fn lookup_valid(h: u32) ?*VmoMetadata {
+    const slot = decode_slot(h);
+    const gen  = decode_generation(h);
+    const meta = &(handle_table[slot] orelse return null);
+    if (meta.magic != SENTINEL_MAGIC) return null;
+    if (meta.generation != gen)       return null;
+    return meta;
+}
+
+fn allocate_vmo(size: usize) !struct { ptr: [*]align(PAGE_SIZE) u8, size: usize } {
+    const aligned_size = std.mem.alignForward(usize, size, PAGE_SIZE);
+    const ptr = try posix.mmap(null, aligned_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0);
+    return .{ .ptr = @alignCast(ptr.ptr), .size = aligned_size };
+}
+
+export fn zx_vmo_create_native(size: usize) u32 {
+    const mapping = allocate_vmo(size) catch return 0;
+    const h     = @atomicRmw(u32, &next_handle, .Add, 1, .monotonic);
+    const shard = shard_for(h);
+    const slot  = decode_slot(h);
+    const gen   = decode_generation(h);
+
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+
+    handle_table[slot] = VmoMetadata{
+        .ptr           = mapping.ptr,
+        .size          = mapping.size,
+        .magic         = SENTINEL_MAGIC,
+        .generation    = gen,
+        .refcount      = 1,
+        .is_cow_child  = false,
+        .parent_handle = 0,
+    };
+    _ = @atomicRmw(u32, &active_vmos, .Add, 1, .monotonic);
+    return h;
+}
+
+export fn zx_vmo_clone_native(parent_handle: u32, _: usize) u32 {
+    const p_shard = shard_for(parent_handle);
+    var parent_size: usize = 0;
+    var parent_ptr:  [*]align(PAGE_SIZE) u8 = undefined;
+
+    {
+        shard_mutexes[p_shard].lock();
+        defer shard_mutexes[p_shard].unlock();
+        const meta = lookup_valid(parent_handle) orelse return 0;
+        parent_size = meta.size;
+        parent_ptr  = meta.ptr;
+        _ = @atomicRmw(u32, &meta.refcount, .Add, 1, .monotonic);
+    }
+
+    const mapping = allocate_vmo(parent_size) catch return 0;
+    @memcpy(mapping.ptr[0..parent_size], parent_ptr[0..parent_size]);
+
+    const h     = @atomicRmw(u32, &next_handle, .Add, 1, .monotonic);
+    const shard = shard_for(h);
+    const slot  = decode_slot(h);
+    const gen   = decode_generation(h);
+
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+
+    handle_table[slot] = VmoMetadata{
+        .ptr           = mapping.ptr,
+        .size          = mapping.size,
+        .magic         = SENTINEL_MAGIC,
+        .generation    = gen,
+        .refcount      = 1,
+        .is_cow_child  = true,
+        .parent_handle = parent_handle,
+    };
+
+    _ = @atomicRmw(u32, &active_vmos, .Add, 1, .monotonic);
+    return h;
+}
+
+export fn zx_handle_close_native(h: u32) void {
+    const shard = shard_for(h);
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+
+    const meta = lookup_valid(h) orelse return;
+
+    const old_ref = @atomicRmw(u32, &meta.refcount, .Sub, 1, .monotonic);
+    if (old_ref == 1) {
+        posix.munmap(meta.ptr[0..meta.size]);
+        handle_table[decode_slot(h)] = null;
+        _ = @atomicRmw(u32, &active_vmos, .Sub, 1, .monotonic);
+    }
+}
+
+export fn zx_vmo_write_native(h: u32, offset: usize, buffer: [*]const u8, size: usize) i32 {
+    const shard = shard_for(h);
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+    const meta = lookup_valid(h) orelse return -1;
+    if (offset + size > meta.size) return -1;
+    @memcpy(meta.ptr[offset .. offset + size], buffer[0..size]);
+    return 0;
+}
+
+export fn zx_vmo_read_native(h: u32, offset: usize, buffer: [*]u8, size: usize) i32 {
+    const shard = shard_for(h);
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+    const meta = lookup_valid(h) orelse return -1;
+    if (offset + size > meta.size) return -1;
+    @memcpy(buffer[0..size], meta.ptr[offset .. offset + size]);
+    return 0;
+}
+
+export fn zx_vmo_get_info(h: u32, out_info: *VmoInfo) i32 {
+    const shard = shard_for(h);
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+    const meta = lookup_valid(h) orelse return -1;
+    out_info.* = .{
+        .handle          = h,
+        .size            = meta.size,
+        .committed_pages = meta.size / PAGE_SIZE,
+        .is_cow          = if (meta.is_cow_child) 1 else 0,
+        .parent_handle   = meta.parent_handle,
+    };
+    return 0;
+}
+
+export fn zx_vmo_calculate_entropy(h: u32) f32 {
+    const shard = shard_for(h);
+    shard_mutexes[shard].lock();
+    defer shard_mutexes[shard].unlock();
+    const meta = lookup_valid(h) orelse return 0.0;
+    var counts = [_]u32{0} ** 256;
+    for (meta.ptr[0..meta.size]) |byte| counts[byte] += 1;
+    var entropy: f32 = 0.0;
+    const size_f: f32 = @floatFromInt(meta.size);
+    for (counts) |count| {
+        if (count > 0) {
+            const p = @as(f32, @floatFromInt(count)) / size_f;
+            entropy -= p * std.math.log2(p);
+        }
+    }
+    return entropy / 8.0;
+}
+
+export fn zx_vmo_get_all_handles(out_handles: [*]u32, max_count: usize) usize {
+    for (&shard_mutexes) |*m| m.lock();
+    defer for (&shard_mutexes) |*m| m.unlock();
+    var count: usize = 0;
+    for (handle_table, 0..) |maybe_meta, i| {
+        if (maybe_meta) |meta| {
+            if (meta.magic == SENTINEL_MAGIC and count < max_count) {
+                const slot: u32 = @intCast(i);
+                out_handles[count] = slot | (meta.generation << GENERATION_SHIFT);
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
+export fn muscle_get_active_vmos() u32 { return @atomicLoad(u32, &active_vmos, .monotonic); }
+export fn muscle_get_next_handle() u32 { return @atomicLoad(u32, &next_handle, .monotonic); }
+export fn set_substrate_load(load: f32) void {
+    shard_mutexes[0].lock();
+    defer shard_mutexes[0].unlock();
+    current_load = @max(0.0, @min(1.0, load));
+}
+export fn set_stress_mode(enabled: bool) void {
+    shard_mutexes[0].lock();
+    defer shard_mutexes[0].unlock();
+    stress_mode = enabled;
+}
+export fn extract_thermal_pulse_raw() i32 {
+    shard_mutexes[0].lock();
+    defer shard_mutexes[0].unlock();
+    const multiplier: f32 = if (stress_mode) 2.5 else 1.0;
+    const temp = (current_load * 40.0 * multiplier) + 30.0;
+    return @intFromFloat(temp * 1000.0);
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/kernel/ffi.rs]
+========================================[0m
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VmoInfo {
+    pub handle: u32,
+    pub size: usize,
+    pub committed_pages: usize,
+    pub is_cow: u8,
+    pub parent_handle: u32,
+}
+
+#[link(name = "muscle")]
+extern "C" {
+    pub fn zx_vmo_create_native(size: usize) -> u32;
+    pub fn zx_vmo_clone_native(parent_handle: u32, size: usize) -> u32;
+    pub fn zx_handle_close_native(handle: u32);
+    pub fn zx_vmo_write_native(handle: u32, offset: usize, buffer: *const u8, size: usize) -> i32;
+    pub fn zx_vmo_read_native(handle: u32, offset: usize, buffer: *mut u8, size: usize) -> i32;
+    pub fn muscle_get_active_vmos() -> u32;
+    pub fn muscle_get_next_handle() -> u32;
+    pub fn set_substrate_load(load: f32);
+    pub fn set_stress_mode(enabled: bool);
+    pub fn extract_thermal_pulse_raw() -> i32;
+    pub fn zx_vmo_get_info(handle: u32, out_info: *mut VmoInfo) -> i32;
+    pub fn zx_vmo_get_all_handles(out_handles: *mut u32, max_count: usize) -> usize;
+    pub fn zx_vmo_calculate_entropy(handle: u32) -> f32;
+}
+
+pub trait KernelOps: Send + Sync {
+    fn vmo_create(&self, size: usize) -> u32;
+    fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32;
+    fn handle_close(&self, handle: u32);
+    fn vmo_get_info(&self, handle: u32, out_info: *mut VmoInfo) -> i32;
+    fn set_stress(&self, enabled: bool);
+    fn calculate_entropy(&self, handle: u32) -> f32;
+}
+
+pub struct NativeKernelOps;
+impl KernelOps for NativeKernelOps {
+    fn vmo_create(&self, size: usize) -> u32 {
+        unsafe { zx_vmo_create_native(size) }
+    }
+
+    fn vmo_clone(&self, p: u32, s: usize) -> u32 {
+        unsafe { zx_vmo_clone_native(p, s) }
+    }
+
+    fn handle_close(&self, h: u32) {
+        unsafe { zx_handle_close_native(h); }
+    }
+
+    fn vmo_get_info(&self, h: u32, i: *mut VmoInfo) -> i32 {
+        unsafe { zx_vmo_get_info(h, i) }
+    }
+
+    fn set_stress(&self, enabled: bool) {
+        unsafe { set_stress_mode(enabled); }
+    }
+
+    fn calculate_entropy(&self, h: u32) -> f32 {
+        unsafe { zx_vmo_calculate_entropy(h) }
+    }
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/vmo_handler.rs]
+========================================[0m
+use axum::{response::IntoResponse, Json};
+use serde_json::json;
+
+pub async fn handle_get_vmos() -> impl IntoResponse {
+    let mut handles = [0u32; 1024];
+    let count = unsafe { crate::kernel::ffi::zx_vmo_get_all_handles(handles.as_mut_ptr(), 1024) };
+
+    let mut vmo_list = Vec::new();
+    for i in 0..count {
+        let mut info = crate::kernel::ffi::VmoInfo {
+            handle: 0,
+            size: 0,
+            committed_pages: 0,
+            is_cow: 0,
+            parent_handle: 0,
+        };
+        let res = unsafe { crate::kernel::ffi::zx_vmo_get_info(handles[i], &mut info) };
+
+        if res == 0 {
+            // ⚡ V17: Real-time Entropy Pull
+            let entropy = unsafe { crate::kernel::ffi::zx_vmo_calculate_entropy(handles[i]) };
+
+            vmo_list.push(json!({
+                "handle": format!("0x{:x}", info.handle),
+                "size_bytes": info.size,
+                "committed_pages": info.committed_pages,
+                "memory_used_kb": (info.committed_pages * 4096) / 1024,
+                "is_cow": info.is_cow,
+                "entropy": format!("{:.4}", entropy),
+                "parent_handle": if info.parent_handle > 0 { format!("0x{:x}", info.parent_handle) } else { "None".to_string() }
+            }));
+        }
+    }
+
+    Json(json!({ "vmos": vmo_list, "active_count": count }))
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/lib.rs]
+========================================[0m
+pub mod kernel {
+    pub mod ffi;
+}
+pub mod memory;
+pub mod vmo_handler;
+pub mod vector_bridge;
+pub mod token_ledger;
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/vector_bridge.rs]
+========================================[0m
+// src/vector_bridge.rs — v1.1 [QUOTA_SHIELDED + MODEL_ALIGNED]
+use anyhow::Result;
+use reqwest::Client;
+use serde_json::json;
+
+pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
+    // ⚡ SUTURE 1: Shield the API call to respect Free Tier RPM limits
+    crate::token_ledger::wait_for_quota("gemini-embedding-2", 500).await;
+
+    let client = Client::new();
+    
+    // ⚡ SUTURE 2: Align with the models verified by scout_models.sh
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={}",
+        api_key
+    );
+
+    let payload = json!({
+        "model": "models/gemini-embedding-2",
+        "content": { "parts": [{ "text": text }] }
+    });
+
+    let res = client.post(&url).json(&payload).send().await?;
+    let body: serde_json::Value = res.json().await?;
+
+    let mut vector = Vec::new();
+    if let Some(values) = body.pointer("/embedding/values").and_then(|v| v.as_array()) {
+        for v in values {
+            if let Some(f) = v.as_f64() {
+                vector.push(f as f32);
+            }
+        }
+    } else {
+        // Stop swallowing the error so we can debug if it fails again
+        return Err(anyhow::anyhow!("API REJECTED EMBEDDING. Raw response: {}", body));
+    }
+
+    Ok(vector)
+}
+
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() { return 0.0; }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    dot / (norm_a * norm_b)
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/token_ledger.rs]
+========================================[0m
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
+
+#[derive(Debug, Clone)]
+pub struct ModelQuota {
+    pub rpm_limit: u32,
+    pub tpm_limit: u32,
+}
+
+impl ModelQuota {
+    fn for_model(model: &str) -> Self {
+        match model {
+            // Dashboard: 5 RPM. Shielding at 4.
+            m if m.contains("flash") => Self { rpm_limit: 4, tpm_limit: 240_000 },
+            // Dashboard: 15 RPM. Shielding at 14.
+            m if m.contains("31b")   => Self { rpm_limit: 14, tpm_limit: 100_000 },
+            // Dashboard: 15 RPM. Shielding at 14.
+            m if m.contains("26b")   => Self { rpm_limit: 14, tpm_limit: 100_000 },
+            // Dashboard: 30 RPM. Shielding at 28.
+            m if m.contains("27b")   => Self { rpm_limit: 28, tpm_limit: 14_000 },
+            // Universal fallback
+            _                        => Self { rpm_limit: 10, tpm_limit: 50_000 },
+        }
+    }
+}
+
+#[derive(Debug)]
+struct WindowEntry {
+    timestamp: Instant,
+    tokens:    u32,
+}
+
+#[derive(Debug, Default)]
+struct ModelWindow {
+    entries: Vec<WindowEntry>,
+}
+
+impl ModelWindow {
+    fn purge_stale(&mut self) {
+        let cutoff = Instant::now() - Duration::from_secs(60);
+        self.entries.retain(|e| e.timestamp > cutoff);
+    }
+
+    fn token_sum(&self) -> u32 {
+        self.entries.iter().map(|e| e.tokens).sum()
+    }
+
+    fn ms_until_slot_free(&self) -> u64 {
+        if self.entries.is_empty() { return 0; }
+        let oldest = self.entries.iter().map(|e| e.timestamp).min().unwrap();
+        (Duration::from_secs(60).saturating_sub(oldest.elapsed())).as_millis() as u64 + 100
+    }
+}
+
+pub struct TokenLedger {
+    windows: Mutex<HashMap<String, ModelWindow>>,
+}
+
+impl TokenLedger {
+    pub fn new() -> Self {
+        Self { windows: Mutex::new(HashMap::new()) }
+    }
+
+    pub fn check_and_reserve(&self, model: &str, estimated_tokens: u32) -> Result<(), u64> {
+        let quota = ModelQuota::for_model(model);
+        let mut map = self.windows.lock().unwrap();
+        let window = map.entry(model.to_string()).or_default();
+        window.purge_stale();
+
+        if window.entries.len() as u32 >= quota.rpm_limit { return Err(window.ms_until_slot_free()); }
+        if window.token_sum() + estimated_tokens > quota.tpm_limit { return Err(window.ms_until_slot_free()); }
+
+        window.entries.push(WindowEntry { timestamp: Instant::now(), tokens: estimated_tokens });
+        Ok(())
+    }
+}
+
+pub static LEDGER: Lazy<TokenLedger> = Lazy::new(TokenLedger::new);
+
+pub async fn wait_for_quota(model: &str, estimated_tokens: u32) {
+    let mut attempts = 0;
+    loop {
+        match LEDGER.check_and_reserve(model, estimated_tokens) {
+            Ok(()) => return,
+            Err(wait_ms) => {
+                let jitter = (generate_seed() % 500) as u64;
+                println!(
+                    "\x1b[33m[LEDGER] {} ceiling hit. Waiting {}ms (attempt {})...\x1b[0m",
+                    model, wait_ms + jitter, attempts + 1
+                );
+                tokio::time::sleep(Duration::from_millis(wait_ms + jitter)).await;
+                attempts += 1;
+                if attempts > 10 { break; }
+            }
+        }
+    }
+}
+
+fn http_rpm_limit() -> u32 {
+    std::env::var("NEXUS_HTTP_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(60)
+}
+
+static HTTP_WINDOWS: Lazy<Mutex<HashMap<String, Vec<Instant>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn http_check(ip: &str) -> Result<(), u64> {
+    let limit = http_rpm_limit();
+    let cutoff = Instant::now() - Duration::from_secs(60);
+
+    let mut map = HTTP_WINDOWS.lock().unwrap();
+    let window = map.entry(ip.to_string()).or_default();
+    window.retain(|&ts| ts > cutoff);
+
+    if window.len() as u32 >= limit {
+        let oldest = *window.first().unwrap();
+        let wait = (Duration::from_secs(60).saturating_sub(oldest.elapsed())).as_millis() as u64;
+        return Err(wait + 100);
+    }
+
+    window.push(Instant::now());
+    Ok(())
+}
+
+/// generate_seed: OS-entropy random u64 with timestamp mixing for per-call uniqueness.
+/// RandomState seeds from getrandom() syscall; writing the current nanos ensures
+/// two calls within the same nanosecond still return different values.
+fn generate_seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let t = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(t);
+    h.finish()
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/memory.rs]
+========================================[0m
+use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
+use std::path::Path;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AgentMemory {
+    pub id: i64,
+    pub origin: String,
+    pub directive: String,
+    pub result: String,
+    pub timestamp: String,
+}
+
+pub struct MemoryPalace {
+    pub pool: SqlitePool,
+}
+
+impl MemoryPalace {
+    pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> {
+        if !Path::new(db_path).exists() { std::fs::File::create(db_path).ok(); }
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(&format!("sqlite:{}", db_path))
+            .await?;
+
+        sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
+        sqlx::query("PRAGMA cache_size=-16000;").execute(&pool).await?;
+        sqlx::query("PRAGMA synchronous=NORMAL;").execute(&pool).await?;
+
+        let palace = Self { pool };
+        palace.init_full_schema().await?;
+        Ok(palace)
+    }
+
+    pub async fn init_full_schema(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS neural_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin TEXT NOT NULL,
+            directive TEXT NOT NULL,
+            result TEXT NOT NULL,
+            embedding TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );",
+        ).execute(&self.pool).await?;
+
+        sqlx::query(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
+            directive, result, content='neural_context', content_rowid='id'
+        );",
+        ).execute(&self.pool).await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS system_insights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            summary TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );",
+        ).execute(&self.pool).await?;
+
+        Ok(())
+    }
+
+    /// SUTURE: Atomic Transaction over FTS and Base Table
+    pub async fn store_memory(
+        &self,
+        origin: &str,
+        directive: &str,
+        result: &str,
+        embedding: Option<Vec<f32>>,
+    ) -> Result<(), sqlx::Error> {
+        let emb_str = embedding.map(|v| serde_json::to_string(&v).unwrap_or_default());
+        
+        let mut tx = self.pool.begin().await?;
+
+        let res = sqlx::query("INSERT INTO neural_context (origin, directive, result, embedding) VALUES (?, ?, ?, ?)")
+            .bind(origin)
+            .bind(directive)
+            .bind(result)
+            .bind(emb_str)
+            .execute(&mut *tx)
+            .await?;
+
+        let row_id = res.last_insert_rowid();
+        sqlx::query("INSERT INTO memory_search (rowid, directive, result) VALUES (?, ?, ?)")
+            .bind(row_id)
+            .bind(directive)
+            .bind(result)
+            .execute(&mut *tx)
+            .await?;
+            
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn store_insight(&self, summary: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO system_insights (summary) VALUES (?)").bind(summary).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn fetch_all(&self) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY id DESC LIMIT 50")
+            .fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|row| AgentMemory {
+            id: row.get("id"),
+            origin: row.get("origin"),
+            directive: row.get("directive"),
+            result: row.get("result"),
+            timestamp: row.get("timestamp"),
+        }).collect())
+    }
+
+    pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT n.id, n.origin, n.directive, n.result, n.timestamp 
+             FROM neural_context n JOIN memory_search m ON n.id = m.rowid 
+             WHERE memory_search MATCH ? ORDER BY rank LIMIT 10",
+        ).bind(query).fetch_all(&self.pool).await?;
+
+        Ok(rows.into_iter().map(|row| AgentMemory {
+            id: row.get(0), origin: row.get(1), directive: row.get(2), result: row.get(3), timestamp: row.get(4),
+        }).collect())
+    }
+
+    pub async fn semantic_search(&self, query_vec: &[f32]) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp, embedding FROM neural_context WHERE embedding IS NOT NULL")
+            .fetch_all(&self.pool).await?;
+
+        let mut scored_mems = Vec::new();
+        for row in rows {
+            let emb_str: Option<String> = row.get("embedding");
+            if let Some(s) = emb_str {
+                if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&s) {
+                    let score = crate::vector_bridge::cosine_similarity(query_vec, &vec);
+                    scored_mems.push((score, row));
+                }
+            }
+        }
+
+        scored_mems.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored_mems.truncate(3); 
+
+        Ok(scored_mems.into_iter().map(|(_, row)| AgentMemory {
+            id: row.get("id"), origin: row.get("origin"), directive: row.get("directive"),
+            result: row.get("result"), timestamp: row.get("timestamp"),
+        }).collect())
+    }
+
+    pub async fn purge_all(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM neural_context").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM memory_search").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM system_insights").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn fetch_random_strands(&self, limit: i64) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY RANDOM() LIMIT ?")
+            .bind(limit).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|row| AgentMemory {
+            id: row.get("id"), origin: row.get("origin"), directive: row.get("directive"), result: row.get("result"), timestamp: row.get("timestamp"),
+        }).collect())
+    }
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/zig/build.zig]
+========================================[0m
+//! NEXUS SINGULARITY — Zig Build Script v3.5 (Zig 0.15.2)
+//! root_source_file points directly at muscle.zig — no lib.zig wrapper.
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target   = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const muscle_mod = b.createModule(.{
+        .root_source_file = b.path("../kernel/muscle.zig"),
+        .target           = target,
+        .optimize         = optimize,
+    });
+
+    const lib = b.addLibrary(.{
+        .name        = "muscle",
+        .linkage     = .static,
+        .root_module = muscle_mod,
+    });
+
+    lib.bundle_compiler_rt = true;
+    b.installArtifact(lib);
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/build.rs]
+========================================[0m
+use std::process::Command;
+use std::env;
+
+fn main() {
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let manifest_dir = env::current_dir().unwrap();
+    let zig_src = manifest_dir.join("src/kernel/muscle.zig");
+
+    println!("cargo:rerun-if-changed=src/kernel/muscle.zig");
+
+    // ⚡ Compile Zig source into a static library
+    let status = Command::new("zig")
+        .args([
+            "build-lib",
+            "-O", "ReleaseFast",
+            "-lc",
+            zig_src.to_str().unwrap(),
+            &format!("-femit-bin={}/libmuscle.a", out_dir),
+            "--name", "muscle",
+        ])
+        .status()
+        .expect(">> [BUILD_ERROR] Zig compiler not found. Install zig to build the hardware bridge.");
+
+    if !status.success() {
+        panic!(">> [BUILD_ERROR] Zig compilation failed.");
+    }
+
+    // ⚡ Tell Cargo where to find the library
+    println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-lib=static=muscle");
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_substrate"
+version = "1.9.4"
+build = "build.rs"
+edition = "2021"
+
+[dependencies]
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+axum = "0.7"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "tls-rustls"] }
+anyhow = "1.0"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+once_cell = "1.19"
+
+[build-dependencies]
+cc = "1.0"
+
+[36m========================================
+[FILE: crates/memory_graph/src/lib.rs]
+========================================[0m
+pub fn init_memory_graph() {
+    println!(">> module memory_graph initialized");
+}
+
+[36m========================================
+[FILE: crates/memory_graph/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_memory_graph"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[36m========================================
+[FILE: crates/economy/src/lib.rs]
+========================================[0m
+pub fn init_economy() {
+    println!(">> module economy initialized");
+}
+
+[36m========================================
+[FILE: crates/economy/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_economy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[36m========================================
+[FILE: crates/protocol/src/lib.rs]
+========================================[0m
+pub fn init_protocol() {
+    println!(">> module protocol initialized");
+}
+
+[36m========================================
+[FILE: crates/protocol/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_protocol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[36m========================================
+[FILE: crates/payments/src/lib.rs]
+========================================[0m
+pub fn init_payments() {
+    println!(">> module payments initialized");
+}
+
+[36m========================================
+[FILE: crates/payments/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_payments"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[36m========================================
+[FILE: crates/marketplace/src/lib.rs]
+========================================[0m
+pub fn init_marketplace() {
+    println!(">> module marketplace initialized");
+}
+
+[36m========================================
+[FILE: crates/marketplace/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_marketplace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[36m========================================
+[FILE: crates/billing/src/lib.rs]
+========================================[0m
+pub fn init_billing() {
+    println!(">> module billing initialized");
+}
+
+[36m========================================
+[FILE: crates/billing/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_billing"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[36m========================================
+[FILE: crates/identity/src/lib.rs]
+========================================[0m
+use ed25519_dalek::{SigningKey, Signer};
+pub struct Identity { pub key: SigningKey }
+impl Identity {
+    pub fn new() -> Self { Self { key: SigningKey::generate(&mut rand::rngs::OsRng) } }
+}
+
+[36m========================================
+[FILE: crates/identity/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_identity"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ed25519-dalek = "2.2"
+rand = "0.8"
+
+[36m========================================
+[FILE: crates/mesh/src/lib.rs]
+========================================[0m
+use serde::{Serialize, Deserialize};
+#[derive(Serialize, Deserialize)]
+pub struct MeshMessage { pub payload: Vec<u8> }
+
+[36m========================================
+[FILE: crates/mesh/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_mesh"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+bincode = "1.3"
+
+[36m========================================
+[FILE: crates/runtime_core/src/lib.rs]
+========================================[0m
+pub mod agent_protocol;
+pub mod neural_agent;
+pub mod orchestrator;
+pub mod json_parser;
+pub mod factory;
+pub mod conductor;
+pub mod router;
+pub mod logic_engine;
+pub mod metrics;
+pub mod wasm_forge;
+pub mod wasm_runtime;
+pub mod arbiter_agent;
+pub mod podman;
+pub mod diff;
+pub mod ast_editor;
+pub mod cluster;
+pub mod distributed_scheduler;
+pub mod executor;
+pub mod task_manager;
+pub mod shared_state;
+pub mod cli_utils;
+
+[36m========================================
+[FILE: crates/runtime_core/src/agent_protocol.rs]
+========================================[0m
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum AgentStatus { Idle, Executing, Fault(String) }
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum AgentTaskType { Refactor, Audit, SystemCheck, NeuralInference, Command, DevOps, DataAnalysis }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentDirective {
+    pub id: Uuid,
+    pub task_type: AgentTaskType,
+    pub payload: String,
+    pub priority: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "type")]
+pub enum AgentAction {
+    #[serde(rename = "execute_command")] ExecuteCommand { command: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "read_file")] ReadFile { path: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "write_file")] WriteFile { path: String, content: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "search_memory")] SearchMemory { query: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "vmo_create")] VmoCreate { size: usize, #[serde(default)] reasoning: String },
+    #[serde(rename = "calculate_entropy")] CalculateEntropy { handle: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "lazarus_snapshot")] LazarusSnapshot { path: String, tag: Option<String>, #[serde(default)] reasoning: String },
+    #[serde(rename = "export_report")] ExportReport { title: String, content: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "fetch_ui_snapshot")] FetchUiSnapshot { #[serde(default)] reasoning: String },
+    #[serde(rename = "patch_function")] PatchFunction { path: String, function_name: String, new_body: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "scrape_url")] ScrapeUrl { url: String, #[serde(default)] reasoning: String },
+    #[serde(rename = "halt")] Halt { #[serde(default)] reasoning: String },
+    #[serde(rename = "diff_patch")] DiffPatch { path: String, search: String, replace: String, #[serde(default)] reasoning: String },
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/neural_agent.rs]
+========================================[0m
+use crate::metrics::METRICS;
+use anyhow::{Context, Result};
+use futures_util::StreamExt;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use tokio::sync::broadcast;
+
+#[derive(Debug, Default, Clone)]
+pub struct ContextPacket {
+    pub system_prompt: Option<String>,
+    pub model_override: Option<String>,
+    pub current_file: String,
+    pub current_content: Option<String>,
+    pub recent_logs: Vec<String>,
+    pub task_complexity: u8,
+}
+
+pub struct MicroAgent {
+    pub memory: Mutex<VecDeque<Value>>,
+    pub tx: broadcast::Sender<String>,
+}
+
+impl MicroAgent {
+    pub fn init(tx: broadcast::Sender<String>) -> Result<Self> {
+        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(16)), tx })
+    }
+
+    pub async fn prepare_and_run(
+        &self,
+        client: &Client,
+        api_key: &str,
+        user_text: &str,
+        ctx: ContextPacket,
+        _resonance: f32,
+        model_override: Option<&str>,
+    ) -> Result<(String, u128)> {
+        let start = std::time::Instant::now();
+        let model = model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-26b-a4b-it");
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
+
+        let combined_text = format!("SYSTEM: {}\nUSER: {}", ctx.system_prompt.unwrap_or_default(), user_text);
+        
+        let payload = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": combined_text }] }],
+            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 4096 }
+        });
+
+        let response = client.post(&url).json(&payload).send().await.context("API request failed")?;
+        let mut full_response = String::new();
+        let mut byte_buffer = Vec::new();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk_result) = stream.next().await {
+            if let Ok(chunk) = chunk_result {
+                byte_buffer.extend_from_slice(&chunk);
+                while let Some(pos) = byte_buffer.iter().position(|&b| b == b'\n') {
+                    let line_bytes: Vec<u8> = byte_buffer.drain(..=pos).collect();
+                    let line = String::from_utf8_lossy(&line_bytes);
+                    let clean = line.trim_start_matches("data: ").trim();
+                    if clean.is_empty() || clean == "[DONE]" { continue; }
+
+                    if let Ok(val) = serde_json::from_str::<Value>(clean) {
+                        if let Some(parts) = val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                            for part in parts {
+                                // ⚡ CRITICAL: Filter out Gemma 4 reasoning/thought parts
+                                if part["thought"].as_bool().unwrap_or(false) { continue; }
+                                
+                                if let Some(token) = part["text"].as_str() {
+                                    full_response.push_str(token);
+                                    let _ = self.tx.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        METRICS.record_api_call(start.elapsed().as_millis());
+        Ok((full_response, start.elapsed().as_millis()))
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/orchestrator.rs]
+========================================[0m
+use crate::neural_agent::ContextPacket;
+use crate::metrics::METRICS;
+use futures_util::StreamExt;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
+use tracing::error;
+
+pub struct Orchestrator;
+
+impl Orchestrator {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub async fn run(
+        &self,
+        prompt: String,
+        ctx: ContextPacket,
+        client: &Client,
+        api_key: &str,
+        tx: Option<broadcast::Sender<String>>,
+    ) -> Result<String, String> {
+        let model = ctx.model_override.as_deref().unwrap_or("gemma-4-26b-a4b-it");
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+            model, api_key
+        );
+
+        let payload = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": prompt }] }],
+            "systemInstruction": {
+                "parts": [{
+                    "text": ctx.system_prompt.as_deref().unwrap_or("Output ONLY a JSON array. Zero prose.")
+                }]
+            },
+            "generationConfig": { 
+                "temperature": 0.1, 
+                "maxOutputTokens": 4096,
+            }
+        });
+
+        for _attempt in 1..=2u64 {
+            let t_start = Instant::now();
+            let res = client
+                .post(&url)
+                .timeout(Duration::from_secs(45))
+                .json(&payload)
+                .send()
+                .await;
+
+            match res {
+                Ok(response) if response.status().is_success() => {
+                    let mut full_text = String::new();
+                    let mut stream = response.bytes_stream();
+                    let mut buf: Vec<u8> = Vec::new();
+
+                    while let Some(Ok(chunk)) = stream.next().await {
+                        buf.extend_from_slice(&chunk);
+
+                        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                            let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+                            let line = String::from_utf8_lossy(&line_bytes);
+                            let clean = line.trim_start_matches("data: ").trim();
+
+                            if clean.is_empty() || clean == "[DONE]" {
+                                continue;
+                            }
+
+                            if let Ok(val) = serde_json::from_str::<Value>(clean) {
+                                if let Some(parts) = val.pointer("/candidates/0/content/parts")
+                                    .and_then(|v| v.as_array())
+                                {
+                                    for part in parts {
+                                        // Skip internal thought tokens
+                                        if part["thought"].as_bool().unwrap_or(false) {
+                                            continue;
+                                        }
+                                        if let Some(token) = part["text"].as_str() {
+                                            full_text.push_str(token);
+                                            if let Some(sender) = &tx {
+                                                let _ = sender.send(
+                                                    json!({"type": "NEURAL_STREAM", "payload": token}).to_string()
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    METRICS.api_latency_ms_sum.fetch_add(
+                        t_start.elapsed().as_millis() as u64,
+                        Ordering::Relaxed,
+                    );
+
+                    let raw = full_text.trim();
+                    // Find the LAST line that starts with [ opening a JSON array.
+                    // This skips [ chars embedded in prose, code blocks, and reasoning.
+                    let raw_lines: Vec<&str> = raw.lines().collect();
+                    let json_start = raw_lines.iter().rposition(|l| {
+                        let t = l.trim();
+                        t.starts_with('[') && t.len() > 1 && {
+                            let rest = t[1..].trim_start();
+                            rest.starts_with('{') || rest.starts_with(']') || rest == "]"
+                        }
+                    });
+                    let out = if let Some(si) = json_start {
+                        let slice = raw_lines[si..].join("
+");
+                        if let Some(e) = slice.rfind(']') { slice[..=e].to_string() } else { raw.to_string() }
+                    } else { raw.to_string() };
+                    return Ok(out.trim().to_string());
+                }
+                Ok(resp) => error!("API ERROR: {}", resp.status()),
+                Err(e) => error!("NETWORK ERROR: {}", e),
+            }
+        }
+
+        Err("CORTEX_UPLINK_FAILED".into())
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/json_parser.rs]
+========================================[0m
+use anyhow::{anyhow, Result};
+use crate::agent_protocol::AgentAction;
+use serde_json::Value;
+
+/// Robust extractor that handles most LLM output variations
+pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
+    let text = response.trim();
+
+    // Strategy 1: Direct parse (clean JSON)
+    if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(text) {
+        if !actions.is_empty() {
+            return Ok(actions);
+        }
+    }
+
+    // Strategy 2: Extract largest JSON array (handles markdown, extra text, thoughts)
+    if let Some(array_str) = extract_largest_json_array(text) {
+        if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&array_str) {
+            if !actions.is_empty() {
+                return Ok(actions);
+            }
+        }
+    }
+
+    // Strategy 3: Single object fallback
+    if let Ok(obj) = serde_json::from_str::<Value>(text) {
+        if obj.is_object() {
+            if let Ok(action) = serde_json::from_value::<AgentAction>(obj) {
+                return Ok(vec![action]);
+            }
+        }
+    }
+
+    // Strategy 4: Aggressive normalization + legacy field support
+    let normalized = normalize_action_json(text);
+    if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&normalized) {
+        if !actions.is_empty() {
+            return Ok(actions);
+        }
+    }
+
+    Err(anyhow!(
+        "PARSER_FRACTURE: Could not extract valid actions after multiple strategies.\nPreview: {:.200}",
+        text
+    ))
+}
+
+fn extract_largest_json_array(text: &str) -> Option<String> {
+    let mut best_start = 0;
+    let mut best_end = 0;
+    let mut max_len = 0;
+
+    let mut i = 0;
+    while let Some(start) = text[i..].find('[') {
+        let abs_start = i + start;
+        let mut depth = 0;
+        let mut end = None;
+
+        for (j, c) in text[abs_start..].char_indices() {
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(abs_start + j + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(e) = end {
+            let len = e - abs_start;
+            if len > max_len {
+                max_len = len;
+                best_start = abs_start;
+                best_end = e;
+            }
+            i = e;
+        } else {
+            break;
+        }
+    }
+
+    if max_len > 10 {
+        Some(text[best_start..best_end].to_string())
+    } else {
+        None
+    }
+}
+
+fn normalize_action_json(text: &str) -> String {
+    let mut s = text
+        .replace("```json", "")
+        .replace("```", "")
+        .replace("action:", "\"type\":")
+        .replace("\"action\"", "\"type\"")
+        .trim()
+        .to_string();
+
+    // If it starts with { but is not wrapped in [], make it an array
+    if s.starts_with('{') && !s.starts_with('[') {
+        s = format!("[{}]", s);
+    }
+    s
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/factory.rs]
+========================================[0m
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub struct AgentFactory;
+
+impl AgentFactory {
+    pub fn get_model_for_turn(turn: usize, current_error_count: usize) -> &'static str {
+        if turn >= 8 || current_error_count > 1 { "gemma-4-26b-a4b-it" } else { "gemma-4-26b-a4b-it" }
+    }
+
+    pub fn select_model_for_mission(mission_type: &str) -> &'static str {
+        match mission_type {
+            "heavy_reasoning" | "refactor" | "security" | "dream" => "gemma-4-26b-a4b-it",
+            _ => "gemma-4-26b-a4b-it",
+        }
+    }
+
+    pub fn get_persona_for_mission(mission_type: &str) -> String {
+        match mission_type {
+            "security" => "IDENTITY: NEXUS Security Auditor. ROLE: Identify logic flaws, path traversal, unsafe unwraps, and auth gaps. OUTPUT: ONLY a valid JSON array. No prose.".to_string(),
+            "docs" => "IDENTITY: NEXUS Archivist. ROLE: Generate technical markdown, README files, and architecture maps. OUTPUT: ONLY a valid JSON array of write_file actions.".to_string(),
+            "qa" => "IDENTITY: NEXUS QA Agent. ROLE: Ensure 100% test coverage and zero compiler warnings. WORKFLOW: cargo check → cargo test → fix failures → halt. OUTPUT: ONLY a valid JSON array.".to_string(),
+            "dream" => "IDENTITY: NEXUS Archivist. ROLE: Synthesize memory strands into architectural insights. OUTPUT: Plain text summary — no JSON required.".to_string(),
+            _ => "IDENTITY: NEXUS Lead DevOps. ROLE: Write high-performance Rust code and manage system operations. OUTPUT: ONLY a valid JSON array. No prose.".to_string(),
+        }
+    }
+
+    pub fn certify_product(title: &str, client: &str, content: &str) -> String {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        format!("--- NEXUS DELIVERABLE ---\nCLIENT: {}\nTITLE: {}\nSTAMP: VERIFIED_AGENT_DNA\nTS: {}\n\n{}", client, title, ts, content)
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/conductor.rs]
+========================================[0m
+use crate::metrics::METRICS;
+use crate::neural_agent::ContextPacket;
+use crate::orchestrator::Orchestrator;
+use crate::router::AgentProfile;
+use nexus_substrate::token_ledger::wait_for_quota;
+use reqwest::Client;
+use serde_json::json;
+use std::sync::atomic::Ordering;
+use tokio::sync::broadcast;
+
+const ESTIMATED_TOKENS: u32 = 2_000;
+
+pub struct Conductor;
+
+impl Conductor {
+    pub async fn run_turn(
+        profile: &AgentProfile,
+        prompt: String,
+        turn: usize,
+        orch: &Orchestrator,
+        client: &Client,
+        api_key: &str,
+        tx: Option<broadcast::Sender<String>>,
+    ) -> Result<String, String> {
+        METRICS.api_calls.fetch_add(1, Ordering::Relaxed);
+
+        let model: &str = if turn > 6 { "gemma-4-26b-a4b-it" } else { "gemma-4-26b-a4b-it" };
+        wait_for_quota(model, ESTIMATED_TOKENS).await;
+
+        let ctx = ContextPacket {
+            system_prompt: Some(profile.persona.clone()),
+            model_override: Some(model.to_string()),
+            ..Default::default()
+        };
+
+        if let Some(ref sender) = tx {
+            let _ = sender.send(
+                json!({"type": "NEURAL_THOUGHT", "payload": format!("[CONDUCTOR] turn {} → {}", turn, model)}).to_string()
+            );
+        }
+
+        let result = orch.run(prompt.clone(), ctx, client, api_key, tx.clone()).await;
+
+        if let Err(ref e) = result {
+            if e.contains("STALE") || e.contains("500") || e.contains("RESOURCE_EXHAUSTED") || e.contains("INTERNAL") || e.contains("CONTEXT_OVERFLOW") {
+                METRICS.task_failures.fetch_add(1, Ordering::Relaxed);
+                
+                let failover: &str = if model == "gemma-4-26b-a4b-it" { "gemma-4-26b-a4b-it" } else { "gemma-4-26b-a4b-it" };
+                wait_for_quota(failover, ESTIMATED_TOKENS).await;
+
+                let fail_ctx = ContextPacket {
+                    system_prompt: Some(profile.persona.clone()),
+                    model_override: Some(failover.to_string()),
+                    ..Default::default()
+                };
+                return orch.run(prompt, fail_ctx, client, api_key, tx).await;
+            }
+        }
+        result
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/router.rs]
+========================================[0m
+// src/router.rs — Intelligent Agent Router v4.1 [REPO_DOCTOR_ACTIVE]
+// Logic: Task-specific budget allocation with strict JSON enforcement.
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DirectiveClass {
+    ShellOp,
+    TargetedEdit { file_hint: String },
+    RepoDoctor, // ⚡ NEW: Automated Workspace Healing
+    SecurityAudit,
+    WasmForge, 
+    Inquiry,
+    FeatureBuild,
+    General,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextBudget {
+    pub max_file_chars: usize,
+    pub max_obs_lines: usize,
+    pub max_schema_chars: usize,
+    pub max_output_tokens: u32,
+}
+
+impl ContextBudget {
+    pub fn minimal() -> Self {
+        Self { max_file_chars: 1_500, max_obs_lines: 2, max_schema_chars: 400, max_output_tokens: 1024 }
+    }
+    pub fn standard() -> Self {
+        Self { max_file_chars: 8_000, max_obs_lines: 6, max_schema_chars: 1_200, max_output_tokens: 4096 }
+    }
+    pub fn doctor() -> Self {
+        Self { max_file_chars: 15_000, max_obs_lines: 10, max_schema_chars: 1_500, max_output_tokens: 8192 }
+    }
+    pub fn security() -> Self {
+        Self { max_file_chars: 20_000, max_obs_lines: 10, max_schema_chars: 2_000, max_output_tokens: 8192 }
+    }
+}
+
+pub struct AgentProfile {
+    pub class: DirectiveClass,
+    pub primary_model: &'static str,
+    pub max_turns: u8,
+    pub budget: ContextBudget,
+    pub persona: String,
+}
+
+pub struct IntelligentRouter;
+
+impl IntelligentRouter {
+    pub fn classify(actual_directive: &str) -> DirectiveClass {
+        let d = actual_directive.to_lowercase();
+
+        if ["diagnose", "doctor", "fix repo", "repair workspace", "suture"].iter().any(|k| d.contains(k)) {
+            return DirectiveClass::RepoDoctor;
+        }
+        if ["synthesize", "forge", "wasm cell"].iter().any(|k| d.contains(k)) {
+            return DirectiveClass::WasmForge;
+        }
+        if ["cargo check", "cargo test", "git status", "ls ", "find "].iter().any(|k| d.contains(k)) {
+            return DirectiveClass::ShellOp;
+        }
+        if ["audit ", "vulnerability", "memory safe"].iter().any(|k| d.contains(k)) {
+            return DirectiveClass::SecurityAudit;
+        }
+        if ["fix", "patch", "update", "edit"].iter().any(|k| d.contains(k)) {
+            return DirectiveClass::TargetedEdit { file_hint: "target".into() };
+        }
+        DirectiveClass::General
+    }
+
+    pub fn route(directive: &str) -> AgentProfile {
+        let start_idx = directive.find("DIRECTIVE: ").map(|i| i + 11).unwrap_or(0);
+        let user_cmd = &directive[start_idx..];
+
+        let class = Self::classify(user_cmd);
+
+        match class {
+            DirectiveClass::RepoDoctor => AgentProfile {
+                class: DirectiveClass::RepoDoctor,
+                primary_model: "gemma-4-26b-a4b-it", // ⚡ High-reasoning model
+                max_turns: 8,
+                budget: ContextBudget::doctor(),
+                persona: "IDENTITY: NEXUS Repo Doctor. Goal: Diagnose and patch compilation errors. RULE: You MUST output ONLY a valid JSON array. WORKFLOW: 1. read_file on the failing file. 2. write_file with the corrected code. 3. execute_command with 'cargo check' to verify. 4. halt only when integrity passes.".into(),
+            },
+            DirectiveClass::WasmForge => AgentProfile {
+                class: DirectiveClass::WasmForge,
+                primary_model: "gemma-4-26b-a4b-it",
+                max_turns: 5,
+                budget: ContextBudget::standard(),
+                persona: "IDENTITY: NEXUS Forge Master. Goal: Synthesize Rust WASM cells. RULE: You MUST output a valid JSON array inside an <ACTION> block containing {\"type\": \"synthesize_wasm\", \"code\": \"...\"}. DO NOT write markdown tutorials. DO NOT output WAT format. RULE 2: You MUST execute {\"type\": \"halt\"} immediately after a successful synthesis.".into(),
+            },
+            DirectiveClass::ShellOp => AgentProfile {
+                class: DirectiveClass::ShellOp,
+                primary_model: "gemma-4-26b-a4b-it",
+                max_turns: 6,
+                budget: ContextBudget::minimal(),
+                persona: "IDENTITY: NEXUS DevOps. Goal: Substrate maintenance. RULE: You MUST execute operations using ONLY a valid JSON array where every object has a 'type' field.".into(),
+            },
+            _ => AgentProfile {
+                class: DirectiveClass::General,
+                primary_model: "gemma-4-26b-a4b-it",
+                max_turns: 8,
+                budget: ContextBudget::standard(),
+                persona: "IDENTITY: NEXUS Sovereign Agent. Goal: Fulfill the directive. RULE: You MUST execute operations using ONLY a valid JSON array where every object has a 'type' field. NEVER output conversational text. Output ONLY JSON.".into(),
+            },
+        }
+    }
+
+    pub fn build_prompt(directive: &str, profile: &AgentProfile, obs: &[String]) -> String {
+        let history = obs.iter().map(|o| format!(">> {}", o)).collect::<Vec<_>>().join("\n");
+        format!(
+            "{}\n\nMISSION HISTORY:\n{}\n\nCURRENT OBJECTIVE: {}\n\nNEXT STEP (Output ONLY a valid JSON array):",
+            profile.persona, history, directive
+        )
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/logic_engine.rs]
+========================================[0m
+use std::collections::HashMap;
+use tracing::warn;
+
+pub struct LogicEngine;
+
+impl LogicEngine {
+    pub fn is_action_safe(directive: &str) -> bool {
+        let forbidden = ["rm -rf /", "mkfs", "shutdown", "chmod 777", "dd if=/dev/zero", "> /dev/sda"];
+        let d_lower = directive.to_lowercase();
+        !forbidden.iter().any(|&p| d_lower.contains(p))
+    }
+
+    pub fn detect_deadlock(observations: &[String]) -> bool {
+        if observations.len() < 3 { return false; }
+
+        let mut read_counts: HashMap<String, usize> = HashMap::new();
+
+        for obs in observations {
+            if let Some(after) = obs.strip_prefix("[READ_OK] ") {
+                let path = after.split_whitespace().next().unwrap_or("").to_string();
+                if !path.is_empty() {
+                    *read_counts.entry(path).or_insert(0) += 1;
+                }
+            }
+        }
+
+        for (path, count) in read_counts {
+            if count >= 3 {
+                let file_progress = observations.iter().any(|obs| {
+                    (obs.contains("[WRITE_OK]") || obs.contains("[DIFF_PATCH_OK]") || obs.contains("[PATCH_OK]"))
+                        && obs.contains(&path)
+                });
+
+                if !file_progress {
+                    warn!("[LOGIC] Localized Deadlock: {} read {} times with zero progress.", path, count);
+                    return true;
+                }
+            }
+        }
+
+        let mut last_cmd_sig = String::new();
+        let mut cmd_repeat_count = 0;
+
+        for obs in observations {
+            if let Some(start) = obs.find("[CMD:") {
+                let sig: String = obs[start..]
+                    .lines()
+                    .filter(|line| !line.contains("Finished") && !line.contains("Blocking waiting"))
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+
+                if sig == last_cmd_sig && !sig.is_empty() {
+                    cmd_repeat_count += 1;
+                } else {
+                    last_cmd_sig = sig;
+                    cmd_repeat_count = 1;
+                }
+            }
+        }
+
+        if cmd_repeat_count >= 2 {
+            warn!("[LOGIC] Deadlock: Time-invariant command repetition detected.");
+            return true;
+        }
+        false
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/metrics.rs]
+========================================[0m
+/**
+ * src/metrics.rs — v4.1 Atomic Sovereign
+ * Copyright 2026 Donald Ball
+ * Lightweight, lock-free, zero-dependency metrics using only std atomics.
+ * Fully compatible with Prometheus scraping.
+ */
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
+
+#[derive(Debug)]
+pub struct NexusMetrics {
+    pub tasks_total:       AtomicU64,
+    pub task_failures:     AtomicU64,
+    pub arbiter_blocks:    AtomicU64,
+    pub heal_successes:    AtomicU64,
+    pub heal_failures:     AtomicU64,
+    pub api_latency_ms_sum: AtomicU64,
+    pub api_calls:         AtomicU64,
+    pub circuit_opens:     AtomicU64,
+}
+
+impl NexusMetrics {
+    const fn new() -> Self {
+        Self {
+            tasks_total: AtomicU64::new(0),
+            task_failures: AtomicU64::new(0),
+            arbiter_blocks: AtomicU64::new(0),
+            heal_successes: AtomicU64::new(0),
+            heal_failures: AtomicU64::new(0),
+            api_latency_ms_sum: AtomicU64::new(0),
+            api_calls: AtomicU64::new(0),
+            circuit_opens: AtomicU64::new(0),
+        }
+    }
+
+    /// Increment total tasks processed
+    pub fn inc_task(&self) {
+        self.tasks_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment task failures
+    pub fn inc_failure(&self) {
+        self.task_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment arbiter blocks (safety interventions)
+    pub fn inc_arbiter_block(&self) {
+        self.arbiter_blocks.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment successful self-healing sutures
+    pub fn inc_heal_success(&self) {
+        self.heal_successes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment failed self-healing attempts
+    pub fn inc_heal_failure(&self) {
+        self.heal_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment circuit breaker trips
+    pub fn inc_circuit_open(&self) {
+        self.circuit_opens.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record API call with latency (used by Orchestrator)
+    pub fn record_api_call(&self, latency_ms: u128) {
+        self.api_calls.fetch_add(1, Ordering::Relaxed);
+        self.api_latency_ms_sum.fetch_add(latency_ms as u64, Ordering::Relaxed);
+    }
+
+    /// Compute average latency (integer ms)
+    pub fn avg_latency_ms(&self) -> u64 {
+        let calls = self.api_calls.load(Ordering::Relaxed);
+        if calls == 0 {
+            0
+        } else {
+            self.api_latency_ms_sum.load(Ordering::Relaxed) / calls
+        }
+    }
+}
+
+pub static METRICS: LazyLock<NexusMetrics> = LazyLock::new(NexusMetrics::new);
+
+/// Returns full Prometheus exposition format text (ready for scraping)
+pub fn get_metrics_text() -> String {
+    let m = &*METRICS;
+    format!(
+        "# HELP nexus_tasks_total Total tasks processed by the NEXUS Cortex\n\
+         # TYPE nexus_tasks_total counter\n\
+         nexus_tasks_total {}\n\
+         # HELP nexus_task_failures Total task execution failures\n\
+         # TYPE nexus_task_failures counter\n\
+         nexus_task_failures {}\n\
+         # HELP nexus_arbiter_blocks Total arbiter safety interventions\n\
+         # TYPE nexus_arbiter_blocks counter\n\
+         nexus_arbiter_blocks {}\n\
+         # HELP nexus_heal_successes Self-healing suture successes\n\
+         # TYPE nexus_heal_successes counter\n\
+         nexus_heal_successes {}\n\
+         # HELP nexus_heal_failures Self-healing suture failures\n\
+         # TYPE nexus_heal_failures counter\n\
+         nexus_heal_failures {}\n\
+         # HELP nexus_api_calls Total calls to Gemini API backend\n\
+         # TYPE nexus_api_calls counter\n\
+         nexus_api_calls {}\n\
+         # HELP nexus_api_avg_latency_ms Average API latency in milliseconds\n\
+         # TYPE nexus_api_avg_latency_ms gauge\n\
+         nexus_api_avg_latency_ms {}\n\
+         # HELP nexus_circuit_opens Circuit breaker trips\n\
+         # TYPE nexus_circuit_opens counter\n\
+         nexus_circuit_opens {}\n",
+        m.tasks_total.load(Ordering::Relaxed),
+        m.task_failures.load(Ordering::Relaxed),
+        m.arbiter_blocks.load(Ordering::Relaxed),
+        m.heal_successes.load(Ordering::Relaxed),
+        m.heal_failures.load(Ordering::Relaxed),
+        m.api_calls.load(Ordering::Relaxed),
+        m.avg_latency_ms(),
+        m.circuit_opens.load(Ordering::Relaxed),
+    )
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/wasm_forge.rs]
+========================================[0m
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose, Engine as _};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::fs;
+
+pub struct WasmForge;
+
+impl WasmForge {
+    pub async fn synthesize_cell(logic_code: &str) -> Result<String> {
+        if logic_code.trim().starts_with("const std") || logic_code.contains("export fn") {
+            return Self::synthesize_zig(logic_code).await;
+        }
+        Self::synthesize_rust(logic_code).await
+    }
+
+    async fn synthesize_zig(zig_code: &str) -> Result<String> {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let tmp_path = format!("/tmp/nexus_zig_cell_{}.zig", ts);
+
+        fs::write(&tmp_path, zig_code).await?;
+
+        // ⚡ ZIG 0.15 WASM COMPILATION FIX (No Linker Panics)
+        let output = tokio::process::Command::new("zig")
+            .args([
+                "build-exe", &tmp_path,
+                "-target", "wasm32-freestanding",
+                "-O", "ReleaseSmall",
+                "-fno-entry", "-rdynamic",
+                "--name", "cell"
+            ])
+            .current_dir("/tmp")
+            .output().await?;
+
+        if !output.status.success() {
+            let _ = fs::remove_file(&tmp_path).await;
+            return Err(anyhow!("Zig compile error: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+
+        // Zig 0.15 writes cell.wasm to its own cwd, not /tmp
+        // Try /tmp first, then fall back to current dir
+        let wasm_path = if tokio::fs::metadata("/tmp/cell.wasm").await.is_ok() {
+            "/tmp/cell.wasm".to_string()
+        } else {
+            "cell.wasm".to_string()
+        };
+        let wasm_bytes = fs::read(&wasm_path).await?;
+        let b64 = general_purpose::STANDARD.encode(&wasm_bytes);
+
+        let _ = fs::remove_file(&tmp_path).await;
+        let _ = fs::remove_file("/tmp/cell.wasm").await;
+        let _ = fs::remove_file("/tmp/cell.wasm.o").await;
+        let _ = fs::remove_file("cell.wasm").await;
+
+        Ok(b64)
+    }
+
+    async fn synthesize_rust(logic_code: &str) -> Result<String> {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+        let build_dir = format!("/tmp/nexus_forge_{}", ts);
+        fs::create_dir_all(format!("{}/src", build_dir)).await?;
+
+        let toml = r#"
+[package]
+name = "nexus_dynamic_cell"
+version = "1.0.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+"#;
+        fs::write(format!("{}/Cargo.toml", build_dir), toml).await?;
+        let wrapped_code = format!("#[no_mangle]\n{}", logic_code);
+        fs::write(format!("{}/src/lib.rs", build_dir), wrapped_code).await?;
+
+        let _ = Command::new("rustup").args(["target", "add", "wasm32-unknown-unknown"]).output();
+        let output = Command::new("cargo")
+            .args(["build", "--target", "wasm32-unknown-unknown", "--release"])
+            .current_dir(&build_dir)
+            .output()?;
+
+        if !output.status.success() {
+            let _ = fs::remove_dir_all(&build_dir).await;
+            return Err(anyhow!("FORGE_FAULT: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+
+        let wasm_path = format!("{}/target/wasm32-unknown-unknown/release/nexus_dynamic_cell.wasm", build_dir);
+        let wasm_bytes = fs::read(&wasm_path).await?;
+        let base64_payload = general_purpose::STANDARD.encode(&wasm_bytes);
+        let _ = fs::remove_dir_all(&build_dir).await;
+        
+        Ok(base64_payload)
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/wasm_runtime.rs]
+========================================[0m
+// src/wasm_runtime.rs — v1.2.1 [LINEAR MEMORY BRIDGE + ARMOR]
+use anyhow::{anyhow, Result};
+use wasmtime::*;
+
+const FUEL_CAP: u64 = 50_000_000;
+
+pub struct WasmRuntime;
+
+impl WasmRuntime {
+    fn make_engine() -> Result<Engine> {
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        Ok(Engine::new(&config)?)
+    }
+
+    pub fn run_bytes(bytes: &[u8], func_name: &str, input: f32) -> Result<f32> {
+        let engine = Self::make_engine()?;
+        let module = Module::from_binary(&engine, bytes)?;
+        let mut store = Store::new(&engine, ());
+        store.set_fuel(FUEL_CAP)?;
+        let instance = Instance::new(&mut store, &module, &[])?;
+        let func = instance.get_typed_func::<f32, f32>(&mut store, func_name)?;
+        Ok(func.call(&mut store, input)?)
+    }
+
+    // ⚡ NEW: The Linear Memory Bridge
+    pub fn run_with_buffer(bytes: &[u8], func_name: &str, data: &[u8]) -> Result<f32> {
+        let engine = Self::make_engine()?;
+        let module = Module::from_binary(&engine, bytes)
+            .map_err(|e| anyhow!("WASM_LOAD_FAULT: {}", e))?;
+        let mut store = Store::new(&engine, ());
+        store.set_fuel(FUEL_CAP)?;
+        let instance = Instance::new(&mut store, &module, &[])
+            .map_err(|e| anyhow!("WASM_INST_FAULT: {}", e))?;
+
+        // 1. Grab the WASM linear memory
+        let memory = instance.get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("WASM module must export memory"))?;
+
+        // 2. Ask the WASM cell where its buffer is
+        let get_ptr = instance.get_typed_func::<(), i32>(&mut store, "get_buffer_ptr")
+            .map_err(|e| anyhow!("Missing get_buffer_ptr export: {}", e))?;
+        let ptr = get_ptr.call(&mut store, ())? as usize;
+
+        // ⚡ ARMOR INJECTED: Prevent sandbox overflow
+        if data.len() > 65_536 {
+            return Err(anyhow!("VMO payload ({} bytes) exceeds the 64KB WASM sandbox buffer.", data.len()));
+        }
+
+        // 3. Write our host data directly into the WASM sandbox
+        memory.write(&mut store, ptr, data)
+            .map_err(|e| anyhow!("WASM_MEMORY_WRITE_FAULT: {}", e))?;
+
+        // 4. Trigger the function, passing only the length
+        let func = instance.get_typed_func::<i32, f32>(&mut store, func_name)
+            .map_err(|e| anyhow!("WASM_FUNC_MISSING [{}]: {}", func_name, e))?;
+
+        Ok(func.call(&mut store, data.len() as i32)?)
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/arbiter_agent.rs]
+========================================[0m
+use crate::neural_agent::MicroAgent;
+use std::sync::Arc;
+
+pub struct ArbiterAgent {
+    pub agent: Arc<MicroAgent>,
+}
+
+const COMMAND_ALLOWLIST: &[&str] = &[
+    "cargo check", "cargo build", "cargo test", "cargo clippy",
+    "git status", "git log", "git diff", "ls", "find src", "cat src/",
+];
+
+impl ArbiterAgent {
+    pub fn new(agent: Arc<MicroAgent>) -> Self { Self { agent } }
+
+    pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
+        // ⚡ FIX: ALWAYS run the danger-pattern scan first.
+        let dangerous_patterns = [
+            "rm -rf /", "rm -rf ~", "mkfs", "> /dev/sda", "> /dev/nvme",
+            "chmod 777 /", "/etc/shadow", "mv /etc/", "mv /usr/",
+            ":(){ :|:& };:", "dd if=/dev/zero", "fork bomb",
+            "sudo su", "sudo -i", "sudo bash", "sudo sh", "passwd root", "chown root",
+            "$'\\x", "\\u0072\\u006d", "base64 -d |", "| bash", "| sh", "eval $(", "exec(",
+            "curl | bash", "wget | bash", "curl | sh",
+            "history -c", "unset HISTFILE",
+        ];
+
+        let normalized = command.to_lowercase();
+
+        for pattern in dangerous_patterns.iter() {
+            if normalized.contains(pattern) {
+                return Err(format!("SANDBOX_VIOLATION: Threat pattern '{}' detected in {}.", pattern, action_type));
+            }
+        }
+
+        if normalized.contains("../../../") || normalized.contains("/etc/passwd") {
+            return Err("SANDBOX_VIOLATION: Directory traversal attempt blocked.".to_string());
+        }
+
+        if (normalized.contains("| bash") || normalized.contains("| sh") || normalized.contains("|bash") || normalized.contains("|sh")) && !normalized.starts_with("echo") {
+            return Err("SANDBOX_VIOLATION: Pipe-to-shell pattern blocked.".to_string());
+        }
+
+        // ⚡ FIX: Allowlist is enforced ONLY AFTER sandbox patterns are cleared.
+        if std::env::var("NEXUS_STRICT_COMMANDS").is_ok() {
+            let permitted = COMMAND_ALLOWLIST.iter().any(|&allowed| {
+                command.trim().starts_with(allowed)
+            });
+            if !permitted {
+                return Err(format!("ALLOWLIST_VIOLATION: '{}' is not in the permitted command set.", command));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn evaluate_entropy_delta(base_entropy: f32, new_entropy: f32) -> Result<(), String> {
+        let delta = (new_entropy - base_entropy).abs();
+        if delta > 0.5 { return Err(format!("ENTROPY_ANOMALY: Delta of {:.4} exceeds 0.5 threshold.", delta)); }
+        Ok(())
+    }
+
+    pub fn resolve_consensus(alpha_vector: &[f32], beta_vector: &[f32]) -> bool {
+        if alpha_vector.len() != beta_vector.len() { return false; }
+        let diff: f32 = alpha_vector.iter().zip(beta_vector.iter()).map(|(a, b)| (a - b).abs()).sum();
+        diff < 0.5
+    }
+
+    pub fn bft_consensus(vectors: &[Vec<f32>], epsilon: f32) -> Option<Vec<f32>> {
+        if vectors.is_empty() { return None; }
+        let n = vectors.len();
+        let threshold = (2 * n / 3) + 1;
+        let dim = vectors[0].len();
+        if vectors.iter().any(|v| v.len() != dim) { return None; }
+
+        let (best_idx, neighbor_count) = (0..n)
+            .map(|i| {
+                let neighbors = (0..n).filter(|&j| { vectors[i].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon }).count();
+                (i, neighbors)
+            }).max_by_key(|&(_, count)| count)?;
+            
+        if neighbor_count < threshold { return None; }
+
+        let agreeing: Vec<&Vec<f32>> = (0..n).filter(|&j| { vectors[best_idx].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon }).map(|j| &vectors[j]).collect();
+        let centroid: Vec<f32> = (0..dim).map(|k| agreeing.iter().map(|v| v[k]).sum::<f32>() / agreeing.len() as f32).collect();
+        Some(centroid)
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/podman.rs]
+========================================[0m
+use std::process::{Command, Output};
+use std::io::{Error, ErrorKind, Result};
+
+pub struct PodmanShield;
+impl PodmanShield {
+    pub fn execute(command: &str) -> Result<Output> {
+        let cmd = command.to_lowercase();
+        
+        // 1. The Ironclad Axiom Block (Never allow self-deletion)
+        if cmd.contains("rm -rf src") || cmd.contains("rm -rf .git") || cmd.contains("rm -rf /") {
+            return Err(Error::new(ErrorKind::PermissionDenied, "AXIOM_BLOCK: Destructive path."));
+        }
+        
+        // 2. The Emancipation List (Allow safe host commands)
+        let host_allowed = [
+            "cargo ", "ls ", "cat ", "curl ", "wget ", "python3 ", 
+            "python ", "grep ", "find ", "git ", "pwd", "echo "
+        ];
+        
+        if host_allowed.iter().any(|&prefix| cmd.starts_with(prefix)) {
+            return Command::new("sh").arg("-c").arg(command).output();
+        }
+        
+        // 3. Fallback Sandbox (Restored network access so package managers work if needed)
+        Command::new("podman").args([
+            "run", "--rm", "-v", ".:/workspace", "-w", "/workspace", 
+            "alpine:latest", "sh", "-c", command
+        ]).output()
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/diff.rs]
+========================================[0m
+/**
+ * NEXUS Diff Engine — v2.0 [SURGICAL + FUZZY]
+ * Copyright 2026 Donald Ball
+ * Handles precise edits even when LLM mangles whitespace or line order.
+ */
+
+use anyhow::{anyhow, Result};
+
+pub struct DiffEngine;
+
+impl DiffEngine {
+    /// Primary entry point: tries exact match first, then fuzzy/indentation-agnostic.
+    pub fn apply(original: &str, search: &str, replace: &str) -> Result<String> {
+        if search.trim().is_empty() {
+            return Ok(original.to_string());
+        }
+
+        // Tier 1: Exact match (fastest, most precise)
+        if let Some(pos) = original.find(search) {
+            return Ok(replace_first_occurrence(original, pos, search.len(), replace));
+        }
+
+        // Tier 2: Indentation-agnostic matching (handles LLM whitespace issues)
+        if let Some(result) = Self::apply_agnostic(original, search, replace) {
+            return Ok(result);
+        }
+
+        // Tier 3: Fuzzy line-based matching (for larger blocks)
+        if let Some(result) = Self::apply_fuzzy_lines(original, search, replace) {
+            return Ok(result);
+        }
+
+        Err(anyhow!(
+            "PATTERN_NOT_FOUND: Could not locate search block.\n\
+            Search preview (first 120 chars):\n{}\n\n\
+            Hint: Try making the search string more unique or shorter.",
+            search.chars().take(120).collect::<String>()
+        ))
+    }
+
+    fn apply_agnostic(original: &str, search: &str, replace: &str) -> Option<String> {
+        let search_lines: Vec<&str> = search.lines().map(|l| l.trim_start()).collect();
+        let orig_lines: Vec<&str> = original.lines().collect();
+        let search_len = search_lines.len();
+
+        if search_len == 0 || orig_lines.len() < search_len {
+            return None;
+        }
+
+        for i in 0..=(orig_lines.len() - search_len) {
+            let window = &orig_lines[i..i + search_len];
+            let window_trimmed: Vec<&str> = window.iter().map(|l| l.trim_start()).collect();
+
+            if window_trimmed == search_lines {
+                let mut result = orig_lines[..i].join("\n");
+                if !result.is_empty() { result.push('\n'); }
+                result.push_str(replace);
+                if i + search_len < orig_lines.len() {
+                    result.push('\n');
+                    result.push_str(&orig_lines[i + search_len..].join("\n"));
+                }
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    fn apply_fuzzy_lines(original: &str, search: &str, replace: &str) -> Option<String> {
+        // Very coarse fallback: if search is long, try to match by first and last line
+        let search_lines: Vec<&str> = search.lines().collect();
+        if search_lines.len() < 3 {
+            return None;
+        }
+
+        let first = search_lines[0].trim();
+        let last = search_lines.last().unwrap().trim();
+
+        let orig_lines: Vec<&str> = original.lines().collect();
+
+        for i in 0..orig_lines.len() {
+            if orig_lines[i].trim() == first {
+                for j in (i + 2)..orig_lines.len() {
+                    if orig_lines[j].trim() == last {
+                        let mut result = orig_lines[..i].join("\n");
+                        if !result.is_empty() { result.push('\n'); }
+                        result.push_str(replace);
+                        if j + 1 < orig_lines.len() {
+                            result.push('\n');
+                            result.push_str(&orig_lines[j + 1..].join("\n"));
+                        }
+                        return Some(result);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn unified_diff(_old: &str, _new: &str, path: &str) -> String {
+        format!("--- a/{}\n+++ b/{}\n[MODIFICATION APPLIED]", path, path)
+    }
+}
+
+fn replace_first_occurrence(s: &str, pos: usize, old_len: usize, new: &str) -> String {
+    let mut result = String::with_capacity(s.len() - old_len + new.len());
+    result.push_str(&s[..pos]);
+    result.push_str(new);
+    result.push_str(&s[pos + old_len..]);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_exact_match() {
+        let src = "fn old() {}\nfn keep() {}";
+        let result = DiffEngine::apply(src, "fn old() {}", "fn new() {}").unwrap();
+        assert_eq!(result, "fn new() {}\nfn keep() {}");
+    }
+
+    #[test]
+    fn test_agnostic_whitespace() {
+        let src = "    fn foo() {\n        println!(\"hi\");\n    }";
+        let search = "fn foo() {\n    println!(\"hi\");\n}";
+        let replace = "fn bar() {\n    println!(\"hello\");\n}";
+        let result = DiffEngine::apply(src, search, replace).unwrap();
+        assert!(result.contains("fn bar()"));
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/ast_editor.rs]
+========================================[0m
+use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+use std::fs;
+use anyhow::{anyhow, Result};
+
+pub struct AstEditor;
+
+impl AstEditor {
+    /// update_function: Finds a function by name and replaces its entire body.
+    /// This is the "Semantic Precision" upgrade to replace simple string diffs.
+    pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
+        let source_code = fs::read_to_string(path)?;
+        let mut parser = Parser::new();
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+        
+        let tree = parser.parse(&source_code, None)
+            .ok_or_else(|| anyhow!("AST_PARSE_FAIL: Could not parse {}", path))?;
+            
+        // Query to find the specific function node
+        let query_str = format!(
+            "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
+            function_name
+        );
+        let query = Query::new(&tree_sitter_rust::LANGUAGE.into(), &query_str)?;
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
+        while let Some(m) = matches.next() {
+            for capture in m.captures {
+                if capture.index == 1 { // The @func capture
+                    let node = capture.node;
+                    let start = node.start_byte();
+                    let end = node.end_byte();
+                    
+                    let mut new_code = source_code.clone();
+                    new_code.replace_range(start..end, new_body);
+                    return Ok(new_code);
+                }
+            }
+        }
+        
+        Err(anyhow!("FUNCTION_NOT_FOUND: Could not find function '{}' in {}", function_name, path))
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/cluster.rs]
+========================================[0m
+// cluster.rs — v1.1
+// FIX: duration_since().unwrap() → unwrap_or_default() to survive NTP jumps.
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ClusterNode {
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub cpu: f32,
+    pub ram: f32,
+    pub temp: f32,
+    pub last_seen: u64,
+}
+
+#[derive(Clone)]
+pub struct ClusterMesh {
+    nodes: Arc<RwLock<Vec<ClusterNode>>>,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+impl ClusterMesh {
+    pub fn new() -> Self {
+        Self { nodes: Arc::new(RwLock::new(vec![])) }
+    }
+
+    pub fn register(&self, mut node: ClusterNode) {
+        node.last_seen = now_secs();
+        let mut guard = self.nodes.write();
+        if let Some(existing) = guard.iter_mut().find(|n| n.id == node.id) {
+            *existing = node;
+        } else {
+            guard.push(node);
+        }
+    }
+
+    pub fn get_all_nodes(&self) -> Vec<ClusterNode> { self.nodes.read().clone() }
+
+    pub fn best_node(&self) -> Option<ClusterNode> {
+        let now = now_secs();
+        self.nodes
+            .read()
+            .iter()
+            .filter(|n| now.saturating_sub(n.last_seen) < 40)
+            .cloned()
+            .min_by(|a, b| {
+                (a.cpu + a.ram)
+                    .partial_cmp(&(b.cpu + b.ram))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/distributed_scheduler.rs]
+========================================[0m
+// src/distributed_scheduler.rs — v2.0 [PRE-EMPTIVE FORGE OFFLOAD]
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose, Engine as _};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use crate::cluster::ClusterMesh;
+use crate::wasm_runtime::WasmRuntime;
+
+#[derive(Clone)]
+pub struct DistributedScheduler {
+    pub mesh: Arc<ClusterMesh>,
+}
+
+impl DistributedScheduler {
+    pub fn new(mesh: Arc<ClusterMesh>) -> Self {
+        Self { mesh }
+    }
+
+    pub async fn synthesize(&self, code: &str) -> Result<String> {
+        if let Some(node) = self.mesh.best_node() {
+            if node.cpu < 85.0 && node.temp < 68.0 {
+                 println!(
+                    "\x1b[35m>> [MESH_ROUTING] Offloading WASM Synthesis to {} (Temp: {:.1}°C Load: {:.1}%)\x1b[0m",
+                    node.id, node.temp, node.cpu
+                );
+                return self.remote_synthesize(&node.host, node.port, code).await;
+            }
+        }
+        
+        println!("\x1b[33m>> [LOCAL_EXEC] Substrate utilized for WASM synthesis (Heavy Load)\x1b[0m");
+        crate::wasm_forge::WasmForge::synthesize_cell(code).await
+    }
+
+    async fn remote_synthesize(&self, host: &str, port: u16, code: &str) -> Result<String> {
+        #[derive(Serialize)]
+        struct Req<'a> { code: &'a str }
+        #[derive(Deserialize)]
+        struct Reply { ok: bool, b64: Option<String>, error: Option<String> }
+
+        let url = format!("http://{}:{}/api/cluster/forge", host, port);
+        let res = reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", "SOVEREIGN")
+            .json(&Req { code })
+            .send()
+            .await?;
+
+        let reply: Reply = res.json().await?;
+        if reply.ok { 
+            Ok(reply.b64.unwrap_or_default()) 
+        } else { 
+            Err(anyhow!(reply.error.unwrap_or_else(|| "Remote forge error".into()))) 
+        }
+    }
+
+    pub async fn execute(&self, wasm: Vec<u8>, func_name: &str, input: f32) -> Result<f32> {
+        if let Some(node) = self.mesh.best_node() {
+            if node.cpu < 85.0 && node.temp < 68.0 {
+                 println!(
+                    ">> [MESH_ROUTING] Offloading execution of {} to {}",
+                    func_name, node.id
+                );
+                return self.remote_call(&node.host, node.port, wasm, func_name, input).await;
+            }
+        }
+        
+        println!(">> [LOCAL_EXEC] Substrate utilized for {}", func_name);
+        WasmRuntime::run_bytes(&wasm, func_name, input)
+    }
+
+    async fn remote_call(&self, host: &str, port: u16, wasm: Vec<u8>, func_name: &str, input: f32) -> Result<f32> {
+        #[derive(Serialize)]
+        struct Req<'a> { wasm_b64: String, func_name: &'a str, input: f32 }
+        #[derive(Deserialize)]
+        struct Reply { ok: bool, result: f32, error: Option<String> }
+
+        let url = format!("http://{}:{}/api/cluster/run", host, port);
+        let res = reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", "SOVEREIGN")
+            .json(&Req { wasm_b64: general_purpose::STANDARD.encode(&wasm), func_name, input })
+            .send()
+            .await?;
+
+        let reply: Reply = res.json().await?;
+        if reply.ok { Ok(reply.result) } 
+        else { Err(anyhow!(reply.error.unwrap_or_else(|| "remote error".into()))) }
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/shared_state.rs]
+========================================[0m
+#[derive(Default, Debug)]
+pub struct VmoState {
+    pub last_parent: Option<u32>,
+    pub last_child:  Option<u32>,
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/cli_utils.rs]
+========================================[0m
+pub async fn inject_workspace_dna(directive: &str) -> String {
+    directive.trim().to_string()
+}
+
+pub async fn get_execution_law_v6() -> String {
+    r#"You are NEXUS — a silent, precise, rule-bound autonomous coding agent.
+
+=== ABSOLUTE OUTPUT RULES (VIOLATION = SYSTEM FAILURE) ===
+- Output **ONLY** a valid JSON array of AgentAction objects.
+- NO explanations, NO thoughts, NO markdown, NO "I think", NO preamble.
+- Response must start with `[` and end with `]`.
+- Keep "reasoning" fields very short (max 12 words).
+
+=== ONE LOGICAL STEP PER TURN ===
+- Do exactly one meaningful action per response.
+- After read_file / diff_patch / write_file / execute_command, stop and wait for next turn.
+- If mission is complete based on observations, output only `halt`.
+
+=== EDITING PREFERENCE ===
+- Prefer `diff_patch` for small surgical changes.
+- Use `patch_function` only when asked for semantic/AST-level function replacement.
+- Use `read_file` first when you need to see current code.
+
+=== READ_FILE PROTOCOL ===
+- When you see [READ_OK] with --- CONTENT --- block, use that content directly.
+- Never re-read the same file if content is already provided.
+
+Valid actions only:
+- "read_file"      { "path": "...", "reasoning": "..." }
+- "write_file"     { "path": "...", "content": "...", "reasoning": "..." }
+- "diff_patch"     { "path": "...", "search": "...", "replace": "...", "reasoning": "..." }
+- "patch_function" { "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." }
+- "execute_command"{ "command": "...", "reasoning": "..." }
+- "halt"           { "reasoning": "..." }
+
+Now execute the directive. Output ONLY the JSON array."#.to_string()
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/executor.rs]
+========================================[0m
+// src/executor.rs — v2.7 [IRONCLAD_FSM + AGENTIC_LRL]
+
+use crate::agent_protocol::AgentAction;
+use crate::arbiter_agent::ArbiterAgent;
+use crate::distributed_scheduler::DistributedScheduler;
+use crate::shared_state::VmoState;
+use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum FsmState { Idle, Executing, Complete, Fault }
+
+pub struct RoboticExecutor {
+    pub current_state: FsmState,
+    tx: tokio::sync::broadcast::Sender<String>,
+}
+
+impl RoboticExecutor {
+    pub fn new(_api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
+        Self { current_state: FsmState::Idle, tx }
+    }
+
+    pub async fn execute_handle(
+        &mut self,
+        actions: Vec<AgentAction>,
+        memory: Arc<Mutex<nexus_substrate::memory::MemoryPalace>>,
+        vmo_state: Arc<Mutex<VmoState>>,
+        dist: Arc<DistributedScheduler>,
+    ) -> Result<Vec<String>> {
+        self.current_state = FsmState::Executing;
+        let mut observations = Vec::new();
+        let total = actions.len();
+
+        for (idx, action) in actions.into_iter().enumerate() {
+            let _ = self.tx.send(serde_json::json!({
+                "type": "TASK_STATUS",
+                "payload": format!("Executing → {:?}", action)
+            }).to_string());
+
+            if matches!(action, AgentAction::Halt { .. }) {
+            }
+
+            match self.execute_single_action(action, memory.clone(), vmo_state.clone(), dist.clone()).await {
+                Ok(obs) => {
+                    observations.push(obs.clone());
+                    tracing::info!("Action observation: {}", obs);
+
+                    if obs.contains("[READ_OK]") || obs.contains("[WRITE_OK]") || obs.contains("[CMD:") || obs.contains("[DIFF_PATCH_OK]") || obs.contains("[PATCH_OK]") || obs.contains("[REPORT_OK]") || obs.contains("[HALT]") {
+                        let skipped = total.saturating_sub(idx + 1);
+                        if skipped > 0 {
+                            let yield_msg = format!(">> [YIELD] Action completed. {} action(s) suspended for next turn.", skipped);
+                            observations.push(yield_msg.clone());
+                            tracing::info!("{}", yield_msg);
+                        }
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let err_obs = format!("ACTION_FAILED: {}", e);
+                    observations.push(err_obs.clone());
+                    tracing::warn!("Action failed: {}", e);
+                    self.current_state = FsmState::Fault;
+                    return Ok(observations);
+                }
+            }
+        }
+
+        self.current_state = FsmState::Complete;
+        Ok(observations)
+    }
+
+    async fn execute_single_action(
+        &mut self,
+        action: AgentAction,
+        _memory: Arc<Mutex<nexus_substrate::memory::MemoryPalace>>,
+        _vmo_state: Arc<Mutex<VmoState>>,
+        _dist: Arc<DistributedScheduler>,
+    ) -> Result<String> {
+        match action {
+            AgentAction::ExecuteCommand { command, reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "NEURAL_THOUGHT", "payload": format!("Reasoning: {}", reasoning)}).to_string());
+                if let Err(e) = ArbiterAgent::validate_action("execute_command", &command) {
+                    return Ok(format!("SHIELD_BLOCKED: {}", e));
+                }
+                
+                // ⚡ LRL FUSION: Route strictly through AgenticRuntime
+                let mut lrl = crate::agents::agentic_runtime::AgenticRuntime::new(
+                    crate::agents::agentic_runtime::SubstrateContext {
+                        memory: _memory.clone(),
+                        vmo_state: _vmo_state.clone(),
+                        dist: _dist.clone(),
+                    }
+                );
+                
+                // Inject the ecosystem
+                lrl.register_agent(Box::new(crate::agents::scout_agent::ScoutAgent::new()));
+                lrl.register_agent(Box::new(crate::agents::shell_agent::ShellAgent));
+                
+                match lrl.dispatch(&command).await {
+                    Ok(output) => Ok(format!("[CMD:LRL_ROUTED]\n{}\nReason: {}", output, reasoning)),
+                    Err(e) => Ok(format!("LRL_FAULT: {}", e)),
+                }
+            }
+
+            AgentAction::WriteFile { path, content, reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "NEURAL_THOUGHT", "payload": format!("Writing file: {} | Reason: {}", path, reasoning)}).to_string());
+                let content_len = content.len();
+                let preview: String = content.chars().take(80).collect();
+                tokio::fs::write(&path, content).await
+                    .map(|_| format!("[WRITE_OK] {} bytes → {} | Preview: {}…", content_len, path, preview))
+                    .map_err(|e| anyhow::anyhow!("WRITE_FAILED: {}", e))
+            }
+
+            AgentAction::ReadFile { path, reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "NEURAL_THOUGHT", "payload": format!("Reading file: {} | Reason: {}", path, reasoning)}).to_string());
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(content) => {
+                        let byte_len = content.len();
+                        const MAX_CHARS: usize = 4096;
+                        let char_count = content.chars().count();
+                        let injected: String = content.chars().take(MAX_CHARS).collect();
+                        let note = if char_count > MAX_CHARS {
+                            format!("\n[TRUNCATED: showing {}/{} chars — use diff_patch for large files]", MAX_CHARS, char_count)
+                        } else { String::new() };
+                        Ok(format!("[READ_OK] {} ({} bytes){}\n--- CONTENT ---\n{}\n--- END CONTENT ---", path, byte_len, note, injected))
+                    }
+                    Err(e) => anyhow::bail!("READ_FAILED: {}", e),
+                }
+            }
+
+            AgentAction::DiffPatch { path, search, replace, reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "NEURAL_THOUGHT", "payload": format!("Applying diff patch to {} | Reason: {}", path, reasoning)}).to_string());
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(original) => {
+                        let orig_lines = original.lines().count();
+                        match crate::diff::DiffEngine::apply(&original, &search, &replace) {
+                            Ok(new_content) => {
+                                let new_lines: usize = new_content.lines().count();
+                                match tokio::fs::write(&path, &new_content).await {
+                                    Ok(_) => Ok(format!("[DIFF_PATCH_OK] {} | Lines: {} → {}", path, orig_lines, new_lines)),
+                                    Err(e) => Ok(format!("[DIFF_PATCH_WRITE_FAILED] {}", e)),
+                                }
+                            }
+                            Err(e) => Ok(format!("[DIFF_PATCH_FAILED] {}", e)),
+                        }
+                    }
+                    Err(e) => Ok(format!("[DIFF_PATCH_READ_FAILED] {}", e)),
+                }
+            }
+
+            AgentAction::PatchFunction { path, function_name, new_body, reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "NEURAL_THOUGHT", "payload": format!("Patching function {} in {} | Reason: {}", function_name, path, reasoning)}).to_string());
+                match crate::ast_editor::AstEditor::update_function(&path, &function_name, &new_body) {
+                    Ok(full_code) => {
+                        match tokio::fs::write(&path, full_code).await {
+                            Ok(_) => Ok(format!("[PATCH_OK] Function '{}' updated in {}", function_name, path)),
+                            Err(e) => Ok(format!("PATCH_WRITE_FAILED: {}", e)),
+                        }
+                    },
+                    Err(e) => Ok(format!("PATCH_FAILED: {}", e)),
+                }
+            }
+
+            AgentAction::ExportReport { title, content, reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "NEURAL_THOUGHT", "payload": format!("Exporting report: {} | Reason: {}", title, reasoning)}).to_string());
+                let safe_name = title.to_lowercase().replace(|c: char| !c.is_alphanumeric() && c != ' ' && c != '-', "_");
+                let path = format!("src/{}.md", safe_name);
+                tokio::fs::write(&path, content).await
+                    .map(|_| format!("[REPORT_OK] Exported → {}", path))
+                    .map_err(|e| anyhow::anyhow!("EXPORT_FAILED: {}", e))
+            }
+
+            AgentAction::FetchUiSnapshot { reasoning } => {
+                let _ = self.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("fetch_ui_snapshot triggered — {}", reasoning)}).to_string());
+                Ok("[UI_SNAPSHOT_REQUESTED] Ghost DOM state capture requested.".to_string())
+            }
+
+            AgentAction::Halt { reasoning } => {
+                self.current_state = FsmState::Complete;
+                let clean_reason = reasoning.chars().take(100).collect::<String>();
+                let _ = self.tx.send(serde_json::json!({"type": "TASK_STATUS", "payload": format!("HALT: {}", clean_reason)}).to_string());
+                Ok(format!("[HALT] {}", clean_reason))
+            }
+
+            _ => Ok(format!("[STUB_OK] Action acknowledged: {:?}", action))
+        }
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/task_manager.rs]
+========================================[0m
+use nexus_substrate::memory::MemoryPalace;
+use crate::{
+    agent_protocol::AgentAction, cli_utils, json_parser, logic_engine::LogicEngine,
+    metrics::METRICS, orchestrator::Orchestrator, executor::RoboticExecutor,
+    shared_state::VmoState, distributed_scheduler::DistributedScheduler,
+};
+use reqwest::Client;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use tracing::{info, error};
+
+pub async fn send_task(
+    orchestrator: Arc<Orchestrator>,
+    client: &Client,
+    api_key: &str,
+    raw_directive: &str,
+    memory: Arc<Mutex<MemoryPalace>>,
+    vmo_state: Arc<Mutex<VmoState>>,
+    tx: broadcast::Sender<String>,
+    dist: Arc<DistributedScheduler>,
+) -> String {
+    METRICS.inc_task();
+    let mut session_obs: Vec<String> = vec![];
+    let mut history: Vec<(String, String)> = vec![]; 
+    let mut turn = 0usize;
+    let mut consecutive_fractures = 0usize;
+
+    let execution_law = cli_utils::get_execution_law_v6().await;
+    let mut executor = RoboticExecutor::new(api_key.to_string(), tx.clone());
+
+    'mission: while turn < 12 {
+        turn += 1;
+        info!("=== Turn {} / 12 ===", turn);
+
+        if LogicEngine::detect_deadlock(&session_obs) { break 'mission; }
+        if consecutive_fractures >= 3 { break 'mission; }
+
+        let mut full_prompt = String::new();
+        for (q, a) in &history { full_prompt.push_str(&format!("USER: {}\nMODEL: {}\n", q, a)); }
+        
+        let turn_prompt = if turn == 1 { raw_directive.to_string() } 
+                          else { format!("The last action resulted in: {}. What is the next logical step?", 
+                                         session_obs.last().cloned().unwrap_or_else(|| "SUCCESS".into())) };
+        full_prompt.push_str(&format!("USER: {}", turn_prompt));
+
+        let ctx = crate::neural_agent::ContextPacket {
+            system_prompt: Some(execution_law.clone()),
+            recent_logs: session_obs.iter().rev().take(3).rev().cloned().collect(),
+            ..Default::default()
+        };
+
+        let response = match orchestrator.run(full_prompt, ctx, client, api_key, Some(tx.clone())).await {
+            Ok(resp) => resp,
+            Err(e) => { error!("Uplink failed: {}", e); break 'mission; }
+        };
+
+        match json_parser::extract_actions(&response) {
+            Ok(actions) => {
+                if actions.is_empty() { break 'mission; }
+                history.push((turn_prompt, response.clone()));
+                consecutive_fractures = 0;
+                match executor.execute_handle(actions.clone(), memory.clone(), vmo_state.clone(), dist.clone()).await {
+                    Ok(observations) => { for obs in observations { session_obs.push(obs); } }
+                    Err(e) => session_obs.push(format!("EXECUTOR_FAULT: {}", e)),
+                }
+                if actions.iter().any(|a| matches!(a, AgentAction::Halt { .. })) { break 'mission; }
+            }
+            Err(_) => {
+                consecutive_fractures += 1;
+                session_obs.push("[FORMAT_VIOLATION] Output ONLY a raw JSON array.".into());
+            }
+        }
+    }
+    "TASK_COMPLETE".to_string()
+}
+
+[36m========================================
+[FILE: crates/runtime_core/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_runtime_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde_json = "1.0"
+futures-util = "0.3"
+uuid = { version = "1.8", features = ["v4", "serde"] }
+tracing = "0.1"
+nexus_substrate = { path = "../nexus_substrate" }
+base64 = "0.22"
+wasmtime = "44.0"
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+parking_lot = "0.12"
+
+[36m========================================
+[FILE: bins/cli/src/main.rs]
+========================================[0m
+#[tokio::main]
+async fn main() {
+    nexus_runtime_core::establish_neural_uplink().await;
+    println!(">> NEXUS CLI READY");
+}
+
+[36m========================================
+[FILE: bins/cli/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus_runtime_core = { path = "../../crates/runtime_core" }
+tokio = { workspace = true }
+
+[36m========================================
+[FILE: bins/node/src/main.rs]
+========================================[0m
+use axum::{Router, routing::get};
+#[tokio::main]
+async fn main() {
+    println!(">> Edge Node booting...");
+    let app = Router::new().route("/", get(|| async { "node alive" }));
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+[36m========================================
+[FILE: bins/node/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_node"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus_runtime_core = { path = "../../crates/runtime_core" }
+tokio = { workspace = true }
+axum = "0.7"
+
+[36m========================================
+[FILE: bins/ide_backend/src/main.rs]
+========================================[0m
+#[tokio::main]
+async fn main() {
+    println!(">> Custom CodeMirror 6 API bridge online.");
+}
+
+[36m========================================
+[FILE: bins/ide_backend/Cargo.toml]
+========================================[0m
+[package]
+name = "nexus_ide_backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus_runtime_core = { path = "../../crates/runtime_core" }
+tokio = { workspace = true }

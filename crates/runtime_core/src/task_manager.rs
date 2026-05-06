@@ -1,8 +1,8 @@
 use nexus_substrate::memory::MemoryPalace;
 use crate::{
-    agent_protocol::AgentAction, cli, json_parser, logic_engine::LogicEngine,
+    agent_protocol::AgentAction, cli_utils, json_parser, logic_engine::LogicEngine,
     metrics::METRICS, orchestrator::Orchestrator, executor::RoboticExecutor,
-    server::VmoState, distributed_scheduler::DistributedScheduler,
+    shared_state::VmoState, distributed_scheduler::DistributedScheduler,
 };
 use reqwest::Client;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub async fn send_task(
     let mut turn = 0usize;
     let mut consecutive_fractures = 0usize;
 
-    let execution_law = cli::get_execution_law_v6().await;
+    let execution_law = cli_utils::get_execution_law_v6().await;
     let mut executor = RoboticExecutor::new(api_key.to_string(), tx.clone());
 
     'mission: while turn < 12 {

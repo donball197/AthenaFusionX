@@ -22,7 +22,8 @@
     });
 
     function connectWebSocket() {
-        ws = new WebSocket('ws://127.0.0.1:3000/ws/telemetry');
+        const host = window.location.host;
+        ws = new WebSocket(`ws://${host}/ws/telemetry`);
         
         ws.onopen = () => {
             addLog('SYSTEM', '>> UPLINK ESTABLISHED: GHOST CORTEX ONLINE', 'text-green-400 font-bold');

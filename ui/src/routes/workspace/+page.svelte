@@ -1,14 +1,19 @@
 <script>
+    import { onMount } from 'svelte';
     import { TaskService } from '$lib/services/TaskService';
+    import { bootAuth } from '$lib/stores/auth.svelte';
     import TerminalPanel from '$lib/components/panels/TerminalPanel.svelte';
     import FileExplorerPanel from '$lib/components/panels/FileExplorerPanel.svelte';
     import EditorPanel from '$lib/components/panels/EditorPanel.svelte';
 
-    // Shared state between Explorer and Editor
     let activeFile = $state(null);
 
+    onMount(async () => {
+        await bootAuth();
+    });
+
     async function runDirective(directive) {
-        TaskService.runDirective(directive, 'WORKSPACE');
+        await TaskService.runDirective(directive, 'WORKSPACE');
     }
 </script>
 
@@ -25,7 +30,6 @@
                     <button onclick={() => runDirective('npm run build')} class="ws-btn">▶ UI RE-LINK</button>
                 </div>
             </div>
-            
             <div class="p-4 border border-purple-900/30 bg-purple-950/10 rounded">
                 <h2 class="text-[10px] text-purple-400 font-black tracking-widest mb-3 uppercase">Neural_Context</h2>
                 <div class="space-y-1">
@@ -33,7 +37,6 @@
                     <button onclick={() => runDirective('scan for TODO and FIXME tags')} class="ws-btn">▶ SCAN SUBSTRATE</button>
                 </div>
             </div>
-            
             <div class="p-4 border border-amber-900/30 bg-amber-950/10 rounded">
                 <h2 class="text-[10px] text-amber-400 font-black tracking-widest mb-3 uppercase">Lazarus_Vault</h2>
                 <div class="space-y-1">
@@ -48,11 +51,9 @@
         <div class="w-1/5 flex flex-col min-h-0">
             <FileExplorerPanel bind:activeFile={activeFile} />
         </div>
-        
         <div class="w-1/2 flex flex-col min-h-0">
             <EditorPanel {activeFile} />
         </div>
-        
         <div class="w-[30%] flex flex-col min-h-0">
             <TerminalPanel />
         </div>

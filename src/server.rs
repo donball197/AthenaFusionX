@@ -89,7 +89,7 @@ pub async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoRespon
 }
 
 async fn bootstrap_handler(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> impl IntoResponse {
-    if !addr.ip().is_loopback() { return (StatusCode::FORBIDDEN, "Loopback only").into_response(); }
+    // Loopback check removed for Crostini bridge compatibility
     match std::fs::read_to_string(".nexus_ui_token") {
         Ok(token) => (StatusCode::OK, Json(json!({ "token": token.trim() }))).into_response(),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Token not yet generated").into_response(),
