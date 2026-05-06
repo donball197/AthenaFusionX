@@ -1,126 +1,38 @@
 [workspace]
 members = [
-    ".",
-    "crates/nexus_substrate",
+    "crates/runtime_core",
+    "crates/identity",
+    "crates/memory_graph",
+    "crates/economy",
+    "crates/protocol",
+    "crates/mesh",
+    "crates/payments",
+    "crates/marketplace",
+    "crates/billing",
+    "bins/cli",
+    "bins/node",
+    "bins/ide_backend"
 ]
 resolver = "2"
 
-[package]
-name = "nexus_singularity"
-version = "1.9.5"
+[workspace.package]
 edition = "2021"
-rust-version = "1.80"
-authors = ["Donald Ball <donball197@gmail.com>"]
-description = "NEXUS Singularity — Sovereign AI Operating Substrate with Zig VMOs, Self-Healing, and Swarm Intelligence"
-license = "Apache-2.0"
-repository = "https://github.com/donball197/nexus_singularity"
-keywords = ["ai", "agent", "sovereign", "zig", "wasm"]
-categories = ["command-line-utilities", "development-tools"]
+version = "3.0.0"
 
-[dependencies]
-syn = { version = "2", features = ["full"] }
-quote = "1"
-prettyplease = "0.2"
-# Core
-anyhow = "1.0"
+[workspace.dependencies]
 tokio = { version = "1.44", features = ["full"] }
-async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Web & API
-axum = { version = "0.7", features = ["json", "ws", "macros"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
-
-# Observability
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# Storage & Memory
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
-
-# Utils
-dotenvy = "0.15"
-parking_lot = "0.12"
-lazy_static = "1.5"
-walkdir = "2.5"
-uuid = { version = "1.8", features = ["v4", "serde"] }
-base64 = "0.22"
-bytes = "1.11"
-mime_guess = "2.0"
-rust-embed = "8.4"
-jsonwebtoken = "9.3"
-
-# System & Performance
-sysinfo = "0.38"
-mimalloc = { version = "0.1", optional = true }
-local-ip-address = "0.6"
-
-# AI / WASM / Zig Bridge
-wasmtime = "44.0"
-futures-util = "0.3"
-async-process = "2.5"
-pdf-extract = "0.10"
-tree-sitter = "0.26"
-tree-sitter-rust = "0.24"
-ed25519-dalek = "2.2"
-scraper = "0.26"
-notify-debouncer-full = "0.7"
-futures-lite = "2.6"
-
-# Internal
-nexus_substrate = { path = "crates/nexus_substrate" }
-bitflags = "2"
-
-[features]
-default = ["mimalloc"]
-mimalloc = ["dep:mimalloc"]
-
-[build-dependencies]
-# No extra crates needed — we use std::process::Command in build.rs
+anyhow = "1.0"
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 debug = true
-split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
+panic = "abort"
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "thin"
 codegen-units = 1
-panic = "abort"
 strip = "symbols"
-debug = false
-
-[profile.profiling]
-inherits = "release"
-debug = true
-
-[profile.dev.build-override]
-opt-level = 3
-
-# Binary targets
-[[bin]]
-name = "nexus"
-path = "src/bin/cli.rs"
-
-[[bin]]
-name = "upgrade"
-path = "src/bin/upgrade.rs"
-
-[[bin]]
-name = "global_audit"
-path = "src/bin/global_audit.rs"
-
-[[bin]]
-name = "prime_wasm"
-path = "src/bin/prime_wasm.rs"
-
-[[bin]]
-name = "thermal_probe"
-path = "src/bin/thermal_probe.rs"
-
-[[bin]]
-name = "ui_audit"
-path = "src/bin/ui_audit.rs"

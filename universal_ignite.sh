@@ -1,33 +1,49 @@
-#!/bin/bash
-# NEXUS SINGULARITY v1.9 — Universal Ignition Protocol
-# Enforces Zero Fragmentation across ARM64 DNA
+#!/usr/bin/env bash
+set -e
 
-echo -e "\e[1;36m>> [IGNITION] Initializing ARM64 Substrate Scan...\e[0m"
-
-# Environment Detection
-if [ -n "$TERMUX_VERSION" ]; then
-    echo -e "\e[32m>> [ENV] Motorola Termux Substrate Detected.\e[0m"
-    export NEXUS_ENV="termux"
-elif uname -r | grep -q "linux"; then
-    echo -e "\e[32m>> [ENV] Chromebook Crostini Substrate Detected.\e[0m"
-    export NEXUS_ENV="crostini"
+# Environment Detection & Cache Routing (Zero Fragmentation)
+if [[ "$PREFIX" == *com.termux* ]]; then
+    export NEXUS_ENV="Motorola_Termux"
+    export CARGO_TARGET_DIR="/tmp/nexus-target-motorola"
 else
-    echo -e "\e[33m>> [ENV] Unknown ARM64 Substrate. Defaulting to standard Linux.\e[0m"
-    export NEXUS_ENV="generic"
+    export NEXUS_ENV="Chromebook_Crostini"
+    export CARGO_TARGET_DIR="/tmp/nexus-target-crostini"
 fi
 
-echo -e "\e[33m>> [CLEANSE] Purging Cross-Environment ABI Artifacts...\e[0m"
-rm -rf target/
-rm -f *.so
-rm -f lib/*.so
+mkdir -p "$CARGO_TARGET_DIR"
+echo -e "\x1b[36m>> [IGNITION] Environment Detected: $NEXUS_ENV\x1b[0m"
+echo -e "\x1b[36m>> [IGNITION] Compilation Cache Routed: $CARGO_TARGET_DIR\x1b[0m"
 
-echo -e "\e[35m>> [MUSCLE] Forging Zig Substrate...\e[0m"
-# Compile the Zig muscle into a dynamic library specific to the current hardware
-zig build-lib src/kernel/muscle.zig -dynamic -O ReleaseFast
-mv libmuscle.so lib/ 2>/dev/null || mv libmuscle.so .
+COMMAND=${1:-run}
 
-echo -e "\e[34m>> [CORTEX] Igniting Rust Kernel (Gemma 4-31-it active)...\e[0m"
-export LD_LIBRARY_PATH="$(pwd)/lib:$(pwd)"
-cargo run --release
+if [ "$COMMAND" == "build" ]; then
+    echo -e "\x1b[35m>> [BUILD] Forging Workspace Binaries...\x1b[0m"
+    if [ -d "bins/node" ]; then
+        cargo build -p nexus_node -p nexus_cli -p nexus_ide_backend --release -j 1
+    else
+        cargo build --bin nexus -j 1
+    fi
+    echo -e "\x1b[32m>> [SUCCESS] Build Complete.\x1b[0m"
 
-echo -e "\e[1;32m>> [IGNITION COMPLETE]\e[0m"
+elif [ "$COMMAND" == "run" ] || [ "$COMMAND" == "dev" ]; then
+    echo -e "\x1b[35m>> [RUN] Booting Nexus Edge Node...\x1b[0m"
+    if [ -d "bins/node" ]; then
+        cargo run -p nexus_node -j 1
+    else
+        cargo run --bin nexus -j 1
+    fi
+
+elif [ "$COMMAND" == "container" ]; then
+    echo -e "\x1b[35m>> [PODMAN] Forging Sovereign Container Image...\x1b[0m"
+    # Execute rootless Podman build using the local Containerfile
+    podman build -f Containerfile -t nexus_node:v3.0.0 .
+    echo -e "\x1b[32m>> [SUCCESS] Podman image enshrined.\x1b[0m"
+
+elif [ "$COMMAND" == "clean" ]; then
+    echo -e "\x1b[31m>> [PURGE] Eradicating Local Caches...\x1b[0m"
+    rm -rf "$CARGO_TARGET_DIR"
+    rm -f *.so
+    echo -e "\x1b[32m>> [SUCCESS] Zero Fragmentation enforced. Caches cleared.\x1b[0m"
+else
+    echo -e "\x1b[33mUsage: nexus-dev [build|run|container|clean]\x1b[0m"
+fi

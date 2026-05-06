@@ -1,0 +1,8 @@
+[package]
+name = "nexus_ide_backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus_runtime_core = { path = "../../crates/runtime_core" }
+tokio = { workspace = true }
