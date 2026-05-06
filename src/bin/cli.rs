@@ -1,7 +1,8 @@
-// src/bin/cli.rs — v4.4 [ASYNC_DNA_FIXED]
+// src/bin/cli.rs — v4.4.1 [IMPORT_ALIGNMENT]
 use anyhow::Result;
+use nexus_substrate::memory;
 use nexus_singularity::{
-    cli, cluster::ClusterMesh, distributed_scheduler::DistributedScheduler, memory, neural_agent,
+    cli, cluster::ClusterMesh, distributed_scheduler::DistributedScheduler, neural_agent,
     orchestrator::Orchestrator, server::VmoState, task_manager,
 };
 use std::io::{self, Write};
@@ -12,7 +13,11 @@ use tokio::sync::{broadcast, Mutex};
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY missing");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .build()
+        .expect("Failed to build HTTP client");
 
     let (tx, _) = broadcast::channel(16);
 
@@ -34,7 +39,6 @@ async fn main() -> Result<()> {
 
     let raw_directive = args[1..].join(" ");
     
-    // ⚡ FIX: Await the async DNA injection
     let enriched_directive = cli::inject_workspace_dna(&raw_directive).await;
 
     println!(

@@ -1,14 +1,7 @@
-// src/wasm_runtime.rs — v1.1 Hardened Wasmtime Runtime
-// FIX: Added explicit fuel cap to prevent runaway WASM cells from
-//      monopolising CPU on the 4GB Duet.
-// FIX: Better error context — includes func_name in all error messages.
-// NEW: run_f64 for double-precision cells.
-// NEW: run_named for registry-backed execution.
+// src/wasm_runtime.rs — v1.2.1 [LINEAR MEMORY BRIDGE + ARMOR]
 use anyhow::{anyhow, Result};
 use wasmtime::*;
 
-/// FUEL_CAP: Max instructions before forceful termination.
-/// 10M instructions ≈ ~10ms of compute on ARM64 Crostini at 1GHz.
 const FUEL_CAP: u64 = 50_000_000;
 
 pub struct WasmRuntime;
@@ -20,58 +13,48 @@ impl WasmRuntime {
         Ok(Engine::new(&config)?)
     }
 
-    /// run_bytes: Execute a compiled WASM cell with f32 I/O.
     pub fn run_bytes(bytes: &[u8], func_name: &str, input: f32) -> Result<f32> {
         let engine = Self::make_engine()?;
+        let module = Module::from_binary(&engine, bytes)?;
+        let mut store = Store::new(&engine, ());
+        store.set_fuel(FUEL_CAP)?;
+        let instance = Instance::new(&mut store, &module, &[])?;
+        let func = instance.get_typed_func::<f32, f32>(&mut store, func_name)?;
+        Ok(func.call(&mut store, input)?)
+    }
+
+    // ⚡ NEW: The Linear Memory Bridge
+    pub fn run_with_buffer(bytes: &[u8], func_name: &str, data: &[u8]) -> Result<f32> {
+        let engine = Self::make_engine()?;
         let module = Module::from_binary(&engine, bytes)
-            .map_err(|e| anyhow!("WASM_LOAD_FAULT [{}]: {}", func_name, e))?;
+            .map_err(|e| anyhow!("WASM_LOAD_FAULT: {}", e))?;
         let mut store = Store::new(&engine, ());
         store.set_fuel(FUEL_CAP)?;
         let instance = Instance::new(&mut store, &module, &[])
-            .map_err(|e| anyhow!("WASM_INST_FAULT [{}]: {}", func_name, e))?;
-        let func = instance
-            .get_typed_func::<f32, f32>(&mut store, func_name)
+            .map_err(|e| anyhow!("WASM_INST_FAULT: {}", e))?;
+
+        // 1. Grab the WASM linear memory
+        let memory = instance.get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("WASM module must export memory"))?;
+
+        // 2. Ask the WASM cell where its buffer is
+        let get_ptr = instance.get_typed_func::<(), i32>(&mut store, "get_buffer_ptr")
+            .map_err(|e| anyhow!("Missing get_buffer_ptr export: {}", e))?;
+        let ptr = get_ptr.call(&mut store, ())? as usize;
+
+        // ⚡ ARMOR INJECTED: Prevent sandbox overflow
+        if data.len() > 65_536 {
+            return Err(anyhow!("VMO payload ({} bytes) exceeds the 64KB WASM sandbox buffer.", data.len()));
+        }
+
+        // 3. Write our host data directly into the WASM sandbox
+        memory.write(&mut store, ptr, data)
+            .map_err(|e| anyhow!("WASM_MEMORY_WRITE_FAULT: {}", e))?;
+
+        // 4. Trigger the function, passing only the length
+        let func = instance.get_typed_func::<i32, f32>(&mut store, func_name)
             .map_err(|e| anyhow!("WASM_FUNC_MISSING [{}]: {}", func_name, e))?;
-        func.call(&mut store, input).map_err(|e| anyhow!("WASM_EXEC_FAULT [{}]: {}", func_name, e))
-    }
 
-    /// run_f64: f64 variant for higher-precision cells.
-    pub fn run_f64(bytes: &[u8], func_name: &str, input: f64) -> Result<f64> {
-        let engine = Self::make_engine()?;
-        let module = Module::from_binary(&engine, bytes)?;
-        let mut store = Store::new(&engine, ());
-        store.set_fuel(FUEL_CAP)?;
-        let instance = Instance::new(&mut store, &module, &[])?;
-        let func = instance.get_typed_func::<f64, f64>(&mut store, func_name)?;
-        Ok(func.call(&mut store, input)?)
-    }
-
-    /// run_i32: Integer variant for flag/status cells.
-    pub fn run_i32(bytes: &[u8], func_name: &str, input: i32) -> Result<i32> {
-        let engine = Self::make_engine()?;
-        let module = Module::from_binary(&engine, bytes)?;
-        let mut store = Store::new(&engine, ());
-        store.set_fuel(FUEL_CAP)?;
-        let instance = Instance::new(&mut store, &module, &[])?;
-        let func = instance.get_typed_func::<i32, i32>(&mut store, func_name)?;
-        Ok(func.call(&mut store, input)?)
-    }
-
-    /// list_exports: Returns names of all exported functions in a WASM module.
-    /// Useful for discovery without executing.
-    pub fn list_exports(bytes: &[u8]) -> Result<Vec<String>> {
-        let engine = Engine::default();
-        let module = Module::from_binary(&engine, bytes)?;
-        Ok(module
-            .exports()
-            .filter(|e| matches!(e.ty(), ExternType::Func(_)))
-            .map(|e| e.name().to_string())
-            .collect())
-    }
-
-    /// validate: Returns Ok(()) if bytes are a valid WASM module.
-    pub fn validate(bytes: &[u8]) -> Result<()> {
-        let engine = Engine::default();
-        Module::from_binary(&engine, bytes).map(|_| ()).map_err(|e| anyhow!("WASM_INVALID: {}", e))
+        Ok(func.call(&mut store, data.len() as i32)?)
     }
 }

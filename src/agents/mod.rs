@@ -29,3 +29,5 @@ pub fn get_expert_prompt(domain: ExpertDomain) -> &'static str {
         ExpertDomain::QualityControl    => "IDENTITY: NEXUS Auditor. ROLE: Ensure 100% test coverage and zero compiler warnings.",
     }
 }
+pub mod agentic_runtime;
+pub mod shell_agent;

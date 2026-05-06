@@ -10,14 +10,14 @@ impl ScribeAgent {
     pub fn enshrine(handle: u32, offset: usize, data: &str) -> bool {
         let bytes = data.as_bytes();
         unsafe {
-            kernel::ffi::zx_vmo_write_native(handle, offset, bytes.as_ptr(), bytes.len()) == 0
+            kernel::zx_vmo_write_native(handle, offset, bytes.as_ptr(), bytes.len()) == 0
         }
     }
 
     pub fn recall(handle: u32, offset: usize, size: usize) -> Option<String> {
         let mut buffer = vec![0u8; size];
         unsafe {
-            if kernel::ffi::zx_vmo_read_native(handle, offset, buffer.as_mut_ptr(), size) == 0 {
+            if kernel::zx_vmo_read_native(handle, offset, buffer.as_mut_ptr(), size) == 0 {
                 String::from_utf8(buffer).ok()
             } else {
                 None
@@ -28,7 +28,7 @@ impl ScribeAgent {
     pub fn scry_vault(handle: u32, offset: usize, size: usize) {
         let mut buffer = vec![0u8; size];
         unsafe {
-            if kernel::ffi::zx_vmo_read_native(handle, offset, buffer.as_mut_ptr(), size) == 0 {
+            if kernel::zx_vmo_read_native(handle, offset, buffer.as_mut_ptr(), size) == 0 {
                 println!("\x1b[1;30m--- [SCRY: 0x{:x} | Offset: {}] ---\x1b[0m", handle, offset);
                 for chunk in buffer.chunks(16) {
                     let hex: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();

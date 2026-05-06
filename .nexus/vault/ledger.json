@@ -1,7 +1,7 @@
 [
   {
     "id": "39e44ae0a55a1b12",
-    "path": "src/main.rs \u2014 v3.4 [AUTONOMIC_IMMUNE_ACTIVE]",
+    "path": "src/main.rs — v3.4 [AUTONOMIC_IMMUNE_ACTIVE]",
     "hash": "39e44ae0a55a1b12",
     "timestamp": "2026-04-24T06:24:50",
     "directive": "pre_suture"
@@ -15,7 +15,7 @@
   },
   {
     "id": "5713cce5070ce2cb",
-    "path": "src/main.rs \u2014 v3.4 [AUTONOMIC_IMMUNE_ACTIVE]",
+    "path": "src/main.rs — v3.4 [AUTONOMIC_IMMUNE_ACTIVE]",
     "hash": "5713cce5070ce2cb",
     "timestamp": "2026-04-26T13:21:12",
     "directive": "pre_suture"
@@ -36,9 +36,149 @@
   },
   {
     "id": "18cce10ac200f87b",
-    "path": "src/task_manager.rs \u2014 v4.6 [WARNING_FREE]",
+    "path": "src/task_manager.rs — v4.6 [WARNING_FREE]",
     "hash": "18cce10ac200f87b",
     "timestamp": "2026-04-26T13:21:12",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "eaa4f979995d7002",
+    "path": "src/main.rs",
+    "hash": "eaa4f979995d7002",
+    "timestamp": "SystemTime { tv_sec: 1777281373, tv_nsec: 67009071 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "caeafae3434af474",
+    "path": "src/lib.rs",
+    "hash": "caeafae3434af474",
+    "timestamp": "SystemTime { tv_sec: 1777281373, tv_nsec: 72487532 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "47c15f8146623c09",
+    "path": "src/executor.rs",
+    "hash": "47c15f8146623c09",
+    "timestamp": "SystemTime { tv_sec: 1777281373, tv_nsec: 76591532 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "f5225a0cc1b27192",
+    "path": "src/task_manager.rs",
+    "hash": "f5225a0cc1b27192",
+    "timestamp": "SystemTime { tv_sec: 1777281373, tv_nsec: 80830532 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "ba1d558539124747",
+    "path": "src/main.rs",
+    "hash": "ba1d558539124747",
+    "timestamp": "SystemTime { tv_sec: 1777408247, tv_nsec: 503770137 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "a8f02e995bf1c5ee",
+    "path": "src/lib.rs",
+    "hash": "a8f02e995bf1c5ee",
+    "timestamp": "SystemTime { tv_sec: 1777408247, tv_nsec: 510575598 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "d1d5368d3b91b4a9",
+    "path": "src/executor.rs",
+    "hash": "d1d5368d3b91b4a9",
+    "timestamp": "SystemTime { tv_sec: 1777408247, tv_nsec: 518212752 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "e9a139e69b27075b",
+    "path": "src/task_manager.rs",
+    "hash": "e9a139e69b27075b",
+    "timestamp": "SystemTime { tv_sec: 1777408247, tv_nsec: 531475291 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "171bf921caecc77c",
+    "path": "src/main.rs",
+    "hash": "171bf921caecc77c",
+    "timestamp": "SystemTime { tv_sec: 1777578201, tv_nsec: 855396482 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "77b25df4110efde",
+    "path": "src/lib.rs",
+    "hash": "77b25df4110efde",
+    "timestamp": "SystemTime { tv_sec: 1777578201, tv_nsec: 867449944 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "70dedb39a6df14ca",
+    "path": "src/executor.rs",
+    "hash": "70dedb39a6df14ca",
+    "timestamp": "SystemTime { tv_sec: 1777578201, tv_nsec: 875313405 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "87bb83edf0961b55",
+    "path": "src/task_manager.rs",
+    "hash": "87bb83edf0961b55",
+    "timestamp": "SystemTime { tv_sec: 1777578201, tv_nsec: 882702021 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "1ce7ed1ab6627452",
+    "path": "src/lib.rs",
+    "hash": "1ce7ed1ab6627452",
+    "timestamp": "SystemTime { tv_sec: 1777579304, tv_nsec: 319522702 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "18223a64e0d1b4f8",
+    "path": "src/main.rs",
+    "hash": "18223a64e0d1b4f8",
+    "timestamp": "SystemTime { tv_sec: 1777776492, tv_nsec: 765735816 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "4469d1eebb1ba838",
+    "path": "src/lib.rs",
+    "hash": "4469d1eebb1ba838",
+    "timestamp": "SystemTime { tv_sec: 1777776492, tv_nsec: 775286739 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "83813c1ccb6afcba",
+    "path": "src/executor.rs",
+    "hash": "83813c1ccb6afcba",
+    "timestamp": "SystemTime { tv_sec: 1777776492, tv_nsec: 786714277 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "6068b46b7961a231",
+    "path": "src/task_manager.rs",
+    "hash": "6068b46b7961a231",
+    "timestamp": "SystemTime { tv_sec: 1777776492, tv_nsec: 795447508 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "2d547f9777c81de6",
+    "path": "src/lib.rs",
+    "hash": "2d547f9777c81de6",
+    "timestamp": "SystemTime { tv_sec: 1778041616, tv_nsec: 34344948 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "a79c7d952c9e7053",
+    "path": "src/executor.rs",
+    "hash": "a79c7d952c9e7053",
+    "timestamp": "SystemTime { tv_sec: 1778041616, tv_nsec: 54200025 }",
+    "directive": "pre_suture"
+  },
+  {
+    "id": "c6f84c408845d0df",
+    "path": "src/task_manager.rs",
+    "hash": "c6f84c408845d0df",
+    "timestamp": "SystemTime { tv_sec: 1778041616, tv_nsec: 65915871 }",
     "directive": "pre_suture"
   }
 ]

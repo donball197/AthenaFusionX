@@ -1,9 +1,10 @@
-// src/governance/protocol.rs — v2.5 [INCREMENTAL_LOG]
+// src/governance/protocol.rs — v2.6 [DETERMINISTIC_LOG]
 use crate::agent_protocol::AgentAction;
+use crate::fnv_hasher::FnvHasher as DefaultHasher;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MerkleLeaf {
@@ -33,16 +34,13 @@ pub struct GovernanceLog {
 impl GovernanceLog {
     pub fn init() -> Self { Self::default() }
 
-    /// record: Incremental update of the system root hash.
     pub fn record(&mut self, action: AgentAction, actor_id: &str) {
         let leaf = MerkleLeaf::new(action, actor_id);
-        
-        // Incremental: Root = Hash(OldRoot + NewLeaf)
+        // Rolling Merkle root
         let mut hasher = DefaultHasher::new();
         self.root_hash.hash(&mut hasher);
         leaf.hash.hash(&mut hasher);
         self.root_hash = hasher.finish();
-
         self.history.push(leaf);
         
         if self.history.len() % 10 == 0 {
@@ -50,5 +48,3 @@ impl GovernanceLog {
         }
     }
 }
-
-use tracing::info;

@@ -1,83 +1,75 @@
-// src/task_manager.rs — v4.7 [UNIT_VARIANT_ALIGNMENT]
-use crate::distributed_scheduler::DistributedScheduler;
-use crate::executor::{FsmState, RoboticExecutor};
-use crate::json_parser;
-use crate::router::IntelligentRouter;
-use crate::logger;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::{broadcast, Mutex, Semaphore};
-use tracing::{info, warn, error, instrument};
+use nexus_substrate::memory::MemoryPalace;
+use crate::{
+    agent_protocol::AgentAction, cli, json_parser, logic_engine::LogicEngine,
+    metrics::METRICS, orchestrator::Orchestrator, executor::RoboticExecutor,
+    server::VmoState, distributed_scheduler::DistributedScheduler,
+};
+use reqwest::Client;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use tracing::{info, error};
 
-static TASK_SLAB: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
-
-fn max_turns() -> usize {
-    std::env::var("NEXUS_MAX_TURNS").ok().and_then(|v| v.parse().ok()).unwrap_or(8)
-}
-
-#[instrument(skip(orch, client, memory, vmo_state, tx, dist), fields(directive_len = directive.len()))]
 pub async fn send_task(
-    orch: Arc<crate::orchestrator::Orchestrator>,
-    client: &reqwest::Client,
+    orchestrator: Arc<Orchestrator>,
+    client: &Client,
     api_key: &str,
-    directive: &str,
-    memory: Arc<Mutex<crate::memory::MemoryPalace>>,
-    vmo_state: Arc<Mutex<crate::server::VmoState>>,
+    raw_directive: &str,
+    memory: Arc<Mutex<MemoryPalace>>,
+    vmo_state: Arc<Mutex<VmoState>>,
     tx: broadcast::Sender<String>,
     dist: Arc<DistributedScheduler>,
 ) -> String {
-    let _permit = TASK_SLAB.clone().acquire_owned().await.expect("SLAB_LOCK_FAIL");
-    
-    let mut session_obs: Vec<String> = Vec::new();
-    let mut fsm = RoboticExecutor::new(api_key.to_string(), tx.clone());
-    let mut turn_logs: Vec<String> = Vec::new();
+    METRICS.inc_task();
+    let mut session_obs: Vec<String> = vec![];
+    let mut history: Vec<(String, String)> = vec![]; 
+    let mut turn = 0usize;
+    let mut consecutive_fractures = 0usize;
 
-    let profile = IntelligentRouter::route(directive);
+    let execution_law = cli::get_execution_law_v6().await;
+    let mut executor = RoboticExecutor::new(api_key.to_string(), tx.clone());
 
-    for turn in 1..=max_turns() {
-        // FIX: Fault is now a unit variant, allowing direct comparison
-        if fsm.current_state == FsmState::Complete || fsm.current_state == FsmState::Fault {
-            break;
-        }
+    'mission: while turn < 12 {
+        turn += 1;
+        info!("=== Turn {} / 12 ===", turn);
 
-        let prompt = IntelligentRouter::build_prompt(directive, &profile, &session_obs);
+        if LogicEngine::detect_deadlock(&session_obs) { break 'mission; }
+        if consecutive_fractures >= 3 { break 'mission; }
+
+        let mut full_prompt = String::new();
+        for (q, a) in &history { full_prompt.push_str(&format!("USER: {}\nMODEL: {}\n", q, a)); }
+        
+        let turn_prompt = if turn == 1 { raw_directive.to_string() } 
+                          else { format!("The last action resulted in: {}. What is the next logical step?", 
+                                         session_obs.last().cloned().unwrap_or_else(|| "SUCCESS".into())) };
+        full_prompt.push_str(&format!("USER: {}", turn_prompt));
 
         let ctx = crate::neural_agent::ContextPacket {
-            system_prompt: Some(profile.persona.clone()),
-            model_override: Some(profile.primary_model.to_string()),
-            recent_logs: turn_logs.clone(), 
+            system_prompt: Some(execution_law.clone()),
+            recent_logs: session_obs.iter().rev().take(3).rev().cloned().collect(),
             ..Default::default()
         };
 
-        if turn == 1 {
-            let _ = tx.send(serde_json::json!({
-                "type": "NEURAL_THOUGHT",
-                "payload": format!(">> [ROUTER] Mission classified as {:?}. Escalating to Cortex.", profile.class)
-            }).to_string());
-        }
+        let response = match orchestrator.run(full_prompt, ctx, client, api_key, Some(tx.clone())).await {
+            Ok(resp) => resp,
+            Err(e) => { error!("Uplink failed: {}", e); break 'mission; }
+        };
 
-        logger::begin_turn_capture();
-
-        match orch.run(prompt, ctx, client, api_key, Some(tx.clone())).await {
-            Ok(res) => {
-                match json_parser::extract_actions(&res) {
-                    Ok(actions) => {
-                        let _ = fsm.execute_handle(actions, memory.clone(), vmo_state.clone(), dist.clone()).await;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Cortex outputted malformed JSON.");
-                        session_obs.push(format!("SYSTEM_ERROR: Your output was not valid JSON. {}", e));
-                    }
+        match json_parser::extract_actions(&response) {
+            Ok(actions) => {
+                if actions.is_empty() { break 'mission; }
+                history.push((turn_prompt, response.clone()));
+                consecutive_fractures = 0;
+                match executor.execute_handle(actions.clone(), memory.clone(), vmo_state.clone(), dist.clone()).await {
+                    Ok(observations) => { for obs in observations { session_obs.push(obs); } }
+                    Err(e) => session_obs.push(format!("EXECUTOR_FAULT: {}", e)),
                 }
+                if actions.iter().any(|a| matches!(a, AgentAction::Halt { .. })) { break 'mission; }
             }
-            Err(e) => {
-                error!(error = %e, "Uplink failure.");
-                break;
+            Err(_) => {
+                consecutive_fractures += 1;
+                session_obs.push("[FORMAT_VIOLATION] Output ONLY a raw JSON array.".into());
             }
         }
-
-        turn_logs = logger::end_turn_capture();
-        info!(turn = turn, log_count = turn_logs.len(), "Turn cycle complete. Logs buffered for next turn.");
     }
-    
-    "TASK_COMPLETE".into()
+    "TASK_COMPLETE".to_string()
 }

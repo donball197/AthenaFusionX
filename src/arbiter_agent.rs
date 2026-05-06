@@ -11,21 +11,10 @@ const COMMAND_ALLOWLIST: &[&str] = &[
 ];
 
 impl ArbiterAgent {
-    pub fn new(agent: Arc<MicroAgent>) -> Self {
-        Self { agent }
-    }
+    pub fn new(agent: Arc<MicroAgent>) -> Self { Self { agent } }
 
     pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
-        if std::env::var("NEXUS_STRICT_COMMANDS").is_ok() {
-            let permitted = COMMAND_ALLOWLIST.iter().any(|&allowed| {
-                command.trim().starts_with(allowed)
-            });
-            if !permitted {
-                return Err(format!("ALLOWLIST_VIOLATION: '{}' is not in the permitted command set.", command));
-            }
-            return Ok(());
-        }
-
+        // ⚡ FIX: ALWAYS run the danger-pattern scan first.
         let dangerous_patterns = [
             "rm -rf /", "rm -rf ~", "mkfs", "> /dev/sda", "> /dev/nvme",
             "chmod 777 /", "/etc/shadow", "mv /etc/", "mv /usr/",
@@ -52,14 +41,22 @@ impl ArbiterAgent {
             return Err("SANDBOX_VIOLATION: Pipe-to-shell pattern blocked.".to_string());
         }
 
+        // ⚡ FIX: Allowlist is enforced ONLY AFTER sandbox patterns are cleared.
+        if std::env::var("NEXUS_STRICT_COMMANDS").is_ok() {
+            let permitted = COMMAND_ALLOWLIST.iter().any(|&allowed| {
+                command.trim().starts_with(allowed)
+            });
+            if !permitted {
+                return Err(format!("ALLOWLIST_VIOLATION: '{}' is not in the permitted command set.", command));
+            }
+        }
+
         Ok(())
     }
 
     pub fn evaluate_entropy_delta(base_entropy: f32, new_entropy: f32) -> Result<(), String> {
         let delta = (new_entropy - base_entropy).abs();
-        if delta > 0.5 {
-            return Err(format!("ENTROPY_ANOMALY: Delta of {:.4} exceeds 0.5 threshold.", delta));
-        }
+        if delta > 0.5 { return Err(format!("ENTROPY_ANOMALY: Delta of {:.4} exceeds 0.5 threshold.", delta)); }
         Ok(())
     }
 
@@ -74,33 +71,18 @@ impl ArbiterAgent {
         let n = vectors.len();
         let threshold = (2 * n / 3) + 1;
         let dim = vectors[0].len();
-
         if vectors.iter().any(|v| v.len() != dim) { return None; }
 
         let (best_idx, neighbor_count) = (0..n)
             .map(|i| {
-                let neighbors = (0..n)
-                    .filter(|&j| {
-                        vectors[i].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon
-                    })
-                    .count();
+                let neighbors = (0..n).filter(|&j| { vectors[i].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon }).count();
                 (i, neighbors)
-            })
-            .max_by_key(|&(_, count)| count)?;
-
+            }).max_by_key(|&(_, count)| count)?;
+            
         if neighbor_count < threshold { return None; }
 
-        let agreeing: Vec<&Vec<f32>> = (0..n)
-            .filter(|&j| {
-                vectors[best_idx].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon
-            })
-            .map(|j| &vectors[j])
-            .collect();
-
-        let centroid: Vec<f32> = (0..dim)
-            .map(|k| agreeing.iter().map(|v| v[k]).sum::<f32>() / agreeing.len() as f32)
-            .collect();
-
+        let agreeing: Vec<&Vec<f32>> = (0..n).filter(|&j| { vectors[best_idx].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon }).map(|j| &vectors[j]).collect();
+        let centroid: Vec<f32> = (0..dim).map(|k| agreeing.iter().map(|v| v[k]).sum::<f32>() / agreeing.len() as f32).collect();
         Some(centroid)
     }
 }

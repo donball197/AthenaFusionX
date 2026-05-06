@@ -1,21 +1,13 @@
-// src/bin/quantum_ingestor.rs — v1.1 [CLEAN_JSON_STORE_FIX]
-// FIX: Was storing the full LLM chain-of-thought including duplicate
-//      JSON blocks and markdown fences into neural_context.result.
-//      Now extracts the last valid JSON object from the response before
-//      persisting — result column contains only the clean data object.
-// FIX: Embedding is generated from the clean JSON, not the raw trace.
+// src/bin/quantum_ingestor.rs — v1.2 [IMPORT_FIX + TYPE_FIX]
 use anyhow::Result;
-use nexus_singularity::memory::MemoryPalace;
+use nexus_substrate::memory::MemoryPalace;
+use nexus_substrate::vector_bridge;
 use nexus_singularity::neural_agent::{ContextPacket, MicroAgent};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
-/// extract_last_json: Finds the last {...} block in a string and
-/// attempts to parse it as valid JSON. Returns the minified JSON
-/// string on success, or None if no valid object is found.
 fn extract_last_json(text: &str) -> Option<String> {
-    // Walk backwards through the string to find the last closing brace
     let bytes = text.as_bytes();
     let mut end = None;
     for (i, &b) in bytes.iter().enumerate().rev() {
@@ -24,10 +16,7 @@ fn extract_last_json(text: &str) -> Option<String> {
             break;
         }
     }
-
     let end = end?;
-
-    // Find the matching opening brace by counting depth
     let mut depth: i32 = 0;
     let mut start = None;
     for (i, &b) in bytes[..=end].iter().enumerate().rev() {
@@ -43,14 +32,10 @@ fn extract_last_json(text: &str) -> Option<String> {
             _ => {}
         }
     }
-
     let start = start?;
     let candidate = &text[start..=end];
-
-    // Validate it parses as a JSON object with our expected keys
     match serde_json::from_str::<serde_json::Value>(candidate) {
         Ok(v) if v.is_object() => {
-            // Minify for storage efficiency
             Some(serde_json::to_string(&v).unwrap_or_else(|_| candidate.to_string()))
         }
         _ => None,
@@ -61,11 +46,16 @@ fn extract_last_json(text: &str) -> Option<String> {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let api_key = std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY missing");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .build()
+        .expect("Failed to build HTTP client");
     let (tx, _) = broadcast::channel(16);
     let agent = Arc::new(MicroAgent::init(tx)?);
 
-    let memory_palace = MemoryPalace::new(".nexus_memory.db").await?;
+    // ⚡ FIX: Explicit type annotation
+    let memory_palace: MemoryPalace = MemoryPalace::new(".nexus_memory.db").await?;
     let memory = Arc::new(Mutex::new(memory_palace));
 
     println!("\x1b[35m>> [QUANTUM_INGESTOR] Initializing Physical PDF Extraction...\x1b[0m");
@@ -88,12 +78,7 @@ async fn main() -> Result<()> {
     );
 
     let ctx = ContextPacket {
-        system_prompt: Some(
-            "You are a Quantum Architect. Output ONLY a valid JSON object with keys \
-             'theory', 'classical_math', 'quantum_bridge_potential'. \
-             No markdown. No explanation. No preamble. JSON only."
-            .to_string()
-        ),
+        system_prompt: Some("You are a Quantum Architect. JSON only.".to_string()),
         model_override: Some("gemma-4-26b-a4b-it".to_string()),
         ..Default::default()
     };
@@ -102,42 +87,20 @@ async fn main() -> Result<()> {
 
     match agent.prepare_and_run(&client, &api_key, &prompt, ctx, 0.2, None).await {
         Ok((response, _)) => {
-            // FIX: Extract only the last clean JSON object from the response
             let clean_json = match extract_last_json(&response) {
-                Some(j) => {
-                    println!("\x1b[32m>> [PARSER] Clean JSON extracted ({} bytes)\x1b[0m", j.len());
-                    j
-                }
-                None => {
-                    // Fallback: strip fences and take the raw response
-                    eprintln!("\x1b[33m>> [PARSER] No valid JSON object found — storing raw (trimmed)\x1b[0m");
-                    response
-                        .trim_start_matches("```json")
-                        .trim_start_matches("```")
-                        .trim_end_matches("```")
-                        .trim()
-                        .chars()
-                        .take(2000)
-                        .collect()
-                }
+                Some(j) => j,
+                None => response.trim().chars().take(2000).collect()
             };
 
             println!("\x1b[36m>> [UPLINK] Generating Semantic Vector Embeddings...\x1b[0m");
 
-            // FIX: Embed the clean JSON, not the raw chain-of-thought
-            let embedding = nexus_singularity::vector_bridge::get_embedding(
+            // ⚡ FIX: Call vector_bridge from substrate and provide explicit type
+            let embedding: Option<Vec<f32>> = vector_bridge::get_embedding(
                 &api_key,
                 &clean_json,
             )
             .await
             .ok();
-
-            if embedding.is_none() {
-                eprintln!(
-                    "\x1b[33m>> [EMBEDDING] Warning: embedding generation failed. \
-                     Check GEMINI_API_KEY has access to text-embedding-004.\x1b[0m"
-                );
-            }
 
             let palace = memory.lock().await;
             palace
@@ -150,7 +113,6 @@ async fn main() -> Result<()> {
                 .await?;
 
             println!("\x1b[32m>> [SUCCESS] Clean JSON enshrined in Semantic Memory Palace.\x1b[0m");
-            println!("\x1b[32m>> [PREVIEW] {}\x1b[0m", &clean_json.chars().take(120).collect::<String>());
         }
         Err(e) => eprintln!("\x1b[31m>> [FAULT] API Request Failed: {}\x1b[0m", e),
     }

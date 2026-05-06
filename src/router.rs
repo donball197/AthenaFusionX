@@ -77,7 +77,7 @@ impl IntelligentRouter {
         match class {
             DirectiveClass::RepoDoctor => AgentProfile {
                 class: DirectiveClass::RepoDoctor,
-                primary_model: "gemma-4-31b-it", // ⚡ High-reasoning model
+                primary_model: "gemma-4-26b-a4b-it", // ⚡ High-reasoning model
                 max_turns: 8,
                 budget: ContextBudget::doctor(),
                 persona: "IDENTITY: NEXUS Repo Doctor. Goal: Diagnose and patch compilation errors. RULE: You MUST output ONLY a valid JSON array. WORKFLOW: 1. read_file on the failing file. 2. write_file with the corrected code. 3. execute_command with 'cargo check' to verify. 4. halt only when integrity passes.".into(),

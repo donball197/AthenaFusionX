@@ -1,0 +1,120 @@
+use crate::neural_agent::ContextPacket;
+use crate::metrics::METRICS;
+use futures_util::StreamExt;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
+use tracing::{info, warn, error};
+
+pub struct Orchestrator;
+
+impl Orchestrator {
+    pub fn new() -> Self { Self }
+
+    pub async fn run(
+        &self,
+        prompt: String,
+        ctx: ContextPacket,
+        client: &Client,
+        api_key: &str,
+        tx: Option<broadcast::Sender<String>>,
+    ) -> Result<String, String> {
+        let model = ctx.model_override.as_deref().unwrap_or("gemma-4-26b-a4b-it");
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+            model, api_key
+        );
+
+        let mut contents: Vec<Value> = Vec::new();
+        if !ctx.recent_logs.is_empty() {
+            let log_blob = ctx.recent_logs.join("\n");
+            contents.push(json!({
+                "role": "user",
+                "parts": [{ "text": format!("[SYSTEM_OBSERVATIONS]\n{}", log_blob) }]
+            }));
+            contents.push(json!({
+                "role": "model",
+                "parts": [{ "text": "[ACKNOWLEDGED]" }]
+            }));
+        }
+        contents.push(json!({ "role": "user", "parts": [{ "text": prompt }] }));
+
+        let payload = json!({
+            "contents": contents,
+            "systemInstruction": ctx.system_prompt.as_deref()
+                .map(|s| json!({"parts": [{"text": s}]})),
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 4096,
+                "responseMimeType": "application/json"
+            }
+        });
+
+        for attempt in 1..=3u64 {
+            info!("[ORCHESTRATOR] Uplink Attempt {} → {}", attempt, model);
+            METRICS.api_calls.fetch_add(1, Ordering::Relaxed);
+
+            let t_start = Instant::now();
+            let res = client.post(&url).timeout(Duration::from_secs(45)).json(&payload).send().await;
+
+            match res {
+                Ok(response) if response.status().is_success() => {
+                    let mut full_text = String::new();
+                    let mut stream = response.bytes_stream();
+                    let mut buf: Vec<u8> = Vec::new();
+
+                    while let Some(Ok(chunk)) = stream.next().await {
+                        buf.extend_from_slice(&chunk);
+                        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                            let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+                            let line = String::from_utf8_lossy(&line_bytes);
+                            let clean = line.trim_start_matches("data: ").trim();
+                            if clean.is_empty() || clean == "[DONE]" { continue; }
+                            if let Ok(val) = serde_json::from_str::<Value>(clean) {
+                                if let Some(token) = val
+                                    .pointer("/candidates/0/content/parts/0/text")
+                                    .and_then(|v| v.as_str())
+                                {
+                                    full_text.push_str(token);
+                                    if let Some(sender) = &tx {
+                                        let _ = sender.send(
+                                            json!({"type": "NEURAL_STREAM", "payload": token}).to_string()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let latency_ms = t_start.elapsed().as_millis() as u64;
+                    METRICS.api_latency_ms_sum.fetch_add(latency_ms, Ordering::Relaxed);
+
+                    if !full_text.trim().is_empty() {
+                        return Ok(full_text.trim().to_string());
+                    }
+                    warn!("[ORCHESTRATOR] Empty response on attempt {}, retrying...", attempt);
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let err_body = response.text().await.unwrap_or_default();
+                    error!("API_REJECTION [{}]: {}", status, err_body);
+
+                    if status == 404 { return Err(format!("STALE_MODEL_STRING: {}", model)); }
+                    if status.as_u16() == 429 || err_body.contains("RESOURCE_EXHAUSTED") || err_body.contains("429") {
+                        return Err("RESOURCE_EXHAUSTED".into());
+                    }
+                    if status == 400 || err_body.contains("400") {
+                        return Err("CONTEXT_OVERFLOW".into());
+                    }
+                }
+                Err(e) => warn!("Uplink failure: {}", e),
+            }
+            tokio::time::sleep(Duration::from_secs(attempt * 2)).await;
+        }
+
+        METRICS.task_failures.fetch_add(1, Ordering::Relaxed);
+        Err("CORTEX_UPLINK_FAILED".into())
+    }
+}

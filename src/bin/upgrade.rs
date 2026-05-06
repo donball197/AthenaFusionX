@@ -1,7 +1,9 @@
+// src/bin/upgrade.rs — v1.9.1 [IMPORT_ALIGNMENT]
+use anyhow::Result;
+use nexus_substrate::memory::MemoryPalace;
 use nexus_singularity::arbiter_agent::ArbiterAgent;
 use nexus_singularity::cluster::ClusterMesh;
 use nexus_singularity::distributed_scheduler::DistributedScheduler;
-use nexus_singularity::memory::MemoryPalace;
 use nexus_singularity::mission_control::upgrade_command;
 use nexus_singularity::neural_agent::MicroAgent;
 use nexus_singularity::orchestrator::Orchestrator;
@@ -14,7 +16,7 @@ use tokio::sync::{broadcast, Mutex};
 use parking_lot::Mutex as SyncMutex;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     println!("\x1b[36m>> [UPGRADE_BINARY] Orchestrating NEXUS Transition...\x1b[0m");
 
@@ -23,7 +25,6 @@ async fn main() -> anyhow::Result<()> {
 
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
     
-    // ⚡ FIX: Wrap monitor in Arc<Mutex<...>> to match AppState definition
     let monitor = Arc::new(tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new()));
 
     let orchestrator = Arc::new(Orchestrator::new());

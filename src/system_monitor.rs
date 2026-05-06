@@ -28,7 +28,7 @@ impl SystemMonitor {
 
         // ⚡ PUMP: Push real CPU load into the Zig kernel for synthetic thermal model
         unsafe {
-            crate::kernel::ffi::set_substrate_load(load);
+            nexus_substrate::kernel::ffi::set_substrate_load(load);
         }
 
         // Synthetic temperature: 30°C idle → 70°C full load

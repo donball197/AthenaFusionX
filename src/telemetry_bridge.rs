@@ -9,7 +9,7 @@ pub async fn start_thermal_bridge(monitor: Arc<Mutex<SystemMonitor>>) {
     println!("\x1b[35m>> [TELEMETRY_BRIDGE] Mapping Synthetic Thermal VMO (Handle: 0x7E1)\x1b[0m");
     
     // Create a 4KB page for hardware metrics
-    let handle = unsafe { kernel::zx_vmo_create_native(4096) };
+    let handle = unsafe { nexus_substrate::kernel::ffi::zx_vmo_create_native(4096) };
     kernel::register_handle(handle, kernel::HandleType::Vmo(handle));
 
     loop {
@@ -24,7 +24,7 @@ pub async fn start_thermal_bridge(monitor: Arc<Mutex<SystemMonitor>>) {
         
         let bytes = payload.as_bytes();
         unsafe {
-            kernel::ffi::zx_vmo_write_native(handle, 0, bytes.as_ptr(), bytes.len());
+            nexus_substrate::kernel::ffi::zx_vmo_write_native(handle, 0, bytes.as_ptr(), bytes.len());
         }
 
         sleep(Duration::from_secs(2)).await;

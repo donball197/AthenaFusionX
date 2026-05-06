@@ -11,9 +11,7 @@ pub async fn monitor_sovereignty(mut monitor: SystemMonitor) {
             warn!("CRITICAL_RESOURCE_HIJACK: Initiating emergency VMO purge.");
             
             // ⚡ FIX: Collect handles to avoid RwLock Deadlock
-            let handles: Vec<u32> = if let Ok(reg) = kernel::HANDLE_REGISTRY.read() {
-                reg.keys().cloned().collect()
-            } else { Vec::new() };
+            let handles: Vec<u32> = kernel::HANDLE_REGISTRY.read().keys().cloned().collect();
 
             for handle in handles {
                 kernel::close_handle(handle);

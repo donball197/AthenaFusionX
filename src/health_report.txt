@@ -1,0 +1,28 @@
+=== NEXUS METRICS SMOKE TEST ===
+# HELP nexus_tasks_total Total tasks processed by the NEXUS Cortex
+# TYPE nexus_tasks_total counter
+nexus_tasks_total 1
+# HELP nexus_task_failures Total task execution failures
+# TYPE nexus_task_failures counter
+nexus_task_failures 1
+# HELP nexus_arbiter_blocks Total arbiter safety interventions
+# TYPE nexus_arbiter_blocks counter
+nexus_arbiter_blocks 0
+# HELP nexus_heal_successes Self-healing suture successes
+# TYPE nexus_heal_successes counter
+nexus_heal_successes 0
+# HELP nexus_heal_failures Self-healing suture failures
+# TYPE nexus_heal_failures counter
+nexus_heal_failures 0
+# HELP nexus_api_calls Total calls to Gemini API backend
+# TYPE nexus_api_calls counter
+nexus_api_calls 1
+# HELP nexus_api_avg_latency_ms Average API latency in milliseconds
+# TYPE nexus_api_avg_latency_ms gauge
+nexus_api_avg_latency_ms 42
+# HELP nexus_circuit_opens Circuit breaker trips
+# TYPE nexus_circuit_opens counter
+nexus_circuit_opens 0
+
+
+✅ Metrics subsystem is live and Prometheus-compatible.

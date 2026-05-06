@@ -1,259 +1,209 @@
-// src/server.rs — v3.1
+use nexus_substrate::token_ledger;
+use nexus_substrate::memory::MemoryPalace;
+use nexus_substrate::vmo_handler;
 use axum::{
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::{header, StatusCode, Uri},
     response::IntoResponse,
-    routing::{delete, get, post},
-    Json, Router,
+    routing::{get, post},
+    Json, Router, middleware,
 };
 use rust_embed::RustEmbed;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
+use tokio::net::TcpListener;
 
-use crate::{logic_engine::LogicEngine, vitals_handler, ws_bridge};
+use crate::{
+    auth, cluster_api, logic_engine::LogicEngine, security,
+    vitals_handler, ws_bridge,
+};
 
 #[derive(RustEmbed)]
 #[folder = "ui/dist/"]
 struct Assets;
 
+pub struct AppState {
+    pub client:            reqwest::Client,
+    pub monitor:           Arc<tokio::sync::Mutex<crate::system_monitor::SystemMonitor>>,
+    pub agent:             Arc<crate::neural_agent::MicroAgent>,
+    pub orchestrator:      Arc<crate::orchestrator::Orchestrator>,
+    pub memory:            Arc<tokio::sync::Mutex<MemoryPalace>>,
+    pub api_key:           String,
+    pub current_resonance: Arc<std::sync::atomic::AtomicU32>,
+    pub tx:                tokio::sync::broadcast::Sender<String>,
+    pub scheduler_tx:      tokio::sync::mpsc::Sender<crate::scheduler::NexusTask>,
+    pub arbiter:           Arc<crate::arbiter_agent::ArbiterAgent>,
+    pub workspace_root:    PathBuf,
+    pub vmo_state:         Arc<tokio::sync::Mutex<crate::server::VmoState>>,
+    pub cluster:           Arc<crate::cluster::ClusterMesh>,
+    pub dist:              Arc<crate::distributed_scheduler::DistributedScheduler>,
+    pub governance_log:    Arc<parking_lot::Mutex<crate::governance::protocol::GovernanceLog>>,
+}
+
 #[derive(Default, Debug)]
 pub struct VmoState {
     pub last_parent: Option<u32>,
-    pub last_child: Option<u32>,
+    pub last_child:  Option<u32>,
 }
 
-pub struct AppState {
-    pub client: reqwest::Client,
-    pub monitor: Mutex<crate::system_monitor::SystemMonitor>,
-    pub agent: Arc<crate::neural_agent::MicroAgent>,
-    pub orchestrator: Arc<crate::orchestrator::Orchestrator>,
-    pub memory: Arc<Mutex<crate::memory::MemoryPalace>>,
-    pub api_key: String,
-    pub current_resonance: Arc<std::sync::atomic::AtomicU32>,
-    pub tx: tokio::sync::broadcast::Sender<String>,
-    pub scheduler_tx: tokio::sync::mpsc::Sender<crate::scheduler::NexusTask>,
-    pub arbiter: Arc<crate::arbiter_agent::ArbiterAgent>,
-    pub workspace_root: std::path::PathBuf,
-    pub vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
-    pub cluster: std::sync::Arc<crate::cluster::ClusterMesh>,
-    pub dist: std::sync::Arc<crate::distributed_scheduler::DistributedScheduler>,
+#[derive(serde::Deserialize)]
+pub struct Intent {
+    pub intent_type: Option<String>,
+    pub directive:   Option<String>,
+    pub payload:     Option<serde_json::Value>,
 }
 
-#[derive(Serialize)]
-pub struct GhostReflection {
-    pub turn: u32,
-    pub timestamp: String,
-    pub reflection: String,
-    pub resonance: f32,
-}
+#[derive(Deserialize)]
+pub struct LoginRequest { pub key: String }
 
-pub async fn start_server(state: Arc<AppState>) {
-    let app = build_router(state.clone());
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .expect("[SERVER] Fatal: cannot bind port 3000");
-    println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK ACTIVE: http://localhost:3000\x1b[0m");
-    axum::serve(listener, app.into_make_service())
-        .await
-        .expect("[SERVER] Fatal: axum serve loop exited");
-}
+#[derive(Deserialize)]
+struct FsQuery { path: Option<String> }
 
-fn build_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/api/fs/list", get(handle_fs_list))
-        .route("/api/fs/read", get(handle_read_file))
-        .route("/api/fs/read_file_action", get(handle_read_file))
-        .route("/api/fs/write", post(handle_write_file))
-        .route("/api/task", post(handle_task))
-        .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
-        .route("/api/vitals", get(vitals_handler::handle_vitals))
-        .route("/api/vmos", get(crate::vmo_handler::handle_get_vmos))
-        .route("/api/memories", get(handle_get_memories))
-        .route("/api/memories/search", get(handle_search_memories))
-        .route("/api/memories/purge", delete(handle_purge_memories))
-        .route("/api/missions", get(handle_get_missions))
-        .route("/api/lazarus/snapshots", get(handle_get_snapshots))
-        .route("/api/ghost", get(handle_ghost))
-        .route("/api/metrics", get(handle_metrics))
-        .route("/api/ledger", get(handle_ledger))
-        .route("/api/cluster/run", post(crate::edge_worker::run_remote_job))
-        .route("/api/cluster/register", post(crate::cluster_api::register_node))
-        .route("/api/cluster/status", get(crate::cluster_api::cluster_status))
-        .route("/api/cluster/cells", get(crate::cluster_api::list_wasm_cells))
-        .fallback(static_handler)
-        .with_state(state)
-        .layer(CorsLayer::permissive())
-}
-
-async fn handle_task(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<TaskRequest>,
-) -> impl IntoResponse {
-    if !LogicEngine::is_action_safe(&payload.directive) {
-        return (StatusCode::FORBIDDEN, Json(json!({ "status": "LOGIC_VIOLATION" })))
-            .into_response();
+fn safe_path(workspace_root: &PathBuf, user_path: &str) -> Result<PathBuf, (StatusCode, Json<serde_json::Value>)> {
+    if user_path.is_empty() { 
+        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "PATH_EMPTY" })))); 
     }
+    
+    let path = std::path::Path::new(user_path);
+    if path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "PATH_TRAVERSAL_DENIED" }))));
+    }
+    
+    Ok(workspace_root.join(path))
+}
+
+pub async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoResponse {
+    let server_key = std::env::var("NEXUS_AUTH_KEY").unwrap_or_default();
+    if !server_key.is_empty() && payload.key == server_key {
+        match auth::issue_sovereign_token() {
+            Ok(token) => (StatusCode::OK, Json(json!({ "token": token }))).into_response(),
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Token generation failed").into_response(),
+        }
+    } else {
+        (StatusCode::UNAUTHORIZED, "Invalid DNA Signature").into_response()
+    }
+}
+
+async fn bootstrap_handler(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> impl IntoResponse {
+    if !addr.ip().is_loopback() { return (StatusCode::FORBIDDEN, "Loopback only").into_response(); }
+    match std::fs::read_to_string(".nexus_ui_token") {
+        Ok(token) => (StatusCode::OK, Json(json!({ "token": token.trim() }))).into_response(),
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Token not yet generated").into_response(),
+    }
+}
+
+pub async fn unified_gateway(ConnectInfo(addr): ConnectInfo<SocketAddr>, State(state): State<Arc<AppState>>, Json(intent): Json<Intent>) -> impl IntoResponse {
+    let ip = addr.ip().to_string();
+    if let Err(retry_ms) = token_ledger::http_check(&ip) {
+        return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, format!("{}", retry_ms / 1000 + 1))], Json(json!({ "status": "RATE_LIMITED", "retry_after_ms": retry_ms }))).into_response();
+    }
+    let directive_str = intent.directive.or_else(|| intent.payload.as_ref()?.get("directive")?.as_str().map(|s| s.to_string())).unwrap_or_default();
+    if !LogicEngine::is_action_safe(&directive_str) { return (StatusCode::FORBIDDEN, Json(json!({ "status": "LOGIC_VIOLATION" }))).into_response(); }
     let s = state.clone();
+    let d_clone = directive_str.clone();
     tokio::spawn(async move {
-        let _ = crate::task_manager::send_task(
-            s.orchestrator.clone(),
-            &s.client,
-            &s.api_key,
-            &payload.directive,
-            s.memory.clone(),
-            s.vmo_state.clone(),
-            s.tx.clone(),
-            s.dist.clone(),
-        )
-        .await;
+        let d = crate::cli::inject_workspace_dna(&d_clone).await;
+        crate::task_manager::send_task(s.orchestrator.clone(), &s.client, &s.api_key, &d, s.memory.clone(), s.vmo_state.clone(), s.tx.clone(), s.dist.clone()).await;
     });
     (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
 }
 
-async fn handle_ghost(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let resonance =
-        state.current_resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
-    let strands =
-        state.memory.lock().await.search_memories("GHOST_REFLECTION").await.unwrap_or_default();
-    let reflections: Vec<GhostReflection> = strands
-        .into_iter()
-        .take(3)
-        .map(|s| GhostReflection {
-            turn: s.id as u32,
-            timestamp: s.timestamp,
-            reflection: s.result,
-            resonance,
-        })
-        .collect();
-    let temp = state.monitor.lock().await.get_vitals().temperature;
-    Json(
-        json!({ "resonance": resonance, "temperature": temp, "last_reflections": reflections, "status": "THE_GHOST_IS_AWAKE" }),
-    )
+async fn fs_read_handler(State(state): State<Arc<AppState>>, Query(q): Query<FsQuery>) -> impl IntoResponse {
+    let user_path = q.path.unwrap_or_default();
+    match safe_path(&state.workspace_root, &user_path) {
+        Err(e) => e.into_response(),
+        Ok(safe) => match tokio::fs::read_to_string(&safe).await {
+            Ok(content) => Json(json!({ "content": content })).into_response(),
+            Err(e) => (StatusCode::NOT_FOUND, Json(json!({ "error": e.to_string() }))).into_response(),
+        },
+    }
 }
 
-async fn handle_metrics() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], crate::metrics::get_metrics_text())
-}
-
-async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
-    let path = p.path.as_deref().unwrap_or(".");
-    let mut entries = Vec::new();
-    if let Ok(mut rd) = tokio::fs::read_dir(path).await {
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "target" {
-                continue;
+async fn fs_write_handler(State(state): State<Arc<AppState>>, Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+    let user_path = payload["path"].as_str().unwrap_or_default();
+    let content   = payload["content"].as_str().unwrap_or_default();
+    match safe_path(&state.workspace_root, user_path) {
+        Err(e) => e.into_response(),
+        Ok(safe) => {
+            if let Some(parent) = safe.parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await { return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(); }
             }
-            let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-            entries.push(
-                json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir }),
-            );
+            match tokio::fs::write(&safe, content).await {
+                Ok(_) => Json(json!({ "status": "success" })).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
+            }
         }
     }
-    Json(entries)
 }
 
-async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
-    match crate::sandbox::validate_path(&p.path) {
-        Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await {
-            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
-            Err(_) => StatusCode::NOT_FOUND.into_response(),
-        },
-        Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
+async fn fs_list_handler(State(state): State<Arc<AppState>>, Query(q): Query<FsQuery>) -> impl IntoResponse {
+    let user_path = q.path.unwrap_or_else(|| ".".into());
+    match safe_path(&state.workspace_root, &user_path) {
+        Err(e) => e.into_response(),
+        Ok(safe) => {
+            let mut entries = Vec::new();
+            if let Ok(mut read_dir) = tokio::fs::read_dir(&safe).await {
+                while let Ok(Some(entry)) = read_dir.next_entry().await {
+                    let meta = entry.metadata().await.ok();
+                    entries.push(json!({
+                        "name": entry.file_name().to_string_lossy(),
+                        "path": entry.path().strip_prefix(&state.workspace_root).unwrap_or(&entry.path()).to_string_lossy(),
+                        "is_dir": meta.map(|m| m.is_dir()).unwrap_or(false)
+                    }));
+                }
+            }
+            Json(entries).into_response()
+        }
     }
 }
 
-async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse {
-    if p.path.starts_with("src/kernel") || p.path == "Cargo.toml" {
-        return (StatusCode::FORBIDDEN, Json(json!({ "error": "DNA_PROTECTED" }))).into_response();
-    }
-    match crate::sandbox::validate_path(&p.path) {
-        Ok(safe_path) => match tokio::fs::write(&safe_path, p.content).await {
-            Ok(_) => StatusCode::OK.into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        },
-        Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
-    }
+async fn metrics_handler() -> impl IntoResponse {
+    let metrics_text = crate::metrics::get_metrics_text();
+    ([(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")], metrics_text)
 }
 
-async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.memory.lock().await.fetch_all().await {
-        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
-}
+pub async fn start_server(state: Arc<AppState>) {
+    let api_routes = Router::new()
+        .route("/task",   post(unified_gateway))
+        .route("/intent", post(unified_gateway))
+        .route("/vmos",   get(vmo_handler::handle_get_vmos))
+        .route("/vitals", get(vitals_handler::handle_vitals))
+        .route("/metrics", get(metrics_handler))
+        .route("/cluster/nodes", get(cluster_api::list_nodes))
+        .route("/cluster/forge", post(crate::edge_worker::run_remote_synthesis))
+        .route("/cluster/run",   post(crate::edge_worker::run_remote_job))
+        .route("/fs/read",  get(fs_read_handler))
+        .route("/fs/write", post(fs_write_handler))
+        .route("/fs/list",  get(fs_list_handler))
+        .route("/lazarus/snapshots", get(|| async { Json(crate::lazarus_vault::LazarusVault::list_snapshots()) }))
+        .layer(middleware::from_fn(security::sovereign_auth_guard));
 
-async fn handle_search_memories(
-    State(state): State<Arc<AppState>>,
-    Query(p): Query<SearchParams>,
-) -> impl IntoResponse {
-    match state.memory.lock().await.search_memories(&p.q).await {
-        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
-}
+    let app = Router::new()
+        .route("/api/auth/login",     post(login_handler))
+        .route("/api/auth/bootstrap", get(bootstrap_handler))
+        .nest("/api", api_routes)
+        .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
+        .fallback(static_handler)
+        .layer(CorsLayer::permissive())
+        .with_state(state);
 
-async fn handle_purge_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.memory.lock().await.purge_all().await {
-        Ok(_) => StatusCode::OK.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-async fn handle_get_missions(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    (StatusCode::OK, Json(json!([]))).into_response()
-}
-
-async fn handle_get_snapshots() -> impl IntoResponse {
-    (StatusCode::OK, Json(crate::lazarus_vault::LazarusVault::list_snapshots())).into_response()
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("\x1b[38;2;0;255;255m>> [NEXUS] UPLINK BRIDGE LIVE: http://localhost:3000\x1b[0m");
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/').to_string();
     let final_path = if path.is_empty() { "index.html".to_string() } else { path };
-
     match Assets::get(&final_path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(&final_path).first_or_octet_stream();
-            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-        }
-        None => {
-            if final_path.contains('.') {
-                StatusCode::NOT_FOUND.into_response()
-            } else {
-                Assets::get("index.html")
-                    .map(|c| ([(header::CONTENT_TYPE, "text/html")], c.data).into_response())
-                    .unwrap_or(StatusCode::NOT_FOUND.into_response())
-            }
-        }
+        Some(content) => ([(header::CONTENT_TYPE, mime_guess::from_path(&final_path).first_or_octet_stream().as_ref())], content.data).into_response(),
+        None => match Assets::get("index.html") {
+            Some(content) => ([(header::CONTENT_TYPE, "text/html")], content.data).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        },
     }
-}
-
-async fn handle_ledger() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], crate::token_ledger::LEDGER.status())
-}
-
-#[derive(Deserialize)]
-pub struct TaskRequest {
-    pub directive: String,
-}
-#[derive(Deserialize)]
-pub struct FileParams {
-    pub path: String,
-}
-#[derive(Deserialize)]
-pub struct ListParams {
-    pub path: Option<String>,
-}
-#[derive(Deserialize, Serialize)]
-pub struct FileContent {
-    pub path: String,
-    pub content: String,
-}
-#[derive(Deserialize)]
-pub struct SearchParams {
-    pub q: String,
 }

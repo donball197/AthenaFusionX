@@ -51,15 +51,44 @@ pub fn issue_sovereign_token() -> Result<String> {
     .map_err(|e| anyhow!("JWT_GEN_FAIL: {}", e))
 }
 
-pub fn verify_token(token: &str) -> Result<bool> {
+/// TokenVerdict: Distinguishes between infrastructure failures and policy rejections.
+/// Use verify_token_detailed() when you need to log *why* a token was rejected.
+#[derive(Debug, PartialEq)]
+pub enum TokenVerdict {
+    Valid,
+    Expired,
+    InvalidSignature,
+    MissingKey,
+}
+
+/// verify_token_detailed: Returns the specific reason for rejection.
+/// Err(_) means the auth key is misconfigured — not that the token is bad.
+pub fn verify_token_detailed(token: &str) -> Result<TokenVerdict> {
     let key = load_key()?;
-    let validation = Validation::new(Algorithm::HS256);
-    match decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(key.as_bytes()),
-        &validation,
-    ) {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.leeway = 0;
+    match decode::<Claims>(token, &DecodingKey::from_secret(key.as_bytes()), &validation) {
+        Ok(_) => Ok(TokenVerdict::Valid),
+        Err(e) => Ok(match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => TokenVerdict::Expired,
+            _ => TokenVerdict::InvalidSignature,
+        }),
+    }
+}
+
+/// verify_token: Backward-compatible shim — returns true only if Valid.
+/// Err(_) indicates a key configuration problem, not a bad token.
+pub fn verify_token(token: &str) -> Result<bool> {
+    match verify_token_detailed(token)? {
+        TokenVerdict::Valid => Ok(true),
+        TokenVerdict::Expired => {
+            tracing::warn!("[AUTH] Token rejected: expired");
+            Ok(false)
+        }
+        TokenVerdict::InvalidSignature => {
+            tracing::warn!("[AUTH] Token rejected: invalid signature");
+            Ok(false)
+        }
+        TokenVerdict::MissingKey => Ok(false), // already an Err from load_key
     }
 }

@@ -1,4 +1,4 @@
-use crate::memory::MemoryPalace;
+use nexus_substrate::memory::MemoryPalace;
 use anyhow::Result;
 use scraper::{Html, Selector};
 use std::sync::Arc;

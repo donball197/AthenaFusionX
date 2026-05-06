@@ -1,0 +1,155 @@
+use nexus_substrate::memory::MemoryPalace;
+use crate::{
+    agent_protocol::AgentAction, cli, json_parser, logic_engine::LogicEngine,
+    metrics::METRICS, orchestrator::Orchestrator, executor::RoboticExecutor,
+    server::VmoState, distributed_scheduler::DistributedScheduler,
+};
+use reqwest::Client;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use tracing::{info, error, warn};
+
+pub const FORMAT_CORRECTION: &str = "\
+[FORMAT_VIOLATION] Your previous response was REJECTED — it contained prose \
+before the JSON array. You MUST output ONLY a raw JSON array. \
+Start your response with `[` and end with `]`. \
+No reasoning text outside JSON. Retry the same action now.";
+
+fn truncate_obs(obs: String, max_chars: usize) -> String {
+    let char_count = obs.chars().count();
+    if char_count <= max_chars { return obs; }
+    let truncated: String = obs.chars().take(max_chars).collect();
+    format!("{}... [TRUNCATED {}/{} chars]", truncated, max_chars, char_count)
+}
+
+pub async fn send_task(
+    orchestrator: Arc<Orchestrator>,
+    client: &Client,
+    api_key: &str,
+    raw_directive: &str,
+    memory: Arc<Mutex<MemoryPalace>>,
+    vmo_state: Arc<Mutex<VmoState>>,
+    tx: broadcast::Sender<String>,
+    dist: Arc<DistributedScheduler>,
+) -> String {
+    METRICS.inc_task();
+
+    let mut session_obs: Vec<String> = vec![];
+    let mut turn = 0usize;
+    let mut consecutive_fractures = 0usize;
+    let mut mission_outcome = "INCOMPLETE".to_string();
+
+    const MAX_TURNS: usize = 12;
+    const MAX_CONSECUTIVE_FRACTURES: usize = 3;
+    const OBS_WINDOW: usize = 5;
+    const MAX_OBS_CHARS: usize = 2500;
+
+    let execution_law = cli::get_execution_law_v6().await;
+    let mut executor = RoboticExecutor::new(api_key.to_string(), tx.clone());
+
+    'mission: while turn < MAX_TURNS {
+        turn += 1;
+        info!("=== Turn {} / {} ===", turn, MAX_TURNS);
+
+        if LogicEngine::detect_deadlock(&session_obs) {
+            warn!("[DEADLOCK] Cortex Loop detected. Aborting mission.");
+            METRICS.inc_failure();
+            let _ = tx.send(serde_json::json!({"type": "TASK_STATUS", "payload": "DEADLOCK_ABORT"}).to_string());
+            break 'mission;
+        }
+
+        if consecutive_fractures >= MAX_CONSECUTIVE_FRACTURES {
+            warn!("[FRACTURE_STORM] {} consecutive failures. Aborting.", consecutive_fractures);
+            METRICS.inc_failure();
+            let _ = tx.send(serde_json::json!({"type": "TASK_STATUS", "payload": "FRACTURE_STORM_ABORT"}).to_string());
+            break 'mission;
+        }
+
+        let mut window: Vec<String> = session_obs
+            .iter()
+            .rev()
+            .take(OBS_WINDOW)
+            .rev()
+            .cloned()
+            .collect();
+
+        // PATCH: When the parser is in fracture-recovery mode, guarantee the
+        // FORMAT_CORRECTION message occupies the first slot of recent_logs so
+        // the LLM always sees it, regardless of window size or observation noise.
+        if consecutive_fractures > 0 {
+            window.retain(|o| !o.starts_with("[FORMAT_VIOLATION]"));
+            window.insert(0, FORMAT_CORRECTION.to_string());
+        }
+
+        let ctx = crate::neural_agent::ContextPacket {
+            system_prompt: Some(execution_law.clone()),
+            recent_logs: window,
+            ..Default::default()
+        };
+
+        let response = match orchestrator.run(raw_directive.to_string(), ctx, client, api_key, Some(tx.clone())).await {
+            Ok(resp) => resp,
+            Err(ref e) if e.contains("CONTEXT_OVERFLOW") => {
+                warn!("[CONTEXT_OVERFLOW] Pruning observation history and retrying...");
+                let keep = session_obs.len() / 2;
+                session_obs = session_obs.split_off(session_obs.len() - keep);
+                continue 'mission;
+            }
+            Err(e) => {
+                error!("Uplink failed: {}", e);
+                break 'mission;
+            }
+        };
+
+        match json_parser::extract_actions(&response) {
+            Ok(actions) => {
+                if actions.is_empty() { break 'mission; }
+                consecutive_fractures = 0;
+                // Clear any FORMAT_CORRECTION messages now that parsing succeeded
+                session_obs.retain(|o| !o.starts_with("[FORMAT_VIOLATION]") && !o.starts_with("[SYSTEM]") && o != crate::task_manager::FORMAT_CORRECTION);
+
+                match executor.execute_handle(actions.clone(), memory.clone(), vmo_state.clone(), dist.clone()).await {
+                    Ok(observations) => {
+                        let mut got_success = false;
+                        for obs in observations {
+                            let clean = truncate_obs(obs, MAX_OBS_CHARS);
+                            session_obs.push(clean.clone());
+                            if clean.contains("_OK") || clean.contains("[CMD:") {
+                                got_success = true;
+                                break;
+                            }
+                        }
+                        // Tell the LLM explicitly when an action succeeded so it
+                        // knows to either proceed to the next step or halt.
+                        if got_success {
+                            session_obs.push(
+                                "[SYSTEM] Last action succeeded. If all steps are complete, emit a halt action now. Otherwise proceed to the next step.".to_string()
+                            );
+                        }
+                    }
+                    Err(e) => session_obs.push(format!("EXECUTOR_FAULT: {}", e)),
+                }
+
+                if actions.iter().any(|a| matches!(a, AgentAction::Halt { .. })) {
+                    info!(">> [MISSION COMPLETE] Agent halted after {} turns.", turn);
+                    mission_outcome = "COMPLETE".to_string();
+                    break 'mission;
+                }
+            }
+            Err(e) => {
+                consecutive_fractures += 1;
+                warn!("Turn {} | Parser fracture ({}/{}): {}", turn, consecutive_fractures, MAX_CONSECUTIVE_FRACTURES, e);
+                session_obs.retain(|o| !o.starts_with("[FORMAT_VIOLATION]"));
+                session_obs.push(FORMAT_CORRECTION.to_string());
+            }
+        }
+        consecutive_fractures += 1;
+                crate::backoff::fracture_backoff(consecutive_fractures as u32).await;
+    }
+
+    let obs_summary = session_obs.iter().filter(|o| o.contains("_OK") || o.contains("FAULT") || o.contains("[CMD:")).cloned().collect::<Vec<_>>().join(" | ");
+    let mem = memory.lock().await;
+    let _ = mem.store_memory("TASK_MANAGER", raw_directive, &format!("[{}] turns={} | {}", mission_outcome, turn, obs_summary), None).await;
+
+    "TASK_COMPLETE".to_string()
+}

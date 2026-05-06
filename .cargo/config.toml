@@ -1,22 +1,2 @@
-[build]
-target = "aarch64-unknown-linux-gnu"
-jobs = 2
-
 [target.aarch64-unknown-linux-gnu]
-rustflags = [
-    "-C", "target-cpu=cortex-a73",
-    "-C", "link-arg=-fuse-ld=lld",
-    "-C", "link-arg=-Wl,--gc-sections",
-    "-C", "link-arg=-Wl,--no-keep-memory",
-    "-C", "link-arg=-Wl,--thinlto-cache-dir=/tmp/thinlto",
-    # UPGRADED: Removed deprecated +fp-armv8. Rust ties it to +neon natively.
-    "-C", "target-feature=+neon,+crc,+dotprod",
-    "-C", "force-unwind-tables=no",
-    "-C", "symbol-mangling-version=v0",
-    "-C", "embed-bitcode=no",
-    "-C", "prefer-dynamic=no",
-]
-
-[env]
-RUSTFLAGS = "-C linker-plugin-lto"
-CARGO_INCREMENTAL = "0"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

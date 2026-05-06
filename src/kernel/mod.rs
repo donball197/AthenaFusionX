@@ -1,5 +1,4 @@
 pub mod error;
-pub mod ffi;
 pub mod memory;
 pub mod realignment;
 pub mod vmar;
@@ -9,10 +8,16 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use lazy_static::lazy_static;
 
-pub use ffi::{
-    muscle_get_active_vmos, muscle_get_next_handle, zx_handle_close_native,
-    zx_vmo_create_native, zx_vmo_get_all_handles, zx_vmo_get_info,
-    zx_vmo_read_native, zx_vmo_write_native,
+// 1. Re-export the ffi module for crate::kernel::ffi usage
+pub use nexus_substrate::kernel::ffi;
+
+// 2. Re-export functions directly for crate::kernel::func usage
+pub use nexus_substrate::kernel::ffi::{
+    zx_vmo_create_native,
+    zx_vmo_read_native,
+    zx_vmo_write_native,
+    zx_handle_close_native,
+    set_substrate_load,
 };
 
 lazy_static! {
@@ -40,10 +45,6 @@ impl Drop for VmoGuard {
             unsafe { zx_handle_close_native(self.id); }
         }
     }
-}
-
-pub fn get_live_telemetry() -> (u32, u32) {
-    unsafe { (muscle_get_active_vmos(), muscle_get_next_handle()) }
 }
 
 pub fn register_handle(id: u32, h: HandleType) {

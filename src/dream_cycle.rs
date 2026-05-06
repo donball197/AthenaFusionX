@@ -1,5 +1,5 @@
 use crate::factory::AgentFactory;
-use crate::memory::MemoryPalace;
+use nexus_substrate::memory::MemoryPalace;
 use crate::neural_agent::{ContextPacket, MicroAgent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
