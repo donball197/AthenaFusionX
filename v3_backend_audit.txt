@@ -336,6 +336,100 @@ impl KernelOps for NativeKernelOps {
 }
 
 [36m========================================
+[FILE: crates/nexus_substrate/src/kernel/error.rs]
+========================================[0m
+#[derive(Debug)]
+pub enum KernelError {
+    VmoCloneFailed { parent: u32, size: usize },
+    InvalidArgs,
+    RegistryFull,
+    AlignmentAnomaly { address: usize },
+}
+
+impl std::fmt::Display for KernelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+impl std::error::Error for KernelError {}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/kernel/mod.rs]
+========================================[0m
+pub mod ffi;
+pub mod error;
+pub mod safe_vmo;
+
+use std::collections::HashMap;
+use parking_lot::RwLock;
+use once_cell::sync::Lazy;
+
+pub enum HandleType {
+    Vmo(u32),
+}
+
+pub static HANDLE_REGISTRY: Lazy<RwLock<HashMap<u32, HandleType>>> = 
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+pub fn register_handle(id: u32, h: HandleType) {
+    HANDLE_REGISTRY.write().insert(id, h);
+}
+
+[36m========================================
+[FILE: crates/nexus_substrate/src/kernel/safe_vmo.rs]
+========================================[0m
+use crate::kernel::{register_handle, HandleType};
+use crate::kernel::ffi;
+use crate::kernel::error::KernelError;
+
+pub struct SafeVmo {
+    handle: u32,
+    pub size: usize,
+}
+
+impl SafeVmo {
+    pub fn new(size: usize) -> Result<Self, KernelError> {
+        let handle = unsafe { ffi::zx_vmo_create_native(size) };
+        if handle == 0 {
+            return Err(KernelError::InvalidArgs);
+        }
+        register_handle(handle, HandleType::Vmo(handle));
+        Ok(Self { handle, size })
+    }
+
+    pub fn write(&self, offset: usize, data: &[u8]) -> Result<(), KernelError> {
+        if offset + data.len() > self.size {
+            return Err(KernelError::InvalidArgs);
+        }
+        let status = unsafe {
+            ffi::zx_vmo_write_native(self.handle, offset, data.as_ptr(), data.len())
+        };
+        if status == 0 { Ok(()) } else { Err(KernelError::InvalidArgs) }
+    }
+
+    /// ⚡ ZERO-ALLOCATION READ FIX: Prevents heap fragmentation on the 4GB Duet
+    pub fn read_into(&self, offset: usize, buffer: &mut [u8]) -> Result<(), KernelError> {
+        if offset + buffer.len() > self.size {
+            return Err(KernelError::InvalidArgs);
+        }
+        let status = unsafe {
+            ffi::zx_vmo_read_native(self.handle, offset, buffer.as_mut_ptr(), buffer.len())
+        };
+        if status == 0 { Ok(()) } else { Err(KernelError::InvalidArgs) }
+    }
+
+    pub fn handle(&self) -> u32 {
+        self.handle
+    }
+}
+
+impl Drop for SafeVmo {
+    fn drop(&mut self) {
+        unsafe { ffi::zx_handle_close_native(self.handle) };
+    }
+}
+
+[36m========================================
 [FILE: crates/nexus_substrate/src/vmo_handler.rs]
 ========================================[0m
 use axum::{response::IntoResponse, Json};
@@ -378,9 +472,7 @@ pub async fn handle_get_vmos() -> impl IntoResponse {
 [36m========================================
 [FILE: crates/nexus_substrate/src/lib.rs]
 ========================================[0m
-pub mod kernel {
-    pub mod ffi;
-}
+pub mod kernel;
 pub mod memory;
 pub mod vmo_handler;
 pub mod vector_bridge;
@@ -827,9 +919,11 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "tls-rustls"] }
 anyhow = "1.0"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 once_cell = "1.19"
+parking_lot = "0.12"
 
 [build-dependencies]
 cc = "1.0"
+parking_lot = "0.12"
 
 [36m========================================
 [FILE: crates/memory_graph/src/lib.rs]
@@ -948,10 +1042,25 @@ anyhow = { workspace = true }
 [36m========================================
 [FILE: crates/identity/src/lib.rs]
 ========================================[0m
-use ed25519_dalek::{SigningKey, Signer};
-pub struct Identity { pub key: SigningKey }
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
+
+pub struct Identity {
+    pub key: SigningKey,
+}
+
 impl Identity {
-    pub fn new() -> Self { Self { key: SigningKey::generate(&mut rand::rngs::OsRng) } }
+    pub fn new() -> Self {
+        let mut csprng = OsRng;
+        let key = SigningKey::generate(&mut csprng);
+        Self { key }
+    }
+}
+
+impl Default for Identity {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 [36m========================================
@@ -963,7 +1072,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ed25519-dalek = "2.2"
+ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 rand = "0.8"
 
 [36m========================================
@@ -989,6 +1098,7 @@ bincode = "1.3"
 [36m========================================
 [FILE: crates/runtime_core/src/lib.rs]
 ========================================[0m
+pub mod agents;
 pub mod agent_protocol;
 pub mod neural_agent;
 pub mod orchestrator;
@@ -1010,6 +1120,12 @@ pub mod executor;
 pub mod task_manager;
 pub mod shared_state;
 pub mod cli_utils;
+
+pub async fn establish_neural_uplink() {
+    println!(">> Neural Uplink Established: NEXUS CORTEX ONLINE.");
+}
+pub mod agent_runtime;
+pub mod orchestrator_v2;
 
 [36m========================================
 [FILE: crates/runtime_core/src/agent_protocol.rs]
@@ -2747,6 +2863,429 @@ pub async fn send_task(
 }
 
 [36m========================================
+[FILE: crates/runtime_core/src/agents/data_agent.rs]
+========================================[0m
+use crate::kernel;
+
+pub struct DataAgent {
+    pub id: String,
+    pub vmo_handle: Option<u32>,
+}
+
+impl DataAgent {
+    pub fn new(id: &str) -> Self {
+        Self { id: id.to_string(), vmo_handle: None }
+    }
+
+    /// Commands the muscle to carve out a 64KB sovereign vault
+    pub fn initialize_vault(&mut self) {
+        let size = 64 * 1024; // 64KB agent vault
+        let handle = unsafe { kernel::zx_vmo_create_native(size) };
+        kernel::register_handle(handle, kernel::HandleType::Vmo(handle));
+        self.vmo_handle = Some(handle);
+        println!("\x1b[35m[DATA_AGENT:{}] Vault carved at handle 0x{:x}\x1b[0m", self.id, handle);
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/mod.rs]
+========================================[0m
+pub mod agentic_runtime;
+pub mod scout_agent;
+pub mod shell_agent;
+
+use anyhow::Result;
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait LogicAgent: Send + Sync {
+    fn name(&self) -> String;
+    fn can_handle(&self, command: &str) -> bool;
+    async fn execute(&self, command: &str, ctx: &agentic_runtime::SubstrateContext) -> Result<String>;
+}
+pub mod v2_worker;
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/pruner.rs]
+========================================[0m
+use anyhow::Result;
+
+pub fn summarize(_input: &str) -> Result<String> {
+    Ok("Pruner operation temporarily suspended pending API-only refactor.".to_string())
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/scout_agent.rs]
+========================================[0m
+use crate::agents::{LogicAgent, agentic_runtime::SubstrateContext};
+use anyhow::Result;
+use async_trait::async_trait;
+
+pub struct ScoutAgent;
+
+impl ScoutAgent {
+    pub fn new() -> Self { Self }
+}
+
+#[async_trait]
+impl LogicAgent for ScoutAgent {
+    fn name(&self) -> String { "ScoutAgent".to_string() }
+    
+    fn can_handle(&self, command: &str) -> bool {
+        let c = command.to_lowercase();
+        c.starts_with("ls") || c.starts_with("find") || c.starts_with("grep")
+    }
+
+    async fn execute(&self, command: &str, _ctx: &SubstrateContext) -> Result<String> {
+        let out = crate::podman::PodmanShield::execute(command)?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/scribe_agent.rs]
+========================================[0m
+use crate::agent_protocol::{AgentDirective, AgentStatus};
+use crate::agents::NexusAgent;
+use crate::kernel;
+use anyhow::Result;
+use async_trait::async_trait;
+
+pub struct ScribeAgent;
+
+impl ScribeAgent {
+    pub fn enshrine(handle: u32, offset: usize, data: &str) -> bool {
+        let bytes = data.as_bytes();
+        unsafe {
+            kernel::zx_vmo_write_native(handle, offset, bytes.as_ptr(), bytes.len()) == 0
+        }
+    }
+
+    pub fn recall(handle: u32, offset: usize, size: usize) -> Option<String> {
+        let mut buffer = vec![0u8; size];
+        unsafe {
+            if kernel::zx_vmo_read_native(handle, offset, buffer.as_mut_ptr(), size) == 0 {
+                String::from_utf8(buffer).ok()
+            } else {
+                None
+            }
+        }
+    }
+
+    pub fn scry_vault(handle: u32, offset: usize, size: usize) {
+        let mut buffer = vec![0u8; size];
+        unsafe {
+            if kernel::zx_vmo_read_native(handle, offset, buffer.as_mut_ptr(), size) == 0 {
+                println!("\x1b[1;30m--- [SCRY: 0x{:x} | Offset: {}] ---\x1b[0m", handle, offset);
+                for chunk in buffer.chunks(16) {
+                    let hex: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
+                    let ascii: String = chunk
+                        .iter()
+                        .map(|&b| if b >= 32 && b <= 126 { b as char } else { '.' })
+                        .collect();
+                    println!("\x1b[35m{:32} \x1b[1;37m| {}\x1b[0m", hex, ascii);
+                }
+            } else {
+                println!(
+                    "\x1b[31m[SCRY] Access Denied: Handle 0x{:x} is opaque or invalid.\x1b[0m",
+                    handle
+                );
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl NexusAgent for ScribeAgent {
+    fn name(&self) -> &'static str {
+        "scribe_io_expert"
+    }
+    async fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+    async fn execute(&self, _directive: AgentDirective) -> Result<String> {
+        Ok("Scribe standing by for commutation.".to_string())
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/shell_agent.rs]
+========================================[0m
+use crate::agents::{LogicAgent, agentic_runtime::SubstrateContext};
+use anyhow::Result;
+use async_trait::async_trait;
+
+pub struct ShellAgent;
+
+#[async_trait]
+impl LogicAgent for ShellAgent {
+    fn name(&self) -> String { "ShellAgent".to_string() }
+    
+    fn can_handle(&self, _command: &str) -> bool {
+        true // Catch-all fallback
+    }
+
+    async fn execute(&self, command: &str, _ctx: &SubstrateContext) -> Result<String> {
+        let out = crate::podman::PodmanShield::execute(command)?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/agentic_runtime.rs]
+========================================[0m
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use anyhow::Result;
+use crate::agents::LogicAgent;
+use crate::shared_state::VmoState;
+use crate::distributed_scheduler::DistributedScheduler;
+use nexus_substrate::memory::MemoryPalace;
+
+pub struct SubstrateContext {
+    pub memory: Arc<Mutex<MemoryPalace>>,
+    pub vmo_state: Arc<Mutex<VmoState>>,
+    pub dist: Arc<DistributedScheduler>,
+}
+
+pub struct AgenticRuntime {
+    pub ctx: SubstrateContext,
+    pub agents: Vec<Box<dyn LogicAgent>>,
+}
+
+impl AgenticRuntime {
+    pub fn new(ctx: SubstrateContext) -> Self {
+        Self {
+            ctx,
+            agents: Vec::new(),
+        }
+    }
+
+    pub fn register_agent(&mut self, agent: Box<dyn LogicAgent>) {
+        self.agents.push(agent);
+    }
+
+    pub async fn dispatch(&mut self, command: &str) -> Result<String> {
+        // Search for a specialized agent
+        for agent in &self.agents {
+            if agent.can_handle(command) {
+                return agent.execute(command, &self.ctx).await;
+            }
+        }
+
+        // Fallback to basic shell execution if no specialized agent matches
+        let output = crate::podman::PodmanShield::execute(command)
+            .map_err(|e| anyhow::anyhow!("Substrate Execution Fault: {}", e))?;
+        
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        
+        if !output.status.success() && stdout.is_empty() {
+            Ok(format!("[ERROR] {}", stderr))
+        } else {
+            Ok(stdout)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cluster::ClusterMesh;
+    
+    #[tokio::test]
+    async fn test_runtime_init() {
+        // This test only verifies that the structures can be initialized in memory
+        let mesh = Arc::new(ClusterMesh::new());
+        let dist = Arc::new(DistributedScheduler::new(mesh));
+        // Note: We don't need a real DB for a basic logic check
+        println!("LRL Structural Integrity: OK");
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agents/v2_worker.rs]
+========================================[0m
+use anyhow::Result;
+use async_trait::async_trait;
+use crate::agent_runtime::engine::{ExecutableAgent, Task, TaskResult};
+
+pub struct WorkerAgent;
+
+#[async_trait]
+impl ExecutableAgent for WorkerAgent {
+    async fn execute(&self, task: Task) -> Result<TaskResult> {
+        let output = format!("Processed task via Native Rust Traits: {}", task.payload);
+        Ok(TaskResult {
+            id: task.id,
+            output,
+            success: true,
+        })
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agent_runtime/sandbox.rs]
+========================================[0m
+use bitflags::bitflags;
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Capabilities: u32 {
+        const NONE     = 0;
+        const READ     = 1 << 0;
+        const WRITE    = 1 << 1;
+        const EXEC     = 1 << 2;
+        const NETWORK  = 1 << 3;
+    }
+}
+
+pub struct Sandbox {
+    caps: Capabilities,
+}
+
+impl Sandbox {
+    pub fn new(caps: Capabilities) -> Self { Self { caps } }
+    pub fn can_read(&self) -> bool { self.caps.contains(Capabilities::READ) }
+    pub fn can_write(&self) -> bool { self.caps.contains(Capabilities::WRITE) }
+    pub fn can_exec(&self) -> bool { self.caps.contains(Capabilities::EXEC) }
+    pub fn can_network(&self) -> bool { self.caps.contains(Capabilities::NETWORK) }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agent_runtime/engine.rs]
+========================================[0m
+use anyhow::Result;
+use async_trait::async_trait;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResult {
+    pub id: String,
+    pub output: String,
+    pub success: bool,
+}
+
+#[async_trait]
+pub trait ExecutableAgent: Send + Sync {
+    async fn execute(&self, task: Task) -> Result<TaskResult>;
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/agent_runtime/mod.rs]
+========================================[0m
+pub mod sandbox;
+pub mod engine;
+
+[36m========================================
+[FILE: crates/runtime_core/src/orchestrator_v2/task_graph.rs]
+========================================[0m
+use std::collections::{HashMap, VecDeque};
+use anyhow::{anyhow, Result};
+
+#[derive(Clone)]
+pub struct TaskNode {
+    pub id: String,
+    pub deps: Vec<String>,
+    pub required_agent: String,
+}
+
+pub struct TaskGraph {
+    pub nodes: HashMap<String, TaskNode>,
+}
+
+impl TaskGraph {
+    pub fn new() -> Self {
+        Self { nodes: HashMap::new() }
+    }
+
+    pub fn add_task(&mut self, id: &str, deps: Vec<String>, required_agent: &str) {
+        self.nodes.insert(id.to_string(), TaskNode {
+            id: id.to_string(),
+            deps,
+            required_agent: required_agent.to_string(),
+        });
+    }
+
+    pub fn resolve_execution_order(&self) -> Result<Vec<String>> {
+        let mut resolved = Vec::new();
+        let mut queue: VecDeque<_> = self.nodes.values().cloned().collect();
+        
+        let mut iterations = 0;
+        let max_iterations = self.nodes.len() * self.nodes.len() + 1;
+
+        while let Some(node) = queue.pop_front() {
+            iterations += 1;
+            
+            // ⚡ DEADLOCK TRAP FIXED
+            if iterations > max_iterations {
+                return Err(anyhow!("DAG_DEADLOCK: Circular dependency detected. Aborting."));
+            }
+
+            if node.deps.iter().all(|d| resolved.contains(d)) {
+                resolved.push(node.id.clone());
+            } else {
+                queue.push_back(node);
+            }
+        }
+        Ok(resolved)
+    }
+}
+
+[36m========================================
+[FILE: crates/runtime_core/src/orchestrator_v2/mod.rs]
+========================================[0m
+pub mod task_graph;
+
+use crate::agent_runtime::engine::{Task, TaskResult, ExecutableAgent};
+use self::task_graph::TaskGraph;
+use std::collections::HashMap;
+use anyhow::{anyhow, Result};
+
+pub struct OrchestratorV2 {
+    // ⚡ DYNAMIC DISPATCH: Supports a diverse swarm of agents simultaneously
+    agents: HashMap<String, Box<dyn ExecutableAgent>>, 
+}
+
+impl OrchestratorV2 {
+    pub fn new() -> Self {
+        Self { agents: HashMap::new() }
+    }
+
+    pub fn register_agent(&mut self, name: &str, agent: Box<dyn ExecutableAgent>) {
+        self.agents.insert(name.to_string(), agent);
+    }
+
+    pub async fn execute_graph(&self, graph: TaskGraph) -> Result<Vec<TaskResult>> {
+        let order = graph.resolve_execution_order()?;
+        let mut results = Vec::new();
+
+        for id in order {
+            let node = graph.nodes.get(&id).unwrap();
+            
+            let agent = self.agents.get(&node.required_agent)
+                .ok_or_else(|| anyhow!("AGENT_MISSING: '{}' not registered in swarm.", node.required_agent))?;
+
+            let task = Task {
+                id: id.clone(),
+                payload: format!("Execute directive for {}", id),
+            };
+
+            let result = agent.execute(task).await?;
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+}
+
+[36m========================================
 [FILE: crates/runtime_core/Cargo.toml]
 ========================================[0m
 [package]
@@ -2769,14 +3308,125 @@ wasmtime = "44.0"
 tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 parking_lot = "0.12"
+async-trait = "0.1.89"
+bitflags = "2.4"
 
 [36m========================================
 [FILE: bins/cli/src/main.rs]
 ========================================[0m
+use std::io::{self, Write};
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use nexus_runtime_core::{
+    neural_agent::MicroAgent,
+    cluster::ClusterMesh,
+    distributed_scheduler::DistributedScheduler,
+    orchestrator::Orchestrator,
+    shared_state::VmoState,
+    task_manager::send_task,
+};
+use nexus_substrate::memory::MemoryPalace;
+
 #[tokio::main]
-async fn main() {
-    nexus_runtime_core::establish_neural_uplink().await;
-    println!(">> NEXUS CLI READY");
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    
+    println!("\x1b[36m==================================================\x1b[0m");
+    println!("\x1b[1;36m>> NEXUS SINGULARITY v3.0 — SOVEREIGN CLI ONLINE\x1b[0m");
+    println!("\x1b[36m==================================================\x1b[0m");
+
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .expect("Fatal: GEMINI_API_KEY not found in .env file.");
+
+    // ⚡ Ignite Core Infrastructure
+    let (tx, mut rx) = broadcast::channel::<String>(256);
+    let memory = Arc::new(Mutex::new(MemoryPalace::new("nexus_cli.db").await?));
+    let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+    let cluster = Arc::new(ClusterMesh::new());
+    let dist = Arc::new(DistributedScheduler::new(cluster));
+    let orchestrator = Arc::new(Orchestrator::new());
+    let client = reqwest::Client::new();
+
+    // ⚡ Spawn the Telemetry Listener Task
+    // This allows you to see the agent's internal monologue in real-time
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
+                let msg_type = parsed["type"].as_str().unwrap_or("LOG");
+                let payload = parsed["payload"].as_str().unwrap_or("");
+                
+                match msg_type {
+                    "NEURAL_THOUGHT" => println!("\n\x1b[35m[CORTEX]\x1b[0m {}", payload),
+                    "TASK_STATUS" => println!("\x1b[33m[SYS]\x1b[0m {}", payload),
+                    "LOG_EVENT" => println!("\x1b[90m[EVENT]\x1b[0m {}", payload),
+                    _ => {}
+                }
+            } else {
+                println!("\x1b[90m[RAW]\x1b[0m {}", msg);
+            }
+        }
+    });
+
+    println!("\x1b[32m>> Neural Uplink Established. Substrate Ready.\x1b[0m");
+    println!("\x1b[90mType '/help' for commands, or enter a directive.\x1b[0m");
+
+    let stdin = io::stdin();
+    
+    // ⚡ The Interactive REPL
+    loop {
+        print!("\n\x1b[1;32mnexus>\x1b[0m ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        stdin.read_line(&mut input)?;
+        let command = input.trim();
+
+        if command.is_empty() { continue; }
+
+        match command {
+            "/exit" | "/quit" => {
+                println!("\x1b[31m>> Severing Uplink. Goodbye.\x1b[0m");
+                break;
+            }
+            "/help" => {
+                println!("\x1b[36mCommands:\x1b[0m");
+                println!("  /status    - View Substrate Load & Active VMOs");
+                println!("  /clear     - Purge SQLite Memory Palace");
+                println!("  /exit      - Shutdown CLI");
+                println!("  <text>     - Submit directive to the Neural Agent");
+            }
+            "/status" => {
+                let active = unsafe { nexus_substrate::kernel::ffi::muscle_get_active_vmos() };
+                println!("\x1b[36m[SUBSTRATE]\x1b[0m Active VMOs: {}", active);
+            }
+            "/clear" => {
+                let mem = memory.lock().await;
+                if let Err(e) = mem.purge_all().await {
+                    println!("\x1b[31m[ERROR]\x1b[0m Memory purge failed: {}", e);
+                } else {
+                    println!("\x1b[32m[MEMORY]\x1b[0m Neural context eradicated.");
+                }
+            }
+            directive => {
+                println!("\x1b[36m>> Engaging Neural Routing...\x1b[0m");
+                // ⚡ Forward directly to the Decoupled Task Manager
+                let response = send_task(
+                    orchestrator.clone(),
+                    &client,
+                    &api_key,
+                    directive,
+                    memory.clone(),
+                    vmo_state.clone(),
+                    tx.clone(),
+                    dist.clone()
+                ).await;
+                
+                println!("\n\x1b[1;32m[MISSION COMPLETE]\x1b[0m {}", response);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 [36m========================================
@@ -2789,7 +3439,12 @@ edition = "2021"
 
 [dependencies]
 nexus_runtime_core = { path = "../../crates/runtime_core" }
-tokio = { workspace = true }
+nexus_substrate = { path = "../../crates/nexus_substrate" }
+tokio = { workspace = true, features = ["full", "io-util"] }
+anyhow = "1.0"
+dotenvy = "0.15"
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1.0"
 
 [36m========================================
 [FILE: bins/node/src/main.rs]
@@ -2817,11 +3472,606 @@ tokio = { workspace = true }
 axum = "0.7"
 
 [36m========================================
+[FILE: bins/ide_backend/src/ws_bridge.rs]
+========================================[0m
+use axum::{extract::ws::{Message, WebSocket, WebSocketUpgrade}, extract::State, response::Response};
+use std::sync::Arc;
+use crate::server::AppState;
+
+pub async fn ws_telemetry_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> Response {
+    ws.on_upgrade(move |socket| handle_socket(socket, state))
+}
+
+async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    let mut rx = state.tx.subscribe();
+    while let Ok(msg) = rx.recv().await {
+        if socket.send(Message::Text(msg.into())).await.is_err() {
+            break;
+        }
+    }
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/vitals_handler.rs]
+========================================[0m
+use crate::server::AppState;
+use axum::{extract::State, response::IntoResponse, Json};
+use serde_json::json;
+use std::sync::Arc;
+
+pub async fn handle_vitals(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut monitor = state.monitor.lock().await;
+    let v: crate::system_monitor::Vitals = monitor.get_vitals();
+    Json(json!({
+        "cpu_load":     v.cpu_load,
+        "ram_gb":       v.ram_gb,
+        "total_ram_gb": v.total_ram_gb,
+        "temperature":  v.temperature,
+    }))
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/cluster_api.rs]
+========================================[0m
+use axum::{extract::State, Json};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use crate::server::AppState;
+
+pub async fn list_nodes(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let nodes = state.cluster.get_all_nodes();
+    Json(json!({ "nodes": nodes }))
+}
+
+pub async fn cluster_status(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let best = state.cluster.best_node();
+    Json(json!({
+        "best_node": best,
+        "has_capacity": best.is_some(),
+    }))
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/server_terminal.rs]
+========================================[0m
+/**
+ * Copyright 2026 Donald Ball
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+use axum::{response::IntoResponse, Json};
+use serde_json::json;
+
+pub async fn terminal_command(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+    let cmd = payload["command"].as_str().unwrap_or("");
+    Json(json!({ "type": "output", "data": format!(">> Processing: {}", cmd) }))
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/auth.rs]
+========================================[0m
+use anyhow::{anyhow, Result};
+use jsonwebtoken::{
+    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+};
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const MIN_KEY_BYTES: usize = 32;
+const DEFAULT_TTL_SECS: u64 = 86_400;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: String,
+    pub exp: usize,
+    pub iat: usize,
+}
+
+fn load_key() -> Result<String> {
+    let key = std::env::var("NEXUS_AUTH_KEY")
+        .map_err(|_| anyhow!("NEXUS_AUTH_KEY env var is not set"))?;
+    if key.len() < MIN_KEY_BYTES {
+        return Err(anyhow!(
+            "NEXUS_AUTH_KEY is too short ({} bytes). Minimum is {} bytes.",
+            key.len(),
+            MIN_KEY_BYTES
+        ));
+    }
+    Ok(key)
+}
+
+fn token_ttl() -> u64 {
+    std::env::var("NEXUS_TOKEN_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_TTL_SECS)
+}
+
+pub fn issue_sovereign_token() -> Result<String> {
+    let key = load_key()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let claims = Claims {
+        sub: "architect".to_owned(),
+        iat: now as usize,
+        exp: (now + token_ttl()) as usize,
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(key.as_bytes()),
+    )
+    .map_err(|e| anyhow!("JWT_GEN_FAIL: {}", e))
+}
+
+/// TokenVerdict: Distinguishes between infrastructure failures and policy rejections.
+/// Use verify_token_detailed() when you need to log *why* a token was rejected.
+#[derive(Debug, PartialEq)]
+pub enum TokenVerdict {
+    Valid,
+    Expired,
+    InvalidSignature,
+    MissingKey,
+}
+
+/// verify_token_detailed: Returns the specific reason for rejection.
+/// Err(_) means the auth key is misconfigured — not that the token is bad.
+pub fn verify_token_detailed(token: &str) -> Result<TokenVerdict> {
+    let key = load_key()?;
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.leeway = 0;
+    match decode::<Claims>(token, &DecodingKey::from_secret(key.as_bytes()), &validation) {
+        Ok(_) => Ok(TokenVerdict::Valid),
+        Err(e) => Ok(match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => TokenVerdict::Expired,
+            _ => TokenVerdict::InvalidSignature,
+        }),
+    }
+}
+
+/// verify_token: Backward-compatible shim — returns true only if Valid.
+/// Err(_) indicates a key configuration problem, not a bad token.
+pub fn verify_token(token: &str) -> Result<bool> {
+    match verify_token_detailed(token)? {
+        TokenVerdict::Valid => Ok(true),
+        TokenVerdict::Expired => {
+            tracing::warn!("[AUTH] Token rejected: expired");
+            Ok(false)
+        }
+        TokenVerdict::InvalidSignature => {
+            tracing::warn!("[AUTH] Token rejected: invalid signature");
+            Ok(false)
+        }
+        TokenVerdict::MissingKey => Ok(false), // already an Err from load_key
+    }
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/security.rs]
+========================================[0m
+use axum::{body::Body, http::{Request, StatusCode, header}, middleware::Next, response::Response};
+use crate::auth;
+
+pub async fn sovereign_auth_guard(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+    if req.uri().path() == "/api/auth/login" { return Ok(next.run(req).await); }
+
+    let auth_header = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let token = auth_header.trim_start_matches("Bearer ").trim();
+
+    if !token.is_empty() {
+        match auth::verify_token_detailed(token) {
+            Ok(auth::TokenVerdict::Valid) => return Ok(next.run(req).await),
+            Ok(verdict) => tracing::warn!(
+                "[SECURITY] 401 Unauthorized: Path={} | Verdict={:?}",
+                req.uri().path(), verdict
+            ),
+            Err(e) => tracing::error!(
+                "[SECURITY] Auth key misconfiguration at {}: {}",
+                req.uri().path(), e
+            ),
+        }
+    } else {
+        tracing::warn!("[SECURITY] 401 Unauthorized: Path={} | No token provided",
+            req.uri().path());
+    }
+    Err(StatusCode::UNAUTHORIZED)
+}
+
+pub fn write_startup_token() -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let token = auth::issue_sovereign_token()?;
+    // ⚡ FIX: Strict 0600 permissions
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(".nexus_ui_token")?
+        .write_all(token.as_bytes())?;
+
+    println!("\x1b[32m>> [SECURITY] Startup token written to .nexus_ui_token (0600)\x1b[0m");
+    Ok(())
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/server.rs]
+========================================[0m
+use nexus_substrate::memory::MemoryPalace;
+use axum::{
+    extract::{State, Query},
+    http::{header, StatusCode, Uri},
+    response::IntoResponse,
+    routing::{get, post},
+    Router, Json,
+};
+use rust_embed::RustEmbed;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use nexus_runtime_core::shared_state::VmoState;
+use serde_json::json;
+use serde::Deserialize;
+
+use crate::{ws_bridge, vitals_handler, cluster_api};
+
+#[derive(RustEmbed)]
+#[folder = "ui/dist/"] 
+struct Assets;
+
+pub struct AppState {
+    pub client:            reqwest::Client,
+    pub monitor:           Arc<tokio::sync::Mutex<crate::system_monitor::SystemMonitor>>,
+    pub agent:             Arc<nexus_runtime_core::neural_agent::MicroAgent>,
+    pub orchestrator:      Arc<nexus_runtime_core::orchestrator::Orchestrator>,
+    pub memory:            Arc<tokio::sync::Mutex<MemoryPalace>>,
+    pub api_key:           String,
+    pub tx:                tokio::sync::broadcast::Sender<String>,
+    pub arbiter:           Arc<nexus_runtime_core::arbiter_agent::ArbiterAgent>,
+    pub workspace_root:    PathBuf,
+    pub vmo_state:         Arc<tokio::sync::Mutex<VmoState>>,
+    pub cluster:           Arc<nexus_runtime_core::cluster::ClusterMesh>,
+    pub dist:              Arc<nexus_runtime_core::distributed_scheduler::DistributedScheduler>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct Intent {
+    pub directive: Option<String>,
+}
+
+pub async fn unified_gateway(State(state): State<Arc<AppState>>, Json(intent): Json<Intent>) -> impl IntoResponse {
+    let directive_str = intent.directive.unwrap_or_default();
+    let s = state.clone();
+    tokio::spawn(async move {
+        let d = nexus_runtime_core::cli_utils::inject_workspace_dna(&directive_str).await;
+        nexus_runtime_core::task_manager::send_task(
+            s.orchestrator.clone(), &s.client, &s.api_key, &d, 
+            s.memory.clone(), s.vmo_state.clone(), s.tx.clone(), s.dist.clone()
+        ).await;
+    });
+    (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
+}
+
+async fn metrics_handler() -> impl IntoResponse {
+    let text = nexus_runtime_core::metrics::get_metrics_text();
+    ([(header::CONTENT_TYPE, "text/plain")], text)
+}
+
+#[derive(Deserialize)]
+pub struct FsQuery { path: Option<String> }
+
+fn safe_path(workspace_root: &PathBuf, user_path: &str) -> Result<PathBuf, (StatusCode, Json<serde_json::Value>)> {
+    if user_path.is_empty() { return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "PATH_EMPTY" })))); }
+    let path = std::path::Path::new(user_path);
+    if path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "PATH_TRAVERSAL_DENIED" }))));
+    }
+    Ok(workspace_root.join(path))
+}
+
+pub async fn fs_read_handler(State(state): State<Arc<AppState>>, Query(q): Query<FsQuery>) -> impl IntoResponse {
+    let user_path = q.path.unwrap_or_default();
+    match safe_path(&state.workspace_root, &user_path) {
+        Err(e) => e.into_response(),
+        Ok(safe) => match tokio::fs::read_to_string(&safe).await {
+            Ok(content) => Json(json!({ "content": content })).into_response(),
+            Err(e) => (StatusCode::NOT_FOUND, Json(json!({ "error": e.to_string() }))).into_response(),
+        },
+    }
+}
+
+pub async fn fs_write_handler(State(state): State<Arc<AppState>>, Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+    let user_path = payload["path"].as_str().unwrap_or_default();
+    let content   = payload["content"].as_str().unwrap_or_default();
+    match safe_path(&state.workspace_root, user_path) {
+        Err(e) => e.into_response(),
+        Ok(safe) => {
+            if let Some(parent) = safe.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            match tokio::fs::write(&safe, content).await {
+                Ok(_) => Json(json!({ "status": "success" })).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
+            }
+        }
+    }
+}
+
+pub async fn fs_list_handler(State(state): State<Arc<AppState>>, Query(q): Query<FsQuery>) -> impl IntoResponse {
+    let user_path = q.path.unwrap_or_else(|| ".".into());
+    match safe_path(&state.workspace_root, &user_path) {
+        Err(e) => e.into_response(),
+        Ok(safe) => {
+            let mut entries = Vec::new();
+            if let Ok(mut read_dir) = tokio::fs::read_dir(&safe).await {
+                while let Ok(Some(entry)) = read_dir.next_entry().await {
+                    let meta = entry.metadata().await.ok();
+                    entries.push(json!({
+                        "name": entry.file_name().to_string_lossy(),
+                        "path": entry.path().strip_prefix(&state.workspace_root).unwrap_or(&entry.path()).to_string_lossy(),
+                        "is_dir": meta.map(|m| m.is_dir()).unwrap_or(false)
+                    }));
+                }
+            }
+            Json(entries).into_response()
+        }
+    }
+}
+
+pub async fn start_server(state: Arc<AppState>) {
+    let app = Router::new()
+        .route("/api/task", post(unified_gateway))
+        .route("/api/metrics", get(metrics_handler))
+        .route("/api/fs/read", get(fs_read_handler))
+        .route("/api/fs/write", post(fs_write_handler))
+        .route("/api/fs/list", get(fs_list_handler))
+        .route("/api/vitals", get(vitals_handler::handle_vitals))
+        .route("/api/cluster/nodes", get(cluster_api::list_nodes))
+        .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
+        .fallback(static_handler)
+        .with_state(state);
+        
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn static_handler(uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/').to_string();
+    let final_path = if path.is_empty() { "index.html".to_string() } else { path };
+    
+    match Assets::get(&final_path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&final_path).first_or_octet_stream();
+            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+        }
+        None => match Assets::get("index.html") {
+            Some(content) => ([(header::CONTENT_TYPE, "text/html")], content.data).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        },
+    }
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/logger.rs]
+========================================[0m
+pub fn init() { println!("Stub logger initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/fs_watcher.rs]
+========================================[0m
+pub fn init() { println!("Stub fs_watcher initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/system_monitor.rs]
+========================================[0m
+pub struct Vitals {
+    pub cpu_load: f32,
+    pub ram_gb: f32,
+    pub total_ram_gb: f32,
+    pub temperature: f32,
+}
+pub struct SystemMonitor {}
+impl SystemMonitor {
+    pub fn new() -> Self { Self {} }
+    pub fn get_vitals(&mut self) -> Vitals {
+        Vitals { cpu_load: 0.0, ram_gb: 0.0, total_ram_gb: 0.0, temperature: 0.0 }
+    }
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/scheduler.rs]
+========================================[0m
+use tokio::sync::mpsc;
+use std::sync::Arc;
+use crate::system_monitor::SystemMonitor;
+use nexus_runtime_core::{
+    orchestrator::Orchestrator,
+    distributed_scheduler::DistributedScheduler,
+    shared_state::VmoState,
+};
+use nexus_substrate::memory::MemoryPalace;
+
+pub struct NexusTask;
+
+pub struct MasterSupervisor;
+
+impl MasterSupervisor {
+    pub fn ignite(
+        _tx: tokio::sync::broadcast::Sender<String>,
+        _client: reqwest::Client,
+        _api_key: String,
+        _orch: Arc<Orchestrator>,
+        _resonance: Arc<std::sync::atomic::AtomicU32>,
+        _monitor: SystemMonitor,
+        _memory: Arc<tokio::sync::Mutex<MemoryPalace>>,
+        _vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
+        _dist: Arc<DistributedScheduler>,
+    ) -> mpsc::Sender<NexusTask> {
+        let (tx, _rx) = mpsc::channel(100);
+        println!("\x1b[35m>> [SCHEDULER] Master Supervisor Ignited.\x1b[0m");
+        tx
+    }
+}
+
+[36m========================================
+[FILE: bins/ide_backend/src/heartbeat.rs]
+========================================[0m
+pub fn init() { println!("Stub heartbeat initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/dream_cycle.rs]
+========================================[0m
+pub fn init() { println!("Stub dream_cycle initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/broker.rs]
+========================================[0m
+pub fn init() { println!("Stub broker initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/telemetry_bridge.rs]
+========================================[0m
+pub fn init() { println!("Stub telemetry_bridge initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/self_healing_engine.rs]
+========================================[0m
+pub fn init() { println!("Stub self_healing_engine initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/lazarus_vault.rs]
+========================================[0m
+pub fn init() { println!("Stub lazarus_vault initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/thermal_governor.rs]
+========================================[0m
+pub fn init() { println!("Stub thermal_governor initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/edge_worker.rs]
+========================================[0m
+pub fn init() { println!("Stub edge_worker initialized"); }
+
+[36m========================================
+[FILE: bins/ide_backend/src/governance/mod.rs]
+========================================[0m
+pub mod protocol {
+    pub struct GovernanceLog;
+    impl GovernanceLog {
+        pub fn init() -> Self { Self }
+    }
+}
+
+[36m========================================
 [FILE: bins/ide_backend/src/main.rs]
 ========================================[0m
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use nexus_runtime_core::{
+    neural_agent::MicroAgent,
+    cluster::ClusterMesh,
+    distributed_scheduler::DistributedScheduler,
+    orchestrator::Orchestrator,
+    shared_state::VmoState,
+    arbiter_agent::ArbiterAgent,
+};
+use nexus_substrate::memory::MemoryPalace;
+
+// Core Management & API Modules
+pub mod server;
+pub mod auth;
+pub mod security;
+pub mod logger;
+pub mod fs_watcher;
+pub mod system_monitor;
+pub mod scheduler;
+pub mod self_healing_engine;
+pub mod governance;
+pub mod ws_bridge;
+pub mod vitals_handler;
+pub mod cluster_api;
+pub mod server_terminal;
+pub mod heartbeat;
+pub mod dream_cycle;
+pub mod broker;
+pub mod telemetry_bridge;
+pub mod lazarus_vault;
+pub mod thermal_governor;
+pub mod edge_worker;
+
 #[tokio::main]
-async fn main() {
-    println!(">> Custom CodeMirror 6 API bridge online.");
+async fn main() -> anyhow::Result<()> {
+    println!("\x1b[36m>> [NEXUS] IGNITION SEQUENCE INITIATED (v3.0.0)\x1b[0m");
+    dotenvy::dotenv().ok();
+
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .unwrap_or_else(|_| "UNSET_KEY".to_string());
+
+    let (tx, _rx) = broadcast::channel::<String>(256);
+
+    // Secure the Ghost DOM UI Token
+    if let Err(e) = security::write_startup_token() {
+        eprintln!("\x1b[31m!! [SECURITY] Could not write startup token: {}\x1b[0m", e);
+    }
+
+    // Initialize the Substrate & Logic Layers
+    let memory = Arc::new(Mutex::new(MemoryPalace::new("nexus_ide.db").await?));
+    let agent = Arc::new(MicroAgent::init(tx.clone())?);
+    let monitor = Arc::new(Mutex::new(system_monitor::SystemMonitor::new()));
+    let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+    let cluster = Arc::new(ClusterMesh::new());
+    let _governance_log = Arc::new(parking_lot::Mutex::new(governance::protocol::GovernanceLog::init()));
+    let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
+    let orchestrator = Arc::new(Orchestrator::new());
+
+    // Ignite the Master Supervisor
+    let _scheduler_tx = scheduler::MasterSupervisor::ignite(
+        tx.clone(),
+        reqwest::Client::new(),
+        api_key.clone(),
+        orchestrator.clone(),
+        Arc::new(std::sync::atomic::AtomicU32::new(50)),
+        system_monitor::SystemMonitor::new(),
+        memory.clone(),
+        vmo_state.clone(),
+        dist.clone(),
+    );
+
+    let workspace_root = std::env::current_dir()?;
+
+    // Construct the Unified Application State exactly as server.rs expects
+    let state = Arc::new(server::AppState {
+        client: reqwest::Client::new(),
+        monitor: monitor.clone(),
+        agent: agent.clone(),
+        orchestrator,
+        memory: memory.clone(),
+        api_key,
+        tx: tx.clone(),
+        arbiter: Arc::new(ArbiterAgent::new(agent)),
+        workspace_root,
+        vmo_state,
+        cluster: cluster.clone(),
+        dist,
+    });
+
+    println!("\x1b[32m>> [NEXUS] IDE Backend Online. Core Integrity Verified.\x1b[0m");
+
+    // ⚡ IGNITE THE WEB SERVER & TELEMETRY BRIDGE
+    server::start_server(state).await;
+
+    Ok(())
 }
 
 [36m========================================
@@ -2834,4 +4084,22 @@ edition = "2021"
 
 [dependencies]
 nexus_runtime_core = { path = "../../crates/runtime_core" }
-tokio = { workspace = true }
+nexus_substrate = { path = "../../crates/nexus_substrate" }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0"
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+jsonwebtoken = "9.3"
+dotenvy = "0.15"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+sysinfo = "0.31"
+notify-debouncer-full = "0.7"
+walkdir = "2.5"
+reqwest = { version = "0.12", features = ["json"] }
+rust-embed = "8.0"
+mime_guess = "2.0"
+parking_lot = "0.12"
+async-trait = "0.1"

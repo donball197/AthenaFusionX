@@ -1,20 +1,24 @@
-//! NEXUS SINGULARITY — ZIG MUSCLE v3.2 (2026)
-//! Fix: Added missing zx_vmo_create_native and aligned symbols for Rust LLD
-const std = @import("std");
-const posix = std.posix;
+//! NEXUS SINGULARITY — ZIG MUSCLE v3.3 (2026)
+//! Fix: allocate child BEFORE bumping parent refcount (no leak on OOM).
+//! Fix: zx_vmo_get_all_handles iterates one shard at a time (no global pause).
+const std    = @import("std");
+const posix  = std.posix;
 const Thread = std.Thread;
 
-const PAGE_SIZE: usize = 4096;
-const MAX_SLOTS: usize = 4096;
-const SLOT_MASK: u32 = MAX_SLOTS - 1;
-const SENTINEL_MAGIC: u32 = 0xDEADC0DE;
-const GENERATION_SHIFT: u5 = 12;
-const SHARD_COUNT: usize = 16;
-const SHARD_MASK: u32 = SHARD_COUNT - 1;
+const PAGE_SIZE:        usize = 4096;
+const MAX_SLOTS:        usize = 4096;
+const SLOT_MASK:        u32   = MAX_SLOTS - 1;
+const SENTINEL_MAGIC:   u32   = 0xDEADC0DE;
+const GENERATION_SHIFT: u5    = 12;
+const SHARD_COUNT:      usize = 16;
+const SHARD_MASK:       u32   = SHARD_COUNT - 1;
+const SLOTS_PER_SHARD:  usize = MAX_SLOTS / SHARD_COUNT;
 
 var shard_mutexes: [SHARD_COUNT]Thread.Mutex = [_]Thread.Mutex{.{}} ** SHARD_COUNT;
-var active_vmos: u32 = 0;
-var next_handle: u32 = 0xc8;
+var active_vmos:   u32  = 0;
+var next_handle:   u32  = 0xc8;
+var current_load:  f32  = 0.0;
+var stress_mode:   bool = false;
 
 const VmoMetadata = struct {
     ptr:           [*]align(PAGE_SIZE) u8,
@@ -35,26 +39,29 @@ const VmoInfo = extern struct {
 };
 
 var handle_table: [MAX_SLOTS]?VmoMetadata = [_]?VmoMetadata{null} ** MAX_SLOTS;
-var current_load: f32 = 0.0;
-var stress_mode: bool = false;
 
-inline fn shard_for(h: u32) usize { return @intCast(h & SHARD_MASK); }
-inline fn decode_slot(h: u32) usize { return @intCast(h & SLOT_MASK); }
+inline fn shard_for(h: u32) usize       { return @intCast(h & SHARD_MASK); }
+inline fn decode_slot(h: u32) usize     { return @intCast(h & SLOT_MASK); }
 inline fn decode_generation(h: u32) u32 { return h >> GENERATION_SHIFT; }
 
 fn lookup_valid(h: u32) ?*VmoMetadata {
     const slot = decode_slot(h);
     const gen  = decode_generation(h);
     const meta = &(handle_table[slot] orelse return null);
-    if (meta.magic != SENTINEL_MAGIC) return null;
-    if (meta.generation != gen)       return null;
+    if (meta.magic      != SENTINEL_MAGIC) return null;
+    if (meta.generation != gen)            return null;
     return meta;
 }
 
 fn allocate_vmo(size: usize) !struct { ptr: [*]align(PAGE_SIZE) u8, size: usize } {
-    const aligned_size = std.mem.alignForward(usize, size, PAGE_SIZE);
-    const ptr = try posix.mmap(null, aligned_size, posix.PROT.READ | posix.PROT.WRITE, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0);
-    return .{ .ptr = @alignCast(ptr.ptr), .size = aligned_size };
+    const aligned = std.mem.alignForward(usize, size, PAGE_SIZE);
+    const ptr = try posix.mmap(
+        null, aligned,
+        posix.PROT.READ | posix.PROT.WRITE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1, 0,
+    );
+    return .{ .ptr = @alignCast(ptr.ptr), .size = aligned };
 }
 
 export fn zx_vmo_create_native(size: usize) u32 {
@@ -80,31 +87,47 @@ export fn zx_vmo_create_native(size: usize) u32 {
     return h;
 }
 
+/// FIXED: allocate child BEFORE bumping parent refcount.
+/// If allocation fails, parent is completely untouched (no refcount leak).
+/// If parent is freed between our size-read and commit, munmap child and abort.
 export fn zx_vmo_clone_native(parent_handle: u32, _: usize) u32 {
+    // Step 1: Read parent size — no side effects yet.
     const p_shard = shard_for(parent_handle);
     var parent_size: usize = 0;
-    var parent_ptr:  [*]align(PAGE_SIZE) u8 = undefined;
-
+    var parent_ptr: [*]align(PAGE_SIZE) u8 = undefined;
     {
         shard_mutexes[p_shard].lock();
         defer shard_mutexes[p_shard].unlock();
         const meta = lookup_valid(parent_handle) orelse return 0;
         parent_size = meta.size;
         parent_ptr  = meta.ptr;
-        _ = @atomicRmw(u32, &meta.refcount, .Add, 1, .monotonic);
     }
 
+    // Step 2: Allocate + copy. Parent refcount still untouched.
     const mapping = allocate_vmo(parent_size) catch return 0;
     @memcpy(mapping.ptr[0..parent_size], parent_ptr[0..parent_size]);
 
+    // Step 3: Claim a new handle slot.
     const h     = @atomicRmw(u32, &next_handle, .Add, 1, .monotonic);
     const shard = shard_for(h);
     const slot  = decode_slot(h);
     const gen   = decode_generation(h);
 
+    // Step 4: Atomically bump parent refcount. Bail if parent freed in window.
+    shard_mutexes[p_shard].lock();
+    const parent_alive = lookup_valid(parent_handle) != null;
+    if (parent_alive) {
+        _ = @atomicRmw(u32, &(lookup_valid(parent_handle).?.refcount), .Add, 1, .monotonic);
+    }
+    shard_mutexes[p_shard].unlock();
+
+    if (!parent_alive) {
+        posix.munmap(mapping.ptr[0..mapping.size]);
+        return 0;
+    }
+
     shard_mutexes[shard].lock();
     defer shard_mutexes[shard].unlock();
-
     handle_table[slot] = VmoMetadata{
         .ptr           = mapping.ptr,
         .size          = mapping.size,
@@ -114,7 +137,6 @@ export fn zx_vmo_clone_native(parent_handle: u32, _: usize) u32 {
         .is_cow_child  = true,
         .parent_handle = parent_handle,
     };
-
     _ = @atomicRmw(u32, &active_vmos, .Add, 1, .monotonic);
     return h;
 }
@@ -123,9 +145,7 @@ export fn zx_handle_close_native(h: u32) void {
     const shard = shard_for(h);
     shard_mutexes[shard].lock();
     defer shard_mutexes[shard].unlock();
-
-    const meta = lookup_valid(h) orelse return;
-
+    const meta    = lookup_valid(h) orelse return;
     const old_ref = @atomicRmw(u32, &meta.refcount, .Sub, 1, .monotonic);
     if (old_ref == 1) {
         posix.munmap(meta.ptr[0..meta.size]);
@@ -187,16 +207,22 @@ export fn zx_vmo_calculate_entropy(h: u32) f32 {
     return entropy / 8.0;
 }
 
+/// FIXED: one shard at a time — no global stop-the-world.
 export fn zx_vmo_get_all_handles(out_handles: [*]u32, max_count: usize) usize {
-    for (&shard_mutexes) |*m| m.lock();
-    defer for (&shard_mutexes) |*m| m.unlock();
     var count: usize = 0;
-    for (handle_table, 0..) |maybe_meta, i| {
-        if (maybe_meta) |meta| {
-            if (meta.magic == SENTINEL_MAGIC and count < max_count) {
-                const slot: u32 = @intCast(i);
-                out_handles[count] = slot | (meta.generation << GENERATION_SHIFT);
-                count += 1;
+    var s: usize = 0;
+    while (s < SHARD_COUNT and count < max_count) : (s += 1) {
+        shard_mutexes[s].lock();
+        defer shard_mutexes[s].unlock();
+        const base = s * SLOTS_PER_SHARD;
+        var i: usize = base;
+        while (i < base + SLOTS_PER_SHARD and count < max_count) : (i += 1) {
+            if (handle_table[i]) |meta| {
+                if (meta.magic == SENTINEL_MAGIC) {
+                    const sl: u32 = @intCast(i);
+                    out_handles[count] = sl | (meta.generation << GENERATION_SHIFT);
+                    count += 1;
+                }
             }
         }
     }
@@ -204,7 +230,8 @@ export fn zx_vmo_get_all_handles(out_handles: [*]u32, max_count: usize) usize {
 }
 
 export fn muscle_get_active_vmos() u32 { return @atomicLoad(u32, &active_vmos, .monotonic); }
-export fn muscle_get_next_handle() u32 { return @atomicLoad(u32, &next_handle, .monotonic); }
+export fn muscle_get_next_handle() u32 { return @atomicLoad(u32, &next_handle,  .monotonic); }
+
 export fn set_substrate_load(load: f32) void {
     shard_mutexes[0].lock();
     defer shard_mutexes[0].unlock();

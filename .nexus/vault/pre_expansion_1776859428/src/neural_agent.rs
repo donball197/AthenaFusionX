@@ -40,7 +40,7 @@ impl MicroAgent {
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
         let model =
-            model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-26b-a4b-it");
+            model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-31b-it");
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
 
         // ⚡ ENHANCED PROMPT ARCHITECTURE

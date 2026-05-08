@@ -39,7 +39,7 @@ impl MicroAgent {
         let start_time = std::time::Instant::now();
         
         // CORRECT MODEL IDENTITY: Gemma-4 26B MoE
-        let model = "gemma-4-26b-a4b-it";
+        let model = "gemma-4-31b-it";
         
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", 

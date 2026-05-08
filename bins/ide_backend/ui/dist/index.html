@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" href="/favicon.png" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link href="/_app/immutable/entry/start.CtOyLKkR.js" rel="modulepreload">
+		<link href="/_app/immutable/chunks/DDE5K5xA.js" rel="modulepreload">
+		<link href="/_app/immutable/entry/app.CPCEG8gr.js" rel="modulepreload">
+		
+	</head>
+	<body class="bg-black">
+		<div id="svelte">
+			<script>
+				{
+					__sveltekit_skyjhv = {
+						base: ""
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("/_app/immutable/entry/start.CtOyLKkR.js"),
+						import("/_app/immutable/entry/app.CPCEG8gr.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+	</body>
+</html>

@@ -1,13 +1,13 @@
 pub mod task_graph;
 
-use crate::agent_runtime::engine::{Task, TaskResult, ExecutableAgent};
 use self::task_graph::TaskGraph;
-use std::collections::HashMap;
+use crate::agent_runtime::engine::{ExecutableAgent, Task, TaskResult};
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 
 pub struct OrchestratorV2 {
     // ⚡ DYNAMIC DISPATCH: Supports a diverse swarm of agents simultaneously
-    agents: HashMap<String, Box<dyn ExecutableAgent>>, 
+    agents: HashMap<String, Box<dyn ExecutableAgent>>,
 }
 
 impl OrchestratorV2 {
@@ -25,19 +25,23 @@ impl OrchestratorV2 {
 
         for id in order {
             let node = graph.nodes.get(&id).unwrap();
-            
-            let agent = self.agents.get(&node.required_agent)
-                .ok_or_else(|| anyhow!("AGENT_MISSING: '{}' not registered in swarm.", node.required_agent))?;
 
-            let task = Task {
-                id: id.clone(),
-                payload: format!("Execute directive for {}", id),
-            };
+            let agent = self.agents.get(&node.required_agent).ok_or_else(|| {
+                anyhow!("AGENT_MISSING: '{}' not registered in swarm.", node.required_agent)
+            })?;
+
+            let task = Task { id: id.clone(), payload: format!("Execute directive for {}", id) };
 
             let result = agent.execute(task).await?;
             results.push(result);
         }
 
         Ok(results)
+    }
+}
+
+impl Default for OrchestratorV2 {
+    fn default() -> Self {
+        Self::new()
     }
 }

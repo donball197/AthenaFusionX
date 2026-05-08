@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     let raw_directive     = args[1..].join(" ");
     let enriched_directive = cli::inject_workspace_dna(&raw_directive);
 
-    println!("\x1b[36m>> [CLI_UPLINK] Directive → NEXUS Cortex (gemma-4-26b-a4b-it primary)\x1b[0m");
+    println!("\x1b[36m>> [CLI_UPLINK] Directive → NEXUS Cortex (gemma-4-31b-it primary)\x1b[0m");
 
     let mut rx = tx.subscribe();
 

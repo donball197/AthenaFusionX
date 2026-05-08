@@ -70,14 +70,14 @@ impl IntelligentRouter {
             },
             DirectiveClass::ShellOp => AgentProfile {
                 class: DirectiveClass::ShellOp,
-                primary_model: "gemma-4-26b-a4b-it",
+                primary_model: "gemma-4-31b-it",
                 max_turns: 6,
                 budget: ContextBudget::minimal(),
                 persona: "IDENTITY: NEXUS DevOps. Goal: Substrate maintenance. Use <ACTION>.".into(),
             },
             _ => AgentProfile {
                 class: DirectiveClass::General,
-                primary_model: "gemma-4-26b-a4b-it",
+                primary_model: "gemma-4-31b-it",
                 max_turns: 8,
                 budget: ContextBudget::standard(),
                 persona: "IDENTITY: NEXUS Generalist. Solve the task efficiently.".into(),

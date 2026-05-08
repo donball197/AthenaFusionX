@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
 use crate::agent_protocol::AgentAction;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 /// Robust extractor that handles most LLM output variations

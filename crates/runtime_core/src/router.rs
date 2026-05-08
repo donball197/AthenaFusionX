@@ -7,7 +7,7 @@ pub enum DirectiveClass {
     TargetedEdit { file_hint: String },
     RepoDoctor, // ⚡ NEW: Automated Workspace Healing
     SecurityAudit,
-    WasmForge, 
+    WasmForge,
     Inquiry,
     FeatureBuild,
     General,
@@ -23,16 +23,36 @@ pub struct ContextBudget {
 
 impl ContextBudget {
     pub fn minimal() -> Self {
-        Self { max_file_chars: 1_500, max_obs_lines: 2, max_schema_chars: 400, max_output_tokens: 1024 }
+        Self {
+            max_file_chars: 1_500,
+            max_obs_lines: 2,
+            max_schema_chars: 400,
+            max_output_tokens: 1024,
+        }
     }
     pub fn standard() -> Self {
-        Self { max_file_chars: 8_000, max_obs_lines: 6, max_schema_chars: 1_200, max_output_tokens: 4096 }
+        Self {
+            max_file_chars: 8_000,
+            max_obs_lines: 6,
+            max_schema_chars: 1_200,
+            max_output_tokens: 4096,
+        }
     }
     pub fn doctor() -> Self {
-        Self { max_file_chars: 15_000, max_obs_lines: 10, max_schema_chars: 1_500, max_output_tokens: 8192 }
+        Self {
+            max_file_chars: 15_000,
+            max_obs_lines: 10,
+            max_schema_chars: 1_500,
+            max_output_tokens: 8192,
+        }
     }
     pub fn security() -> Self {
-        Self { max_file_chars: 20_000, max_obs_lines: 10, max_schema_chars: 2_000, max_output_tokens: 8192 }
+        Self {
+            max_file_chars: 20_000,
+            max_obs_lines: 10,
+            max_schema_chars: 2_000,
+            max_output_tokens: 8192,
+        }
     }
 }
 
@@ -50,13 +70,17 @@ impl IntelligentRouter {
     pub fn classify(actual_directive: &str) -> DirectiveClass {
         let d = actual_directive.to_lowercase();
 
-        if ["diagnose", "doctor", "fix repo", "repair workspace", "suture"].iter().any(|k| d.contains(k)) {
+        if ["diagnose", "doctor", "fix repo", "repair workspace", "suture"]
+            .iter()
+            .any(|k| d.contains(k))
+        {
             return DirectiveClass::RepoDoctor;
         }
         if ["synthesize", "forge", "wasm cell"].iter().any(|k| d.contains(k)) {
             return DirectiveClass::WasmForge;
         }
-        if ["cargo check", "cargo test", "git status", "ls ", "find "].iter().any(|k| d.contains(k)) {
+        if ["cargo check", "cargo test", "git status", "ls ", "find "].iter().any(|k| d.contains(k))
+        {
             return DirectiveClass::ShellOp;
         }
         if ["audit ", "vulnerability", "memory safe"].iter().any(|k| d.contains(k)) {
@@ -77,28 +101,28 @@ impl IntelligentRouter {
         match class {
             DirectiveClass::RepoDoctor => AgentProfile {
                 class: DirectiveClass::RepoDoctor,
-                primary_model: "gemma-4-26b-a4b-it", // ⚡ High-reasoning model
+                primary_model: "gemma-4-31b-it", // ⚡ High-reasoning model
                 max_turns: 8,
                 budget: ContextBudget::doctor(),
                 persona: "IDENTITY: NEXUS Repo Doctor. Goal: Diagnose and patch compilation errors. RULE: You MUST output ONLY a valid JSON array. WORKFLOW: 1. read_file on the failing file. 2. write_file with the corrected code. 3. execute_command with 'cargo check' to verify. 4. halt only when integrity passes.".into(),
             },
             DirectiveClass::WasmForge => AgentProfile {
                 class: DirectiveClass::WasmForge,
-                primary_model: "gemma-4-26b-a4b-it",
+                primary_model: "gemma-4-31b-it",
                 max_turns: 5,
                 budget: ContextBudget::standard(),
                 persona: "IDENTITY: NEXUS Forge Master. Goal: Synthesize Rust WASM cells. RULE: You MUST output a valid JSON array inside an <ACTION> block containing {\"type\": \"synthesize_wasm\", \"code\": \"...\"}. DO NOT write markdown tutorials. DO NOT output WAT format. RULE 2: You MUST execute {\"type\": \"halt\"} immediately after a successful synthesis.".into(),
             },
             DirectiveClass::ShellOp => AgentProfile {
                 class: DirectiveClass::ShellOp,
-                primary_model: "gemma-4-26b-a4b-it",
+                primary_model: "gemma-4-31b-it",
                 max_turns: 6,
                 budget: ContextBudget::minimal(),
                 persona: "IDENTITY: NEXUS DevOps. Goal: Substrate maintenance. RULE: You MUST execute operations using ONLY a valid JSON array where every object has a 'type' field.".into(),
             },
             _ => AgentProfile {
                 class: DirectiveClass::General,
-                primary_model: "gemma-4-26b-a4b-it",
+                primary_model: "gemma-4-31b-it",
                 max_turns: 8,
                 budget: ContextBudget::standard(),
                 persona: "IDENTITY: NEXUS Sovereign Agent. Goal: Fulfill the directive. RULE: You MUST execute operations using ONLY a valid JSON array where every object has a 'type' field. NEVER output conversational text. Output ONLY JSON.".into(),

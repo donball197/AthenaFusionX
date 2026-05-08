@@ -38,7 +38,7 @@ impl MicroAgent {
         let start = std::time::Instant::now();
         
         // UPGRADE: Targeting the MoE variant for high-speed, 500-error-free execution
-        let model = ctx.target_model.unwrap_or_else(|| "gemma-4-26b-a4b-it".to_string());
+        let model = ctx.target_model.unwrap_or_else(|| "gemma-4-31b-it".to_string());
         
         // GEMMA 4 PROTOCOL: <|think|> trigger in the native system prompt
         let system_instruction = format!(

@@ -23,14 +23,20 @@ impl WasmForge {
         // ⚡ ZIG 0.15 WASM COMPILATION FIX (No Linker Panics)
         let output = tokio::process::Command::new("zig")
             .args([
-                "build-exe", &tmp_path,
-                "-target", "wasm32-freestanding",
-                "-O", "ReleaseSmall",
-                "-fno-entry", "-rdynamic",
-                "--name", "cell"
+                "build-exe",
+                &tmp_path,
+                "-target",
+                "wasm32-freestanding",
+                "-O",
+                "ReleaseSmall",
+                "-fno-entry",
+                "-rdynamic",
+                "--name",
+                "cell",
             ])
             .current_dir("/tmp")
-            .output().await?;
+            .output()
+            .await?;
 
         if !output.status.success() {
             let _ = fs::remove_file(&tmp_path).await;
@@ -87,11 +93,12 @@ panic = "abort"
             return Err(anyhow!("FORGE_FAULT: {}", String::from_utf8_lossy(&output.stderr)));
         }
 
-        let wasm_path = format!("{}/target/wasm32-unknown-unknown/release/nexus_dynamic_cell.wasm", build_dir);
+        let wasm_path =
+            format!("{}/target/wasm32-unknown-unknown/release/nexus_dynamic_cell.wasm", build_dir);
         let wasm_bytes = fs::read(&wasm_path).await?;
         let base64_payload = general_purpose::STANDARD.encode(&wasm_bytes);
         let _ = fs::remove_dir_all(&build_dir).await;
-        
+
         Ok(base64_payload)
     }
 }

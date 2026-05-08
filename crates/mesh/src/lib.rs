@@ -1,3 +1,5 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
-pub struct MeshMessage { pub payload: Vec<u8> }
+pub struct MeshMessage {
+    pub payload: Vec<u8>,
+}

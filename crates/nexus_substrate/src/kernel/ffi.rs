@@ -29,7 +29,9 @@ pub trait KernelOps: Send + Sync {
     fn vmo_create(&self, size: usize) -> u32;
     fn vmo_clone(&self, parent_handle: u32, size: usize) -> u32;
     fn handle_close(&self, handle: u32);
-    fn vmo_get_info(&self, handle: u32, out_info: *mut VmoInfo) -> i32;
+    /// # Safety
+    /// The caller must ensure `out_info` is a valid, properly aligned pointer to a `VmoInfo` struct.
+    unsafe fn vmo_get_info(&self, handle: u32, out_info: *mut VmoInfo) -> i32;
     fn set_stress(&self, enabled: bool);
     fn calculate_entropy(&self, handle: u32) -> f32;
 }
@@ -48,8 +50,10 @@ impl KernelOps for NativeKernelOps {
         unsafe { zx_handle_close_native(h); }
     }
 
-    fn vmo_get_info(&self, h: u32, i: *mut VmoInfo) -> i32 {
-        unsafe { zx_vmo_get_info(h, i) }
+    /// # Safety
+    /// The caller must ensure `out_info` is a valid, properly aligned pointer to a `VmoInfo` struct.
+    unsafe fn vmo_get_info(&self, h: u32, i: *mut VmoInfo) -> i32 {
+        zx_vmo_get_info(h, i)
     }
 
     fn set_stress(&self, enabled: bool) {

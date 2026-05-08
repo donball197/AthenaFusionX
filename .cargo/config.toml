@@ -1,7 +1,11 @@
 [build]
 jobs = 1
 
+# Target-specific linker to protect the Termux/Android build process
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
 [env]
 CARGO_INCREMENTAL = "1"
 RUST_BACKTRACE = "1"
-# Target dir moved to run.sh so it doesn't break Container builds

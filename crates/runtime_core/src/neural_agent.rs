@@ -37,17 +37,23 @@ impl MicroAgent {
         model_override: Option<&str>,
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
-        let model = model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-26b-a4b-it");
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
+        let model = model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-31b-it");
+        println!("\x1b[90m[DEBUG_UPLINK] Target: {}\x1b[0m", model);
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:generateContent?key={}",
+            model, api_key
+        );
 
-        let combined_text = format!("SYSTEM: {}\nUSER: {}", ctx.system_prompt.unwrap_or_default(), user_text);
-        
+        let combined_text =
+            format!("SYSTEM: {}\nUSER: {}", ctx.system_prompt.unwrap_or_default(), user_text);
+
         let payload = json!({
             "contents": [{ "role": "user", "parts": [{ "text": combined_text }] }],
-            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 4096 }
+            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 4096, "thinkingConfig": { "thinkingLevel": "high" } }
         });
 
-        let response = client.post(&url).json(&payload).send().await.context("API request failed")?;
+        let response =
+            client.post(&url).json(&payload).send().await.context("API request failed")?;
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
         let mut stream = response.bytes_stream();
@@ -59,14 +65,25 @@ impl MicroAgent {
                     let line_bytes: Vec<u8> = byte_buffer.drain(..=pos).collect();
                     let line = String::from_utf8_lossy(&line_bytes);
                     let clean = line.trim_start_matches("data: ").trim();
-                    if clean.is_empty() || clean == "[DONE]" { continue; }
+                    if clean.is_empty() || clean == "[DONE]" {
+                        continue;
+                    }
 
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                        if let Some(parts) = val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                        if let Some(parts) =
+                            val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
+                        {
                             for part in parts {
-                                // ⚡ CRITICAL: Filter out Gemma 4 reasoning/thought parts
-                                if part["thought"].as_bool().unwrap_or(false) { continue; }
+                                // ⚡ EVOLUTION: Route thoughts to telemetry instead of dropping them
+                                let is_thought = part["thought"].as_bool().unwrap_or(false);
+                                let has_thinking_key = part.get("thinking").is_some();
                                 
+                                if is_thought || has_thinking_key {
+                                    let thought = part["text"].as_str().unwrap_or("");
+                                    let _ = self.tx.send(json!({"type": "NEURAL_THOUGHT", "payload": thought}).to_string());
+                                    continue; 
+                                }
+
                                 if let Some(token) = part["text"].as_str() {
                                     full_response.push_str(token);
                                     let _ = self.tx.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());

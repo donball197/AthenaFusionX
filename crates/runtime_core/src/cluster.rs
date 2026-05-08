@@ -22,10 +22,7 @@ pub struct ClusterMesh {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
 impl ClusterMesh {
@@ -43,19 +40,22 @@ impl ClusterMesh {
         }
     }
 
-    pub fn get_all_nodes(&self) -> Vec<ClusterNode> { self.nodes.read().clone() }
+    pub fn get_all_nodes(&self) -> Vec<ClusterNode> {
+        self.nodes.read().clone()
+    }
 
     pub fn best_node(&self) -> Option<ClusterNode> {
         let now = now_secs();
-        self.nodes
-            .read()
-            .iter()
-            .filter(|n| now.saturating_sub(n.last_seen) < 40)
-            .cloned()
-            .min_by(|a, b| {
-                (a.cpu + a.ram)
-                    .partial_cmp(&(b.cpu + b.ram))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        self.nodes.read().iter().filter(|n| now.saturating_sub(n.last_seen) < 40).cloned().min_by(
+            |a, b| {
+                (a.cpu + a.ram).partial_cmp(&(b.cpu + b.ram)).unwrap_or(std::cmp::Ordering::Equal)
+            },
+        )
+    }
+}
+
+impl Default for ClusterMesh {
+    fn default() -> Self {
+        Self::new()
     }
 }

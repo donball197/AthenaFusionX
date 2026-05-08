@@ -3,7 +3,6 @@
  * Copyright 2026 Donald Ball
  * Handles precise edits even when LLM mangles whitespace or line order.
  */
-
 use anyhow::{anyhow, Result};
 
 pub struct DiffEngine;
@@ -53,7 +52,9 @@ impl DiffEngine {
 
             if window_trimmed == search_lines {
                 let mut result = orig_lines[..i].join("\n");
-                if !result.is_empty() { result.push('\n'); }
+                if !result.is_empty() {
+                    result.push('\n');
+                }
                 result.push_str(replace);
                 if i + search_len < orig_lines.len() {
                     result.push('\n');
@@ -82,7 +83,9 @@ impl DiffEngine {
                 for j in (i + 2)..orig_lines.len() {
                     if orig_lines[j].trim() == last {
                         let mut result = orig_lines[..i].join("\n");
-                        if !result.is_empty() { result.push('\n'); }
+                        if !result.is_empty() {
+                            result.push('\n');
+                        }
                         result.push_str(replace);
                         if j + 1 < orig_lines.len() {
                             result.push('\n');

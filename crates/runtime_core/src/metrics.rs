@@ -4,20 +4,19 @@
  * Lightweight, lock-free, zero-dependency metrics using only std atomics.
  * Fully compatible with Prometheus scraping.
  */
-
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
 #[derive(Debug)]
 pub struct NexusMetrics {
-    pub tasks_total:       AtomicU64,
-    pub task_failures:     AtomicU64,
-    pub arbiter_blocks:    AtomicU64,
-    pub heal_successes:    AtomicU64,
-    pub heal_failures:     AtomicU64,
+    pub tasks_total: AtomicU64,
+    pub task_failures: AtomicU64,
+    pub arbiter_blocks: AtomicU64,
+    pub heal_successes: AtomicU64,
+    pub heal_failures: AtomicU64,
     pub api_latency_ms_sum: AtomicU64,
-    pub api_calls:         AtomicU64,
-    pub circuit_opens:     AtomicU64,
+    pub api_calls: AtomicU64,
+    pub circuit_opens: AtomicU64,
 }
 
 impl NexusMetrics {
@@ -36,6 +35,7 @@ impl NexusMetrics {
 
     /// Increment total tasks processed
     pub fn inc_task(&self) {
+        tracing::info!("Task counter incremented");
         self.tasks_total.fetch_add(1, Ordering::Relaxed);
     }
 

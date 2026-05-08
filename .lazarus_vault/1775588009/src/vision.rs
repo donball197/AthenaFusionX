@@ -23,7 +23,7 @@ pub async fn scan_local_image_cloud(image_path: &str, prompt: &str, api_key: &st
     };
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent?key={}",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key={}",
         api_key
     );
 

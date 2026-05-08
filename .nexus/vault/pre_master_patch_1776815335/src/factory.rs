@@ -6,11 +6,11 @@ impl AgentFactory {
         if turn >= 8 || current_error_count > 1 {
             return "gemma-4-31b-it"; 
         }
-        "gemma-4-26b-a4b-it"
+        "gemma-4-31b-it"
     }
 
     pub fn select_model_for_mission(_mission_type: &str) -> &'static str {
-        "gemma-4-26b-a4b-it"
+        "gemma-4-31b-it"
     }
 
     pub fn get_persona_for_mission(_mission_type: &str) -> String {

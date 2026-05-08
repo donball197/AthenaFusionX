@@ -7,16 +7,19 @@ edition = "2021"
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-serde_json = "1.0"
-futures-util = "0.3"
-uuid = { version = "1.8", features = ["v4", "serde"] }
-tracing = "0.1"
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
 nexus_substrate = { path = "../nexus_substrate" }
-base64 = "0.22"
+base64 = { workspace = true }
 wasmtime = "44.0"
 tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
-parking_lot = "0.12"
-async-trait = "0.1.89"
-bitflags = "2.4"
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+bitflags = { workspace = true }
+
+# V5 Substrate Storage (Consolidated from nexus_memory)
+sqlx = { workspace = true }

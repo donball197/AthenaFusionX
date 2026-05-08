@@ -7,7 +7,7 @@
 //   Err(wait_ms)     — backoff this many milliseconds before retrying
 //
 // Gemini free-tier limits (as of April 2026):
-//   gemma-4-26b-a4b-it : 15 RPM, 1_000_000 TPM
+//   gemma-4-31b-it : 15 RPM, 1_000_000 TPM
 //   gemma-4-31b-it     : 2 RPM,    50_000 TPM
 //   gemini-2.5-pro     : 5 RPM,   250_000 TPM  (emergency only)
 //
@@ -29,7 +29,7 @@ impl ModelQuota {
         match model {
             m if m.contains("31b") => Self { rpm_limit: 2,  tpm_limit: 50_000 },
             m if m.contains("2.5-pro") => Self { rpm_limit: 5, tpm_limit: 250_000 },
-            // gemma-4-26b-a4b-it and all other MoE models
+            // gemma-4-31b-it and all other MoE models
             _ => Self {
                 rpm_limit: std::env::var("NEXUS_RPM_OVERRIDE_26B")
                     .ok().and_then(|v| v.parse().ok()).unwrap_or(15),
@@ -227,6 +227,6 @@ mod tests {
         ledger.check_and_reserve("gemma-4-31b-it", 100).unwrap();
         ledger.check_and_reserve("gemma-4-31b-it", 100).unwrap();
         // MoE model has its own window — should still pass
-        assert!(ledger.check_and_reserve("gemma-4-26b-a4b-it", 100).is_ok());
+        assert!(ledger.check_and_reserve("gemma-4-31b-it", 100).is_ok());
     }
 }

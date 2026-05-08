@@ -1,15 +1,13 @@
-// src/vector_bridge.rs — v1.1 [QUOTA_SHIELDED + MODEL_ALIGNED]
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::json;
 
 pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
-    // ⚡ SUTURE 1: Shield the API call to respect Free Tier RPM limits
-    crate::token_ledger::wait_for_quota("gemini-embedding-2", 500).await;
+    // wait_for_quota is an async fn that returns ()
+    let _ = crate::token_ledger::wait_for_quota("gemini-embedding-2", 500).await;
 
     let client = Client::new();
     
-    // ⚡ SUTURE 2: Align with the models verified by scout_models.sh
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={}",
         api_key
@@ -31,7 +29,6 @@ pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
             }
         }
     } else {
-        // Stop swallowing the error so we can debug if it fails again
         return Err(anyhow::anyhow!("API REJECTED EMBEDDING. Raw response: {}", body));
     }
 

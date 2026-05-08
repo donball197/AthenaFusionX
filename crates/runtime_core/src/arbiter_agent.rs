@@ -6,30 +6,66 @@ pub struct ArbiterAgent {
 }
 
 const COMMAND_ALLOWLIST: &[&str] = &[
-    "cargo check", "cargo build", "cargo test", "cargo clippy",
-    "git status", "git log", "git diff", "ls", "find src", "cat src/",
+    "cargo check",
+    "cargo build",
+    "cargo test",
+    "cargo clippy",
+    "git status",
+    "git log",
+    "git diff",
+    "ls",
+    "find src",
+    "cat src/",
 ];
 
 impl ArbiterAgent {
-    pub fn new(agent: Arc<MicroAgent>) -> Self { Self { agent } }
+    pub fn new(agent: Arc<MicroAgent>) -> Self {
+        Self { agent }
+    }
 
     pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
         // ⚡ FIX: ALWAYS run the danger-pattern scan first.
         let dangerous_patterns = [
-            "rm -rf /", "rm -rf ~", "mkfs", "> /dev/sda", "> /dev/nvme",
-            "chmod 777 /", "/etc/shadow", "mv /etc/", "mv /usr/",
-            ":(){ :|:& };:", "dd if=/dev/zero", "fork bomb",
-            "sudo su", "sudo -i", "sudo bash", "sudo sh", "passwd root", "chown root",
-            "$'\\x", "\\u0072\\u006d", "base64 -d |", "| bash", "| sh", "eval $(", "exec(",
-            "curl | bash", "wget | bash", "curl | sh",
-            "history -c", "unset HISTFILE",
+            "rm -rf /",
+            "rm -rf ~",
+            "mkfs",
+            "> /dev/sda",
+            "> /dev/nvme",
+            "chmod 777 /",
+            "/etc/shadow",
+            "mv /etc/",
+            "mv /usr/",
+            ":(){ :|:& };:",
+            "dd if=/dev/zero",
+            "fork bomb",
+            "sudo su",
+            "sudo -i",
+            "sudo bash",
+            "sudo sh",
+            "passwd root",
+            "chown root",
+            "$'\\x",
+            "\\u0072\\u006d",
+            "base64 -d |",
+            "| bash",
+            "| sh",
+            "eval $(",
+            "exec(",
+            "curl | bash",
+            "wget | bash",
+            "curl | sh",
+            "history -c",
+            "unset HISTFILE",
         ];
 
         let normalized = command.to_lowercase();
 
         for pattern in dangerous_patterns.iter() {
             if normalized.contains(pattern) {
-                return Err(format!("SANDBOX_VIOLATION: Threat pattern '{}' detected in {}.", pattern, action_type));
+                return Err(format!(
+                    "SANDBOX_VIOLATION: Threat pattern '{}' detected in {}.",
+                    pattern, action_type
+                ));
             }
         }
 
@@ -37,17 +73,24 @@ impl ArbiterAgent {
             return Err("SANDBOX_VIOLATION: Directory traversal attempt blocked.".to_string());
         }
 
-        if (normalized.contains("| bash") || normalized.contains("| sh") || normalized.contains("|bash") || normalized.contains("|sh")) && !normalized.starts_with("echo") {
+        if (normalized.contains("| bash")
+            || normalized.contains("| sh")
+            || normalized.contains("|bash")
+            || normalized.contains("|sh"))
+            && !normalized.starts_with("echo")
+        {
             return Err("SANDBOX_VIOLATION: Pipe-to-shell pattern blocked.".to_string());
         }
 
         // ⚡ FIX: Allowlist is enforced ONLY AFTER sandbox patterns are cleared.
         if std::env::var("NEXUS_STRICT_COMMANDS").is_ok() {
-            let permitted = COMMAND_ALLOWLIST.iter().any(|&allowed| {
-                command.trim().starts_with(allowed)
-            });
+            let permitted =
+                COMMAND_ALLOWLIST.iter().any(|&allowed| command.trim().starts_with(allowed));
             if !permitted {
-                return Err(format!("ALLOWLIST_VIOLATION: '{}' is not in the permitted command set.", command));
+                return Err(format!(
+                    "ALLOWLIST_VIOLATION: '{}' is not in the permitted command set.",
+                    command
+                ));
             }
         }
 
@@ -56,33 +99,66 @@ impl ArbiterAgent {
 
     pub fn evaluate_entropy_delta(base_entropy: f32, new_entropy: f32) -> Result<(), String> {
         let delta = (new_entropy - base_entropy).abs();
-        if delta > 0.5 { return Err(format!("ENTROPY_ANOMALY: Delta of {:.4} exceeds 0.5 threshold.", delta)); }
+        if delta > 0.5 {
+            return Err(format!("ENTROPY_ANOMALY: Delta of {:.4} exceeds 0.5 threshold.", delta));
+        }
         Ok(())
     }
 
     pub fn resolve_consensus(alpha_vector: &[f32], beta_vector: &[f32]) -> bool {
-        if alpha_vector.len() != beta_vector.len() { return false; }
-        let diff: f32 = alpha_vector.iter().zip(beta_vector.iter()).map(|(a, b)| (a - b).abs()).sum();
+        if alpha_vector.len() != beta_vector.len() {
+            return false;
+        }
+        let diff: f32 =
+            alpha_vector.iter().zip(beta_vector.iter()).map(|(a, b)| (a - b).abs()).sum();
         diff < 0.5
     }
 
     pub fn bft_consensus(vectors: &[Vec<f32>], epsilon: f32) -> Option<Vec<f32>> {
-        if vectors.is_empty() { return None; }
+        if vectors.is_empty() {
+            return None;
+        }
         let n = vectors.len();
         let threshold = (2 * n / 3) + 1;
         let dim = vectors[0].len();
-        if vectors.iter().any(|v| v.len() != dim) { return None; }
+        if vectors.iter().any(|v| v.len() != dim) {
+            return None;
+        }
 
         let (best_idx, neighbor_count) = (0..n)
             .map(|i| {
-                let neighbors = (0..n).filter(|&j| { vectors[i].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon }).count();
+                let neighbors = (0..n)
+                    .filter(|&j| {
+                        vectors[i]
+                            .iter()
+                            .zip(vectors[j].iter())
+                            .map(|(a, b)| (a - b).abs())
+                            .sum::<f32>()
+                            < epsilon
+                    })
+                    .count();
                 (i, neighbors)
-            }).max_by_key(|&(_, count)| count)?;
-            
-        if neighbor_count < threshold { return None; }
+            })
+            .max_by_key(|&(_, count)| count)?;
 
-        let agreeing: Vec<&Vec<f32>> = (0..n).filter(|&j| { vectors[best_idx].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon }).map(|j| &vectors[j]).collect();
-        let centroid: Vec<f32> = (0..dim).map(|k| agreeing.iter().map(|v| v[k]).sum::<f32>() / agreeing.len() as f32).collect();
+        if neighbor_count < threshold {
+            return None;
+        }
+
+        let agreeing: Vec<&Vec<f32>> = (0..n)
+            .filter(|&j| {
+                vectors[best_idx]
+                    .iter()
+                    .zip(vectors[j].iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .sum::<f32>()
+                    < epsilon
+            })
+            .map(|j| &vectors[j])
+            .collect();
+        let centroid: Vec<f32> = (0..dim)
+            .map(|k| agreeing.iter().map(|v| v[k]).sum::<f32>() / agreeing.len() as f32)
+            .collect();
         Some(centroid)
     }
 }

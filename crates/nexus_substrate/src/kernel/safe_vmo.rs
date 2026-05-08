@@ -1,6 +1,6 @@
-use crate::kernel::{register_handle, HandleType};
-use crate::kernel::ffi;
 use crate::kernel::error::KernelError;
+use crate::kernel::ffi;
+use crate::kernel::{register_handle, HandleType};
 
 pub struct SafeVmo {
     handle: u32,
@@ -21,10 +21,13 @@ impl SafeVmo {
         if offset + data.len() > self.size {
             return Err(KernelError::InvalidArgs);
         }
-        let status = unsafe {
-            ffi::zx_vmo_write_native(self.handle, offset, data.as_ptr(), data.len())
-        };
-        if status == 0 { Ok(()) } else { Err(KernelError::InvalidArgs) }
+        let status =
+            unsafe { ffi::zx_vmo_write_native(self.handle, offset, data.as_ptr(), data.len()) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(KernelError::InvalidArgs)
+        }
     }
 
     /// ⚡ ZERO-ALLOCATION READ FIX: Prevents heap fragmentation on the 4GB Duet
@@ -35,7 +38,11 @@ impl SafeVmo {
         let status = unsafe {
             ffi::zx_vmo_read_native(self.handle, offset, buffer.as_mut_ptr(), buffer.len())
         };
-        if status == 0 { Ok(()) } else { Err(KernelError::InvalidArgs) }
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(KernelError::InvalidArgs)
+        }
     }
 
     pub fn handle(&self) -> u32 {

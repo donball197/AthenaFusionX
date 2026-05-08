@@ -6,7 +6,7 @@ pub async fn handle_get_vmos() -> impl IntoResponse {
     let count = unsafe { crate::kernel::ffi::zx_vmo_get_all_handles(handles.as_mut_ptr(), 1024) };
 
     let mut vmo_list = Vec::new();
-    for i in 0..count {
+    for &h in handles.iter().take(count) {
         let mut info = crate::kernel::ffi::VmoInfo {
             handle: 0,
             size: 0,
@@ -14,11 +14,10 @@ pub async fn handle_get_vmos() -> impl IntoResponse {
             is_cow: 0,
             parent_handle: 0,
         };
-        let res = unsafe { crate::kernel::ffi::zx_vmo_get_info(handles[i], &mut info) };
+        let res = unsafe { crate::kernel::ffi::zx_vmo_get_info(h, &mut info) };
 
         if res == 0 {
-            // ⚡ V17: Real-time Entropy Pull
-            let entropy = unsafe { crate::kernel::ffi::zx_vmo_calculate_entropy(handles[i]) };
+            let entropy = unsafe { crate::kernel::ffi::zx_vmo_calculate_entropy(h) };
 
             vmo_list.push(json!({
                 "handle": format!("0x{:x}", info.handle),

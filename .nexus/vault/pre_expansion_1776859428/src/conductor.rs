@@ -45,7 +45,7 @@ impl Conductor {
 
                 let failover_ctx = ContextPacket {
                     system_prompt: Some(profile.persona.clone()),
-                    model_override: Some("gemma-4-26b-a4b-it".to_string()),
+                    model_override: Some("gemma-4-31b-it".to_string()),
                     ..Default::default()
                 };
                 return orch.run(prompt, failover_ctx, client, api_key, tx).await;

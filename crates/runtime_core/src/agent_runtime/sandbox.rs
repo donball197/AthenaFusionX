@@ -16,9 +16,19 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    pub fn new(caps: Capabilities) -> Self { Self { caps } }
-    pub fn can_read(&self) -> bool { self.caps.contains(Capabilities::READ) }
-    pub fn can_write(&self) -> bool { self.caps.contains(Capabilities::WRITE) }
-    pub fn can_exec(&self) -> bool { self.caps.contains(Capabilities::EXEC) }
-    pub fn can_network(&self) -> bool { self.caps.contains(Capabilities::NETWORK) }
+    pub fn new(caps: Capabilities) -> Self {
+        Self { caps }
+    }
+    pub fn can_read(&self) -> bool {
+        self.caps.contains(Capabilities::READ)
+    }
+    pub fn can_write(&self) -> bool {
+        self.caps.contains(Capabilities::WRITE)
+    }
+    pub fn can_exec(&self) -> bool {
+        self.caps.contains(Capabilities::EXEC)
+    }
+    pub fn can_network(&self) -> bool {
+        self.caps.contains(Capabilities::NETWORK)
+    }
 }

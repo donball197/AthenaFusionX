@@ -1,0 +1,1 @@
+Example.com is a domain name reserved by the Internet Assigned Numbers Authority (IANA) for use in illustrative examples in documents. It is intended to be used as a placeholder domain to avoid using real, active websites in documentation and tutorials.

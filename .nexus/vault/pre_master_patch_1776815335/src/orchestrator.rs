@@ -19,7 +19,7 @@ impl Orchestrator {
         api_key: &str,
         tx: Option<broadcast::Sender<String>>,
     ) -> Result<String, String> {
-        let model = ctx.model_override.as_deref().unwrap_or("gemma-4-26b-a4b-it");
+        let model = ctx.model_override.as_deref().unwrap_or("gemma-4-31b-it");
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
 
         let mut combined_text = String::new();
