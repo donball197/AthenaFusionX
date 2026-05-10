@@ -48,7 +48,7 @@ class NexusSocket {
             this.lastHeartbeat = Date.now();
             try {
                 const msg = JSON.parse(e.data);
-                if (!msg.type && !msg.type_id && msg._internal === undefined) return;
+                // Heartbeat pass
                 // Mirror telemetry fields
                 if (msg.active_vmos !== undefined) this.telemetry.active_vmos = msg.active_vmos;
                 if (msg.resonance   !== undefined) this.telemetry.resonance   = msg.resonance;

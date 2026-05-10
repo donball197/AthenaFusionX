@@ -6,13 +6,10 @@ edition = "2021"
 [dependencies]
 nexus_runtime_core = { path = "../../crates/runtime_core" }
 nexus_substrate = { path = "../../crates/nexus_substrate" }
-tokio = { workspace = true, features = ["full", "io-util"] }
+tokio = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
-
-rustyline = "14.0"
-indicatif = "0.17"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

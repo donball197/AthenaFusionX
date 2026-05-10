@@ -4,7 +4,7 @@
 // Requires: Inquisitor (cargo check), LazarusVault (snapshots), GovernanceLog (audit trail)
 use crate::{
     agent_protocol::AgentAction, governance::protocol::GovernanceLog, inquisitor::Inquisitor,
-    lazarus_vault::LazarusVault, metrics::METRICS, neural_agent::ContextPacket,
+    lazarus_vault::LazarusVault, metrics::METRICS, 
 };
 use nexus_substrate::memory::MemoryPalace;
 use parking_lot::Mutex;
@@ -141,20 +141,18 @@ impl SelfHealingEngine {
             error_log
         );
 
-        match self
-            .ctx
-            .agent
-            .prepare_and_run(
-                &self.ctx.client,
-                &self.ctx.api_key,
-                &prompt,
-                ContextPacket::default(),
-                0.1,
-                Some("gemma-4-31b-it"),
-            )
-            .await
-        {
-            Ok((response, _)) => {
+        let orch = crate::orchestrator::Orchestrator::new();
+        match orch.run(
+            prompt.clone(),
+            crate::neural_agent::ContextPacket {
+                model_override: Some("models/gemma-4-26b-a4b-it".to_string()),
+                ..Default::default()
+            },
+            &self.ctx.client,
+            &self.ctx.api_key,
+            None,
+        ).await.map_err(|e| anyhow::anyhow!(e)) {
+            Ok(response) => {
                 if response.contains("<SUTURE>") || response.trim_start().starts_with('[') {
                     self.transition(HealingState::Suturing(response));
                 } else {

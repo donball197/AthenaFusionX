@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::fs;
-use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{Parser, Query, QueryCursor};
 
 pub struct AstEditor;
 
@@ -10,7 +10,7 @@ impl AstEditor {
     pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
         let source_code = fs::read_to_string(path)?;
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+        parser.set_language(&tree_sitter_rust::language().into())?;
 
         let tree = parser
             .parse(&source_code, None)
@@ -21,7 +21,7 @@ impl AstEditor {
             "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
             function_name
         );
-        let query = Query::new(&tree_sitter_rust::LANGUAGE.into(), &query_str)?;
+        let query = Query::new(&tree_sitter_rust::language().into(), &query_str)?;
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
         while let Some(m) = matches.next() {

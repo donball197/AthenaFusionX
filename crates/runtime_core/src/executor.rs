@@ -14,11 +14,12 @@ pub enum FsmState { Idle, Executing, Complete, Fault }
 pub struct RoboticExecutor {
     pub current_state: FsmState,
     tx: tokio::sync::broadcast::Sender<String>,
+    pub api_key: String,
 }
 
 impl RoboticExecutor {
     pub fn new(_api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
-        Self { current_state: FsmState::Idle, tx }
+        Self { current_state: FsmState::Idle, tx, api_key: _api_key }
     }
 
     pub async fn execute_handle(
@@ -201,6 +202,18 @@ impl RoboticExecutor {
             AgentAction::FetchUiSnapshot { reasoning } => {
                 let _ = self.tx.send(serde_json::json!({"type":"LOG_EVENT","payload":format!("fetch_ui_snapshot — {}", reasoning)}).to_string());
                 Ok("[UI_SNAPSHOT_REQUESTED] Ghost DOM state capture requested.".to_string())
+            }
+
+            
+            AgentAction::DelegateTask { ref instruction, ref tier, token_limit, reasoning: _ } => {
+                let model_tier = if tier.to_lowercase().contains("matriarch") {
+                    crate::agent_protocol::ModelTier::Matriarch
+                } else {
+                    crate::agent_protocol::ModelTier::Specialist
+                };
+                let orch = crate::orchestrator::Orchestrator::new();
+                                let result = orch.run_subagent(instruction.clone(), model_tier, token_limit, &self.api_key).await;
+                Ok(crate::logic_engine::LogicEngine::linearize_handoff(&action, result))
             }
 
             AgentAction::Halt { reasoning } => {
