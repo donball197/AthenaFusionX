@@ -1,0 +1,99 @@
+<script lang="ts">
+  import WorkspaceShell from './lib/components/WorkspaceShell.svelte';
+  import { bootAuth } from './lib/stores/auth.svelte';
+  import { onMount } from 'svelte';
+
+  onMount(async () => {
+      // Initialize the auth handshake before rendering the CLI
+      await bootAuth();
+  });
+</script>
+
+<WorkspaceShell />
+<script lang="ts">
+  let count: number = $state(0)
+  const increment = () => {
+    count += 1
+  }
+</script>
+
+<button type="button" class="counter" onclick={increment}>
+  Count is {count}
+</button>
+export const uplink = {
+    async post(path, body) {
+        return await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    },
+    async json(path) {
+        const res = await fetch(path);
+        return await res.json();
+    }
+};
+export class TelemetryStore {
+    logs = $state<string[]>([]);
+    connected = $state(false);
+
+    constructor() {
+        this.connect();
+    }
+
+    private connect() {
+        const ws = new WebSocket("ws://" + window.location.hostname + ":3000/ws/telemetry");
+        
+        ws.onopen = () => { this.connected = true; };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            this.logs = [...this.logs, data.payload];
+            if (this.logs.length > 100) this.logs.shift();
+        };
+        ws.onclose = () => { this.connected = false; };
+    }
+}
+
+export const telemetry = new TelemetryStore();
+import { mount } from 'svelte'
+import './app.css'
+import App from './App.svelte'
+
+const app = mount(App, {
+  target: document.getElementById('app')!,
+})
+
+export default app
+export class TelemetryStore {
+    logs = $state<string[]>([]);
+    vitals = $state({ cpu: 0, ram: 0, temp: 0 });
+    connected = $state(false);
+
+    constructor() {
+        this.connect();
+    }
+
+    private connect() {
+        const host = window.location.hostname;
+        const ws = new WebSocket("ws://" + host + ":3000/ws/telemetry");
+        
+        ws.onopen = () => { this.connected = true; };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            this.logs = [...this.logs, data.payload];
+            if (this.logs.length > 50) this.logs.shift();
+        };
+        ws.onclose = () => { this.connected = false; };
+    }
+}
+
+export const telemetry = new TelemetryStore();
+/** @type {import("@sveltejs/vite-plugin-svelte").SvelteConfig} */
+export default {}
+import { defineConfig } from 'vite'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [svelte()],
+})

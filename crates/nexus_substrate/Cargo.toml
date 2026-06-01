@@ -3,8 +3,10 @@ name = "nexus_substrate"
 version = "3.0.0"
 edition = "2021"
 build = "build.rs"
+links = "muscle"
 
 [dependencies]
+dashmap = "6"
 tracing = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

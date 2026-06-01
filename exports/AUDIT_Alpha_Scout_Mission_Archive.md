@@ -1,1 +1,0 @@
-Alpha Scout mission successful. All objectives met. Commercial Certificate: Alpha Scout Mission Verified.

@@ -1,13 +1,17 @@
-use crate::kernel::ffi;
 use crate::kernel::error::KernelError;
+use crate::kernel::ffi;
 
 pub struct SafeKernel;
 
 impl SafeKernel {
     pub fn create_vmo(size: usize) -> Result<u32, KernelError> {
-        if size == 0 || size > 16_777_216 { return Err(KernelError::InvalidArgs); }
+        if size == 0 || size > 16_777_216 {
+            return Err(KernelError::InvalidArgs);
+        }
         let handle = unsafe { ffi::zx_vmo_create_native(size) };
-        if handle == 0 { return Err(KernelError::InvalidArgs); }
+        if handle == 0 {
+            return Err(KernelError::InvalidArgs);
+        }
         Ok(handle)
     }
 

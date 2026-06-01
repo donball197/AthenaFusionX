@@ -1,1 +1,0 @@
-VMO Initialization and Cloning Sequence Successful. Parent VMO (0xc90c8) initialized with signature NEXUS_GHOST_INIT_V2.5. Child VMO (0xca0c9) successfully cloned via COW and updated with signature NEXUS_GHOST_CLONE_VERIFIED. Lazarus snapshot 'kernel_init_v2.5' secured.

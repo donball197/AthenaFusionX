@@ -4,7 +4,10 @@ use tracing::warn;
 pub struct LogicEngine;
 
 impl LogicEngine {
-    pub fn linearize_handoff(action: &crate::agent_protocol::AgentAction, result: crate::agent_protocol::SubagentReturn) -> String {
+    pub fn linearize_handoff(
+        action: &crate::agent_protocol::AgentAction,
+        result: crate::agent_protocol::SubagentReturn,
+    ) -> String {
         format!(
             "[SYSTEM: DELEGATION REPORT]\nAction: {:?}\nStatus: {}\nOutput: {}\n[DIRECTIVE]: Matriarch, resume execution based on this report.",
             action, result.status, result.output
@@ -12,13 +15,16 @@ impl LogicEngine {
     }
 
     pub fn is_action_safe(directive: &str) -> bool {
-        let forbidden = ["rm -rf /", "mkfs", "shutdown", "chmod 777", "dd if=/dev/zero", "> /dev/sda"];
+        let forbidden =
+            ["rm -rf /", "mkfs", "shutdown", "chmod 777", "dd if=/dev/zero", "> /dev/sda"];
         let d_lower = directive.to_lowercase();
         !forbidden.iter().any(|&p| d_lower.contains(p))
     }
 
     pub fn detect_deadlock(observations: &[String]) -> bool {
-        if observations.len() < 3 { return false; }
+        if observations.len() < 3 {
+            return false;
+        }
 
         let mut read_counts: HashMap<String, usize> = HashMap::new();
 
@@ -34,12 +40,17 @@ impl LogicEngine {
         for (path, count) in read_counts {
             if count >= 3 {
                 let file_progress = observations.iter().any(|obs| {
-                    (obs.contains("[WRITE_OK]") || obs.contains("[DIFF_PATCH_OK]") || obs.contains("[PATCH_OK]"))
+                    (obs.contains("[WRITE_OK]")
+                        || obs.contains("[DIFF_PATCH_OK]")
+                        || obs.contains("[PATCH_OK]"))
                         && obs.contains(&path)
                 });
 
                 if !file_progress {
-                    warn!("[LOGIC] Localized Deadlock: {} read {} times with zero progress.", path, count);
+                    warn!(
+                        "[LOGIC] Localized Deadlock: {} read {} times with zero progress.",
+                        path, count
+                    );
                     return true;
                 }
             }

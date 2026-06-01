@@ -1,1 +1,0 @@
-Active VMO count: 2

@@ -21,13 +21,13 @@ impl PodmanShield {
             return Command::new("sh").arg("-c").arg(command).output();
         }
 
-        // 3. Fallback Sandbox (Restored network access so package managers work if needed)
+        // 3. Fallback Sandbox (Hardened to read-only to safeguard host repository files)
         Command::new("podman")
             .args([
                 "run",
                 "--rm",
                 "-v",
-                ".:/workspace",
+                ".:/workspace:ro", // ⚡ SUTURED: Changed to explicit read-only mode to prevent host code corruption
                 "-w",
                 "/workspace",
                 "alpine:latest",

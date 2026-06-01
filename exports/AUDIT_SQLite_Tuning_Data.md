@@ -1,1 +1,0 @@
-WAL (Write-Ahead Logging) mode improves concurrency by allowing readers to not block writers and vice versa. It uses a separate WAL file for changes, which are later checkpointed back to the main database.

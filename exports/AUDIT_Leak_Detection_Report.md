@@ -1,1 +1,0 @@
-Error: HANDLE_REGISTRY/active_vmos not found. Unable to compare VmRSS against active_vmos telemetry. Substrate Desync check aborted.

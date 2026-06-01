@@ -1,1 +1,0 @@
-Files alpha.txt, beta.txt, and gamma.txt have been successfully created and verified.

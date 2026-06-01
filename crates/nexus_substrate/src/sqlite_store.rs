@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 pub struct SqliteStore {
     pool: SqlitePool,
@@ -15,21 +15,29 @@ impl SqliteStore {
         sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
         sqlx::query("PRAGMA synchronous=NORMAL;").execute(&pool).await?;
 
-        sqlx::query("
+        sqlx::query(
+            "
             CREATE TABLE IF NOT EXISTS events (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL,
                 object_id TEXT NOT NULL,
                 ts DATETIME DEFAULT CURRENT_TIMESTAMP
             );
-        ").execute(&pool).await?;
+        ",
+        )
+        .execute(&pool)
+        .await?;
 
-        sqlx::query("
+        sqlx::query(
+            "
             CREATE TABLE IF NOT EXISTS artifacts (
                 id TEXT PRIMARY KEY,
                 payload BLOB NOT NULL
             );
-        ").execute(&pool).await?;
+        ",
+        )
+        .execute(&pool)
+        .await?;
 
         Ok(Self { pool })
     }

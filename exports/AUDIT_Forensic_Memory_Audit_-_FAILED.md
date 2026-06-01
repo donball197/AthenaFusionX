@@ -1,1 +1,0 @@
-Mission failed. Search for 'VMO_CLONE_SUCCESS' returned 0 results. No VMO handles could be retrieved from neural memory to perform the integrity check.

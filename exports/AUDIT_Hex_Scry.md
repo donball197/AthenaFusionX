@@ -1,1 +1,0 @@
-Memory COW verification complete.

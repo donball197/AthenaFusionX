@@ -11,7 +11,7 @@ fn main() -> Result<()> {
     // 1. Map the GGUF Weights directly into the Substrate
     // This verifies the dequantization bridge and file IO
     let _vb = VarBuilder::from_gguf(&model_path, &device)?;
-    
+
     println!("\x1b[32m>> [REFLEX] Substrate Ready. Weights Mapped Successfully.\x1b[0m");
     println!("\x1b[32m>> [REFLEX] Output: READY\x1b[0m");
     println!("\x1b[35m>> [RESONANCE: 1.00 — LOCAL REFLEX ONLINE]\x1b[0m");

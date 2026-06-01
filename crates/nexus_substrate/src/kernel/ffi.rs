@@ -47,7 +47,9 @@ impl KernelOps for NativeKernelOps {
     }
 
     fn handle_close(&self, h: u32) {
-        unsafe { zx_handle_close_native(h); }
+        unsafe {
+            zx_handle_close_native(h);
+        }
     }
 
     /// # Safety
@@ -57,7 +59,9 @@ impl KernelOps for NativeKernelOps {
     }
 
     fn set_stress(&self, enabled: bool) {
-        unsafe { set_stress_mode(enabled); }
+        unsafe {
+            set_stress_mode(enabled);
+        }
     }
 
     fn calculate_entropy(&self, h: u32) -> f32 {

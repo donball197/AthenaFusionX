@@ -1,1 +1,0 @@
-VMO 0x1: SECURE_ROOT | VMO 0x2: GHOST_PULSE. Divergence confirmed via COW mechanism.

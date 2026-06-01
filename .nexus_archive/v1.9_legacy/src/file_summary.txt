@@ -1,2 +1,0 @@
-src/main.rs: Entry point for the Nexus Singularity system.
-src/orchestrator.rs: Manages LLM interactions and request orchestration.

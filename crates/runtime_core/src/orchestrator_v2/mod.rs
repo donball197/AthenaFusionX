@@ -1,4 +1,8 @@
 pub mod task_graph;
+pub mod planner;
+pub mod scheduler;
+pub mod executor;
+pub mod verifier;
 
 use self::task_graph::TaskGraph;
 use crate::agent_runtime::engine::{ExecutableAgent, Task, TaskResult};
@@ -6,7 +10,6 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 pub struct OrchestratorV2 {
-    // ⚡ DYNAMIC DISPATCH: Supports a diverse swarm of agents simultaneously
     agents: HashMap<String, Box<dyn ExecutableAgent>>,
 }
 

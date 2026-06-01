@@ -1,1 +1,0 @@
-Status: Nominal. Active VMOs: 0. VmRSS: 2060 kB. No Kernel Bloat Anomaly detected.

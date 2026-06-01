@@ -1,30 +1,69 @@
-use crate::system_monitor::SystemMonitor;
-use nexus_runtime_core::{
-    distributed_scheduler::DistributedScheduler, orchestrator::Orchestrator, shared_state::VmoState,
-};
-use nexus_substrate::memory::MemoryPalace;
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use uuid::Uuid;
 
-pub struct NexusTask;
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub enum TaskState {
+    Ready,
+    Blocked,
+    Suspended,
+    Completed,
+    Failed,
+}
 
-pub struct MasterSupervisor;
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct ResourceBudget {
+    pub cpu_budget_ms: u32,
+    pub token_budget: usize,
+    pub max_memory_bytes: usize,
+    pub io_weight: u8,
+}
 
-impl MasterSupervisor {
-    #[allow(clippy::too_many_arguments)]
-pub fn ignite(
-        _tx: tokio::sync::broadcast::Sender<String>,
-        _client: reqwest::Client,
-        _api_key: String,
-        _orch: Arc<Orchestrator>,
-        _resonance: Arc<std::sync::atomic::AtomicU32>,
-        _monitor: SystemMonitor,
-        _memory: Arc<tokio::sync::Mutex<MemoryPalace>>,
-        _vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
-        _dist: Arc<DistributedScheduler>,
-    ) -> mpsc::Sender<NexusTask> {
-        let (tx, _rx) = mpsc::channel(100);
-        println!("\x1b[35m>> [SCHEDULER] Master Supervisor Ignited.\x1b[0m");
-        tx
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct RuntimeCounters {
+    pub cpu_time_used_ms: u32,
+    pub tokens_consumed: usize,
+    pub memory_used_bytes: usize,
+    pub io_operations: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct CognitiveTask {
+    pub id: Uuid,
+    pub lineage_id: Uuid,
+    pub parent_lineage_id: Option<Uuid>,
+    pub execution_class: ExecutionClass,
+    pub state: TaskState,
+    pub static_priority: u8,
+    pub dynamic_priority: u32,
+    pub budget: ResourceBudget,
+    pub counters: RuntimeCounters,
+    pub created_at: u64,
+}
+
+#[derive(Clone, Debug)]
+pub enum ExecutionClass {
+    RealTimeTelemetry,
+    SovereignInference,
+    BackgroundConsolidation,
+}
+
+pub struct DeterministicScheduler {
+    pub queue: Vec<CognitiveTask>,
+}
+
+impl DeterministicScheduler {
+    pub fn new() -> Self {
+        Self { queue: Vec::new() }
+    }
+
+    pub fn submit(&mut self, task: CognitiveTask) {
+        self.queue.push(task);
+    }
+
+    pub fn dispatch(&mut self) -> Option<CognitiveTask> {
+        if self.queue.is_empty() { None } else { Some(self.queue.remove(0)) }
     }
 }

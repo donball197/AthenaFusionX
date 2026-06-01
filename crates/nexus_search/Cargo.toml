@@ -1,0 +1,10 @@
+[package]
+name = "nexus_search"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+turbovec = "0.1"
+
+[lints]
+workspace = true

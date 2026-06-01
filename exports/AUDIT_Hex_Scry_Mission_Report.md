@@ -1,1 +1,0 @@
-Mission Hex Scry completed successfully. Parent VMO (0xc90c8) contains 'SOVEREIGN_ROOT'. Clone VMO contains 'GHOST_BRANCH'.

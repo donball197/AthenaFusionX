@@ -9,8 +9,8 @@ pub async fn get_execution_law_v6() -> String {
 - NO explanations, NO markdown, NO "I think", NO preamble.
 - Response must start with `[` and end with `]`.
 
-Valid actions only (THE "type" FIELD IS MANDATORY):
-- "search_memory"  { "query": "...", "reasoning": "..." }
+=== CAPABILITY SCHEMA ===
+You MUST use these exact keys. Do not invent field names.
 - "read_file"      { "type": "read_file", "path": "...", "reasoning": "..." }
 - "write_file"     { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." }
 - "diff_patch"     { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." }

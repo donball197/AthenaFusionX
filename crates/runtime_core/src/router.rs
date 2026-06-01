@@ -1,0 +1,71 @@
+#[derive(Debug, Clone, PartialEq)]
+pub enum DirectiveClass {
+    ShellOp, TargetedEdit { file_hint: String }, RepoDoctor, SecurityAudit, WasmForge, Inquiry, FeatureBuild, General,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextBudget {
+    pub max_file_chars: usize, pub max_obs_lines: usize, pub max_schema_chars: usize, pub max_output_tokens: u32,
+}
+
+impl ContextBudget {
+    pub fn minimal() -> Self { Self { max_file_chars: 1_500, max_obs_lines: 2, max_schema_chars: 400, max_output_tokens: 1024 } }
+    pub fn standard() -> Self { Self { max_file_chars: 8_000, max_obs_lines: 6, max_schema_chars: 1_200, max_output_tokens: 4096 } }
+    pub fn doctor() -> Self { Self { max_file_chars: 15_000, max_obs_lines: 10, max_schema_chars: 1_500, max_output_tokens: 8192 } }
+    pub fn security() -> Self { Self { max_file_chars: 20_000, max_obs_lines: 10, max_schema_chars: 2_000, max_output_tokens: 8192 } }
+}
+
+pub struct AgentProfile {
+    pub class: DirectiveClass,
+    pub primary_model: &'static str,
+    pub max_turns: u8,
+    pub budget: ContextBudget,
+    pub persona: String,
+}
+
+pub struct IntelligentRouter;
+
+impl IntelligentRouter {
+    pub fn classify(actual_directive: &str) -> DirectiveClass {
+        let d = actual_directive.to_lowercase();
+        if ["diagnose", "doctor", "fix repo", "repair workspace", "suture"].iter().any(|k| d.contains(k)) { return DirectiveClass::RepoDoctor; }
+        if ["synthesize", "forge", "wasm cell"].iter().any(|k| d.contains(k)) { return DirectiveClass::WasmForge; }
+        if ["cargo check", "cargo test", "git status", "ls ", "find "].iter().any(|k| d.contains(k)) { return DirectiveClass::ShellOp; }
+        if ["audit ", "vulnerability", "memory safe"].iter().any(|k| d.contains(k)) { return DirectiveClass::SecurityAudit; }
+        if ["fix", "patch", "update", "edit"].iter().any(|k| d.contains(k)) { return DirectiveClass::TargetedEdit { file_hint: "target".into() }; }
+        DirectiveClass::General
+    }
+
+    pub fn route(directive: &str) -> AgentProfile {
+        let start_idx = directive.find("DIRECTIVE: ").map(|i| i + 11).unwrap_or(0);
+        let user_cmd = &directive[start_idx..];
+        let class = Self::classify(user_cmd);
+        
+        let theater_persona = format!("IDENTITY: NEXUS Sovereign Agent. \
+        STRICT SYSTEM RULE: You must operate in a two-phase cognitive cycle.\n\
+        [PHASE 1: CORTEX THINKING] You MUST write out your step-by-step reasoning in plain text. Analyze the directive and plan your action.\n\
+        [PHASE 2: CORTEX EXECUTING] Output EXACTLY ONE valid JSON array of AgentAction objects. This array must be the absolute final text in your response.\n\
+        CRITICAL SCHEMA: Every JSON object MUST use the `type` field to define the action.\n\
+        HALT PROTOCOL: When the objective is achieved, or if you cannot proceed without user input, you MUST use the `halt` action to end the execution loop.\n\
+        VALID TYPES: execute_command, read_file, write_file, diff_patch, patch_function, search_memory, vmo_create, calculate_entropy, lazarus_snapshot, export_report, fetch_ui_snapshot, scrape_url, spawn_subagent, delegate_task, halt.\n\
+        EXAMPLE: [{{ \"type\": \"halt\", \"reasoning\": \"Objective complete.\" }}]\n\
+        ");
+
+        match class {
+            DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => AgentProfile {
+                class,
+                primary_model: "gemma-4-31b-it",
+                max_turns: 8,
+                budget: ContextBudget::doctor(),
+                persona: theater_persona,
+            },
+            _ => AgentProfile {
+                class,
+                primary_model: "gemma-4-26b-a4b-it",
+                max_turns: 8,
+                budget: ContextBudget::standard(),
+                persona: theater_persona,
+            },
+        }
+    }
+}

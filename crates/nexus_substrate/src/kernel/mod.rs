@@ -18,3 +18,5 @@ pub fn register_handle(id: u32, h: HandleType) {
 }
 
 pub mod safe_kernel;
+pub mod temp_vmo;
+pub mod ffi_tests;

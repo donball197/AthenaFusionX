@@ -1,1 +1,0 @@
-Consensus engine is active. Snapshot is secured.

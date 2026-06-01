@@ -18,9 +18,12 @@ impl SafeVmo {
     }
 
     pub fn write(&self, offset: usize, data: &[u8]) -> Result<(), KernelError> {
-        if offset + data.len() > self.size {
+        // ⚡ SUTURE: Prevent Integer Overflow OOB Attack
+        let end = offset.checked_add(data.len()).ok_or(KernelError::InvalidArgs)?;
+        if end > self.size {
             return Err(KernelError::InvalidArgs);
         }
+        
         let status =
             unsafe { ffi::zx_vmo_write_native(self.handle, offset, data.as_ptr(), data.len()) };
         if status == 0 {
@@ -32,9 +35,12 @@ impl SafeVmo {
 
     /// ⚡ ZERO-ALLOCATION READ FIX: Prevents heap fragmentation on the 4GB Duet
     pub fn read_into(&self, offset: usize, buffer: &mut [u8]) -> Result<(), KernelError> {
-        if offset + buffer.len() > self.size {
+        // ⚡ SUTURE: Prevent Integer Overflow OOB Attack
+        let end = offset.checked_add(buffer.len()).ok_or(KernelError::InvalidArgs)?;
+        if end > self.size {
             return Err(KernelError::InvalidArgs);
         }
+        
         let status = unsafe {
             ffi::zx_vmo_read_native(self.handle, offset, buffer.as_mut_ptr(), buffer.len())
         };

@@ -1,1 +1,0 @@
-VMO Handle 0xca0c9 initialized with 'SWARM_INIT_V2.5_ACTIVE'. Lazarus snapshot 9eea5bc32409 captured. Substrate stable.

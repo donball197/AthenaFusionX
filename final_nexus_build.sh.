@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+echo "=========================================================="
+echo "NEXUS SINGULARITY — ARM64 LINKER REPAIR (PRODUCTION)"
+echo "=========================================================="
+
+cd ~/nexus_singularity-dev
+
+###############################################################################
+# PRECHECKS
+###############################################################################
+
+echo "[0/9] Environment validation..."
+
+command -v cargo >/dev/null 2>&1 || {
+    echo "ERROR: cargo not installed"
+    exit 1
+}
+
+command -v rustc >/dev/null 2>&1 || {
+    echo "ERROR: rustc not installed"
+    exit 1
+}
+
+command -v zig >/dev/null 2>&1 || {
+    echo "ERROR: zig not installed"
+    exit 1
+}
+
+command -v python3 >/dev/null 2>&1 || {
+    echo "ERROR: python3 not installed"
+    exit 1
+}
+
+echo "Rust:"
+rustc --version
+
+echo "Cargo:"
+cargo --version
+
+echo "Zig:"
+zig version
+
+###############################################################################
+# BACKUPS
+###############################################################################
+
+echo "[1/9] Creating surgical backups..."
+
+mkdir -p .surgical_backup
+
+cp Cargo.toml .surgical_backup/Cargo.toml.bak.$(date +%s) || true
+cp crates/nexus_substrate/build.rs .surgical_backup/build.rs.bak.$(date +%s) 2>/dev/null || true
+
+###############################################################################
+# WRITE PRODUCTION BUILD.RS
+###############################################################################
+
+echo "[2/9] Writing production build.rs..."
+
+mkdir -p crates/nexus_substrate
+
+cat > crates/nexus_substrate/build.rs <<'EOF'
+use std::env;
+use std::path::PathBuf;
+use std::process::Command;
+
+fn main() {
+    println!("cargo:rerun-if-changed=src/kernel/muscle.zig");
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    let output_lib = out_dir.join("libmuscle.a");
+
+    let status = Command::new("zig")
+        .args([
+            "build-lib",
+            "-O",
+            "ReleaseFast",
+            "-static",
+            "-fPIC",
+            "-femit-bin",
+            output_lib.to_str().unwrap(),
+            "src/kernel/muscle.zig",
+        ])
+        .status()
+        .expect("failed to execute zig compiler");
+
+    if !status.success() {
+        panic!("zig compilation failed");
+    }
+
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
+
+    // Force linker retention for all Zig exports
+    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+    println!("cargo:rustc-link-lib=static=muscle");
+    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+
+    // ARM64 Chromebook / Crostini stabilization
+    println!("cargo:rustc-link-lib=c");
+    println!("cargo:rustc-link-lib=m");
+    println!("cargo:rustc-link-lib=pthread");
+    println!("cargo:rustc-link-lib=dl");
+    println!("cargo:rustc-link-lib=rt");
+
+    // Explicit ARM64 libc search paths
+    println!("cargo:rustc-link-search=native=/usr/lib/aarch64-linux-gnu");
+    println!("cargo:rustc-link-search=native=/lib/aarch64-linux-gnu");
+}
+EOF
+
+###############################################################################
+# PATCH RELEASE PROFILE SAFELY
+###############################################################################
+
+echo "[3/9] Patching Cargo.toml release profile..."
+
+python3 <<'PY'
+from pathlib import Path
+import re
+import sys
+
+cargo = Path("Cargo.toml")
+
+if not cargo.exists():
+    print("ERROR: Cargo.toml not found")
+    sys.exit(1)
+
+text = cargo.read_text()
+
+replacement = """
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+strip = false
+panic = "abort"
+""".strip()
+
+pattern = re.compile(
+    r'\[profile\.release\][^\[]*',
+    re.MULTILINE | re.DOTALL
+)
+
+if pattern.search(text):
+    text = pattern.sub(replacement + "\n\n", text)
+else:
+    text += "\n\n" + replacement + "\n"
+
+cargo.write_text(text)
+
+print("SUCCESS: Cargo.toml patched")
+PY
+
+###############################################################################
+# VERIFY ZIG SOURCE EXISTS
+###############################################################################
+
+echo "[4/9] Validating Zig substrate source..."
+
+if [ ! -f crates/nexus_substrate/src/kernel/muscle.zig ]; then
+    echo "ERROR: missing Zig file:"
+    echo "crates/nexus_substrate/src/kernel/muscle.zig"
+    exit 1
+fi
+
+###############################################################################
+# FULL CLEAN
+###############################################################################
+
+echo "[5/9] Cleaning workspace..."
+
+cargo clean || true
+rm -rf target
+
+###############################################################################
+# PREBUILD STATIC LIB
+###############################################################################
+
+echo "[6/9] Testing Zig compilation..."
+
+mkdir -p /tmp/nexus_zig_test
+
+zig build-lib \
+    -O ReleaseFast \
+    -static \
+    -fPIC \
+    -femit-bin=/tmp/nexus_zig_test/libmuscle.a \
+    crates/nexus_substrate/src/kernel/muscle.zig
+
+###############################################################################
+# VERIFY SYMBOL EXPORTS
+###############################################################################
+
+echo "[7/9] Verifying exported symbols..."
+
+nm /tmp/nexus_zig_test/libmuscle.a | grep zx_vmo || {
+    echo "ERROR: Zig symbols missing from archive"
+    exit 1
+}
+
+echo ""
+echo "Exported symbols:"
+nm /tmp/nexus_zig_test/libmuscle.a | grep zx_vmo
+echo ""
+
+###############################################################################
+# BUILD RELEASE
+###############################################################################
+
+echo "[8/9] Building nexus_ide_backend..."
+
+cargo build -p nexus_ide_backend --release -j 2
+
+###############################################################################
+# FINAL VERIFICATION
+###############################################################################
+
+echo "[9/9] Final verification..."
+
+BIN="target/release/nexus_ide_backend"
+
+if [ ! -f "$BIN" ]; then
+    echo "ERROR: final binary missing"
+    exit 1
+fi
+
+echo ""
+echo "=========================================================="
+echo "BUILD SUCCESSFUL"
+echo "=========================================================="
+echo ""
+echo "Binary:"
+echo "$BIN"
+echo ""
+file "$BIN" || true
+echo ""
+echo "Done."
+echo ""

@@ -1,1 +1,0 @@
-Parent 0xcd0cc read: [original content expected]. Child 0xe00df read: GHOST_BRANCH. COW verification successful.
