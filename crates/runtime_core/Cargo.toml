@@ -22,8 +22,8 @@ tree-sitter-rust = "0.21"
 bitflags = "2.4"
 
 # Use the version found in your lockfile (43.0.2)
-wasmtime = { version = "43.0.2", features = ["component-model"] }
-wasmtime-wasi = { version = "43.0.2" }
+wasmtime = { version = "43.0.1", features = ["component-model"] }
+wasmtime-wasi = { version = "43.0.1" }
 wit-bindgen-rt = { version = "0.39", features = ["bitflags"] }
 
 [lints]

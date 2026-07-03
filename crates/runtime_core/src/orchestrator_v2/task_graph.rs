@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+#[allow(unused_imports)]
+use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +43,10 @@ pub struct TaskNode {
 
     #[serde(default)]
     pub execution_state: TaskExecutionState,
+
+    // HEFT Optimization field
+    #[serde(default)]
+    pub priority: usize,
 }
 
 fn default_status() -> TaskStatus {
@@ -68,8 +74,37 @@ impl TaskGraph {
                 objective: String::new(),
                 success_criteria: Vec::new(),
                 execution_state: TaskExecutionState::default(),
+                priority: 0,
             },
         );
+    }
+
+    pub fn compute_critical_path_priorities(&mut self) {
+        let mut memo: HashMap<String, usize> = HashMap::new();
+
+        fn b_level(node_id: &str, graph: &TaskGraph, memo: &mut HashMap<String, usize>) -> usize {
+            if let Some(&cached) = memo.get(node_id) {
+                return cached;
+            }
+            let mut max_child = 0;
+            
+            for (child_id, child) in &graph.nodes {
+                if child.deps.contains(&node_id.to_string()) {
+                    max_child = max_child.max(b_level(child_id, graph, memo));
+                }
+            }
+            let level = max_child + 1;
+            memo.insert(node_id.to_string(), level);
+            level
+        }
+
+        let keys: Vec<String> = self.nodes.keys().cloned().collect();
+        for id in keys {
+            let prio = b_level(&id, self, &mut memo);
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.priority = prio;
+            }
+        }
     }
 
     pub fn resolve_execution_order(&self) -> Result<Vec<String>> {

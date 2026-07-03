@@ -43,6 +43,7 @@ pub struct CognitiveTask {
     pub created_at: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum ExecutionClass {
     RealTimeTelemetry,
@@ -63,6 +64,7 @@ impl DeterministicScheduler {
         self.queue.push(task);
     }
 
+    #[allow(dead_code)]
     pub fn dispatch(&mut self) -> Option<CognitiveTask> {
         if self.queue.is_empty() { None } else { Some(self.queue.remove(0)) }
     }

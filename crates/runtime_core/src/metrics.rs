@@ -1,9 +1,3 @@
-/**
- * src/metrics.rs — v4.1 Atomic Sovereign
- * Copyright 2026 Donald Ball
- * Lightweight, lock-free, zero-dependency metrics using only std atomics.
- * Fully compatible with Prometheus scraping.
- */
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
@@ -19,8 +13,14 @@ pub struct NexusMetrics {
     pub circuit_opens: AtomicU64,
 }
 
+impl Default for NexusMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NexusMetrics {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             tasks_total: AtomicU64::new(0),
             task_failures: AtomicU64::new(0),
@@ -33,57 +33,44 @@ impl NexusMetrics {
         }
     }
 
-    /// Increment total tasks processed
     pub fn inc_task(&self) {
         tracing::info!("Task counter incremented");
         self.tasks_total.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment task failures
     pub fn inc_failure(&self) {
         self.task_failures.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment arbiter blocks (safety interventions)
     pub fn inc_arbiter_block(&self) {
         self.arbiter_blocks.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment successful self-healing sutures
     pub fn inc_heal_success(&self) {
         self.heal_successes.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment failed self-healing attempts
     pub fn inc_heal_failure(&self) {
         self.heal_failures.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment circuit breaker trips
     pub fn inc_circuit_open(&self) {
         self.circuit_opens.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record API call with latency (used by Orchestrator)
     pub fn record_api_call(&self, latency_ms: u128) {
         self.api_calls.fetch_add(1, Ordering::Relaxed);
         self.api_latency_ms_sum.fetch_add(latency_ms as u64, Ordering::Relaxed);
     }
 
-    /// Compute average latency (integer ms)
     pub fn avg_latency_ms(&self) -> u64 {
         let calls = self.api_calls.load(Ordering::Relaxed);
-        if calls == 0 {
-            0
-        } else {
-            self.api_latency_ms_sum.load(Ordering::Relaxed) / calls
-        }
+        self.api_latency_ms_sum.load(Ordering::Relaxed).checked_div(calls).unwrap_or(0)
     }
 }
 
 pub static METRICS: LazyLock<NexusMetrics> = LazyLock::new(NexusMetrics::new);
 
-/// Returns full Prometheus exposition format text (ready for scraping)
 pub fn get_metrics_text() -> String {
     let m = &*METRICS;
     format!(

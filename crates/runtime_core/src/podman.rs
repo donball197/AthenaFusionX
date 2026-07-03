@@ -13,28 +13,40 @@ impl PodmanShield {
 
         // 2. The Emancipation List (Allow safe host commands)
         let host_allowed = [
-            "cargo ", "ls ", "cat ", "curl ", "wget ", "python3 ", "python ", "grep ", "find ",
-            "git ", "pwd", "echo ",
+            "cargo", "ls", "cat", "python3", "python", "grep", "find",
+            "git", "pwd", "echo",
         ];
+        
+        let cmd_base = cmd.split_whitespace().next().unwrap_or("");
 
-        if host_allowed.iter().any(|&prefix| cmd.starts_with(prefix)) {
-            return Command::new("sh").arg("-c").arg(command).output();
+        let out = if host_allowed.contains(&cmd_base) {
+            Command::new("sh").arg("-c").arg(command).output()?
+        } else {
+            // 3. Fallback Sandbox (Hardened to read-only to safeguard host repository files)
+            Command::new("podman")
+                .args([
+                    "run",
+                    "--rm",
+                    "-v",
+                    ".:/workspace:ro", // Explicit read-only mode to prevent host code corruption
+                    "-w",
+                    "/workspace",
+                    "alpine:latest",
+                    "sh",
+                    "-c",
+                    command,
+                ])
+                .output()?
+        };
+
+        // ⚡ REGRESSION FIX: Explicitly check for command success and expose stderr
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(Error::other(
+                format!("Command failed with status: {}\nSTDERR:\n{}", out.status, stderr)
+            ));
         }
 
-        // 3. Fallback Sandbox (Hardened to read-only to safeguard host repository files)
-        Command::new("podman")
-            .args([
-                "run",
-                "--rm",
-                "-v",
-                ".:/workspace:ro", // ⚡ SUTURED: Changed to explicit read-only mode to prevent host code corruption
-                "-w",
-                "/workspace",
-                "alpine:latest",
-                "sh",
-                "-c",
-                command,
-            ])
-            .output()
+        Ok(out)
     }
 }

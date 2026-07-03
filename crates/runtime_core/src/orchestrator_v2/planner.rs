@@ -10,7 +10,9 @@ impl PlannerAgent {
         let system_instruction = 
             "You are a headless JSON API. You MUST output ONLY a valid, raw JSON array. \
             Do NOT use markdown formatting like ```json. Do NOT write any conversational text. \
-            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`.";
+            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`. CRITICAL RULE: If the directive involves modifying Rust code, your DAG MUST include a final task to verify integrity by running `cargo clippy --workspace --all-targets -j 1 -- -D warnings`. \
+            CRITICAL: The ONLY valid fields for each object are 'id', 'objective', 'deps', 'required_agent', and 'success_criteria'. \
+            DO NOT output any other fields like 'params', 'required_files', or 'Architectural_Strategies'. Embed all details into the 'objective' string.";
 
         // ⚡ SUTURE: We use a strict few-shot example, and then FORCE the model to start with '['
         let payload = serde_json::json!({
@@ -20,7 +22,8 @@ impl PlannerAgent {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [{ "text": "DIRECTIVE: Audit the codebase for secrets." }]
+                    "parts": [{ "text": "DIRECTIVE: Audit the codebase for secrets.
+Use world model knowledge. Prefer targeted reads over broad grep." }]
                 },
                 {
                     "role": "model",
@@ -36,7 +39,7 @@ impl PlannerAgent {
                 }
             ],
             "generationConfig": { 
-                "temperature": 0.2, 
+                "temperature": 0.1,  // ⚡ Lowered to 0.1 to prevent hallucinated keys
                 "topK": 40,
                 "topP": 0.95,
                 "maxOutputTokens": 8192
@@ -46,7 +49,8 @@ impl PlannerAgent {
         let base_url = std::env::var("NEXUS_API_GATEWAY")
             .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
         
-        let url = format!("{}/v1beta/models/gemma-4-31b-it:generateContent?key={}", base_url, api_key);
+        // ⚡ FIX: Use 2.0-flash as the stable endpoint
+        let url = format!("{}/v1beta/models/gemini-3.1-flash-lite:generateContent?key={}", base_url, api_key);
 
         let mut attempts = 0;
         let mut last_error = String::new();
@@ -55,7 +59,16 @@ impl PlannerAgent {
             attempts += 1;
             match client.post(&url).json(&payload).send().await {
                 Ok(res) => {
+                    let status = res.status();
                     let body: Value = res.json().await?;
+                    
+                    // ⚡ FIX: Quota limit guard
+                    if status == 429 || body.pointer("/error/status").and_then(|s| s.as_str()) == Some("RESOURCE_EXHAUSTED") {
+                        tracing::warn!("[PLANNER] Quota Exhausted! Sleeping for 15 seconds...");
+                        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                        continue;
+                    }
+
                     if let Some(err) = body.pointer("/error/message") {
                         return Err(anyhow!("API Error: {}", err));
                     }
@@ -69,8 +82,6 @@ impl PlannerAgent {
                     if !text.starts_with('[') {
                         text = format!("[{}", text);
                     }
-
-                    println!("\x1b[35m>> [PLANNER DEBUG] Raw LLM Output:\x1b[0m\n{}", text);
 
                     let array_str = Self::extract_json_array(&text)
                         .ok_or_else(|| anyhow!("No valid JSON array found in response:\n{}", text))?;
@@ -116,7 +127,6 @@ impl PlannerAgent {
             }
         }
 
-        // Recursive Partial Recovery
         let partial = &text[start..];
         let mut end_idx = partial.len();
         

@@ -1,7 +1,9 @@
+pub mod model_config;
 pub mod agents;
 pub mod agent_protocol;
 pub mod neural_agent;
 pub mod orchestrator;
+pub mod cognition;
 pub mod json_parser;
 pub mod factory;
 pub mod conductor;
@@ -22,8 +24,18 @@ pub mod shared_state;
 pub mod cli_utils;
 pub mod agent_runtime;
 pub mod orchestrator_v2;
-
-pub async fn establish_neural_uplink() {
-    println!(">> Neural Uplink Established: NEXUS CORTEX ONLINE.");
-}
+pub mod critic;
+pub mod hypothesis;
 pub mod lazarus_vault;
+pub mod event_bus;
+pub mod policy;
+pub mod memory_actor;
+pub mod react_agent;
+pub mod runtime_metrics;
+pub mod governance;
+pub mod world_model;
+pub mod cortical_loop;
+pub mod epistemic_engine;
+pub mod cognition_graph;
+pub mod hypothesis_engine;
+pub mod task_manager_v4;

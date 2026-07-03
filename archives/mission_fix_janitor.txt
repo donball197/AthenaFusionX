@@ -1,5 +1,0 @@
-REFRESH: Clean up src/janitor.rs to remove compiler warnings.
-1. Remove the unused 'Path' import on line 2.
-2. Remove the unused 'end' variable on line 54.
-3. Remove the unused function 'get_manual_override'.
-PROTOCOL: You MUST start your response with the tag CODE: followed by the full corrected file content.

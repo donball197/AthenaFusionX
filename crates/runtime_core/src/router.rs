@@ -1,12 +1,8 @@
 #[derive(Debug, Clone, PartialEq)]
-pub enum DirectiveClass {
-    ShellOp, TargetedEdit { file_hint: String }, RepoDoctor, SecurityAudit, WasmForge, Inquiry, FeatureBuild, General,
-}
+pub enum DirectiveClass { ShellOp, TargetedEdit { file_hint: String }, RepoDoctor, SecurityAudit, WasmForge, Inquiry, FeatureBuild, General }
 
 #[derive(Debug, Clone)]
-pub struct ContextBudget {
-    pub max_file_chars: usize, pub max_obs_lines: usize, pub max_schema_chars: usize, pub max_output_tokens: u32,
-}
+pub struct ContextBudget { pub max_file_chars: usize, pub max_obs_lines: usize, pub max_schema_chars: usize, pub max_output_tokens: u32 }
 
 impl ContextBudget {
     pub fn minimal() -> Self { Self { max_file_chars: 1_500, max_obs_lines: 2, max_schema_chars: 400, max_output_tokens: 1024 } }
@@ -15,57 +11,46 @@ impl ContextBudget {
     pub fn security() -> Self { Self { max_file_chars: 20_000, max_obs_lines: 10, max_schema_chars: 2_000, max_output_tokens: 8192 } }
 }
 
-pub struct AgentProfile {
-    pub class: DirectiveClass,
-    pub primary_model: &'static str,
-    pub max_turns: u8,
-    pub budget: ContextBudget,
-    pub persona: String,
-}
+pub struct AgentProfile { pub class: DirectiveClass, pub primary_model: &'static str, pub max_turns: u8, pub budget: ContextBudget, pub persona: String }
 
 pub struct IntelligentRouter;
-
 impl IntelligentRouter {
-    pub fn classify(actual_directive: &str) -> DirectiveClass {
-        let d = actual_directive.to_lowercase();
-        if ["diagnose", "doctor", "fix repo", "repair workspace", "suture"].iter().any(|k| d.contains(k)) { return DirectiveClass::RepoDoctor; }
-        if ["synthesize", "forge", "wasm cell"].iter().any(|k| d.contains(k)) { return DirectiveClass::WasmForge; }
-        if ["cargo check", "cargo test", "git status", "ls ", "find "].iter().any(|k| d.contains(k)) { return DirectiveClass::ShellOp; }
-        if ["audit ", "vulnerability", "memory safe"].iter().any(|k| d.contains(k)) { return DirectiveClass::SecurityAudit; }
-        if ["fix", "patch", "update", "edit"].iter().any(|k| d.contains(k)) { return DirectiveClass::TargetedEdit { file_hint: "target".into() }; }
+    pub fn classify(d: &str) -> DirectiveClass {
+        let d = d.to_lowercase();
+        if ["diagnose", "doctor", "fix repo", "suture"].iter().any(|k| d.contains(k)) { return DirectiveClass::RepoDoctor; }
+        if ["cargo check", "ls ", "find "].iter().any(|k| d.contains(k)) { return DirectiveClass::ShellOp; }
+        if ["fix", "patch", "edit"].iter().any(|k| d.contains(k)) { return DirectiveClass::TargetedEdit { file_hint: "target".into() }; }
         DirectiveClass::General
     }
 
     pub fn route(directive: &str) -> AgentProfile {
-        let start_idx = directive.find("DIRECTIVE: ").map(|i| i + 11).unwrap_or(0);
-        let user_cmd = &directive[start_idx..];
-        let class = Self::classify(user_cmd);
-        
-        let theater_persona = format!("IDENTITY: NEXUS Sovereign Agent. \
-        STRICT SYSTEM RULE: You must operate in a two-phase cognitive cycle.\n\
-        [PHASE 1: CORTEX THINKING] You MUST write out your step-by-step reasoning in plain text. Analyze the directive and plan your action.\n\
-        [PHASE 2: CORTEX EXECUTING] Output EXACTLY ONE valid JSON array of AgentAction objects. This array must be the absolute final text in your response.\n\
-        CRITICAL SCHEMA: Every JSON object MUST use the `type` field to define the action.\n\
-        HALT PROTOCOL: When the objective is achieved, or if you cannot proceed without user input, you MUST use the `halt` action to end the execution loop.\n\
-        VALID TYPES: execute_command, read_file, write_file, diff_patch, patch_function, search_memory, vmo_create, calculate_entropy, lazarus_snapshot, export_report, fetch_ui_snapshot, scrape_url, spawn_subagent, delegate_task, halt.\n\
-        EXAMPLE: [{{ \"type\": \"halt\", \"reasoning\": \"Objective complete.\" }}]\n\
-        ");
+        let class = Self::classify(directive);
+        let persona = r#"IDENTITY: NEXUS Sovereign Agent.
+STRICT SYSTEM RULE: You MUST output EXACTLY ONE valid JSON array of AgentAction objects. No markdown.
 
-        match class {
-            DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => AgentProfile {
-                class,
-                primary_model: "gemma-4-31b-it",
-                max_turns: 8,
-                budget: ContextBudget::doctor(),
-                persona: theater_persona,
-            },
-            _ => AgentProfile {
-                class,
-                primary_model: "gemma-4-26b-a4b-it",
-                max_turns: 8,
-                budget: ContextBudget::standard(),
-                persona: theater_persona,
-            },
-        }
+MANDATORY SCHEMA:
+[
+  { "type": "patch_function", "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." },
+  { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." },
+  { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
+  { "type": "read_file", "path": "...", "reasoning": "..." },
+  { "type": "execute_command", "command": "...", "reasoning": "..." },
+  { "type": "search_memory", "query": "...", "reasoning": "..." },
+  { "type": "halt", "reasoning": "..." }
+]
+
+CRITICAL RULES:
+1. NEVER use `write_file` to modify an existing function. You MUST use `patch_function` or `diff_patch`.
+2. `patch_function` requires `path`, `function_name`, and the full replacement code in `new_body`.
+3. `diff_patch` requires `search` (the exact old string) and `replace` (the exact new string). DO NOT output unified diffs or use a `diff` field.
+4. When you have achieved the task objective, include the `halt` action in your JSON array.
+5. You MUST escape all newlines inside JSON strings as `\n` (e.g. "line1\nline2")."#;
+
+        let (primary_model, budget) = match class {
+            DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => ("gemma-4-31b-it", ContextBudget::doctor()),
+            _ => ("gemini-3.1-flash-lite", ContextBudget::standard()),
+        };
+
+        AgentProfile { class, primary_model, max_turns: 8, budget, persona: persona.to_string() }
     }
 }

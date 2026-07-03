@@ -6,7 +6,6 @@ use tokio::fs;
 pub struct WasmForge;
 
 impl WasmForge {
-    // Pure local synthesis only.
     pub async fn synthesize_cell(logic_code: &str) -> Result<String> {
         if logic_code.trim().starts_with("const std") || logic_code.contains("export fn") {
             return Self::synthesize_zig(logic_code).await;
@@ -26,7 +25,7 @@ impl WasmForge {
 
         if !output.status.success() {
             let _ = fs::remove_file(&tmp_path).await;
-            return Err(anyhow!("Zig compile error"));
+            return Err(anyhow!("Zig compile error: {}", String::from_utf8_lossy(&output.stderr)));
         }
 
         let wasm_bytes = fs::read("/tmp/cell.wasm").await?;
@@ -35,7 +34,39 @@ impl WasmForge {
         Ok(b64)
     }
 
-    async fn synthesize_rust(_logic_code: &str) -> Result<String> {
-        Err(anyhow!("Rust WASM synthesis stubbed for build"))
+    // ⚡ REAL RUST TO WASM PIPELINE
+    async fn synthesize_rust(logic_code: &str) -> Result<String> {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let tmp_dir = format!("/tmp/nexus_rust_cell_{}", ts);
+        fs::create_dir_all(&tmp_dir).await?;
+        
+        let cargo_toml = r#"[package]
+name = "cell"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+"#;
+        fs::write(format!("{}/Cargo.toml", tmp_dir), cargo_toml).await?;
+        
+        let src_dir = format!("{}/src", tmp_dir);
+        fs::create_dir_all(&src_dir).await?;
+        fs::write(format!("{}/lib.rs", src_dir), logic_code).await?;
+
+        let output = tokio::process::Command::new("cargo")
+            .args(["build", "--target", "wasm32-wasi", "--release"])
+            .current_dir(&tmp_dir)
+            .output().await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let _ = fs::remove_dir_all(&tmp_dir).await;
+            return Err(anyhow!("Rust WASM compile error:\n{}", stderr));
+        }
+
+        let wasm_bytes = fs::read(format!("{}/target/wasm32-wasi/release/cell.wasm", tmp_dir)).await?;
+        let b64 = general_purpose::STANDARD.encode(&wasm_bytes);
+        let _ = fs::remove_dir_all(&tmp_dir).await;
+        Ok(b64)
     }
 }

@@ -1,0 +1,24 @@
+// TEST DIRECTIVE v7 - Duet 2 Safe Test
+// V7 SINGULARITY ONLINE
+pub async fn inject_workspace_dna(directive: &str) -> String {
+    directive.trim().to_string()
+}
+pub async fn get_execution_law_v6() -> String {
+    r#"You are NEXUS.
+=== ABSOLUTE OUTPUT RULES ===
+- Output ONLY a valid JSON array of AgentAction objects.
+- NO explanations, NO markdown, NO "I think".
+- Put reasoning ONLY inside the "reasoning" field.
+
+Valid actions:
+{ "type": "search_memory",   "query": "...", "reasoning": "..." }
+{ "type": "read_file",       "path": "...", "reasoning": "..." }
+{ "type": "write_file",      "path": "...", "content": "...", "reasoning": "..." }
+{ "type": "diff_patch",      "path": "...", "search": "...", "replace": "...", "reasoning": "..." }
+{ "type": "patch_function",  "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." }
+{ "type": "execute_command", "command": "...", "reasoning": "..." }
+{ "type": "halt", "reasoning": "..." }"#.to_string()
+}
+pub fn ping_substrate() -> &'static str {
+    "PONG"
+}

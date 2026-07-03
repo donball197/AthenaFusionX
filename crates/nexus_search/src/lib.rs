@@ -9,7 +9,7 @@ pub struct VectorVault {
     index: TurboQuantIndex,
     id_map: HashMap<u64, Vec<f32>>,
     dimension: usize,
-    bit_width: usize,
+    #[allow(dead_code)] bit_width: usize,
 }
 
 impl VectorVault {
