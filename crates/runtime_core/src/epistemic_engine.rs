@@ -120,6 +120,26 @@ impl EpistemicEngine {
                 return Ok(json_out.to_string());
             }
         }
+        
+        // 3. Git Rollback Fast-Path
+        if action_lower.contains("rollback") || action_lower.contains("reset --hard") {
+            let json_out = serde_json::json!([{
+                "type": "git_rollback",
+                "reasoning": "Safety override triggered."
+            }]);
+            println!("\x1b[35m>> [TRANSLATOR] Local Fast-Path Engaged (Bypassing LLM)\x1b[0m");
+            return Ok(json_out.to_string());
+        }
+        
+        // 3. Git Rollback Fast-Path
+        if action_lower.contains("rollback") || action_lower.contains("reset --hard") {
+            let json_out = serde_json::json!([{
+                "type": "git_rollback",
+                "reasoning": "Safety override triggered."
+            }]);
+            println!("\x1b[35m>> [TRANSLATOR] Local Fast-Path Engaged (Bypassing LLM)\x1b[0m");
+            return Ok(json_out.to_string());
+        }
         // --- END FAST-PATHS ---
 
         let prompt = format!(

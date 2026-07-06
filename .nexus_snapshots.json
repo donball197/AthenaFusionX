@@ -19,5 +19,33 @@
     "hash": "59ab56ed7dc49ada",
     "directive": "Pre-fix snapshot",
     "timestamp": "1783258527"
+  },
+  {
+    "id": "18bfc7e6fb8e03c1",
+    "path": "bins/ide_backend/Cargo.toml",
+    "hash": "63a9b81b3f02eb02",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783363772"
+  },
+  {
+    "id": "18bfc7ee6d3e7877",
+    "path": "bins/ide_backend/Cargo.toml",
+    "hash": "13a816aaa1c780a3",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783363804"
+  },
+  {
+    "id": "18bfc7f77ae58d92",
+    "path": "bins/ide_backend/Cargo.toml",
+    "hash": "13a816aaa1c780a3",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783363843"
+  },
+  {
+    "id": "18bfc8381556551e",
+    "path": "crates/runtime_core/src/cognition_graph.rs",
+    "hash": "a1a550cadadbd3a2",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783364120"
   }
 ]

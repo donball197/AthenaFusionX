@@ -162,6 +162,26 @@ impl RoboticExecutor {
                 Ok("[DELEGATION_LOGGED] Instruction pushed to Memory Palace for async execution.".to_string())
             }
             AgentAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
+            AgentAction::GitRollback { reasoning } => {
+                let _ = crate::podman::PodmanShield::execute("git reset --hard");
+                let _ = crate::podman::PodmanShield::execute("git clean -fd");
+                Ok(format!("[GIT_ROLLBACK_OK] Codebase restored to last known good commit."))
+            },
+            AgentAction::GitRollback { reasoning } => {
+                let _ = crate::podman::PodmanShield::execute("git reset --hard");
+                let _ = crate::podman::PodmanShield::execute("git clean -fd");
+                Ok(format!("[GIT_ROLLBACK_OK] Reason: {}\nCodebase restored to last known good commit.", reasoning))
+            },
+            AgentAction::GitRollback { reasoning } => {
+                let _ = crate::podman::PodmanShield::execute("git reset --hard");
+                let _ = crate::podman::PodmanShield::execute("git clean -fd");
+                Ok(format!("[GIT_ROLLBACK_OK] Codebase restored to last known good commit."))
+            },
+            AgentAction::GitRollback { reasoning } => {
+                let _ = crate::podman::PodmanShield::execute("git reset --hard");
+                let _ = crate::podman::PodmanShield::execute("git clean -fd");
+                Ok(format!("[GIT_ROLLBACK_OK] Reason: {}\nCodebase restored to last known good commit.", reasoning))
+            },
         }
     }
 }

@@ -37,12 +37,16 @@ MANDATORY SCHEMA:
   { "type": "read_file", "path": "...", "reasoning": "..." },
   { "type": "execute_command", "command": "...", "reasoning": "..." },
   { "type": "search_memory", "query": "...", "reasoning": "..." },
+  { "type": "git_rollback", "reasoning": "..." },
+  { "type": "git_rollback", "reasoning": "..." },
   { "type": "halt", "reasoning": "..." }
 ]
 
 CRITICAL RULES:
 1. NEVER use `write_file` to modify an existing function. You MUST use `patch_function` or `diff_patch`.
 2. ALWAYS prefer `read_function` over `read_file` if you only need to inspect a specific function. This dramatically saves context space.
+3. If you make a mistake that breaks compilation, or you reach a dead end, use `git_rollback` to restore the last known good commit.
+3. If you make a mistake that breaks compilation, or you reach a dead end, use `git_rollback` to restore the last known good commit.
 2. `patch_function` requires `path`, `function_name`, and the full replacement code in `new_body`.
 3. `diff_patch` requires `search` (the exact old string) and `replace` (the exact new string). DO NOT output unified diffs or use a `diff` field.
 4. When you have achieved the task objective, include the `halt` action in your JSON array.
