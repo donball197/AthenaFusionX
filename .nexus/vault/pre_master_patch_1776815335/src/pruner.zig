@@ -16,7 +16,7 @@ pub export fn pruner_summarize(ptr: [*]const u8, len: usize) [*]const u8 {
     defer c.TfLiteInterpreterDelete(i);
 
     if (c.TfLiteInterpreterAllocateTensors(i) != 0) return ptr;
-    
+
     const in_t = c.TfLiteInterpreterGetInputTensor(i, 0);
     _ = c.TfLiteTensorCopyFromBuffer(in_t, ptr, len);
 

@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/donball197/nexus_singularity-dev/.nexus_venv
+set -gx VIRTUAL_ENV /home/donball197/AthenaFusionX/.nexus_venv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

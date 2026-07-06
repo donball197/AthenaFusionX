@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
 
     let agent = Arc::new(MicroAgent::init(tx.clone()).unwrap());
     let monitor = tokio::sync::Mutex::new(nexus_singularity::system_monitor::SystemMonitor::new());
-    
+
     // ⚡ FIX: Use the zero-argument constructor
     let orchestrator = Arc::new(Orchestrator::new());
 

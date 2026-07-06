@@ -30,7 +30,7 @@ impl MasterSupervisor {
         tokio::spawn(async move {
             while let Some(task) = task_rx.recv().await {
                 let vitals = monitor.get_vitals();
-                
+
                 // Throttling logic remains active to protect the metal
                 if vitals.cpu_load > 0.85 || vitals.temperature > 68.0 {
                     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;

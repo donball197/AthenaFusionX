@@ -1,23 +1,33 @@
-pub const MODEL_FLASH_LITE: &str = "gemini-3.1-flash-lite";
-pub const MODEL_31B: &str = "gemma-4-31b-it";
+use crate::model_config::{get_light_models, get_heavy_models};
 
 pub struct AgentFactory;
 
 impl AgentFactory {
     pub fn new() -> Self { Self }
 
-    pub fn get_model_for_turn(turn: usize, error_count: usize) -> &'static str {
+    pub fn get_model_for_turn(turn: usize, error_count: usize) -> String {
         if error_count > 0 {
-            return MODEL_31B; // ⚡ Engage 31B Heavy Lifting on failure
+            return get_heavy_models().first().cloned().unwrap_or_else(|| "gemini-3.1-flash-lite".to_string());
         }
         match turn {
-            0..=4 => MODEL_FLASH_LITE, // Fast initial iteration
-            _     => MODEL_31B,        // ⚡ Handoff to 31B for deep reasoning turns
+            0..=4 => get_light_models().first().cloned().unwrap_or_else(|| "gemini-3.1-flash-lite".to_string()),
+            _     => get_heavy_models().first().cloned().unwrap_or_else(|| "gemini-3.1-flash-lite".to_string()),
         }
     }
 
-    pub fn failover_model(_current_model: &str) -> &'static str {
-        MODEL_31B 
+    pub fn failover_model(current_model: &str) -> String {
+        let heavy = get_heavy_models();
+        let light = get_light_models();
+        
+        if let Some(pos) = heavy.iter().position(|m| m == current_model) {
+            if pos + 1 < heavy.len() { return heavy[pos+1].clone(); }
+        }
+        if let Some(pos) = light.iter().position(|m| m == current_model) {
+            if pos + 1 < light.len() { return light[pos+1].clone(); }
+        }
+        
+        // Ultimate fallback
+        "gemini-3.1-flash-lite".to_string()
     }
 }
 

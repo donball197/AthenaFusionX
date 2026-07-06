@@ -18,7 +18,7 @@ use secrecy::{ExposeSecret, SecretString};
 use crate::{ws_bridge, vitals_handler, cluster_api};
 
 #[derive(RustEmbed)]
-#[folder = "ui/dist/"] 
+#[folder = "../../ui/dist/"]
 struct Assets;
 
 pub struct AppState {
@@ -128,6 +128,33 @@ pub async fn fs_list_handler(State(state): State<Arc<AppState>>, Query(q): Query
     }
 }
 
+// Basic Authentication Middleware
+async fn basic_auth(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    // Exempt WebSocket telemetry to avoid browser header issues and WS drops
+    if req.uri().path() == "/ws/telemetry" {
+        return next.run(req).await;
+    }
+
+    if let Some(auth_header) = req.headers().get(header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            // Check for valid Base64 encoded: "admin:password" => "YWRtaW46cGFzc3dvcmQ="
+            if auth_str == "Basic YWRtaW46cGFzc3dvcmQ=" {
+                return next.run(req).await;
+            }
+        }
+    }
+
+    // Unsuccessful authentication prompts a re-authentication WWW-Authenticate header block
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Basic realm=\"Nexus\"")],
+        "Unauthorized",
+    ).into_response()
+}
+
 pub async fn start_server(state: Arc<AppState>) {
     let app = Router::new()
         .route("/api/task", post(unified_gateway))
@@ -139,8 +166,9 @@ pub async fn start_server(state: Arc<AppState>) {
         .route("/api/cluster/nodes", get(cluster_api::list_nodes))
         .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
         .fallback(static_handler)
+        .layer(axum::middleware::from_fn(basic_auth))
         .with_state(state);
-        
+
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -148,7 +176,7 @@ pub async fn start_server(state: Arc<AppState>) {
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/').to_string();
     let final_path = if path.is_empty() { "index.html".to_string() } else { path };
-    
+
     // Fallback Matrix: Check direct path, then explicit relative path format
     let asset = Assets::get(&final_path)
         .or_else(|| Assets::get(&format!("./{}", final_path)));

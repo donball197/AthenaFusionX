@@ -38,7 +38,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV=/home/donball197/nexus_singularity-dev/.nexus_venv
+VIRTUAL_ENV=/home/donball197/AthenaFusionX/.nexus_venv
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"

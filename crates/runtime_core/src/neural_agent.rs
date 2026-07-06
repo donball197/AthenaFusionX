@@ -1,5 +1,4 @@
-use crate::metrics::METRICS;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -24,7 +23,10 @@ pub struct MicroAgent {
 
 impl MicroAgent {
     pub fn init(tx: broadcast::Sender<String>) -> Result<Self> {
-        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(16)), tx })
+        Ok(MicroAgent { 
+            memory: Mutex::new(VecDeque::with_capacity(16)), 
+            tx 
+        })
     }
 
     pub async fn prepare_and_run(
@@ -38,17 +40,16 @@ impl MicroAgent {
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
         let model = model_override.or(ctx.model_override.as_deref()).unwrap_or("gemma-4-31b-it");
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key);
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key.trim());
 
         let combined_text = format!("SYSTEM: {}\nUSER: {}", ctx.system_prompt.unwrap_or_default(), user_text);
         
-        // ⚡ SUTURE: Tokens expanded to 8192 to prevent silent exhaustion during Chain-of-Thought
         let payload = json!({
             "contents": [{ "role": "user", "parts": [{ "text": combined_text }] }],
             "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
         });
 
-        let response = client.post(&url).json(&payload).send().await.context("API request failed")?;
+        let response = client.post(&url).json(&payload).send().await?;
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
         let mut stream = response.bytes_stream();
@@ -82,7 +83,7 @@ impl MicroAgent {
                 }
             }
         }
-        METRICS.record_api_call(start.elapsed().as_millis());
+        
         Ok((full_response, start.elapsed().as_millis()))
     }
 }

@@ -1,6 +1,6 @@
+use reqwest::Client;
 use std::sync::atomic::Ordering;
 use tokio::sync::broadcast;
-use reqwest::Client;
 
 use crate::metrics::METRICS;
 use crate::neural_agent::{ContextPacket, MicroAgent};
@@ -28,7 +28,7 @@ impl Orchestrator {
         tx: Option<broadcast::Sender<String>>,
     ) -> Result<String, String> {
         METRICS.api_calls.fetch_add(1, Ordering::SeqCst);
-        
+
         let mut active_ctx = ctx;
 
         // Only classify and assign defaults if properties are not already defined
@@ -48,7 +48,7 @@ impl Orchestrator {
             let (dummy_tx, _) = broadcast::channel(1);
             dummy_tx
         });
-        
+
         let agent = MicroAgent::init(sender).map_err(|e| format!("AGENT_INIT_FAULT: {}", e))?;
 
         // 4. Engage the API and pipe the SSE stream

@@ -1,4 +1,5 @@
 use crate::orchestrator_v2::task_graph::{TaskGraph, TaskNode, TaskStatus};
+use crate::model_config::get_light_models;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde_json::Value;
@@ -6,15 +7,27 @@ use serde_json::Value;
 pub struct PlannerAgent;
 
 impl PlannerAgent {
+    // ⚡ V4 ISOLATOR: Bulletproof extraction of JSON Arrays from hallucinated markdown 
+    fn isolate_json_array(raw: &str) -> Option<String> {
+        let s = raw.replace("```json", "").replace("```", "").trim().to_string();
+        if let (Some(start), Some(end)) = (s.find('['), s.rfind(']')) {
+            if end > start {
+                return Some(s[start..=end].to_string());
+            }
+        }
+        None
+    }
+
     pub async fn generate_plan(client: &Client, api_key: &str, directive: &str) -> Result<TaskGraph> {
         let system_instruction = 
             "You are a headless JSON API. You MUST output ONLY a valid, raw JSON array. \
             Do NOT use markdown formatting like ```json. Do NOT write any conversational text. \
-            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`. CRITICAL RULE: If the directive involves modifying Rust code, your DAG MUST include a final task to verify integrity by running `cargo clippy --workspace --all-targets -j 1 -- -D warnings`. \
+            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`. \
+            CRITICAL RULE: If the directive involves modifying Rust code, your DAG MUST include a final task to verify integrity by running `cargo clippy --workspace --all-targets -j 1 -- -D warnings`. \
             CRITICAL: The ONLY valid fields for each object are 'id', 'objective', 'deps', 'required_agent', and 'success_criteria'. \
-            DO NOT output any other fields like 'params', 'required_files', or 'Architectural_Strategies'. Embed all details into the 'objective' string.";
+            Embed all details into the 'objective' string.";
 
-        // ⚡ SUTURE: We use a strict few-shot example, and then FORCE the model to start with '['
+        // Use r#""# to prevent escape sequence destruction
         let payload = serde_json::json!({
             "systemInstruction": {
                 "parts": [{ "text": system_instruction }]
@@ -22,24 +35,29 @@ impl PlannerAgent {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [{ "text": "DIRECTIVE: Audit the codebase for secrets.
-Use world model knowledge. Prefer targeted reads over broad grep." }]
+                    "parts": [{ "text": "DIRECTIVE: Audit the codebase for secrets. Use world model knowledge." }]
                 },
                 {
                     "role": "model",
-                    "parts": [{ "text": "[\n  {\n    \"id\": \"task_1\",\n    \"objective\": \"Scan src/ for API keys\",\n    \"deps\": [],\n    \"required_agent\": \"AuditorAgent\",\n    \"success_criteria\": [\"Scan completes\"]\n  }\n]" }]
+                    "parts": [{ "text": r#"
+[
+  {
+    "id": "task_1",
+    "objective": "Scan src/ for API keys",
+    "deps": [],
+    "required_agent": "AuditorAgent",
+    "success_criteria": ["Scan completes"]
+  }
+]"# 
+                    }]
                 },
                 {
                     "role": "user",
                     "parts": [{ "text": format!("DIRECTIVE: {}", directive) }]
-                },
-                {
-                    "role": "model",
-                    "parts": [{ "text": "[" }] // ⚡ FORCE PRE-FILL
                 }
             ],
             "generationConfig": { 
-                "temperature": 0.1,  // ⚡ Lowered to 0.1 to prevent hallucinated keys
+                "temperature": 0.1, 
                 "topK": 40,
                 "topP": 0.95,
                 "maxOutputTokens": 8192
@@ -49,97 +67,73 @@ Use world model knowledge. Prefer targeted reads over broad grep." }]
         let base_url = std::env::var("NEXUS_API_GATEWAY")
             .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
         
-        // ⚡ FIX: Use 2.0-flash as the stable endpoint
-        let url = format!("{}/v1beta/models/gemini-3.1-flash-lite:generateContent?key={}", base_url, api_key);
-
-        let mut attempts = 0;
         let mut last_error = String::new();
-
-        while attempts < 3 {
-            attempts += 1;
-            match client.post(&url).json(&payload).send().await {
-                Ok(res) => {
-                    let status = res.status();
-                    let body: Value = res.json().await?;
-                    
-                    // ⚡ FIX: Quota limit guard
-                    if status == 429 || body.pointer("/error/status").and_then(|s| s.as_str()) == Some("RESOURCE_EXHAUSTED") {
-                        tracing::warn!("[PLANNER] Quota Exhausted! Sleeping for 15 seconds...");
-                        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-                        continue;
-                    }
-
-                    if let Some(err) = body.pointer("/error/message") {
-                        return Err(anyhow!("API Error: {}", err));
-                    }
-
-                    let mut text = body.pointer("/candidates/0/content/parts/0/text")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    // ⚡ RE-ATTACH THE PRE-FILLED BRACKET
-                    if !text.starts_with('[') {
-                        text = format!("[{}", text);
-                    }
-
-                    let array_str = Self::extract_json_array(&text)
-                        .ok_or_else(|| anyhow!("No valid JSON array found in response:\n{}", text))?;
-                    
-                    let nodes: Vec<TaskNode> = serde_json::from_str(&array_str)
-                        .map_err(|e| anyhow!("DAG Parse Fracture: {}\nRaw Extracted: {}", e, array_str))?;
-
-                    if nodes.is_empty() {
-                        return Err(anyhow!("Model returned an empty task array. Raw Output: {}", text));
-                    }
-
-                    let mut graph = TaskGraph::new();
-                    for mut node in nodes {
-                        node.status = TaskStatus::Pending; 
-                        graph.nodes.insert(node.id.clone(), node);
-                    }
-
-                    return Ok(graph);
-                }
-                Err(e) => {
-                    last_error = e.to_string();
-                    tracing::warn!("[PLANNER] Transport drop on attempt {}/3. Retrying in 2s...", attempts);
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                }
-            }
-        }
-        Err(anyhow!("FATAL TRANSPORT FRACTURE after 3 attempts: {}", last_error))
-    }
-
-    fn extract_json_array(text: &str) -> Option<String> {
-        let start = text.find('[')?;
-        let mut depth = 0;
-        for (i, c) in text[start..].char_indices() {
-            match c {
-                '[' => depth += 1,
-                ']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(text[start..=start + i].to_string());
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let partial = &text[start..];
-        let mut end_idx = partial.len();
         
-        while let Some(last_close) = partial[..end_idx].rfind('}') {
-            let candidate = format!("{}]", &partial[..=last_close]);
-            let clean_candidate: String = candidate.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
+        // ⚡ CASCADE LOOP: Failover seamlessly through light models if one times out
+        for model_name in get_light_models() {
+            let url = format!("{}/v1beta/models/{}:generateContent?key={}", base_url.trim(), model_name, api_key.trim());
+            
+            let mut attempts = 0;
+            while attempts < 2 {
+                attempts += 1;
+                match client.post(&url).json(&payload).send().await {
+                    Ok(res) => {
+                        let status = res.status();
+                        let body: Value = res.json().await.unwrap_or_default();
+                        
+                        if status == 429 || body.pointer("/error/status").and_then(|s| s.as_str()) == Some("RESOURCE_EXHAUSTED") {
+                            tracing::warn!("[PLANNER] {} Quota Exhausted! Cascading...", model_name);
+                            last_error = format!("{} Rate Limited", model_name);
+                            break; 
+                        }
 
-            if serde_json::from_str::<serde_json::Value>(&clean_candidate).is_ok() {
-                return Some(clean_candidate);
+                        if let Some(err) = body.pointer("/error/message") {
+                            last_error = err.to_string();
+                            break; 
+                        }
+
+                        let text = body.pointer("/candidates/0/content/parts/0/text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        // ⚡ SCRUB AND ISOLATE
+                        let array_str = match Self::isolate_json_array(&text) {
+                            Some(s) => s,
+                            None => {
+                                last_error = "No valid JSON array found in response.".to_string();
+                                continue; 
+                            }
+                        };
+                        
+                        let nodes: Vec<TaskNode> = match serde_json::from_str(&array_str) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                last_error = format!("DAG Parse Fracture: {}\nRaw Extracted: {}", e, array_str);
+                                continue; 
+                            }
+                        };
+
+                        if nodes.is_empty() {
+                            last_error = "Model returned an empty task array.".to_string();
+                            continue;
+                        }
+
+                        let mut graph = TaskGraph::new();
+                        for mut node in nodes {
+                            node.status = TaskStatus::Pending; 
+                            graph.nodes.insert(node.id.clone(), node);
+                        }
+
+                        return Ok(graph);
+                    }
+                    Err(e) => {
+                        last_error = format!("Network failure: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                }
             }
-            end_idx = last_close;
         }
-        
-        None
+        Err(anyhow!("FATAL CASCADE EXHAUSTION: All models failed. Last error: {}", last_error))
     }
 }

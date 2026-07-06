@@ -1,19 +1,27 @@
-use crate::agents::LogicAgent;
 use crate::agents::agentic_runtime::SubstrateContext;
+use crate::agents::LogicAgent;
 use anyhow::Result;
 use async_trait::async_trait;
 
 pub struct ScoutAgent;
 
 impl ScoutAgent {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
-impl Default for ScoutAgent { fn default() -> Self { Self::new() } }
+impl Default for ScoutAgent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl LogicAgent for ScoutAgent {
-    fn name(&self) -> String { "ScoutAgent".to_string() }
-    
+    fn name(&self) -> String {
+        "ScoutAgent".to_string()
+    }
+
     fn can_handle(&self, command: &str) -> bool {
         let c = command.to_lowercase();
         c.starts_with("ls") || c.starts_with("find") || c.starts_with("grep")

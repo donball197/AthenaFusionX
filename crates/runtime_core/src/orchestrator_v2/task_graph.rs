@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, VecDeque};
+use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
 use std::collections::HashSet;
-use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskStatus {
@@ -25,10 +25,10 @@ pub struct TaskExecutionState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TaskNode {
     pub id: String,
-    
+
     #[serde(alias = "dependencies")]
     pub deps: Vec<String>,
-    
+
     #[serde(alias = "assigned_agent")]
     pub required_agent: String,
 
@@ -62,13 +62,13 @@ impl TaskGraph {
     pub fn new() -> Self {
         Self { nodes: HashMap::new() }
     }
-    
+
     pub fn add_task(&mut self, id: &str, deps: Vec<String>, required_agent: &str) {
         self.nodes.insert(
             id.to_string(),
-            TaskNode { 
-                id: id.to_string(), 
-                deps, 
+            TaskNode {
+                id: id.to_string(),
+                deps,
                 required_agent: required_agent.to_string(),
                 status: TaskStatus::Pending,
                 objective: String::new(),
@@ -87,7 +87,7 @@ impl TaskGraph {
                 return cached;
             }
             let mut max_child = 0;
-            
+
             for (child_id, child) in &graph.nodes {
                 if child.deps.contains(&node_id.to_string()) {
                     max_child = max_child.max(b_level(child_id, graph, memo));

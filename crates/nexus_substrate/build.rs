@@ -1,22 +1,24 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::fs;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let manifest_dir = env::current_dir().unwrap();
     let zig_src = manifest_dir.join("src/kernel/muscle.zig");
-    
+
     println!("cargo:rerun-if-changed=src/kernel/muscle.zig");
 
     let temp_lib = manifest_dir.join("libmuscle.a");
-    
+
     let status = Command::new("zig")
         .args([
             "build-lib",
-            "-target", "aarch64-linux-gnu",
-            "-O", "ReleaseSmall",
+            "-target",
+            "aarch64-linux-gnu",
+            "-O",
+            "ReleaseSmall",
             "-lc",
             "-fPIC",
             zig_src.to_str().unwrap(),

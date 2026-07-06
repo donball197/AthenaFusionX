@@ -1,0 +1,46 @@
+:root {
+  --crt-bg: #0d0d0d;
+  --crt-text: #33ff33;
+  --crt-glow: rgba(51, 255, 51, 0.2);
+  --scanline-color: rgba(0, 0, 0, 0.1);
+}
+
+body {
+  margin: 0;
+  background: var(--crt-bg);
+  color: var(--crt-text);
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+}
+
+/* CRT Scanline Overlay */
+body::before {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, var(--scanline-color) 50%),
+              linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  z-index: 2;
+  background-size: 100% 4px, 3px 100%;
+  pointer-events: none;
+}
+
+/* Blinking Cursor Animation */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor {
+  display: inline-block;
+  width: 10px;
+  height: 20px;
+  background: var(--crt-text);
+  animation: blink 1s step-end infinite;
+}
+
+/* CRT Glow Effect */
+.cli-terminal {
+  text-shadow: 0 0 5px var(--crt-glow);
+}

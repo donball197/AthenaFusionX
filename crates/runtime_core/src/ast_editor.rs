@@ -7,6 +7,36 @@ pub struct AstEditor;
 impl AstEditor {
     /// update_function: Finds a function by name and replaces its entire body.
     /// This is the "Semantic Precision" upgrade to replace simple string diffs.
+    pub fn read_function(path: &str, function_name: &str) -> Result<String> {
+        let source_code = fs::read_to_string(path)?;
+        let mut parser = Parser::new();
+        parser.set_language(&tree_sitter_rust::language())?;
+
+        let tree = parser
+            .parse(&source_code, None)
+            .ok_or_else(|| anyhow!("AST_PARSE_FAIL: Could not parse {}", path))?;
+
+        let query_str = format!(
+            "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
+            function_name
+        );
+        let query = Query::new(&tree_sitter_rust::language(), &query_str)?;
+        let mut cursor = QueryCursor::new();
+        let matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
+        for m in matches {
+            for capture in m.captures {
+                if capture.index == 1 {
+                    let node = capture.node;
+                    let start = node.start_byte();
+                    let end = node.end_byte();
+                    return Ok(source_code[start..end].to_string());
+                }
+            }
+        }
+
+        Err(anyhow!("FUNCTION_NOT_FOUND: Could not find function '{}' in {}", function_name, path))
+    }
+
     pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
         let source_code = fs::read_to_string(path)?;
         let mut parser = Parser::new();

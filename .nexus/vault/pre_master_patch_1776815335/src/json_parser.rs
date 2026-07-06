@@ -5,7 +5,7 @@ use regex::Regex;
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let re = Regex::new(r"(?s)<ACTION>(.*?)</ACTION>").unwrap();
-    
+
     // ⚡ FIX: Convert to owned String immediately to solve "does not live long enough"
     let raw_content = match re.captures_iter(response).last() {
         Some(cap) => cap[1].to_string(),

@@ -23,7 +23,7 @@ impl VoidWalker {
 
         for file_path in all_files {
             let path_str = file_path.to_string_lossy().to_string();
-            
+
             if ignore_dirs.iter().any(|d| path_str.contains(d)) {
                 continue;
             }

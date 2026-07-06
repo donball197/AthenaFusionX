@@ -19,8 +19,8 @@ impl Conductor {
         tx: Option<broadcast::Sender<String>>,
     ) -> Result<String, String> {
         // Selection: Tier escalation logic
-        let model = if turn > 6 { "gemini-2.5-pro" } 
-                    else if turn > 3 { "gemma-4-31b-it" } 
+        let model = if turn > 6 { "gemini-2.5-pro" }
+                    else if turn > 3 { "gemma-4-31b-it" }
                     else { profile.primary_model };
 
         let ctx = ContextPacket {
@@ -40,7 +40,7 @@ impl Conductor {
                         "payload": format!("!! [CONDUCTOR] Model {} unstable. Initiating failover to stable MoE...", model)
                     }).to_string());
                 }
-                
+
                 let failover_ctx = ContextPacket {
                     system_prompt: Some(profile.persona.clone()),
                     model_override: Some("gemma-4-31b-it".to_string()),

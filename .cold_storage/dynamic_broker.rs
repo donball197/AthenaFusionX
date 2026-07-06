@@ -27,7 +27,7 @@ impl DynamicBroker {
     pub fn get_library_path(lib_name: &str) -> Result<PathBuf> {
         let muscle = detect_host_muscle();
         let workspace_root = std::env::current_dir().context("Failed to get workspace root")?;
-        
+
         let sub_dir = match muscle {
             HostMuscle::MotorolaTermux => "lib/motorola",
             HostMuscle::ChromebookCrostini => "lib/chromebook",
@@ -41,8 +41,8 @@ impl DynamicBroker {
             Ok(lib_path)
         } else {
             Err(anyhow!(
-                "FRAGMENTATION_FAULT: Library '{}' not found for seated muscle in {:?}", 
-                lib_name, 
+                "FRAGMENTATION_FAULT: Library '{}' not found for seated muscle in {:?}",
+                lib_name,
                 sub_dir
             ))
         }

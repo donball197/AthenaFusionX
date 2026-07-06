@@ -13,9 +13,7 @@ pub struct ExecutionSandbox {
 impl ExecutionSandbox {
     /// Default safe-mode: The agent can read, but cannot mutate or execute.
     pub fn strict_lockdown() -> Self {
-        Self { 
-            active_capabilities: vec![Capability::ReadSubstrate] 
-        }
+        Self { active_capabilities: vec![Capability::ReadSubstrate] }
     }
 
     /// Validates the intended action against granted capabilities before it hits the OS

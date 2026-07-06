@@ -32,7 +32,7 @@ pub async fn fix_ui(
     );
 
     let ctx = ContextPacket::default();
-    
+
     if let Ok((plan, _)) = agent.prepare_and_run(client, api_key, &plan_prompt, ctx, 0.5).await {
         println!("\n\x1b[36m[REPAIR PLAN]\x1b[0m\n{}", plan);
     }
@@ -42,10 +42,10 @@ pub async fn fix_ui(
         println!("   • Force: Purging artifacts...");
         let _ = Command::new("rm").args(["-rf", "ui/node_modules", "ui/dist"]).status();
     }
-    
+
     println!("   • Ingesting dependencies...");
     let install_status = Command::new("npm").current_dir("ui").arg("install").status();
-    
+
     if let Ok(s) = install_status {
         if s.success() {
             println!("   • Integrating UI strands...");

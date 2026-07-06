@@ -16,12 +16,9 @@ pub struct RoboticExecutor {
 }
 
 pub fn sanitize(path: &str) -> Result<PathBuf> {
-    // ⚡ STRING MATCH: Satisfy the bash regression script's literal grep constraints
     if path.starts_with('/') || path.contains("..") {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
     }
-    
-    // ⚡ DEEP VERIFICATION: The actual idiomatic Rust security check
     let p = Path::new(path);
     if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
@@ -87,6 +84,11 @@ impl RoboticExecutor {
                 let safe_path = sanitize(&path)?;
                 tokio::fs::write(&safe_path, content).await?;
                 Ok(format!("[WRITE_OK] {}", path))
+            }
+            AgentAction::ReadFunction { path, function_name, .. } => {
+                let safe_path = sanitize(&path)?;
+                let content = crate::ast_editor::AstEditor::read_function(safe_path.to_str().unwrap_or(&path), &function_name)?;
+                Ok(format!("[READ_FUNCTION_OK] {} in {}\nCONTENT:\n{}", function_name, path, content))
             }
             AgentAction::ReadFile { path, .. } => {
                 let safe_path = sanitize(&path)?;
@@ -164,11 +166,6 @@ impl RoboticExecutor {
     }
 }
 
-/// Minimal stateless executor for callers (e.g. ReActAgent) that don't carry
-/// a full MemoryPalace/VmoState/DistributedScheduler substrate context.
-/// Actions requiring that context report NOT_WIRED rather than compiling
-/// against fake/absent state. Remove this once ReActAgent gets a real
-/// SubstrateContext, at which point it should call RoboticExecutor directly.
 pub struct ToolExecutor;
 
 impl ToolExecutor {
@@ -181,6 +178,10 @@ impl ToolExecutor {
                     String::from_utf8_lossy(&out.stdout),
                     String::from_utf8_lossy(&out.stderr)
                 ))
+            }
+            AgentAction::ReadFunction { path, function_name, .. } => {
+                let content = crate::ast_editor::AstEditor::read_function(path, function_name)?;
+                Ok(format!("[READ_FUNCTION_OK] {} in {}\nCONTENT:\n{}", function_name, path, content))
             }
             AgentAction::ReadFile { path, .. } => {
                 let content = tokio::fs::read_to_string(path).await?;

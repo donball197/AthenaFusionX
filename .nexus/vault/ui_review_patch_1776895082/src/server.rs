@@ -99,31 +99,31 @@ async fn handle_ghost(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(json!({ "resonance": resonance, "temperature": temp, "last_reflections": reflections, "status": "THE_GHOST_IS_AWAKE" }))
 }
 
-async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse { 
-    let path = p.path.as_deref().unwrap_or("."); 
-    let mut entries = Vec::new(); 
-    if let Ok(mut rd) = tokio::fs::read_dir(path).await { 
-        while let Ok(Some(entry)) = rd.next_entry().await { 
-            let name = entry.file_name().to_string_lossy().to_string(); 
+async fn handle_fs_list(Query(p): Query<ListParams>) -> impl IntoResponse {
+    let path = p.path.as_deref().unwrap_or(".");
+    let mut entries = Vec::new();
+    if let Ok(mut rd) = tokio::fs::read_dir(path).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') || name == "target" { continue; }
             let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-            entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir })); 
-        } 
-    } 
-    Json(entries) 
+            entries.push(json!({ "name": name, "path": entry.path().to_string_lossy(), "is_dir": is_dir }));
+        }
+    }
+    Json(entries)
 }
 
-async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse { 
+async fn handle_read_file(Query(p): Query<FileParams>) -> impl IntoResponse {
     match crate::sandbox::validate_path(&p.path) {
-        Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await { 
-            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(), 
-            Err(_) => StatusCode::NOT_FOUND.into_response(), 
+        Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await {
+            Ok(c) => (StatusCode::OK, Json(json!({ "content": c }))).into_response(),
+            Err(_) => StatusCode::NOT_FOUND.into_response(),
         },
         Err(e) => (StatusCode::FORBIDDEN, Json(json!({ "error": e.to_string() }))).into_response(),
     }
 }
 
-async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse { 
+async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse {
     if p.path.starts_with("src/kernel") || p.path == "Cargo.toml" {
         return (StatusCode::FORBIDDEN, Json(json!({ "error": "DNA_PROTECTED" }))).into_response();
     }
@@ -136,12 +136,12 @@ async fn handle_write_file(Json(p): Json<FileContent>) -> impl IntoResponse {
     }
 }
 
-async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse { 
-    let palace = state.memory.lock().await; 
-    match palace.fetch_all().await { 
-        Ok(m) => (StatusCode::OK, Json(m)).into_response(), 
-        Err(_) => StatusCode::NOT_FOUND.into_response() 
-    } 
+async fn handle_get_memories(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let palace = state.memory.lock().await;
+    match palace.fetch_all().await {
+        Ok(m) => (StatusCode::OK, Json(m)).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response()
+    }
 }
 
 async fn handle_search_memories(State(state): State<Arc<AppState>>, Query(p): Query<SearchParams>) -> impl IntoResponse {
@@ -172,19 +172,19 @@ async fn handle_get_snapshots() -> impl IntoResponse {
 }
 
 // ⚡ THE FIX: Dynamic MIME type resolution based on file extension
-async fn static_handler(uri: Uri) -> impl IntoResponse { 
-    let path = uri.path().trim_start_matches('/').to_string(); 
-    let final_path = if path.is_empty() { "index.html".to_string() } else { path }; 
-    
-    match Assets::get(&final_path) { 
+async fn static_handler(uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/').to_string();
+    let final_path = if path.is_empty() { "index.html".to_string() } else { path };
+
+    match Assets::get(&final_path) {
         Some(content) => {
             let mime = mime_guess::from_path(&final_path).first_or_octet_stream();
             ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-        }, 
+        },
         None => Assets::get("index.html")
             .map(|c| ([(header::CONTENT_TYPE, "text/html")], c.data).into_response())
-            .unwrap_or(StatusCode::NOT_FOUND.into_response()) 
-    } 
+            .unwrap_or(StatusCode::NOT_FOUND.into_response())
+    }
 }
 
 #[derive(Deserialize)] pub struct TaskRequest { pub directive: String }

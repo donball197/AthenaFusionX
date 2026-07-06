@@ -1,8 +1,8 @@
+use crate::distributed_scheduler::DistributedScheduler;
+use crate::shared_state::VmoState;
+use nexus_substrate::memory::MemoryPalace;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::shared_state::VmoState;
-use crate::distributed_scheduler::DistributedScheduler;
-use nexus_substrate::memory::MemoryPalace;
 
 pub struct SubstrateContext {
     pub memory: Arc<Mutex<MemoryPalace>>,
@@ -15,10 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 pub type RuntimeResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 pub enum AgentCommand {
-    DispatchTask {
-        prompt: String,
-        respond_to: oneshot::Sender<RuntimeResult<()>>,
-    },
+    DispatchTask { prompt: String, respond_to: oneshot::Sender<RuntimeResult<()>> },
 }
 
 #[derive(Clone)]
@@ -33,7 +30,8 @@ impl AgenticRuntime {
             while let Some(cmd) = cmd_receiver.recv().await {
                 match cmd {
                     AgentCommand::DispatchTask { prompt, respond_to } => {
-                        let result = Self::process_execution_loop(&prompt, execution_budget_ms).await;
+                        let result =
+                            Self::process_execution_loop(&prompt, execution_budget_ms).await;
                         let _ = respond_to.send(result);
                     }
                 }
@@ -45,10 +43,7 @@ impl AgenticRuntime {
     pub async fn dispatch(&self, prompt: &str) -> RuntimeResult<()> {
         let (tx, rx) = oneshot::channel();
         self.cmd_sender
-            .send(AgentCommand::DispatchTask {
-                prompt: prompt.to_string(),
-                respond_to: tx,
-            })
+            .send(AgentCommand::DispatchTask { prompt: prompt.to_string(), respond_to: tx })
             .await
             .map_err(|e| format!("Failed to queue task: {}", e))?;
         rx.await.map_err(|e| format!("Runtime channel dropped: {}", e))?
@@ -62,20 +57,30 @@ impl AgenticRuntime {
     }
 }
 
-
 // ================================================
 // COMPATIBILITY STUBS (kept minimal)
 // ================================================
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InferenceStrategy {
-    DeepReasoning, ShallowReasoning, ReactiveFlash, EmergencyEvac,
+    DeepReasoning,
+    ShallowReasoning,
+    ReactiveFlash,
+    EmergencyEvac,
 }
 
 #[derive(Debug)]
 pub struct DuetResourceGuard;
-impl DuetResourceGuard { pub fn new() -> Self { Self } }
-impl Default for DuetResourceGuard { fn default() -> Self { Self::new() } }
+impl DuetResourceGuard {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for DuetResourceGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug)]
 pub struct SystemVitals {

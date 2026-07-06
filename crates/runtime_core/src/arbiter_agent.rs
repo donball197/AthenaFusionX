@@ -56,6 +56,16 @@ impl ArbiterAgent {
             "curl | sh",
             "history -c",
             "unset HISTFILE",
+            // ⚡ SUTURE: git-destructive patterns — root cause of the v8 data-loss incident.
+            "git reset --hard",
+            "git clean -f",
+            "git clean -fd",
+            "git clean -fx",
+            "git clean -dfx",
+            "git push --force",
+            "git push -f",
+            "git checkout -- .",
+            "git checkout .",
         ];
 
         let normalized = command.to_lowercase();

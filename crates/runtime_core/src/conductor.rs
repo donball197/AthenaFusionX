@@ -1,4 +1,3 @@
-// crates/runtime_core/src/conductor.rs
 use crate::factory::AgentFactory;
 use crate::metrics::METRICS;
 use crate::neural_agent::ContextPacket;
@@ -14,7 +13,6 @@ const ESTIMATED_TOKENS: u32 = 2_000;
 
 pub struct Conductor;
 
-// Grouping arguments to satisfy clippy's too_many_arguments check
 pub struct TurnContext<'a> {
     pub orch: &'a Orchestrator,
     pub client: &'a Client,
@@ -33,11 +31,11 @@ impl Conductor {
         METRICS.api_calls.fetch_add(1, Ordering::Relaxed);
 
         let model = AgentFactory::get_model_for_turn(turn, errors);
-        let _ = wait_for_quota(model, ESTIMATED_TOKENS).await;
+        let _ = wait_for_quota(&model, ESTIMATED_TOKENS).await;
 
         let neural_ctx = ContextPacket {
             system_prompt: Some(profile.persona.clone()),
-            model_override: Some(model.to_string()),
+            model_override: Some(model.clone()),
             ..Default::default()
         };
 
@@ -53,13 +51,13 @@ impl Conductor {
             if e.contains("STALE") || e.contains("500") || e.contains("RESOURCE_EXHAUSTED") || e.contains("INTERNAL") || e.contains("CONTEXT_OVERFLOW") {
                 METRICS.task_failures.fetch_add(1, Ordering::Relaxed);
                 
-                let failover = AgentFactory::failover_model(model);
+                let failover = AgentFactory::failover_model(&model);
                 tracing::warn!("[CONDUCTOR] {} failed → failing over to {}", model, failover);
-                let _ = wait_for_quota(failover, ESTIMATED_TOKENS).await;
+                let _ = wait_for_quota(&failover, ESTIMATED_TOKENS).await;
 
                 let fail_ctx = ContextPacket {
                     system_prompt: Some(profile.persona.clone()),
-                    model_override: Some(failover.to_string()),
+                    model_override: Some(failover.clone()),
                     ..Default::default()
                 };
                 return ctx.orch.run(prompt, fail_ctx, ctx.client, ctx.api_key, ctx.tx).await;

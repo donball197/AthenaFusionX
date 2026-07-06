@@ -5,7 +5,4 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-candle-core = "0.10.2"
-candle-nn = "0.10.2"
-candle-transformers = "0.10.2"
-tokenizers = "0.23.1"
+# ⚡ HEAVY CANDLE DEPENDENCIES PURGED FOR LITERT MINION TRANSITION

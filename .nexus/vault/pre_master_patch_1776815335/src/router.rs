@@ -40,7 +40,7 @@ pub struct IntelligentRouter;
 impl IntelligentRouter {
     pub fn classify(actual_directive: &str) -> DirectiveClass {
         let d = actual_directive.to_lowercase();
-        
+
         if ["cargo check", "cargo test", "git status", "ls ", "find "].iter().any(|k| d.contains(k)) {
             return DirectiveClass::ShellOp;
         }
@@ -57,7 +57,7 @@ impl IntelligentRouter {
         // ⚡ FIX: Isolate the original command from the enriched Git schema
         let start_idx = directive.find("DIRECTIVE: ").map(|i| i + 11).unwrap_or(0);
         let user_cmd = &directive[start_idx..];
-        
+
         let class = Self::classify(user_cmd);
 
         match class {

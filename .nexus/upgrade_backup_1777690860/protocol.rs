@@ -36,7 +36,7 @@ impl GovernanceLog {
     /// record: Incremental update of the system root hash.
     pub fn record(&mut self, action: AgentAction, actor_id: &str) {
         let leaf = MerkleLeaf::new(action, actor_id);
-        
+
         // Incremental: Root = Hash(OldRoot + NewLeaf)
         let mut hasher = DefaultHasher::new();
         self.root_hash.hash(&mut hasher);
@@ -44,7 +44,7 @@ impl GovernanceLog {
         self.root_hash = hasher.finish();
 
         self.history.push(leaf);
-        
+
         if self.history.len() % 10 == 0 {
             info!("\x1b[34m[GOVERNANCE] Checkpoint: Root=0x{:x} (Size: {})\x1b[0m", self.root_hash, self.history.len());
         }

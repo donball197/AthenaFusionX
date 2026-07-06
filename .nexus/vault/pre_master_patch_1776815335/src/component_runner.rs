@@ -38,7 +38,7 @@ impl AgentComponent {
     pub fn spawn(id: &str, _caps: Capabilities) -> AgentHandle {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let agent_id = id.to_string();
-        
+
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 println!("\x1b[36m>> [MICRO-AGENT {}] Directive received: {}\x1b[0m", agent_id, msg);
@@ -50,6 +50,6 @@ impl AgentComponent {
 
     // Generic wrapper to swallow the 3 extra legacy arguments
     pub fn spawn_legacy<A, T, M>(id: &str, caps: Capabilities, _agent: A, _tx: T, _memory: M) -> AgentHandle {
-        Self::spawn(id, caps) 
+        Self::spawn(id, caps)
     }
 }

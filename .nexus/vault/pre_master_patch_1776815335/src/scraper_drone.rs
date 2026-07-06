@@ -20,7 +20,7 @@ pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Res
 
     let (title, full_strand) = {
         let document = Html::parse_document(&response);
-        
+
         let title_selector = Selector::parse("title, h1").unwrap();
         let title_inner = document.select(&title_selector).next()
             .map(|e| e.text().collect::<String>())
@@ -29,7 +29,7 @@ pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Res
         // Expanded selector to catch more article bodies
         let body_selector = Selector::parse("p, pre, code, article, .content").unwrap();
         let mut content = Vec::new();
-        
+
         for element in document.select(&body_selector).take(50) {
             let text: String = element.text().collect::<String>();
             let trimmed = text.trim();
@@ -39,7 +39,7 @@ pub async fn execute_mission(url: &str, memory: Arc<Mutex<MemoryPalace>>) -> Res
             }
         }
         (title_inner, content.join("\n\n"))
-    }; 
+    };
 
     if full_strand.is_empty() {
         return Err(anyhow::anyhow!("SCRAPE_FAULT: Page returned no readable text. It may be heavily JavaScript-rendered or completely blocked."));

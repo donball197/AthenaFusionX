@@ -26,7 +26,7 @@ impl HypothesisEngine {
         objective: &str,
         fault_log: &str,
     ) -> Result<GoTResolution> {
-        let system_instruction = 
+        let system_instruction =
             "You are the NEXUS Graph of Thoughts (GoT) Engine.\n\
              A task has failed. You must perform non-linear reasoning:\n\
              1. Analyze the fault.\n\
@@ -44,17 +44,18 @@ impl HypothesisEngine {
                     "parts": [{ "text": format!("OBJECTIVE:\n{}\n\nFAULT TRACE:\n{}", objective, fault_log) }]
                 }
             ],
-            "generationConfig": { 
-                "temperature": 0.3, 
-                "responseMimeType": "application/json" 
+            "generationConfig": {
+                "temperature": 0.3,
+                "responseMimeType": "application/json"
             }
         });
 
         let base_url = std::env::var("NEXUS_API_GATEWAY")
             .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
-        
+
         // We use the heavier 31B model for GoT resolution because reasoning is complex
-        let url = format!("{}/v1beta/models/gemma-4-31b-it:generateContent?key={}", base_url, api_key);
+        let url =
+            format!("{}/v1beta/models/gemma-4-31b-it:generateContent?key={}", base_url, api_key);
 
         let res = client.post(&url).json(&payload).send().await?;
         let body: serde_json::Value = res.json().await?;
@@ -63,12 +64,13 @@ impl HypothesisEngine {
             return Err(anyhow!("GoT API Error: {}", err));
         }
 
-        let text = body.pointer("/candidates/0/content/parts/0/text")
+        let text = body
+            .pointer("/candidates/0/content/parts/0/text")
             .and_then(|v| v.as_str())
             .unwrap_or("{}");
 
-        let resolution: GoTResolution = serde_json::from_str(text)
-            .map_err(|e| anyhow!("GoT Schema Fracture: {}", e))?;
+        let resolution: GoTResolution =
+            serde_json::from_str(text).map_err(|e| anyhow!("GoT Schema Fracture: {}", e))?;
 
         Ok(resolution)
     }

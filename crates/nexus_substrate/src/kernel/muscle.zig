@@ -45,10 +45,10 @@ export fn zx_vmo_create_native(size: usize) u32 {
     if (next_handle >= MAX_SLOTS) return 0;
     const flags = posix.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true };
     const ptr = posix.mmap(null, size, posix.PROT.READ | posix.PROT.WRITE, flags, -1, 0) catch return 0;
-    
+
     const h = next_handle;
     next_handle += 1;
-    
+
     handle_table[decode_slot(h)] = VmoMetadata{
         .ptr = @alignCast(ptr.ptr),
         .size = size,
@@ -94,7 +94,7 @@ export fn zx_vmo_get_info(h: u32, out_info: *VmoInfo) i32 {
     const gen = decode_generation(h);
     const meta = handle_table[slot] orelse return -1;
     if (meta.magic != SENTINEL_MAGIC or meta.generation != gen) return -1;
-    
+
     out_info.* = .{
         .handle = h,
         .size = @intCast(meta.size),
@@ -110,7 +110,7 @@ export fn zx_vmo_calculate_entropy(h: u32) f32 {
     const gen = decode_generation(h);
     const meta = handle_table[slot] orelse return 0.0;
     if (meta.magic != SENTINEL_MAGIC or meta.generation != gen) return 0.0;
-    
+
     var counts = [_]u32{0} ** 256;
     for (meta.ptr[0..meta.size]) |byte| counts[byte] += 1;
     var entropy: f32 = 0.0;

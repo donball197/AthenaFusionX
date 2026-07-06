@@ -13,7 +13,7 @@ impl ArbiterAgent {
 
     pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
         let dangerous_patterns = [
-            "rm -rf /", "mkfs", "> /dev/sda", "chmod 777", 
+            "rm -rf /", "mkfs", "> /dev/sda", "chmod 777",
             "/etc/shadow", "mv /etc/", ":(){ :|:& };:"
         ];
 
@@ -21,12 +21,12 @@ impl ArbiterAgent {
         for pattern in dangerous_patterns.iter() {
             if normalized.contains(pattern) {
                 return Err(format!(
-                    "SANDBOX_VIOLATION: Critical threat pattern '{}' detected in {}.", 
+                    "SANDBOX_VIOLATION: Critical threat pattern '{}' detected in {}.",
                     pattern, action_type
                 ));
             }
         }
-        
+
         if normalized.contains("../../../") {
             return Err("SANDBOX_VIOLATION: Directory traversal attempt blocked.".to_string());
         }
@@ -40,6 +40,6 @@ impl ArbiterAgent {
         for i in 0..alpha_vector.len() {
             diff += (alpha_vector[i] - beta_vector[i]).abs();
         }
-        diff < 0.5 
+        diff < 0.5
     }
 }

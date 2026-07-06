@@ -1,0 +1,23 @@
+[
+  {
+    "id": "18bf68236218d777",
+    "path": "ui/src/app.css",
+    "hash": "033f40cb7c023a16",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783258478"
+  },
+  {
+    "id": "18bf682583ef802f",
+    "path": "ui/src/lib/components/WorkspaceShell.svelte",
+    "hash": "0b3d24af7c16369b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783258487"
+  },
+  {
+    "id": "18bf682ebb262b10",
+    "path": "ui/src/app.css",
+    "hash": "59ab56ed7dc49ada",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783258527"
+  }
+]

@@ -55,7 +55,7 @@ pub async fn send_task(
                     _ => {
                         // ⚡ If no action tags, the model is likely speaking to you. End mission.
                         session_obs.push("System: Mission target likely achieved or clarification needed.".into());
-                        break; 
+                        break;
                     }
                 }
             }

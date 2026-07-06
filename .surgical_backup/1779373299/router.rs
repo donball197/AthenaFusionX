@@ -7,7 +7,7 @@ pub enum DirectiveClass {
     TargetedEdit { file_hint: String },
     RepoDoctor,
     SecurityAudit,
-    WasmForge, 
+    WasmForge,
     Inquiry,
     FeatureBuild,
     General,

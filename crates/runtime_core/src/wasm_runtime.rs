@@ -22,17 +22,19 @@ impl WasmRuntime {
 
     pub fn run_with_buffer(bytes: &[u8], func_name: &str, data: &[u8]) -> Result<f32> {
         let engine = Self::make_engine()?;
-        let module = Module::from_binary(&engine, bytes)
-            .map_err(|e| anyhow!("WASM_LOAD_FAULT: {}", e))?;
+        let module =
+            Module::from_binary(&engine, bytes).map_err(|e| anyhow!("WASM_LOAD_FAULT: {}", e))?;
         let mut store = Store::new(&engine, ());
         store.set_fuel(50_000_000)?;
         let instance = Instance::new(&mut store, &module, &[])
             .map_err(|e| anyhow!("WASM_INST_FAULT: {}", e))?;
 
-        let memory = instance.get_memory(&mut store, "memory")
+        let memory = instance
+            .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow!("WASM module must export memory"))?;
 
-        let get_ptr = instance.get_typed_func::<(), i32>(&mut store, "get_buffer_ptr")
+        let get_ptr = instance
+            .get_typed_func::<(), i32>(&mut store, "get_buffer_ptr")
             .map_err(|e| anyhow!("Missing get_buffer_ptr export: {}", e))?;
         let ptr = get_ptr.call(&mut store, ())? as usize;
 
@@ -41,10 +43,12 @@ impl WasmRuntime {
         }
 
         // WASMtime 43+ API: Use .write() directly on the memory slice
-        memory.write(&mut store, ptr, data)
+        memory
+            .write(&mut store, ptr, data)
             .map_err(|e| anyhow!("WASM_MEMORY_WRITE_FAULT: {}", e))?;
 
-        let func = instance.get_typed_func::<i32, f32>(&mut store, func_name)
+        let func = instance
+            .get_typed_func::<i32, f32>(&mut store, func_name)
             .map_err(|e| anyhow!("WASM_FUNC_MISSING: {}", e))?;
 
         Ok(func.call(&mut store, data.len() as i32)?)

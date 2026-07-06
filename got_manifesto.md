@@ -1,0 +1,1 @@
+Graph of Thoughts allows for non-linear exploration of ideas, whereas Chain of Thought is restricted to a single path. By enabling branching and merging, Graph of Thoughts can recover from suboptimal reasoning steps that would derail Chain of Thought. This structure mirrors complex human problem-solving more accurately than the linear progression of standard prompting.

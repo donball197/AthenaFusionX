@@ -29,7 +29,7 @@ impl SystemMonitor {
 
         // Direct method call replacement
         let cpu_load = self.sys.global_cpu_usage() / 100.0;
-        
+
         // Convert raw bytes to Gigabytes
         let ram_gb   = (self.sys.used_memory() as f32) / 1_073_741_824.0;
         let total_ram_gb = (self.sys.total_memory() as f32) / 1_073_741_824.0;

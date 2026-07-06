@@ -44,7 +44,7 @@ impl MicroAgent {
 
         // ⚡ ENHANCED PROMPT ARCHITECTURE
         let mut full_context = String::new();
-        
+
         if let Some(sys) = ctx.system_prompt {
             full_context.push_str(&format!("SYSTEM: {}\n\n", sys));
         }
@@ -65,9 +65,9 @@ impl MicroAgent {
 
         let payload = json!({
             "contents": [{ "role": "user", "parts": [{ "text": combined_text }] }],
-            "generationConfig": { 
-                "temperature": (resonance * 1.2).clamp(0.05, 0.7), 
-                "maxOutputTokens": 4096 
+            "generationConfig": {
+                "temperature": (resonance * 1.2).clamp(0.05, 0.7),
+                "maxOutputTokens": 4096
             }
         });
 
@@ -84,7 +84,7 @@ impl MicroAgent {
                     let line = String::from_utf8_lossy(&line_bytes);
                     let clean = line.trim_start_matches("data: ").trim();
                     if clean.is_empty() || clean == "[DONE]" { continue; }
-                    
+
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
                         if let Some(token) = val.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
                             full_response.push_str(token);

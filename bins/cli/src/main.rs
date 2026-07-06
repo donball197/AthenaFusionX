@@ -19,7 +19,8 @@ async fn main() -> anyhow::Result<()> {
     println!("\x1b[36m==================================================\x1b[0m");
 
     let api_key = std::env::var("GEMINI_API_KEY")
-        .expect("Fatal: GEMINI_API_KEY not found in .env file.");
+        .expect("Fatal: GEMINI_API_KEY not found in .env file.").trim().to_string();
+
     let (tx, mut rx) = broadcast::channel::<String>(256);
     let memory = Arc::new(Mutex::new(MemoryPalace::new("nexus_cli.db").await?));
     let vmo_state = Arc::new(Mutex::new(VmoState::default()));
@@ -28,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let orchestrator = Arc::new(Orchestrator::new());
     let client = reqwest::Client::new();
 
+    // Background message handler
     tokio::spawn(async move {
         let mut last_type = String::new();
         while let Ok(msg) = rx.recv().await {
@@ -36,7 +38,6 @@ async fn main() -> anyhow::Result<()> {
                 let payload = parsed["payload"].as_str().unwrap_or("");
                 
                 match msg_type {
-                    // ⚡ SUTURE: Silently consume NEURAL_THOUGHT so the CLI remains purely operational.
                     "NEURAL_THOUGHT" => {},
                     "NEURAL_STREAM" => {
                         if last_type != "NEURAL_STREAM" { 

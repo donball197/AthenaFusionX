@@ -121,9 +121,9 @@ impl MemoryPalace {
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT n.id, n.origin, n.directive, n.result, n.timestamp 
+            "SELECT n.id, n.origin, n.directive, n.result, n.timestamp
                                 FROM neural_context n
-                                JOIN memory_search m ON n.id = m.rowid 
+                                JOIN memory_search m ON n.id = m.rowid
                                 WHERE memory_search MATCH ? ORDER BY rank LIMIT 10",
         )
         .bind(query)

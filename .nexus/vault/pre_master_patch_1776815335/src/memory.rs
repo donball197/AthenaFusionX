@@ -15,8 +15,8 @@ pub struct AgentMemory {
     pub timestamp: String,
 }
 
-pub struct MemoryPalace { 
-    pub pool: SqlitePool 
+pub struct MemoryPalace {
+    pub pool: SqlitePool
 }
 
 impl MemoryPalace {
@@ -26,7 +26,7 @@ impl MemoryPalace {
             .max_connections(5)
             .connect(&format!("sqlite:{}", db_path))
             .await?;
-        
+
         // ⚡ EVOLUTION: Enable Write-Ahead Logging
         // This prevents the "Database is Locked" errors during multi-turn missions.
         sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
@@ -61,7 +61,7 @@ impl MemoryPalace {
     pub async fn store_memory(&self, origin: &str, directive: &str, result: &str) -> Result<(), sqlx::Error> {
         let res = sqlx::query("INSERT INTO neural_context (origin, directive, result) VALUES (?, ?, ?)")
             .bind(origin).bind(directive).bind(result).execute(&self.pool).await?;
-        
+
         let row_id = res.last_insert_rowid();
         sqlx::query("INSERT INTO memory_search (rowid, directive, result) VALUES (?, ?, ?)")
             .bind(row_id).bind(directive).bind(result).execute(&self.pool).await?;
@@ -84,9 +84,9 @@ impl MemoryPalace {
     }
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT n.id, n.origin, n.directive, n.result, n.timestamp 
+        let rows = sqlx::query("SELECT n.id, n.origin, n.directive, n.result, n.timestamp
                                 FROM neural_context n
-                                JOIN memory_search m ON n.id = m.rowid 
+                                JOIN memory_search m ON n.id = m.rowid
                                 WHERE memory_search MATCH ? ORDER BY rank LIMIT 10")
             .bind(query).fetch_all(&self.pool).await?;
 

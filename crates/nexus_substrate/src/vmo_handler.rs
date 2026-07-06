@@ -20,23 +20,20 @@ pub type VmoHandle = u32;
 
 pub struct SafeVmo {
     pub handle: VmoHandle,
-    pub data:   Vec<u8>,
+    pub data: Vec<u8>,
     pub timestamp: u64,
 }
 
 pub struct VmoHandler {
     /// Sharded concurrent map — no global lock on reads or cross-shard writes.
-    registry:    DashMap<VmoHandle, Arc<SafeVmo>>,
+    registry: DashMap<VmoHandle, Arc<SafeVmo>>,
     /// Atomic counter replaces the second RwLock entirely.
     next_handle: AtomicU32,
 }
 
 impl VmoHandler {
     pub fn new() -> Self {
-        Self {
-            registry:    DashMap::new(),
-            next_handle: AtomicU32::new(1),
-        }
+        Self { registry: DashMap::new(), next_handle: AtomicU32::new(1) }
     }
 
     pub fn allocate_cognitive_window(&self, raw_data: &[u8]) -> Result<VmoHandle, String> {

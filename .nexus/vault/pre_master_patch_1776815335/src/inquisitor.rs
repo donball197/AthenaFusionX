@@ -17,14 +17,14 @@ impl Inquisitor {
             .output()
             .map_err(|e| anyhow::anyhow!("NPM binary not found: {}", e))?;
 
-        if output.status.success() { Ok("NOMINAL".into()) } 
+        if output.status.success() { Ok("NOMINAL".into()) }
         else { Ok(String::from_utf8_lossy(&output.stderr).to_string()) }
     }
 
     pub fn audit_backend() -> anyhow::Result<String> {
         let output = Command::new("cargo").args(["check"]).output()
             .map_err(|e| anyhow::anyhow!("Cargo not found: {}", e))?;
-        if output.status.success() { Ok("NOMINAL".into()) } 
+        if output.status.success() { Ok("NOMINAL".into()) }
         else { Ok(String::from_utf8_lossy(&output.stderr).to_string()) }
     }
 
@@ -32,7 +32,7 @@ impl Inquisitor {
     pub fn probe_shadow_activity() -> Vec<String> {
         let mut alerts = Vec::new();
         let targets = ["./ziggy-llm", "./target", "./src", "./vault"];
-        
+
         for path in targets {
             if let Ok(meta) = fs::metadata(path) {
                 if let Ok(modified) = meta.modified() {

@@ -46,8 +46,8 @@ impl CorticalLoop {
             println!("\x1b[90m  -> Strategy: {}\x1b[0m", h);
         }
 
-        for turn in 1..=15 {
-            println!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 15\x1b[0m", turn);
+        for turn in 1..=8 {
+            println!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 8\x1b[0m", turn);
 
             if let Some(best_node) = self.graph.select_best_hypothesis().cloned() {
                 let h_id = best_node.id;
@@ -55,18 +55,54 @@ impl CorticalLoop {
                 let current_belief = best_node.belief_score;
                 println!("\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}", current_belief, h_content);
 
+                // --- ⚡ HEURISTIC CONTEXT PRUNING (API STARVATION) ---
                 let mut evidence_history = String::new();
+                let mut relevant_obs = Vec::new();
+                
                 for edge in &self.graph.edges {
                     if edge.target == h_id && (edge.relation == EdgeRelation::Supports || edge.relation == EdgeRelation::Contradicts) {
                         if let Some(obs) = self.graph.nodes.get(&edge.source) {
-                            evidence_history.push_str(&format!("- [{:?}] {}\n", edge.relation, obs.content));
+                            relevant_obs.push((edge.relation.clone(), obs.content.clone()));
                         }
                     }
                 }
+
+                // Keep failures (we must learn from mistakes) + the 3 most recent successes
+                let mut filtered_obs = Vec::new();
+                let mut success_count = 0;
+                
+                for (relation, content) in relevant_obs.into_iter().rev() {
+                    let is_failure = content.contains("FAILED") || content.contains("STDERR:") || relation == EdgeRelation::Contradicts;
+                    if is_failure {
+                        filtered_obs.push((relation, content));
+                    } else if success_count < 3 {
+                        filtered_obs.push((relation, content));
+                        success_count += 1;
+                    }
+                }
+
+                // Re-reverse so chronological order is maintained, and cap at 3000 chars total
+                filtered_obs.reverse();
+                for (relation, content) in filtered_obs {
+                    let truncated = if content.len() > 800 {
+                        format!("{}... [TRUNCATED]", &content[..800])
+                    } else {
+                        content
+                    };
+                    evidence_history.push_str(&format!("- [{:?}] {}\n", relation, truncated));
+                    if evidence_history.len() > 3000 { break; }
+                }
+
                 if evidence_history.is_empty() { evidence_history = "None yet.".to_string(); }
+                // --- END PRUNING ---
+                
+                // ⚡ SUTURE: Cap the evidence history to prevent context blowout from massive loop accumulation
+                let safe_history: String = evidence_history.chars().rev().take(12000).collect::<String>().chars().rev().collect();
 
                 println!("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m");
-                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, &h_content, &evidence_history).await {
+                
+                // ⚡ GROUNDING: Pass world_context so the agent sees the actual file tree
+                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, &h_content, &safe_history, &world_context).await {
                     Ok(action) => action,
                     Err(e) => { println!("\x1b[31m>> [STRATEGIST FAULT]\x1b[0m {}", e); continue; }
                 };
@@ -84,7 +120,6 @@ impl CorticalLoop {
                                 let mut executor = RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
                                 
                                 for action in actions {
-                                    // LAZARUS SAFEGUARD FOR MUTATIONS
                                     match &action {
                                         AgentAction::PatchFunction { path, .. } | AgentAction::DiffPatch { path, .. } | AgentAction::WriteFile { path, .. } => {
                                             println!("\x1b[35m>> [LAZARUS] Taking atomic snapshot of {}...\x1b[0m", path);
@@ -115,8 +150,8 @@ impl CorticalLoop {
                                         if let Some(updated_node) = self.graph.nodes.get(&h_id) {
                                             println!("\x1b[1;32m>> [CORTEX] Strategy Belief mathematically updated to {:.2}\x1b[0m", updated_node.belief_score);
                                             
-                                            // ⚡ EXIT CONDITION: If belief is high AND it proved compilation/write success!
-                                            if updated_node.belief_score >= 0.85 && (evidence.contains("[WRITE_OK]") || evidence.contains("[PATCH_FUNCTION_OK]") || evidence.contains("[CMD_OK]")) {
+                                            // ⚡ EXIT CONDITION
+                                            if updated_node.belief_score >= 0.85 && (evidence.contains("[WRITE_OK]") || evidence.contains("[PATCH_FUNCTION_OK]") || evidence.contains("[CMD_OK]") || evidence.contains("[REPORT_EXPORTED]")) {
                                                 println!("\x1b[1;36m>> [CORTEX] STRATEGY PROVEN AND FIX APPLIED! Mission Accomplished.\x1b[0m");
                                                 return Ok(());
                                             }

@@ -10,9 +10,9 @@ impl WasmForge {
     pub async fn synthesize_cell(logic_code: &str) -> Result<String> {
         let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
         let build_dir = format!("/tmp/nexus_forge_{}", ts);
-        
+
         fs::create_dir_all(format!("{}/src", build_dir)).await?;
-        
+
         let toml = r#"
 [package]
 name = "nexus_dynamic_cell"

@@ -12,12 +12,12 @@ pub struct ModelQuota {
 impl ModelQuota {
     fn for_model(model: &str) -> Self {
         match model {
-                        m if m.contains("flash") => Self { rpm_limit: 2, tpm_limit: 60_000 },
-            m if m.contains("31b")   => Self { rpm_limit: 3, tpm_limit: 50_000 },
-            m if m.contains("26b")   => Self { rpm_limit: 3, tpm_limit: 50_000 },
-            m if m.contains("27b")   => Self { rpm_limit: 4, tpm_limit: 8_000 },
-            _                        => Self { rpm_limit: 3, tpm_limit: 30_000 },
-
+            m if m.contains("flash-lite") => Self { rpm_limit: 10, tpm_limit: 100_000 },
+            m if m.contains("flash") => Self { rpm_limit: 5, tpm_limit: 60_000 },
+            m if m.contains("31b") => Self { rpm_limit: 3, tpm_limit: 50_000 },
+            m if m.contains("pro") => Self { rpm_limit: 2, tpm_limit: 30_000 },
+            m if m.contains("research") => Self { rpm_limit: 1, tpm_limit: 10_000 },
+            _ => Self { rpm_limit: 3, tpm_limit: 30_000 },
         }
     }
 }

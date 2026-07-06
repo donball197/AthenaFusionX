@@ -2,8 +2,17 @@
 name = "nexus_node"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 nexus_runtime_core = { path = "../../crates/runtime_core" }
-tokio = { workspace = true }
+nexus_substrate = { path = "../../crates/nexus_substrate" }
+tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+base64 = "0.22"

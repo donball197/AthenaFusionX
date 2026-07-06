@@ -10,18 +10,20 @@ impl Scheduler {
     /// Returns the IDs of tasks that are newly marked as Ready.
     pub fn prepare_ready_tasks(graph: &mut TaskGraph) -> Vec<String> {
         let mut newly_ready = Vec::new();
-        
+
         // We must clone the keys to avoid mutably borrowing the graph while iterating
         let node_ids: Vec<String> = graph.nodes.keys().cloned().collect();
 
         for id in node_ids {
             let mut is_ready = false;
-            
+
             // Check dependency status immutably
             if let Some(node) = graph.nodes.get(&id) {
                 if node.status == TaskStatus::Pending || node.status == TaskStatus::Retrying {
                     let all_deps_met = node.deps.iter().all(|dep_id| {
-                        graph.nodes.get(dep_id)
+                        graph
+                            .nodes
+                            .get(dep_id)
                             .map(|n| n.status == TaskStatus::Completed)
                             .unwrap_or(false)
                     });
@@ -59,7 +61,7 @@ impl Scheduler {
                 VerificationResult::Retry(reason) => {
                     node.execution_state.attempts += 1;
                     node.execution_state.last_error = Some(reason.clone());
-                    
+
                     if node.execution_state.attempts >= Self::MAX_RETRIES {
                         node.status = TaskStatus::Escalated; // Budget exhausted
                     } else {

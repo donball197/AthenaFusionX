@@ -11,7 +11,7 @@ impl ContextBudget {
     pub fn security() -> Self { Self { max_file_chars: 20_000, max_obs_lines: 10, max_schema_chars: 2_000, max_output_tokens: 8192 } }
 }
 
-pub struct AgentProfile { pub class: DirectiveClass, pub primary_model: &'static str, pub max_turns: u8, pub budget: ContextBudget, pub persona: String }
+pub struct AgentProfile { pub class: DirectiveClass, pub primary_model: String, pub max_turns: u8, pub budget: ContextBudget, pub persona: String }
 
 pub struct IntelligentRouter;
 impl IntelligentRouter {
@@ -33,6 +33,7 @@ MANDATORY SCHEMA:
   { "type": "patch_function", "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." },
   { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." },
   { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
+  { "type": "read_function", "path": "...", "function_name": "...", "reasoning": "..." },
   { "type": "read_file", "path": "...", "reasoning": "..." },
   { "type": "execute_command", "command": "...", "reasoning": "..." },
   { "type": "search_memory", "query": "...", "reasoning": "..." },
@@ -41,14 +42,21 @@ MANDATORY SCHEMA:
 
 CRITICAL RULES:
 1. NEVER use `write_file` to modify an existing function. You MUST use `patch_function` or `diff_patch`.
+2. ALWAYS prefer `read_function` over `read_file` if you only need to inspect a specific function. This dramatically saves context space.
 2. `patch_function` requires `path`, `function_name`, and the full replacement code in `new_body`.
 3. `diff_patch` requires `search` (the exact old string) and `replace` (the exact new string). DO NOT output unified diffs or use a `diff` field.
 4. When you have achieved the task objective, include the `halt` action in your JSON array.
 5. You MUST escape all newlines inside JSON strings as `\n` (e.g. "line1\nline2")."#;
 
         let (primary_model, budget) = match class {
-            DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => ("gemma-4-31b-it", ContextBudget::doctor()),
-            _ => ("gemini-3.1-flash-lite", ContextBudget::standard()),
+            DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => (
+                crate::model_config::get_heavy_models().first().cloned().unwrap_or_else(|| "gemini-3.1-flash-lite".to_string()), 
+                ContextBudget::doctor()
+            ),
+            _ => (
+                crate::model_config::get_light_models().first().cloned().unwrap_or_else(|| "gemini-3.1-flash-lite".to_string()), 
+                ContextBudget::standard()
+            ),
         };
 
         AgentProfile { class, primary_model, max_turns: 8, budget, persona: persona.to_string() }

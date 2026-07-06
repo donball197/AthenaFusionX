@@ -66,14 +66,14 @@ impl RoboticExecutor {
                         Ok(b64) => {
                             println!(">> [FORGE] Dispatching KERNEL_GENESIS payload to UI.");
                             results.push("WASM_SYNTHESIS_COMPLETE".into());
-                            
+
                             // ⚡ V14: Direct WebSocket push using the global TX channel
                             // We construct a specific KERNEL_GENESIS message to bypass log parsing.
                             let ws_payload = serde_json::json!({
                                 "type": "KERNEL_GENESIS",
                                 "payload": b64
                             }).to_string();
-                            
+
                             // We have to route this through the active FSM transaction.
                             // The easiest way is to just push it as a raw JSON string to results,
                             // and the `task_manager.rs` loop will forward it if we format it right.

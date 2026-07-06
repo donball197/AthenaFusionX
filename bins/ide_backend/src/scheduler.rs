@@ -66,6 +66,10 @@ impl DeterministicScheduler {
 
     #[allow(dead_code)]
     pub fn dispatch(&mut self) -> Option<CognitiveTask> {
-        if self.queue.is_empty() { None } else { Some(self.queue.remove(0)) }
+        if self.queue.is_empty() {
+            None
+        } else {
+            Some(self.queue.remove(0))
+        }
     }
 }

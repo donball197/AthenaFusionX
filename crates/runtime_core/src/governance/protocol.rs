@@ -3,7 +3,9 @@ use crate::agent_protocol::AgentAction;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,10 @@ impl GovernanceLog {
         Self::default()
     }
 
+    pub fn init_shared() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self::init()))
+    }
+
     /// record: Chains a new leaf into the Merkle root.
     /// Root = Hash(OldRoot ++ NewLeaf)
     pub fn record(&mut self, action: AgentAction, actor_id: &str) {
@@ -50,7 +56,7 @@ impl GovernanceLog {
 
         if self.history.len().is_multiple_of(10) {
             info!(
-                "\x1b[34m[GOVERNANCE] Checkpoint: Root=0x{:x} (Size: {})\x1b[0m",
+                "[34m[GOVERNANCE] Checkpoint: Root=0x{:x} (Size: {})[0m",
                 self.root_hash,
                 self.history.len()
             );

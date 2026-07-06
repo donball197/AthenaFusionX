@@ -23,7 +23,7 @@ pub struct SwarmUnit {
 
 pub fn spawn_swarm(count: u32) -> Vec<SwarmUnit> {
     let mut swarm = Vec::new();
-    
+
     for i in 1..=count {
         let sector = match i {
             1 => "Main/Alloc".to_string(),
@@ -38,6 +38,6 @@ pub fn spawn_swarm(count: u32) -> Vec<SwarmUnit> {
             active: true,
         });
     }
-    
+
     swarm
 }

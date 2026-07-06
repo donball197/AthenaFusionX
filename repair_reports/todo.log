@@ -1,0 +1,2 @@
+./crates/nexus_substrate/src/kernel/temp_vmo.rs:15:        Ok(b"// TODO: Implement real VMO-backed file read".to_vec())
+./crates/runtime_core/src/orchestrator_v2/verifier.rs:59:        // TODO: Phase 2 Low-temp Gemma API semantic verification.

@@ -69,3 +69,8 @@ pub fn spawn(
         }
     });
 }
+
+            // Low memory maintenance for Duet 2
+            let mem = memory.lock().await;
+            let _ = mem.lightweight_maintenance().await;
+

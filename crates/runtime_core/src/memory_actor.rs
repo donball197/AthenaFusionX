@@ -1,5 +1,5 @@
-use tokio::sync::{mpsc, oneshot};
 use std::collections::HashMap;
+use tokio::sync::{mpsc, oneshot};
 
 pub enum MemoryCommand {
     Store { key: String, value: Vec<u8> },
@@ -19,7 +19,9 @@ impl MemoryActor {
         let mut db = HashMap::new();
         while let Some(cmd) = self.rx.recv().await {
             match cmd {
-                MemoryCommand::Store { key, value } => { db.insert(key, value); }
+                MemoryCommand::Store { key, value } => {
+                    db.insert(key, value);
+                }
                 MemoryCommand::Load { key, respond_to } => {
                     let _ = respond_to.send(db.get(&key).cloned());
                 }

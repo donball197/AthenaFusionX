@@ -2,6 +2,7 @@
 name = "nexus_search"
 edition.workspace = true
 version.workspace = true
+build = "build.rs"
 
 [dependencies]
 turbovec = "0.1"

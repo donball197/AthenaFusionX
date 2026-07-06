@@ -11,7 +11,7 @@ pub struct ResonatorCore {
 
 impl ResonatorCore {
     pub fn new() -> Self {
-        Self { 
+        Self {
             frequency: 528,
             governor: ThermalGovernor::new(),
         }
@@ -19,7 +19,7 @@ impl ResonatorCore {
 
     pub fn sync(&self) {
         let status = self.governor.get_status();
-        println!("\x1b[1;34m>> [RESONATOR] Frequency Locked: {}Hz | Thermal: {}\x1b[0m", 
+        println!("\x1b[1;34m>> [RESONATOR] Frequency Locked: {}Hz | Thermal: {}\x1b[0m",
             self.frequency, status);
     }
 

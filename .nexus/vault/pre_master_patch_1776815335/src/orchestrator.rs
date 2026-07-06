@@ -25,7 +25,7 @@ impl Orchestrator {
         let mut combined_text = String::new();
         if let Some(ref sys) = ctx.system_prompt { combined_text.push_str(&format!("SYSTEM DIRECTIVE:\n{}\n\n", sys)); }
         if let Some(ref content) = ctx.current_content { if !content.is_empty() { combined_text.push_str(&format!("CONTEXT:\n{}\n\n", content)); } }
-        
+
         if !ctx.recent_logs.is_empty() {
             let logs = ctx.recent_logs.join("\n>> ");
             combined_text.push_str(&format!("RECENT OBSERVATIONS (TEAM LOGS):\n>> {}\n\n", logs));
@@ -49,8 +49,8 @@ impl Orchestrator {
             attempts += 1;
             match client.post(&url).json(&payload).timeout(Duration::from_secs(45)).send().await {
                 Ok(res) => {
-                    if !res.status().is_success() { 
-                        return Err(format!("API_FAULT [model={} status={}]: {}", model, res.status(), res.text().await.unwrap_or_default())); 
+                    if !res.status().is_success() {
+                        return Err(format!("API_FAULT [model={} status={}]: {}", model, res.status(), res.text().await.unwrap_or_default()));
                     }
 
                     let mut full_response = String::new();
@@ -87,7 +87,7 @@ impl Orchestrator {
                 }
             }
         }
-        
+
         Err(last_err)
     }
 }

@@ -6,6 +6,7 @@ use tokio::time::{interval, Duration};
 use nexus_substrate::memory::MemoryPalace;
 use nexus_runtime_core::shared_state::VmoState;
 use nexus_runtime_core::distributed_scheduler::DistributedScheduler;
+use nexus_runtime_core::hypothesis_engine::HypothesisEngine;
 
 pub fn init() {
     tracing::info!(">> [SELF_HEALING] Suture engine initialised");
@@ -49,13 +50,25 @@ pub fn spawn(
                             "payload": format!("[HEAL] cargo check FAILED — engaging RepoDoctor")})
                             .to_string()
                     );
-                    let directive = format!(
+
+                    let mut directive = format!(
                         "diagnose and fix the following cargo check errors:\n{}",
                         &stderr[..stderr.len().min(2000)]
                     );
+
+                    // ⚡ ENGAGE GoT HYPOTHESIS ENGINE
+                    if let Ok(got) = HypothesisEngine::evaluate_fault(&client, &api_key, "Cargo check failing", &stderr).await {
+                        tracing::info!("[GOT] Root Cause Selected: {}", got.root_cause_analysis);
+                        let _ = tx.send(serde_json::json!({"type":"LOG_EVENT", "payload": format!("[GOT] Root Cause: {}", got.root_cause_analysis)}).to_string());
+                        directive = format!("{}\n\nGoT RCA: {}\nProposed Fix: {}", directive, got.root_cause_analysis, got.selected_path.proposed_fix_action);
+                    }
+
                     nexus_runtime_core::task_manager::send_task(
-                        orchestrator.clone(), &client, &api_key, &directive,
-                        memory.clone(), vmo_state.clone(), tx.clone(), dist.clone()
+                        orchestrator.clone(),
+                        nexus_runtime_core::task_manager::TaskContext {
+                            client: client.clone(), api_key: api_key.clone(), memory: memory.clone(), vmo_state: vmo_state.clone(), tx: tx.clone(), dist: dist.clone()
+                        },
+                        &directive
                     ).await;
                 }
                 Err(e) => tracing::warn!("[SELF_HEALING] Could not run cargo check: {}", e),

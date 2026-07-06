@@ -19,7 +19,7 @@
 
 extern "C" {
     pub fn extract_thermal_pulse_raw() -> i32;
-    
+
     pub fn extract_payload_strands(
         input_ptr: *const u8,
         input_len: usize,

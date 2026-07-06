@@ -1,7 +1,7 @@
 # 🔬 Fuchsia Zircon Insights: Project Nexus Integration
 
 ## 1. Virtual Memory Objects (VMOs) -> Zero-Copy Agent Memory
-**Zircon Pattern:** Fuchsia maps VMOs and passes handles over IPC channels. 
+**Zircon Pattern:** Fuchsia maps VMOs and passes handles over IPC channels.
 **Nexus Application:** Future optimization utilizing `mmap` to pass memory pointers between Host and Bio-Dome instead of heavy JSON strings.
 
 ## 2. Capability Routing -> Strict Agent Handles

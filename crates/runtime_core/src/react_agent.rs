@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Will be fully wired in next iterations
+#![allow(dead_code)]
 
 use crate::agent_protocol::AgentAction;
 use crate::json_parser::extract_actions;
@@ -54,7 +54,10 @@ impl ReActAgent {
             history.push(ReActStep::Thought(thought));
 
             if let Some(answer) = self.extract_final_answer(&response) {
-                let _ = self.tx.send(json!({"type": "REACT_FINAL_ANSWER", "payload": {"answer": answer}}).to_string());
+                let _ = self.tx.send(
+                    json!({"type": "REACT_FINAL_ANSWER", "payload": {"answer": answer}})
+                        .to_string(),
+                );
                 return Ok(answer);
             }
 
@@ -64,7 +67,9 @@ impl ReActAgent {
                         history.push(ReActStep::Action(action.clone()));
                         let obs = self.execute_action(action, &ctx).await?;
                         history.push(ReActStep::Observation(obs.clone()));
-                        let _ = self.tx.send(json!({"type": "REACT_OBSERVATION", "payload": obs}).to_string());
+                        let _ = self
+                            .tx
+                            .send(json!({"type": "REACT_OBSERVATION", "payload": obs}).to_string());
                     }
                 }
                 _ => warn!("No actions parsed in this ReAct turn"),
@@ -74,13 +79,29 @@ impl ReActAgent {
         Ok("Task reached maximum ReAct steps.".to_string())
     }
 
-    fn build_react_prompt(&self, task: &str, history: &[ReActStep], _ctx: &ContextPacket) -> String {
+    fn build_react_prompt(
+        &self,
+        task: &str,
+        history: &[ReActStep],
+        _ctx: &ContextPacket,
+    ) -> String {
         let mut p = format!("You are NEXUS ReAct Agent.\nTask: {}\n\n", task);
-        p.push_str("Use Thought → Action → Observation format.\n");
-        p.push_str("Available actions: read_file, write_file, vmo_create, diff_patch, etc.\n\n");
+        p.push_str("Use Thought -> Action -> Observation format.\n");
+        p.push_str(
+            "CRITICAL: Your Action MUST be a valid JSON array matching exactly this schema:\n",
+        );
+        p.push_str(
+            r#"
+[
+  { "type": "execute_command", "command": "ls -la", "reasoning": "..." },
+  { "type": "read_file", "path": "...", "reasoning": "..." },
+  { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." }
+]
+"#,
+        );
 
         if !history.is_empty() {
-            p.push_str("History:\n");
+            p.push_str("\nHistory:\n");
             for step in history.iter().take(10) {
                 match step {
                     ReActStep::Thought(t) => p.push_str(&format!("Thought: {}\n", t)),
@@ -91,12 +112,15 @@ impl ReActAgent {
             }
         }
 
-        p.push_str("\nNext response format:\nThought: ...\nAction: [JSON array of AgentAction] OR Final Answer: ...");
+        p.push_str(
+            "\nNext response format:\nThought: ...\nAction: [JSON array] OR Final Answer: ...",
+        );
         p
     }
 
     async fn call_llm(&self, prompt: &str, ctx: &ContextPacket) -> Result<String> {
-        let (response, _) = self.micro_agent
+        let (response, _) = self
+            .micro_agent
             .prepare_and_run(&self.client, &self.api_key, prompt, ctx.clone(), 0.0, None)
             .await
             .context("LLM call failed")?;
@@ -105,7 +129,9 @@ impl ReActAgent {
     }
 
     async fn execute_action(&self, action: AgentAction, _ctx: &ContextPacket) -> Result<String> {
-        let _ = self.tx.send(json!({"type": "ACTION_EXECUTE", "payload": format!("{:?}", action)}).to_string());
+        let _ = self.tx.send(
+            json!({"type": "ACTION_EXECUTE", "payload": format!("{:?}", action)}).to_string(),
+        );
         crate::executor::ToolExecutor::execute(&action).await
     }
 

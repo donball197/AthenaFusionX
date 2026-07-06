@@ -40,8 +40,8 @@ impl RoboticExecutor {
                 Ok(obs) => {
                     observations.push(obs.clone());
                     tracing::info!("Action observation: {}", obs);
-                    if obs.contains("[READ_OK]") || obs.contains("[WRITE_OK]") || obs.contains("[CMD:") || 
-                       obs.contains("[DIFF_PATCH_OK]") || obs.contains("[PATCH_OK]") || 
+                    if obs.contains("[READ_OK]") || obs.contains("[WRITE_OK]") || obs.contains("[CMD:") ||
+                       obs.contains("[DIFF_PATCH_OK]") || obs.contains("[PATCH_OK]") ||
                        obs.contains("[REPORT_OK]") || obs.contains("[HALT]") {
                         let skipped = total.saturating_sub(idx + 1);
                         if skipped > 0 {

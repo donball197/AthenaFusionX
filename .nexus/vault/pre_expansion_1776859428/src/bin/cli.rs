@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     let memory        = Arc::new(Mutex::new(memory_palace));
     let vmo_state     = Arc::new(Mutex::new(VmoState::default()));
     let orchestrator  = Arc::new(Orchestrator::new());
-    
+
     // ⚡ V14: Initialize the Cluster for the CLI
     let cluster = Arc::new(ClusterMesh::new());
     let dist = Arc::new(DistributedScheduler::new(cluster.clone()));

@@ -1,5 +1,15 @@
 use crate::kernel::error::KernelError;
-use crate::kernel::ffi;
+use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize)]
+struct VmoCreateReq {
+    size: usize,
+}
+#[derive(Deserialize)]
+struct VmoCreateRes {
+    handle: u32,
+}
 
 pub struct SafeKernel;
 
@@ -8,14 +18,25 @@ impl SafeKernel {
         if size == 0 || size > 16_777_216 {
             return Err(KernelError::InvalidArgs);
         }
-        let handle = unsafe { ffi::zx_vmo_create_native(size) };
-        if handle == 0 {
-            return Err(KernelError::InvalidArgs);
+
+        let client = Client::builder().build().unwrap();
+        let url =
+            std::env::var("NEXUS_NODE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+
+        let res = client
+            .post(format!("{}/api/vmo/create", url))
+            .header("Authorization", "SOVEREIGN")
+            .json(&VmoCreateReq { size })
+            .send()
+            .map_err(|_| KernelError::InvalidArgs)?;
+
+        if res.status().is_success() {
+            let body: VmoCreateRes = res.json().map_err(|_| KernelError::InvalidArgs)?;
+            Ok(body.handle)
+        } else {
+            Err(KernelError::InvalidArgs)
         }
-        Ok(handle)
     }
 
-    pub fn close_handle(handle: u32) {
-        unsafe { ffi::zx_handle_close_native(handle) }
-    }
+    pub fn close_handle(_handle: u32) {}
 }

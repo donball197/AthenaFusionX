@@ -48,7 +48,7 @@ where
         // Split the buffer at the chunk boundary or remaining length
         let split_at = std::cmp::min(self.buffer.len(), self.chunk_size);
         let chunk = self.buffer.split_to(split_at);
-        
+
         Poll::Ready(Some(Ok(String::from_utf8_lossy(&chunk).to_string())))
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tokio::fs;
 use std::path::Path;
+use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -39,14 +39,19 @@ pub async fn take_snapshot(path: &str, directive: &str) -> Result<Snapshot> {
 
     let mut catalog = list_snapshots().await.unwrap_or_default();
     catalog.push(snap.clone());
-    if catalog.len() > 200 { catalog.remove(0); }
+    if catalog.len() > 200 {
+        catalog.remove(0);
+    }
     fs::write(CATALOG, serde_json::to_string_pretty(&catalog)?).await?;
     Ok(snap)
 }
 
 fn fnv_hex(data: &[u8]) -> String {
     let mut h: u64 = 14695981039346656037;
-    for &b in data { h ^= b as u64; h = h.wrapping_mul(1099511628211); }
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(1099511628211);
+    }
     format!("{:016x}", h)
 }
 
@@ -55,5 +60,8 @@ fn epoch_secs() -> u64 {
 }
 
 fn uuid_v4() -> String {
-    format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
+    format!(
+        "{:x}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    )
 }

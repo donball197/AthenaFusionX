@@ -25,7 +25,7 @@ impl LazarusVault {
 
     pub fn snapshot_file(filepath: &str, directive_tag: &str) -> Result<Snapshot, String> {
         let content = fs::read_to_string(filepath).map_err(|e| format!("FS_READ_FAULT: {}", e))?;
-        
+
         // ⚡ NATIVE DNA: Using standard library hasher to avoid external dependencies
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
@@ -44,7 +44,7 @@ impl LazarusVault {
             timestamp: format!("{:?}", SystemTime::now()),
             directive: directive_tag.to_string(),
         };
-        
+
         let ledger_path = format!("{}/ledger.json", vault_dir);
         let mut ledger: Vec<Snapshot> = vec![];
         if Path::new(&ledger_path).exists() {

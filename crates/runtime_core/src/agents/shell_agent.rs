@@ -1,5 +1,5 @@
-use crate::agents::LogicAgent;
 use crate::agents::agentic_runtime::SubstrateContext;
+use crate::agents::LogicAgent;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -7,9 +7,13 @@ pub struct ShellAgent;
 
 #[async_trait]
 impl LogicAgent for ShellAgent {
-    fn name(&self) -> String { "ShellAgent".to_string() }
-    
-    fn can_handle(&self, _command: &str) -> bool { true }
+    fn name(&self) -> String {
+        "ShellAgent".to_string()
+    }
+
+    fn can_handle(&self, _command: &str) -> bool {
+        true
+    }
 
     async fn execute(&self, command: &str, _ctx: &SubstrateContext) -> Result<String> {
         let out = crate::podman::PodmanShield::execute(command)?;

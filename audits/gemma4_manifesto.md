@@ -14,7 +14,7 @@ Following a massive audit of the `src/` directory, the system demonstrates a rob
 ## 2. ARCHITECTURAL ANALYSIS
 
 ### 2.1 The Neural-Physical Decoupling
-The system avoids the "God-Mode" agent fallacy. The `MicroAgent` does not have direct access to the OS. Instead, it generates `AgentAction` intents which are parsed by the `NeuralParser` and passed to the `Executor`. 
+The system avoids the "God-Mode" agent fallacy. The `MicroAgent` does not have direct access to the OS. Instead, it generates `AgentAction` intents which are parsed by the `NeuralParser` and passed to the `Executor`.
 
 **Security Flow:**
 `Neural Agent` $\rightarrow$ `JSON Intent` $\rightarrow$ `NeuralParser` $\rightarrow$ `Executor` $\rightarrow$ `Capability Check` $\rightarrow$ `Sandbox Validation` $\rightarrow$ `OS Call`.
@@ -26,9 +26,9 @@ This pipeline ensures that even if the LLM is compromised via prompt injection, 
 ## 3. MEMORY SAFETY & KERNEL AUDIT
 
 ### 3.1 Slab Allocator Analysis (`src/memory.rs`)
-The `SlabAllocator` implements a manual memory management scheme to reduce fragmentation on ARM64. 
+The `SlabAllocator` implements a manual memory management scheme to reduce fragmentation on ARM64.
 - **Risk:** The use of `NonNull<FreeNode>` and raw pointer arithmetic in `allocate` and `deallocate` introduces potential for use-after-free if the allocator is misused.
-- **Mitigation:** The allocator is encapsulated. The `MemoryPalace` manages the allocator's lifecycle, and the `SlabAllocator` is marked `Send` and `Sync` only after ensuring internal consistency. 
+- **Mitigation:** The allocator is encapsulated. The `MemoryPalace` manages the allocator's lifecycle, and the `SlabAllocator` is marked `Send` and `Sync` only after ensuring internal consistency.
 - **Finding:** The `deallocate` method lacks a check to verify if the pointer being returned actually belongs to one of the allocated pages. While efficient, this is a potential point of failure if an external module passes a foreign pointer to the deallocator.
 
 ### 3.2 Kernel Realignment & FFI (`src/kernel/`)
