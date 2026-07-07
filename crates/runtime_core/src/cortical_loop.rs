@@ -9,6 +9,7 @@ use crate::world_model::WorldModel;
 use crate::epistemic_engine::EpistemicEngine;
 use crate::executor::RoboticExecutor;
 use crate::agent_protocol::AgentAction;
+use crate::logic_engine::LogicEngine;
 use nexus_substrate::memory::MemoryPalace;
 use crate::shared_state::VmoState;
 use crate::distributed_scheduler::DistributedScheduler;
@@ -53,6 +54,7 @@ impl CorticalLoop {
         }
 
         let mut current_best_belief = 0.0;
+        let mut observation_log: Vec<String> = Vec::new();
 
         for turn in 1..=15 {
             println!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 15\x1b[0m", turn);
@@ -73,24 +75,24 @@ impl CorticalLoop {
                         }
                     }
                 }
-                // ⚡ DEFENSE IN DEPTH 2: Hard bound the accumulated evidence history
+                // DEFENSE IN DEPTH 2: Hard bound the accumulated evidence history
                 if evidence_history.len() > 16000 {
                     let start = evidence_history.len() - 16000;
                     evidence_history = format!("...[EVIDENCE HISTORY TRUNCATED]...
 {}", &evidence_history[start..]);
                 }
-                
-                // ⚡ DEFENSE IN DEPTH 2: Hard bound the accumulated evidence history
-                if evidence_history.len() > 16000 {
-                    let start = evidence_history.len() - 16000;
-                    evidence_history = format!("...[EVIDENCE HISTORY TRUNCATED]...
-{}", &evidence_history[start..]);
-                }
-                
+
                 if evidence_history.is_empty() { evidence_history = "None yet.".to_string(); }
 
+                if LogicEngine::detect_deadlock(&observation_log) {
+                    println!("\x1b[90m>> [CORTEX] Deadlock detected -- repeated action with zero progress. Forcing strategy pivot.\x1b[0m");
+                    self.graph.add_edge(h_id, h_id, EdgeRelation::Contradicts, 0.4);
+                    self.graph.propagate_beliefs();
+                    continue;
+                }
+
                 println!("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m");
-                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, &h_content, &evidence_history).await {
+                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, mission, &h_content, &evidence_history).await {
                     Ok(action) => action,
                     Err(e) => { println!("\x1b[31m>> [STRATEGIST FAULT]\x1b[0m {}", e); continue; }
                 };
@@ -122,6 +124,7 @@ impl CorticalLoop {
                                         Err(e) => format!("[ACTION FAILED] OS rejected action: {}", e),
                                     };
 
+                                    observation_log.push(evidence.clone());
                                     let preview = evidence.lines().take(5).collect::<Vec<_>>().join("\n");
                                     println!("\x1b[32m>> [EVIDENCE ACQUIRED]\x1b[0m\n{}", preview);
                                     

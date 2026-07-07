@@ -61,8 +61,8 @@ impl EpistemicEngine {
         serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))
     }
 
-    pub async fn propose_action(client: &Client, api_key: &str, strategy: &str, evidence_so_far: &str) -> Result<String> {
-        let prompt = format!("You are the Action Strategist.\nSTRATEGY: {}\nEVIDENCE GATHERED SO FAR:\n{}\nPropose the exact next step to fulfill the strategy. CRITICAL RULE: NEVER run `find /` or search the root directory! Only search the current working directory (`.`). OUTPUT ONLY YOUR PROPOSED NEXT STEP IN PLAIN TEXT.", strategy, evidence_so_far);
+    pub async fn propose_action(client: &Client, api_key: &str, mission: &str, strategy: &str, evidence_so_far: &str) -> Result<String> {
+        let prompt = format!("You are the Action Strategist.\nORIGINAL DIRECTIVE (stay strictly within its scope -- do not investigate other files unless the directive or evidence explicitly points there): {}\nSTRATEGY: {}\nEVIDENCE GATHERED SO FAR:\n{}\nPropose the exact next step to fulfill the strategy. CRITICAL RULE: NEVER run `find /` or search the root directory! Only search the current working directory (`.`). OUTPUT ONLY YOUR PROPOSED NEXT STEP IN PLAIN TEXT.", mission, strategy, evidence_so_far);
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }});
         Self::safe_api_call(client, api_key, &get_light_models(), &payload).await
     }
