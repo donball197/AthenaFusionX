@@ -56,3 +56,5 @@ Thumbs.db
 .direnv/
 .env
 .gcp_key.json
+*.snap
+wire_modes_and_governance.py

@@ -71,6 +71,8 @@ impl RoboticExecutor {
         _vmo_state: Arc<Mutex<VmoState>>,
         _dist: Arc<DistributedScheduler>,
     ) -> Result<String> {
+        let ledger_action = action.clone();
+        let result: Result<String> = async {
         match action {
             AgentAction::ExecuteCommand { command, .. } => {
                 let out = crate::podman::PodmanShield::execute(&command)?;
@@ -175,5 +177,12 @@ impl RoboticExecutor {
             }
             AgentAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
         }
+        }.await;
+
+        if result.is_ok() {
+            crate::governance::protocol::GOVERNANCE.lock().await.record(ledger_action, "robotic_executor");
+        }
+
+        result
     }
 }

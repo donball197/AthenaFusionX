@@ -3,7 +3,7 @@ use crate::agent_protocol::AgentAction;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::info;
@@ -75,3 +75,9 @@ impl GovernanceLog {
         self.history.is_empty()
     }
 }
+
+// Process-wide persistent governance log. Callers should use this
+// instead of constructing their own GovernanceLog, or records get
+// discarded along with the throwaway instance.
+pub static GOVERNANCE: LazyLock<Mutex<GovernanceLog>> =
+    LazyLock::new(|| Mutex::new(GovernanceLog::init()));
