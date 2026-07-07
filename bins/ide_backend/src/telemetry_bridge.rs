@@ -22,9 +22,7 @@ pub fn spawn(
                 m.get_vitals()
             };
             let res = resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0;
-            let active_vmos = unsafe {
-                nexus_substrate::kernel::ffi::muscle_get_active_vmos()
-            };
+            let active_vmos = nexus_substrate::kernel::get_active_vmos();
 
             let msg = serde_json::json!({
                 "type":        "VITALS",

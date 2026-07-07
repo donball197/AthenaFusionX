@@ -1,32 +1,6 @@
 use crate::kernel::error::KernelError;
-use crate::kernel::{register_handle, HandleType};
-use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize)]
-struct VmoCreateReq {
-    size: usize,
-}
-#[derive(Deserialize)]
-struct VmoCreateRes {
-    handle: u32,
-}
-#[derive(Serialize)]
-struct VmoWriteReq {
-    handle: u32,
-    offset: usize,
-    data: Vec<u8>,
-}
-#[derive(Serialize)]
-struct VmoReadReq {
-    handle: u32,
-    offset: usize,
-    size: usize,
-}
-
-fn node_url() -> String {
-    std::env::var("NEXUS_NODE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
-}
+use crate::kernel::safe_kernel::SafeKernel;
+use crate::kernel::VMO_REGISTRY;
 
 pub struct SafeVmo {
     handle: u32,
@@ -35,21 +9,8 @@ pub struct SafeVmo {
 
 impl SafeVmo {
     pub fn new(size: usize) -> Result<Self, KernelError> {
-        let client = Client::builder().build().unwrap();
-        let res = client
-            .post(format!("{}/api/vmo/create", node_url()))
-            .header("Authorization", "SOVEREIGN")
-            .json(&VmoCreateReq { size })
-            .send()
-            .map_err(|_| KernelError::InvalidArgs)?;
-
-        if res.status().is_success() {
-            let body: VmoCreateRes = res.json().map_err(|_| KernelError::InvalidArgs)?;
-            register_handle(body.handle, HandleType::Vmo(body.handle));
-            Ok(Self { handle: body.handle, size })
-        } else {
-            Err(KernelError::InvalidArgs)
-        }
+        let handle = SafeKernel::create_vmo(size)?;
+        Ok(Self { handle, size })
     }
 
     pub fn write(&self, offset: usize, data: &[u8]) -> Result<(), KernelError> {
@@ -57,16 +18,9 @@ impl SafeVmo {
         if end > self.size {
             return Err(KernelError::InvalidArgs);
         }
-
-        let client = Client::builder().build().unwrap();
-        let res = client
-            .post(format!("{}/api/vmo/write", node_url()))
-            .header("Authorization", "SOVEREIGN")
-            .json(&VmoWriteReq { handle: self.handle, offset, data: data.to_vec() })
-            .send()
-            .map_err(|_| KernelError::InvalidArgs)?;
-
-        if res.status().is_success() {
+        
+        if let Some(mut vmo) = VMO_REGISTRY.get_mut(&self.handle) {
+            vmo[offset..end].copy_from_slice(data);
             Ok(())
         } else {
             Err(KernelError::InvalidArgs)
@@ -78,23 +32,10 @@ impl SafeVmo {
         if end > self.size {
             return Err(KernelError::InvalidArgs);
         }
-
-        let client = Client::builder().build().unwrap();
-        let res = client
-            .post(format!("{}/api/vmo/read", node_url()))
-            .header("Authorization", "SOVEREIGN")
-            .json(&VmoReadReq { handle: self.handle, offset, size: buffer.len() })
-            .send()
-            .map_err(|_| KernelError::InvalidArgs)?;
-
-        if res.status().is_success() {
-            let data: Vec<u8> = res.json().map_err(|_| KernelError::InvalidArgs)?;
-            if data.len() == buffer.len() {
-                buffer.copy_from_slice(&data);
-                Ok(())
-            } else {
-                Err(KernelError::InvalidArgs)
-            }
+        
+        if let Some(vmo) = VMO_REGISTRY.get(&self.handle) {
+            buffer.copy_from_slice(&vmo[offset..end]);
+            Ok(())
         } else {
             Err(KernelError::InvalidArgs)
         }
@@ -107,6 +48,6 @@ impl SafeVmo {
 
 impl Drop for SafeVmo {
     fn drop(&mut self) {
-        // Drop handled remotely by node lifespan or future close endpoint
+        SafeKernel::close_handle(self.handle);
     }
 }

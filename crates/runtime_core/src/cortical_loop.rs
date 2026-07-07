@@ -13,6 +13,12 @@ use nexus_substrate::memory::MemoryPalace;
 use crate::shared_state::VmoState;
 use crate::distributed_scheduler::DistributedScheduler;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum CortexOutcome {
+    Proven { belief: f32 },
+    TurnsExhausted { best_belief: f32 },
+}
+
 pub struct CorticalLoop {
     client: Client,
     api_key: String,
@@ -32,7 +38,7 @@ impl CorticalLoop {
         Self { client: Client::new(), api_key, graph: CognitiveGraph::new(), world_model, memory, vmo_state, dist, tx }
     }
 
-    pub async fn ignite(&mut self, mission: &str) -> Result<()> {
+    pub async fn ignite(&mut self, mission: &str) -> Result<CortexOutcome> {
         println!("\x1b[1;36m>> [CORTEX] Igniting Unified Epistemic Engine\x1b[0m");
         
         let context_chunks = (*self.world_model).semantic_query(mission).await;
@@ -46,63 +52,45 @@ impl CorticalLoop {
             println!("\x1b[90m  -> Strategy: {}\x1b[0m", h);
         }
 
-        for turn in 1..=8 {
-            println!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 8\x1b[0m", turn);
+        let mut current_best_belief = 0.0;
+
+        for turn in 1..=15 {
+            println!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 15\x1b[0m", turn);
 
             if let Some(best_node) = self.graph.select_best_hypothesis().cloned() {
                 let h_id = best_node.id;
                 let h_content = best_node.content.clone();
                 let current_belief = best_node.belief_score;
+                current_best_belief = current_belief.max(current_best_belief);
+                
                 println!("\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}", current_belief, h_content);
 
-                // --- ⚡ HEURISTIC CONTEXT PRUNING (API STARVATION) ---
                 let mut evidence_history = String::new();
-                let mut relevant_obs = Vec::new();
-                
                 for edge in &self.graph.edges {
                     if edge.target == h_id && (edge.relation == EdgeRelation::Supports || edge.relation == EdgeRelation::Contradicts) {
                         if let Some(obs) = self.graph.nodes.get(&edge.source) {
-                            relevant_obs.push((edge.relation.clone(), obs.content.clone()));
+                            evidence_history.push_str(&format!("- [{:?}] {}\n", edge.relation, obs.content));
                         }
                     }
                 }
-
-                // Keep failures (we must learn from mistakes) + the 3 most recent successes
-                let mut filtered_obs = Vec::new();
-                let mut success_count = 0;
+                // ⚡ DEFENSE IN DEPTH 2: Hard bound the accumulated evidence history
+                if evidence_history.len() > 16000 {
+                    let start = evidence_history.len() - 16000;
+                    evidence_history = format!("...[EVIDENCE HISTORY TRUNCATED]...
+{}", &evidence_history[start..]);
+                }
                 
-                for (relation, content) in relevant_obs.into_iter().rev() {
-                    let is_failure = content.contains("FAILED") || content.contains("STDERR:") || relation == EdgeRelation::Contradicts;
-                    if is_failure {
-                        filtered_obs.push((relation, content));
-                    } else if success_count < 3 {
-                        filtered_obs.push((relation, content));
-                        success_count += 1;
-                    }
+                // ⚡ DEFENSE IN DEPTH 2: Hard bound the accumulated evidence history
+                if evidence_history.len() > 16000 {
+                    let start = evidence_history.len() - 16000;
+                    evidence_history = format!("...[EVIDENCE HISTORY TRUNCATED]...
+{}", &evidence_history[start..]);
                 }
-
-                // Re-reverse so chronological order is maintained, and cap at 3000 chars total
-                filtered_obs.reverse();
-                for (relation, content) in filtered_obs {
-                    let truncated = if content.len() > 800 {
-                        format!("{}... [TRUNCATED]", &content[..800])
-                    } else {
-                        content
-                    };
-                    evidence_history.push_str(&format!("- [{:?}] {}\n", relation, truncated));
-                    if evidence_history.len() > 3000 { break; }
-                }
-
+                
                 if evidence_history.is_empty() { evidence_history = "None yet.".to_string(); }
-                // --- END PRUNING ---
-                
-                // ⚡ SUTURE: Cap the evidence history to prevent context blowout from massive loop accumulation
-                let safe_history: String = evidence_history.chars().rev().take(12000).collect::<String>().chars().rev().collect();
 
                 println!("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m");
-                
-                // ⚡ GROUNDING: Pass world_context so the agent sees the actual file tree
-                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, &h_content, &safe_history, &world_context).await {
+                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, &h_content, &evidence_history).await {
                     Ok(action) => action,
                     Err(e) => { println!("\x1b[31m>> [STRATEGIST FAULT]\x1b[0m {}", e); continue; }
                 };
@@ -149,11 +137,11 @@ impl CorticalLoop {
                                         
                                         if let Some(updated_node) = self.graph.nodes.get(&h_id) {
                                             println!("\x1b[1;32m>> [CORTEX] Strategy Belief mathematically updated to {:.2}\x1b[0m", updated_node.belief_score);
+                                            current_best_belief = updated_node.belief_score.max(current_best_belief);
                                             
-                                            // ⚡ EXIT CONDITION
-                                            if updated_node.belief_score >= 0.85 && (evidence.contains("[WRITE_OK]") || evidence.contains("[PATCH_FUNCTION_OK]") || evidence.contains("[CMD_OK]") || evidence.contains("[REPORT_EXPORTED]")) {
+                                            if updated_node.belief_score >= 0.85 && (evidence.contains("[WRITE_OK]") || evidence.contains("[PATCH_FUNCTION_OK]") || evidence.contains("[CMD_OK]")) {
                                                 println!("\x1b[1;36m>> [CORTEX] STRATEGY PROVEN AND FIX APPLIED! Mission Accomplished.\x1b[0m");
-                                                return Ok(());
+                                                return Ok(CortexOutcome::Proven { belief: updated_node.belief_score });
                                             }
                                             
                                             if updated_node.belief_score < 0.2 {
@@ -183,6 +171,6 @@ impl CorticalLoop {
             sleep(Duration::from_secs(2)).await;
         }
         println!("\x1b[1;32m>> [CORTEX] Epistemic Execution Cycle Complete.\x1b[0m");
-        Ok(())
+        Ok(CortexOutcome::TurnsExhausted { best_belief: current_best_belief })
     }
 }

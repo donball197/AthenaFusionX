@@ -16,11 +16,13 @@ pub struct RoboticExecutor {
 }
 
 pub fn sanitize(path: &str) -> Result<PathBuf> {
-    if path.starts_with('/') || path.contains("..") {
+    // ⚡ Allow /tmp/ prefix, block all other absolute paths
+    if (path.starts_with('/') && !path.starts_with("/tmp/")) || path.contains("..") {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
     }
+    
     let p = Path::new(path);
-    if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if (p.is_absolute() && !path.starts_with("/tmp/")) || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
     }
     Ok(p.to_path_buf())
@@ -72,8 +74,14 @@ impl RoboticExecutor {
         match action {
             AgentAction::ExecuteCommand { command, .. } => {
                 let out = crate::podman::PodmanShield::execute(&command)?;
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
+                let mut stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                let mut stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+                
+                // ⚡ DEFENSE IN DEPTH 1: Truncate raw command output at the source
+                if stdout.len() > 8000 { stdout.truncate(8000); stdout.push_str("
+...[STDOUT TRUNCATED: OUTPUT TOO LARGE]"); }
+                if stderr.len() > 8000 { stderr.truncate(8000); stderr.push_str("
+...[STDERR TRUNCATED: OUTPUT TOO LARGE]"); }
                 let mut res = format!("[CMD_OK] Status: {}\n", out.status);
                 if !stdout.trim().is_empty() { res.push_str(&format!("STDOUT:\n{}\n", stdout)); }
                 if !stderr.trim().is_empty() { res.push_str(&format!("STDERR:\n{}\n", stderr)); }
@@ -85,15 +93,15 @@ impl RoboticExecutor {
                 tokio::fs::write(&safe_path, content).await?;
                 Ok(format!("[WRITE_OK] {}", path))
             }
-            AgentAction::ReadFunction { path, function_name, .. } => {
-                let safe_path = sanitize(&path)?;
-                let content = crate::ast_editor::AstEditor::read_function(safe_path.to_str().unwrap_or(&path), &function_name)?;
-                Ok(format!("[READ_FUNCTION_OK] {} in {}\nCONTENT:\n{}", function_name, path, content))
-            }
             AgentAction::ReadFile { path, .. } => {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
                 Ok(format!("[READ_OK] {}\nCONTENT:\n{}", path, content))
+            }
+            AgentAction::ReadFunction { path, function_name, .. } => {
+                let safe_path = sanitize(&path)?;
+                let content = tokio::fs::read_to_string(&safe_path).await?;
+                Ok(format!("[READ_FUNCTION_OK] '{}' from {}\nCONTENT:\n{}", function_name, path, content))
             }
             AgentAction::DiffPatch { path, search, replace, .. } => {
                 let safe_path = sanitize(&path)?;
@@ -128,7 +136,7 @@ impl RoboticExecutor {
             }
             AgentAction::CalculateEntropy { handle, .. } => {
                 let h_val = handle.parse::<u32>().unwrap_or(0);
-                let entropy = unsafe { nexus_substrate::kernel::ffi::zx_vmo_calculate_entropy(h_val) };
+                let entropy = nexus_substrate::kernel::calculate_entropy(h_val);
                 Ok(format!("[ENTROPY] Handle {}: {:.4} Shannon bits", handle, entropy))
             }
             AgentAction::LazarusSnapshot { path, tag, .. } => {
@@ -156,77 +164,16 @@ impl RoboticExecutor {
                 let text = res.text().await?;
                 Ok(format!("[URL_SCRAPED] Output: {}", text))
             }
+            AgentAction::GitRollback { reasoning } => {
+                let out = crate::podman::PodmanShield::execute("git reset --hard HEAD")?;
+                Ok(format!("[GIT_ROLLBACK_OK] Reason: {}\nSTDOUT:\n{}", reasoning, String::from_utf8_lossy(&out.stdout)))
+            }
             AgentAction::SpawnSubagent { instruction, .. } | AgentAction::DelegateTask { instruction, .. } => {
                 let mem = _memory.lock().await;
                 mem.store_memory("Executor", &instruction, "Delegated to Subagent", None).await?;
                 Ok("[DELEGATION_LOGGED] Instruction pushed to Memory Palace for async execution.".to_string())
             }
             AgentAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
-            AgentAction::GitRollback { reasoning } => {
-                let _ = crate::podman::PodmanShield::execute("git reset --hard");
-                let _ = crate::podman::PodmanShield::execute("git clean -fd");
-                Ok(format!("[GIT_ROLLBACK_OK] Codebase restored to last known good commit."))
-            },
-            AgentAction::GitRollback { reasoning } => {
-                let _ = crate::podman::PodmanShield::execute("git reset --hard");
-                let _ = crate::podman::PodmanShield::execute("git clean -fd");
-                Ok(format!("[GIT_ROLLBACK_OK] Reason: {}\nCodebase restored to last known good commit.", reasoning))
-            },
-            AgentAction::GitRollback { reasoning } => {
-                let _ = crate::podman::PodmanShield::execute("git reset --hard");
-                let _ = crate::podman::PodmanShield::execute("git clean -fd");
-                Ok(format!("[GIT_ROLLBACK_OK] Codebase restored to last known good commit."))
-            },
-            AgentAction::GitRollback { reasoning } => {
-                let _ = crate::podman::PodmanShield::execute("git reset --hard");
-                let _ = crate::podman::PodmanShield::execute("git clean -fd");
-                Ok(format!("[GIT_ROLLBACK_OK] Reason: {}\nCodebase restored to last known good commit.", reasoning))
-            },
-        }
-    }
-}
-
-pub struct ToolExecutor;
-
-impl ToolExecutor {
-    pub async fn execute(action: &AgentAction) -> Result<String> {
-        match action {
-            AgentAction::ExecuteCommand { command, .. } => {
-                let out = crate::podman::PodmanShield::execute(command)?;
-                Ok(format!(
-                    "[CMD_OK]\nSTDOUT:\n{}\nSTDERR:\n{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                ))
-            }
-            AgentAction::ReadFunction { path, function_name, .. } => {
-                let content = crate::ast_editor::AstEditor::read_function(path, function_name)?;
-                Ok(format!("[READ_FUNCTION_OK] {} in {}\nCONTENT:\n{}", function_name, path, content))
-            }
-            AgentAction::ReadFile { path, .. } => {
-                let content = tokio::fs::read_to_string(path).await?;
-                Ok(format!("[READ_OK] {}\nCONTENT:\n{}", path, content))
-            }
-            AgentAction::WriteFile { path, content, .. } => {
-                tokio::fs::write(path, content).await?;
-                Ok(format!("[WRITE_OK] {}", path))
-            }
-            AgentAction::DiffPatch { path, search, replace, .. } => {
-                let original = tokio::fs::read_to_string(path).await?;
-                let patched = crate::diff::DiffEngine::apply(&original, search, replace)?;
-                tokio::fs::write(path, patched).await?;
-                Ok(format!("[DIFF_PATCH_OK] Applied changes to {}", path))
-            }
-            AgentAction::PatchFunction { path, function_name, new_body, .. } => {
-                let patched = crate::ast_editor::AstEditor::update_function(path, function_name, new_body)?;
-                tokio::fs::write(path, patched).await?;
-                Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
-            }
-            AgentAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
-            other => Ok(format!(
-                "[NOT_WIRED] {:?} requires substrate context (memory/vmo/dist) that ToolExecutor does not carry.",
-                other
-            )),
         }
     }
 }

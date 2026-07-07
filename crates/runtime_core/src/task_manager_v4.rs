@@ -1,5 +1,5 @@
 use crate::task_manager::TaskContext;
-use crate::cortical_loop::CorticalLoop;
+use crate::cortical_loop::{CorticalLoop, CortexOutcome};
 use crate::world_model::WorldModel;
 use crate::cognition::meta_reasoner::MetaReasoner;
 use crate::hypothesis::HypothesisGenerator;
@@ -33,7 +33,10 @@ pub async fn send_task_v4(ctx: TaskContext, directive: &str) -> Result<String> {
         ctx.dist.clone(),
         ctx.tx.clone(),
     );
-    cortex.ignite(directive).await?;
-    
-    Ok("CorticalLoop Execution Complete".to_string())
+    match cortex.ignite(directive).await? {
+        CortexOutcome::Proven { belief } => Ok(format!("CorticalLoop Execution Complete (belief {:.2})", belief)),
+        CortexOutcome::TurnsExhausted { best_belief } => Err(anyhow::anyhow!(
+            "CorticalLoop exhausted turns without proving the strategy (best belief {:.2})", best_belief
+        )),
+    }
 }

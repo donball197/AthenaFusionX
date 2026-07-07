@@ -1,0 +1,12 @@
+   Compiling nexus_search v3.0.0 (/home/donball197/AthenaFusionX/crates/nexus_search)
+    Checking nexus_substrate v3.0.0 (/home/donball197/AthenaFusionX/crates/nexus_substrate)
+    Checking nexus_runtime_core v0.1.0 (/home/donball197/AthenaFusionX/crates/runtime_core)
+   Compiling nexus_ide_backend v0.1.0 (/home/donball197/AthenaFusionX/bins/ide_backend)
+    Checking nexus_mesh v0.1.0 (/home/donball197/AthenaFusionX/crates/mesh)
+    Checking nexus_identity v0.1.0 (/home/donball197/AthenaFusionX/crates/identity)
+    Checking nexus_cli v0.1.0 (/home/donball197/AthenaFusionX/bins/cli)
+    Checking nexus_node v0.1.0 (/home/donball197/AthenaFusionX/bins/node)
+    Checking nexus_memory_graph v0.1.0 (/home/donball197/AthenaFusionX/crates/memory_graph)
+    Checking nexus_protocol v0.1.0 (/home/donball197/AthenaFusionX/crates/protocol)
+    Checking telemetry_node v3.0.0 (/home/donball197/AthenaFusionX/apps/telemetry_node)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 54s

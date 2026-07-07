@@ -138,7 +138,7 @@ async fn calculate_entropy(
 ) -> impl IntoResponse {
     let registry = state.vmo_registry.lock().await;
     if registry.contains_key(&req.handle) {
-        let entropy = unsafe { nexus_substrate::kernel::ffi::zx_vmo_calculate_entropy(req.handle) };
+        let entropy = nexus_substrate::kernel::calculate_entropy(req.handle);
         (StatusCode::OK, Json(VmoEntropyRes { entropy })).into_response()
     } else {
         (StatusCode::NOT_FOUND, "VMO handle not found").into_response()
@@ -172,7 +172,25 @@ async fn execute_wasm(Json(req): Json<ExecuteReq>) -> impl IntoResponse {
 
 // ⚡ PHASE 3: The magic endpoint that receives LLM actions from the Duet and executes them locally on the Node's filesystem.
 async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse {
-    match nexus_runtime_core::executor::ToolExecutor::execute(&action).await {
+    // ⚡ FIX: ToolExecutor was deleted during the Executor Unification pass.
+    // As `nexus_node` acts as a remote satellite without a true Memory Palace 
+    // or VmoState right now, we spin up a localized RoboticExecutor instance.
+    let (tx, _) = tokio::sync::broadcast::channel(1);
+    let mut executor = nexus_runtime_core::executor::RoboticExecutor::new(
+        String::new(), // Edge nodes don't need the API key
+        tx,
+    );
+
+    // Mock up the substrate dependencies for the edge node
+    let memory = Arc::new(Mutex::new(
+        nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap(),
+    ));
+    let vmo_state = Arc::new(Mutex::new(nexus_runtime_core::shared_state::VmoState::default()));
+    let dist = Arc::new(nexus_runtime_core::distributed_scheduler::DistributedScheduler::new(
+        Arc::new(nexus_runtime_core::cluster::ClusterMesh::new()),
+    ));
+
+    match executor.execute_single_action(action, memory, vmo_state, dist).await {
         Ok(obs) => (StatusCode::OK, obs).into_response(),
         Err(e) => {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("ACTION_FAILED: {}", e)).into_response()

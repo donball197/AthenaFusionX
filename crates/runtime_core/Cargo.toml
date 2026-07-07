@@ -26,6 +26,7 @@ bitflags = "2.4"
 wasmtime = { version = "43.0.1", features = ["component-model"] }
 wasmtime-wasi = { version = "43.0.1" }
 wit-bindgen-rt = { version = "0.39", features = ["bitflags"] }
+regex = "1.12.4"
 
 [lints]
 workspace = true

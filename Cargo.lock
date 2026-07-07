@@ -2415,15 +2415,12 @@ dependencies = [
 name = "nexus_node"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "axum",
  "base64",
  "nexus_runtime_core",
  "nexus_substrate",
  "serde",
- "serde_json",
  "tokio",
- "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2447,6 +2444,7 @@ dependencies = [
  "futures-util",
  "nexus_substrate",
  "parking_lot",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -2475,7 +2473,6 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "axum",
- "cc",
  "dashmap",
  "nexus_search",
  "once_cell",

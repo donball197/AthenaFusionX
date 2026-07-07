@@ -3,7 +3,7 @@ use crate::{
     metrics::METRICS, orchestrator::Orchestrator, 
     shared_state::VmoState, distributed_scheduler::DistributedScheduler,
     orchestrator_v2::planner::PlannerAgent,
-    cortical_loop::CorticalLoop,
+    cortical_loop::{CorticalLoop, CortexOutcome},
     world_model::WorldModel
 };
 use reqwest::Client;
@@ -44,6 +44,7 @@ pub async fn send_task(
     let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted. Fusing Graph of Thoughts Loop...", plan_id)}).to_string());
 
     let mut task_outputs: HashMap<String, String> = HashMap::new();
+    let mut mission_had_failures = false;
     let world_model = Arc::new(WorldModel::new());
     
     // Phase 2: Topologically Schedule Sub-Tasks via Scoped GoT Loops
@@ -76,15 +77,28 @@ pub async fn send_task(
 
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting GoT Epistemic Loop for Node {}", task_id)}).to_string());
         
-        if let Err(e) = loop_cortex.ignite(&combined_mission).await {
-            let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX FRACTURE] Node {} loop failed: {}", task_id, e)}).to_string());
-        }
-
-        // ⚡ FIX: Pass a deterministic success trace so the next node knows the ancestor concluded
-        let execution_evidence = format!("[DAG NODE COMPLETE] Ancestor node '{}' concluded execution.", node.objective);
+        let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
+            Ok(CortexOutcome::Proven { belief }) => {
+                format!("[DAG NODE COMPLETE] Ancestor node '{}' concluded execution (belief {:.2}).", node.objective, belief)
+            }
+            Ok(CortexOutcome::TurnsExhausted { best_belief }) => {
+                mission_had_failures = true;
+                let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX INCOMPLETE] Node {} exhausted turns without proving strategy (best belief {:.2}).", task_id, best_belief)}).to_string());
+                format!("[DAG NODE INCOMPLETE] Ancestor node '{}' did NOT conclude successfully — best belief {:.2}. Treat this dependency as unresolved.", node.objective, best_belief)
+            }
+            Err(e) => {
+                mission_had_failures = true;
+                let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX FRACTURE] Node {} loop failed: {}", task_id, e)}).to_string());
+                format!("[DAG NODE FAILED] Ancestor node '{}' failed: {}", node.objective, e)
+            }
+        };
 
         task_outputs.insert(task_id.clone(), execution_evidence);
     }
 
-    format!("DAG/GoT Hybrid Execution Complete. Plan ID: {}", plan_id)
+    if mission_had_failures {
+        format!("DAG/GoT Execution FINISHED WITH INCOMPLETE NODES. Plan ID: {}", plan_id)
+    } else {
+        format!("DAG/GoT Hybrid Execution Complete. Plan ID: {}", plan_id)
+    }
 }

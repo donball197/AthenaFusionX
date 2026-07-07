@@ -88,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("  <text>     - Submit directive to the Neural Agent");
             }
             "/status" => {
-                let active = unsafe { nexus_substrate::kernel::ffi::muscle_get_active_vmos() };
+                let active = nexus_substrate::kernel::get_active_vmos();
                 println!("\x1b[36m[SUBSTRATE]\x1b[0m Active VMOs: {}", active);
             }
             "/clear" => {

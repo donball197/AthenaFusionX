@@ -47,5 +47,26 @@
     "hash": "a1a550cadadbd3a2",
     "directive": "Pre-fix snapshot",
     "timestamp": "1783364120"
+  },
+  {
+    "id": "18c0142e3bd524c7",
+    "path": "apps/hello_world/main.rs",
+    "hash": "6ddf42ae3ffa1725",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783447641"
+  },
+  {
+    "id": "18c017d6fb48701f",
+    "path": "crates/memory_graph/src/lib.rs",
+    "hash": "81c3443d6030367e",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783451664"
+  },
+  {
+    "id": "18c0189970345d2d",
+    "path": "crates/memory_graph/src/lib.rs",
+    "hash": "ee39a699e37b1d65",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1783452499"
   }
 ]

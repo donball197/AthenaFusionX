@@ -2,11 +2,8 @@
 name = "nexus_substrate"
 version = "3.0.0"
 edition = "2021"
-build = "build.rs"
-links = "muscle"
 
 [dependencies]
-nexus_search = { path = "../nexus_search" }
 dashmap = "6"
 tracing = { workspace = true }
 tokio = { workspace = true }
@@ -15,9 +12,7 @@ serde_json = { workspace = true }
 axum = { workspace = true }
 sqlx = { workspace = true }
 anyhow = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "json"] }
+reqwest = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
-
-[build-dependencies]
-cc = "1.0"
+nexus_search = { path = "../nexus_search" }

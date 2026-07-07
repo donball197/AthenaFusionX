@@ -1,1 +1,1 @@
-fn main() { println!("Nexus App Forge Online"); }
+fn main() { println!("NEXUS: Graph of Thoughts Engine Online"); }

@@ -1,15 +1,6 @@
 use crate::kernel::error::KernelError;
-use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize)]
-struct VmoCreateReq {
-    size: usize,
-}
-#[derive(Deserialize)]
-struct VmoCreateRes {
-    handle: u32,
-}
+use crate::kernel::{NEXT_HANDLE, VMO_REGISTRY};
+use std::sync::atomic::Ordering;
 
 pub struct SafeKernel;
 
@@ -18,25 +9,12 @@ impl SafeKernel {
         if size == 0 || size > 16_777_216 {
             return Err(KernelError::InvalidArgs);
         }
-
-        let client = Client::builder().build().unwrap();
-        let url =
-            std::env::var("NEXUS_NODE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-
-        let res = client
-            .post(format!("{}/api/vmo/create", url))
-            .header("Authorization", "SOVEREIGN")
-            .json(&VmoCreateReq { size })
-            .send()
-            .map_err(|_| KernelError::InvalidArgs)?;
-
-        if res.status().is_success() {
-            let body: VmoCreateRes = res.json().map_err(|_| KernelError::InvalidArgs)?;
-            Ok(body.handle)
-        } else {
-            Err(KernelError::InvalidArgs)
-        }
+        let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        VMO_REGISTRY.insert(handle, vec![0u8; size]);
+        Ok(handle)
     }
 
-    pub fn close_handle(_handle: u32) {}
+    pub fn close_handle(handle: u32) {
+        VMO_REGISTRY.remove(&handle);
+    }
 }
