@@ -9,12 +9,11 @@ use crate::world_model::WorldModel;
 use crate::epistemic_engine::EpistemicEngine;
 use crate::executor::RoboticExecutor;
 use crate::agent_protocol::AgentAction;
-use crate::logic_engine::LogicEngine;
 use nexus_substrate::memory::MemoryPalace;
 use crate::shared_state::VmoState;
 use crate::distributed_scheduler::DistributedScheduler;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
 pub enum CortexOutcome {
     Proven { belief: f32 },
     TurnsExhausted { best_belief: f32 },
@@ -53,8 +52,7 @@ impl CorticalLoop {
             println!("\x1b[90m  -> Strategy: {}\x1b[0m", h);
         }
 
-        let mut current_best_belief = 0.0;
-        let mut observation_log: Vec<String> = Vec::new();
+        let mut max_observed_belief = 0.0_f32;
 
         for turn in 1..=15 {
             println!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 15\x1b[0m", turn);
@@ -63,8 +61,7 @@ impl CorticalLoop {
                 let h_id = best_node.id;
                 let h_content = best_node.content.clone();
                 let current_belief = best_node.belief_score;
-                current_best_belief = current_belief.max(current_best_belief);
-                
+                if current_belief > max_observed_belief { max_observed_belief = current_belief; }
                 println!("\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}", current_belief, h_content);
 
                 let mut evidence_history = String::new();
@@ -75,21 +72,7 @@ impl CorticalLoop {
                         }
                     }
                 }
-                // DEFENSE IN DEPTH 2: Hard bound the accumulated evidence history
-                if evidence_history.len() > 16000 {
-                    let start = evidence_history.len() - 16000;
-                    evidence_history = format!("...[EVIDENCE HISTORY TRUNCATED]...
-{}", &evidence_history[start..]);
-                }
-
                 if evidence_history.is_empty() { evidence_history = "None yet.".to_string(); }
-
-                if LogicEngine::detect_deadlock(&observation_log) {
-                    println!("\x1b[90m>> [CORTEX] Deadlock detected -- repeated action with zero progress. Forcing strategy pivot.\x1b[0m");
-                    self.graph.add_edge(h_id, h_id, EdgeRelation::Contradicts, 0.4);
-                    self.graph.propagate_beliefs();
-                    continue;
-                }
 
                 println!("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m");
                 let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, mission, &h_content, &evidence_history).await {
@@ -110,6 +93,7 @@ impl CorticalLoop {
                                 let mut executor = RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
                                 
                                 for action in actions {
+                                    // LAZARUS SAFEGUARD FOR MUTATIONS
                                     match &action {
                                         AgentAction::PatchFunction { path, .. } | AgentAction::DiffPatch { path, .. } | AgentAction::WriteFile { path, .. } => {
                                             println!("\x1b[35m>> [LAZARUS] Taking atomic snapshot of {}...\x1b[0m", path);
@@ -124,7 +108,6 @@ impl CorticalLoop {
                                         Err(e) => format!("[ACTION FAILED] OS rejected action: {}", e),
                                     };
 
-                                    observation_log.push(evidence.clone());
                                     let preview = evidence.lines().take(5).collect::<Vec<_>>().join("\n");
                                     println!("\x1b[32m>> [EVIDENCE ACQUIRED]\x1b[0m\n{}", preview);
                                     
@@ -140,8 +123,9 @@ impl CorticalLoop {
                                         
                                         if let Some(updated_node) = self.graph.nodes.get(&h_id) {
                                             println!("\x1b[1;32m>> [CORTEX] Strategy Belief mathematically updated to {:.2}\x1b[0m", updated_node.belief_score);
-                                            current_best_belief = updated_node.belief_score.max(current_best_belief);
+                                            if updated_node.belief_score > max_observed_belief { max_observed_belief = updated_node.belief_score; }
                                             
+                                            // ⚡ EXIT CONDITION: If belief is high AND it proved compilation/write success!
                                             if updated_node.belief_score >= 0.85 && (evidence.contains("[WRITE_OK]") || evidence.contains("[PATCH_FUNCTION_OK]") || evidence.contains("[CMD_OK]")) {
                                                 println!("\x1b[1;36m>> [CORTEX] STRATEGY PROVEN AND FIX APPLIED! Mission Accomplished.\x1b[0m");
                                                 return Ok(CortexOutcome::Proven { belief: updated_node.belief_score });
@@ -174,6 +158,6 @@ impl CorticalLoop {
             sleep(Duration::from_secs(2)).await;
         }
         println!("\x1b[1;32m>> [CORTEX] Epistemic Execution Cycle Complete.\x1b[0m");
-        Ok(CortexOutcome::TurnsExhausted { best_belief: current_best_belief })
+        Ok(CortexOutcome::TurnsExhausted { best_belief: max_observed_belief })
     }
 }

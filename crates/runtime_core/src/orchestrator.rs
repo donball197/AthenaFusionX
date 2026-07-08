@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use tokio::sync::broadcast;
 
 use crate::metrics::METRICS;
-use crate::neural_agent::{ContextPacket, MicroAgent};
+use nexus_model_hub::neural_agent::{ContextPacket, MicroAgent};
 use crate::router::IntelligentRouter;
 
 pub struct Orchestrator;
@@ -52,7 +52,7 @@ impl Orchestrator {
         let agent = MicroAgent::init(sender).map_err(|e| format!("AGENT_INIT_FAULT: {}", e))?;
 
         // 4. Engage the API and pipe the SSE stream
-        match agent.prepare_and_run(client, api_key, &prompt, active_ctx, 0.0, None).await {
+        match agent.prepare_and_run(client, api_key, &prompt, active_ctx).await {
             Ok((execution_delta, _latency)) => Ok(execution_delta),
             Err(e) => Err(format!("NEURAL_UPLINK_FAILURE: {}", e)),
         }

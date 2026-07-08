@@ -43,7 +43,40 @@ pub fn spawn(
                     );
                 }
                 Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let raw_stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+                    // Defense in depth alongside the colon-path guard in
+                    // executor::sanitize -- strip "file:line:col" diagnostic
+                    // locators down to just the file path before this text
+                    // ever reaches a directive/prompt, so the Translator LLM
+                    // is less likely to try treating a locator as a path in
+                    // the first place.
+                    let stderr: String = raw_stderr
+                        .lines()
+                        .map(|line| {
+                            if let Some(colon_pos) = line.find(".rs:") {
+                                let after = &line[colon_pos + 3..];
+                                let mut end = after.len();
+                                let mut seen_colons = 0;
+                                for (i, c) in after.char_indices() {
+                                    if c == ':' {
+                                        seen_colons += 1;
+                                        if seen_colons == 3 {
+                                            end = i;
+                                            break;
+                                        }
+                                    } else if !c.is_ascii_digit() {
+                                        end = i; // FIXED: Preserve the rest of the error message!
+                                        break;
+                                    }
+                                }
+                                format!("{}{}", &line[..colon_pos + 3], &after[end.min(after.len())..])
+                            } else {
+                                line.to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("
+");
                     tracing::warn!("[SELF_HEALING] Errors detected — triggering RepoDoctor");
                     let _ = tx.send(
                         serde_json::json!({"type":"LOG_EVENT",

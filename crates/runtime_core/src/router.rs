@@ -30,24 +30,22 @@ STRICT SYSTEM RULE: You MUST output EXACTLY ONE valid JSON array of AgentAction 
 
 MANDATORY SCHEMA:
 [
-  { "type": "read_function", "path": "...", "function_name": "...", "reasoning": "..." },
   { "type": "patch_function", "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." },
-  { "type": "read_file", "path": "...", "reasoning": "..." },
-  { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
   { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." },
+  { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
+  { "type": "read_file", "path": "...", "reasoning": "..." },
   { "type": "execute_command", "command": "...", "reasoning": "..." },
   { "type": "search_memory", "query": "...", "reasoning": "..." },
-  { "type": "git_rollback", "reasoning": "..." },
   { "type": "halt", "reasoning": "..." }
 ]
 
 CRITICAL RULES:
-1. NEVER use `read_file` on a `.rs` file if you only need to inspect a specific function. You MUST use `read_function` to save context space.
-2. NEVER use `write_file` to modify an existing function. You MUST use `patch_function` or `diff_patch`.
-3. `patch_function` requires `path`, `function_name`, and the full replacement code in `new_body`.
-4. If you make a mistake that breaks compilation, or you reach a dead end, use `git_rollback` to restore the last known good commit.
-5. When you have achieved the task objective, include the `halt` action in your JSON array.
-6. You MUST escape all newlines inside JSON strings as `\n`."#;
+1. NEVER use `write_file` to modify an existing function. You MUST use `patch_function` or `diff_patch`.
+2. `patch_function` requires `path`, `function_name`, and the full replacement code in `new_body`.
+3. `diff_patch` requires `search` (the exact old string) and `replace` (the exact new string). DO NOT output unified diffs or use a `diff` field.
+4. When you have achieved the task objective, include the `halt` action in your JSON array.
+5. You MUST escape all newlines inside JSON strings as `\n` (e.g. "line1\nline2").
+6. CRITICAL HALT OVERRIDE: You are strictly forbidden from issuing a [HALT] command if your objective requires code modification (patching). Finding the target code via 'grep' or 'cat' is only reconnaissance. You MUST verify the presence of a successful [PATCH_FUNCTION_OK], [WRITE_OK], or [DIFF_PATCH_OK] in your physical evidence buffer before you are authorized to halt. Halting before patching is considered a critical mission failure."#;
 
         let (primary_model, budget) = match class {
             DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => ("gemma-4-31b-it", ContextBudget::doctor()),

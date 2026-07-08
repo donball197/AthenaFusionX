@@ -6,10 +6,13 @@ members = [
     "crates/protocol",
     "crates/mesh",
     "crates/nexus_substrate",
+    "crates/nexus_model_hub",
+    "crates/nexus_search",
     "bins/cli",
     "bins/node",
-    "bins/ide_backend"
-, "crates/nexus_search", "apps/telemetry_node"]
+    "bins/ide_backend",
+    "apps/telemetry_node"
+, "target_dummy"]
 resolver = "2"
 
 [workspace.package]
@@ -38,7 +41,8 @@ tower-http             = { version = "0.5", features = ["cors", "fs", "trace"] }
 tracing                = "0.1"
 tracing-subscriber     = { version = "0.3", features = ["env-filter", "json"] }
 uuid                   = { version = "1.8", features = ["serde", "v4"] }
-wasmtime               = "43.0.1"
+wasmtime               = "45.0.2"
+wasmtime-wasi          = "45.0.2"
 
 [profile.dev]
 opt-level = 0

@@ -1,6 +1,6 @@
-use crate::factory::AgentFactory;
+use nexus_model_hub::factory::AgentFactory;
 use crate::metrics::METRICS;
-use crate::neural_agent::ContextPacket;
+use nexus_model_hub::neural_agent::ContextPacket;
 use crate::orchestrator::Orchestrator;
 use crate::router::AgentProfile;
 use nexus_substrate::token_ledger::wait_for_quota;
@@ -37,7 +37,7 @@ impl Conductor {
         let neural_ctx = ContextPacket {
             system_prompt: Some(profile.persona.clone()),
             model_override: Some(model.to_string()), // ⚡ FIX: Convert &str to String
-            ..Default::default()
+            
         };
 
         if let Some(ref sender) = ctx.tx {
@@ -59,7 +59,7 @@ impl Conductor {
                 let fail_ctx = ContextPacket {
                     system_prompt: Some(profile.persona.clone()),
                     model_override: Some(failover.to_string()), // ⚡ FIX: Convert &str to String
-                    ..Default::default()
+                    
                 };
                 return ctx.orch.run(prompt, fail_ctx, ctx.client, ctx.api_key, ctx.tx).await;
             }

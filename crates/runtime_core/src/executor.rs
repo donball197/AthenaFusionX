@@ -12,6 +12,7 @@ pub enum FsmState { Idle, Executing, Complete, Fault }
 
 pub struct RoboticExecutor {
     pub current_state: FsmState,
+    pub api_key: String,
     tx: tokio::sync::broadcast::Sender<String>,
 }
 
@@ -29,8 +30,8 @@ pub fn sanitize(path: &str) -> Result<PathBuf> {
 }
 
 impl RoboticExecutor {
-    pub fn new(_api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
-        Self { current_state: FsmState::Idle, tx }
+    pub fn new(api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
+        Self { current_state: FsmState::Idle, api_key, tx }
     }
 
     pub async fn execute_handle(
@@ -98,7 +99,25 @@ impl RoboticExecutor {
             AgentAction::ReadFile { path, .. } => {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
-                Ok(format!("[READ_OK] {}\nCONTENT:\n{}", path, content))
+                
+                // ⚡ SOVEREIGN RAG: Vectorize and store in MemoryPalace
+                // Use a 8k token safe-chunk for the embedding API
+                let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
+                let mem = _memory.lock().await;
+                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await {
+                    let _ = mem.store_memory("ReadFile", &path, &content, Some(emb)).await;
+                } else {
+                    let _ = mem.store_memory("ReadFile", &path, &content, None).await;
+                }
+                
+                // Return a truncated preview to the immediate GoT loop to prevent context overflow
+                let return_content = if content.len() > 1500 {
+                    format!("{}...\n\n[CONTENT TRUNCATED. FULL DATA SAVED TO MEMORY PALACE VECTOR VAULT. USE search_memory TO EXPLORE DEEPER.]", &content[..1500])
+                } else {
+                    content.clone()
+                };
+                
+                Ok(format!("[READ_OK] {}\nCONTENT PREVIEW:\n{}", path, return_content))
             }
             AgentAction::ReadFunction { path, function_name, .. } => {
                 let safe_path = sanitize(&path)?;
@@ -120,15 +139,32 @@ impl RoboticExecutor {
             }
             AgentAction::SearchMemory { query, .. } => {
                 let mem = _memory.lock().await;
-                match mem.search_memories(&query).await {
-                    Ok(results) => {
-                        if results.is_empty() { Ok("[SEARCH_OK] No memories found.".to_string()) } 
-                        else {
-                            let f: Vec<String> = results.iter().map(|r| format!("Result: {}", r.result)).collect();
-                            Ok(format!("[SEARCH_OK] Found:\n{}", f.join("\n")))
+                let mut results_text = String::new();
+                
+                // 1. Semantic Vector Search
+                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await {
+                    if let Ok(results) = mem.semantic_search(&emb).await {
+                        for r in results {
+                            let snippet = if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
+                            results_text.push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
                         }
-                    },
-                    Err(e) => Ok(format!("[SEARCH_ERROR] {}", e)),
+                    }
+                }
+                
+                // 2. Fallback to FTS5 Lexical Search if Vector fails or is empty
+                if results_text.is_empty() {
+                    if let Ok(results) = mem.search_memories(&query).await {
+                        for r in results {
+                            let snippet = if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
+                            results_text.push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
+                        }
+                    }
+                }
+                
+                if results_text.is_empty() { 
+                    Ok(format!("[SEARCH_OK] No memories found in VectorVault for: {}", query))
+                } else { 
+                    Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
                 }
             }
             AgentAction::VmoCreate { size, .. } => {

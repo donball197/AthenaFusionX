@@ -58,3 +58,6 @@ Thumbs.db
 .gcp_key.json
 *.snap
 wire_modes_and_governance.py
+.env
+*.db*
+target_dummy/

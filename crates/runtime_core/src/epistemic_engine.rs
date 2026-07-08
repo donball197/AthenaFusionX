@@ -26,9 +26,22 @@ impl EpistemicEngine {
                 let body: Value = res.json().await.unwrap_or_default();
                 
                 if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
-                    println!("\x1b[31m>> [API ERROR] {} returned: {}\x1b[0m", short_name, err);
                     last_err = anyhow!("API Error: {}", err);
-                    break;
+                    
+                    // ⚡ THE MISSING SUTURE: Trap transient errors and RETRY with a backoff!
+                    if err.contains("Internal error") || err.contains("high demand") || err.contains("quota") || err.contains("rate limit") {
+                        retries += 1;
+                        if retries > 3 {
+                            println!("\x1b[31m>> [API FATAL] {} exhausted retries. Falling back...\x1b[0m", short_name);
+                            break; // Exhausted retries, move to next model in the cascade
+                        }
+                        println!("\x1b[33m>> [API RETRY] {} hit transient fault. Backing off 4s (Attempt {}/3)...\x1b[0m", short_name, retries);
+                        tokio::time::sleep(Duration::from_secs(4)).await;
+                        continue;
+                    } else {
+                        println!("\x1b[31m>> [API ERROR] {} returned fatal error: {}\x1b[0m", short_name, err);
+                        break; // Fatal error (e.g. bad API key), move to next model immediately
+                    }
                 }
 
                 let mut final_text = String::new();
@@ -56,7 +69,7 @@ impl EpistemicEngine {
 
     pub async fn generate_hypotheses(client: &Client, api_key: &str, problem: &str, world_context: &str) -> Result<Vec<String>> {
         let prompt = format!("You are AthenaFusionX. Analyze this directive.\nDIRECTIVE: {}\nWORLD CONTEXT: {}\nGenerate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS. No markdown.", problem, world_context);
-        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.4, "maxOutputTokens": 2048 }});
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 2048 }});
         let text = Self::safe_api_call(client, api_key, &get_heavy_models(), &payload).await?;
         serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))
     }
@@ -68,7 +81,7 @@ impl EpistemicEngine {
     }
 
     pub async fn criticize_proposal(client: &Client, api_key: &str, strategy: &str, proposed_action: &str, world_context: &str) -> Result<CriticResponse> {
-        let prompt = format!("You are the Adversarial Critic.\nSTRATEGY: {}\nPROPOSED ACTION: {}\nWORLD CONTEXT: {}\nEvaluate if this action is safe and logically sound. OUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, proposed_action, world_context);
+        let prompt = format!("You are the Adversarial Critic.\nSTRATEGY: {}\nPROPOSED ACTION: {}\nWORLD CONTEXT: {}\nEvaluate if this action is safe and logically sound. \nCRITICAL RULE: Always allow 'read_file' and 'find' operations even if the path is not visible in the WORLD CONTEXT. A failed read is safe exploration. Do not veto read operations for missing paths.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, proposed_action, world_context);
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
         let text = Self::safe_api_call(client, api_key, &get_heavy_models(), &payload).await?;
         serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))

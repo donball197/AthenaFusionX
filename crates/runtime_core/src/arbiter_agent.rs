@@ -1,4 +1,4 @@
-use crate::neural_agent::MicroAgent;
+use nexus_model_hub::neural_agent::MicroAgent;
 use std::sync::Arc;
 
 pub struct ArbiterAgent {
