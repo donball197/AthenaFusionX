@@ -3,8 +3,8 @@ use std::sync::atomic::Ordering;
 use tokio::sync::broadcast;
 
 use crate::metrics::METRICS;
-use nexus_model_hub::neural_agent::{ContextPacket, MicroAgent};
 use crate::router::IntelligentRouter;
+use nexus_model_hub::neural_agent::{ContextPacket, MicroAgent};
 
 pub struct Orchestrator;
 

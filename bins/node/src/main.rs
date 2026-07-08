@@ -173,7 +173,7 @@ async fn execute_wasm(Json(req): Json<ExecuteReq>) -> impl IntoResponse {
 // ⚡ PHASE 3: The magic endpoint that receives LLM actions from the Duet and executes them locally on the Node's filesystem.
 async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse {
     // ⚡ FIX: ToolExecutor was deleted during the Executor Unification pass.
-    // As `nexus_node` acts as a remote satellite without a true Memory Palace 
+    // As `nexus_node` acts as a remote satellite without a true Memory Palace
     // or VmoState right now, we spin up a localized RoboticExecutor instance.
     let (tx, _) = tokio::sync::broadcast::channel(1);
     let mut executor = nexus_runtime_core::executor::RoboticExecutor::new(
@@ -182,9 +182,8 @@ async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse 
     );
 
     // Mock up the substrate dependencies for the edge node
-    let memory = Arc::new(Mutex::new(
-        nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap(),
-    ));
+    let memory =
+        Arc::new(Mutex::new(nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap()));
     let vmo_state = Arc::new(Mutex::new(nexus_runtime_core::shared_state::VmoState::default()));
     let dist = Arc::new(nexus_runtime_core::distributed_scheduler::DistributedScheduler::new(
         Arc::new(nexus_runtime_core::cluster::ClusterMesh::new()),

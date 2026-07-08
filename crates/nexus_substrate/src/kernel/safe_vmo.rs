@@ -18,7 +18,7 @@ impl SafeVmo {
         if end > self.size {
             return Err(KernelError::InvalidArgs);
         }
-        
+
         if let Some(mut vmo) = VMO_REGISTRY.get_mut(&self.handle) {
             vmo[offset..end].copy_from_slice(data);
             Ok(())
@@ -32,7 +32,7 @@ impl SafeVmo {
         if end > self.size {
             return Err(KernelError::InvalidArgs);
         }
-        
+
         if let Some(vmo) = VMO_REGISTRY.get(&self.handle) {
             buffer.copy_from_slice(&vmo[offset..end]);
             Ok(())

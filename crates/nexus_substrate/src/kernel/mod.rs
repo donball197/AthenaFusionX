@@ -18,11 +18,15 @@ pub fn get_active_vmos() -> u32 {
 pub fn calculate_entropy(handle: u32) -> f32 {
     if let Some(vmo) = VMO_REGISTRY.get(&handle) {
         let data = vmo.value();
-        if data.is_empty() { return 0.0; }
-        
+        if data.is_empty() {
+            return 0.0;
+        }
+
         let mut counts = [0u32; 256];
-        for &b in data { counts[b as usize] += 1; }
-        
+        for &b in data {
+            counts[b as usize] += 1;
+        }
+
         let mut entropy = 0.0f32;
         let len = data.len() as f32;
         for &c in &counts {

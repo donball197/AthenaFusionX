@@ -1,15 +1,17 @@
-use nexus_substrate::memory::MemoryPalace;
 use crate::{
-    metrics::METRICS, orchestrator::Orchestrator, 
-    shared_state::VmoState, distributed_scheduler::DistributedScheduler,
+    cortical_loop::{CortexOutcome, CorticalLoop},
+    distributed_scheduler::DistributedScheduler,
+    metrics::METRICS,
+    orchestrator::Orchestrator,
     orchestrator_v2::planner::PlannerAgent,
-    cortical_loop::{CorticalLoop, CortexOutcome},
-    world_model::WorldModel
+    shared_state::VmoState,
+    world_model::WorldModel,
 };
+use nexus_substrate::memory::MemoryPalace;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
-use std::collections::HashMap;
 
 pub struct TaskContext {
     pub client: Client,
@@ -29,10 +31,11 @@ pub async fn send_task(
     let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": "[EXECUTIVE CORTEX] Initiating DAG Decomposition..."}).to_string());
 
     // Phase 1: High-Level DAG Decomposition
-    let mut graph = match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
-        Ok(g) => g,
-        Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
-    };
+    let mut graph =
+        match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
+            Ok(g) => g,
+            Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
+        };
 
     graph.compute_critical_path_priorities();
     let order = match graph.resolve_execution_order() {
@@ -46,7 +49,7 @@ pub async fn send_task(
     let mut task_outputs: HashMap<String, String> = HashMap::new();
     let mut mission_had_failures = false;
     let world_model = Arc::new(WorldModel::new());
-    
+
     // Phase 2: Topologically Schedule Sub-Tasks via Scoped GoT Loops
     for task_id in order {
         let node = graph.nodes.get(&task_id).unwrap().clone();
@@ -55,13 +58,14 @@ pub async fn send_task(
         let mut task_context_history = String::new();
         for dep in &node.deps {
             if let Some(out) = task_outputs.get(dep) {
-                task_context_history.push_str(&format!("---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n", dep, out));
+                task_context_history
+                    .push_str(&format!("---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n", dep, out));
             }
         }
 
         // Firing structured context directly into the Epistemic Engine
         let combined_mission = format!(
-            "OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nLINEAGE CONTEXT:\n{}", 
+            "OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nLINEAGE CONTEXT:\n{}",
             node.objective, node.required_agent, task_context_history
         );
 
@@ -76,10 +80,13 @@ pub async fn send_task(
         );
 
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting GoT Epistemic Loop for Node {}", task_id)}).to_string());
-        
+
         let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
             Ok(CortexOutcome::Proven { belief }) => {
-                format!("[DAG NODE COMPLETE] Ancestor node '{}' concluded execution (belief {:.2}).", node.objective, belief)
+                format!(
+                    "[DAG NODE COMPLETE] Ancestor node '{}' concluded execution (belief {:.2}).",
+                    node.objective, belief
+                )
             }
             Ok(CortexOutcome::TurnsExhausted { best_belief }) => {
                 mission_had_failures = true;

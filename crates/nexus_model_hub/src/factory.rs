@@ -4,7 +4,9 @@ pub const MODEL_31B: &str = "gemma-4-31b-it";
 pub struct AgentFactory;
 
 impl AgentFactory {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub fn get_model_for_turn(turn: usize, error_count: usize) -> &'static str {
         if error_count > 0 {
@@ -12,15 +14,17 @@ impl AgentFactory {
         }
         match turn {
             0..=4 => MODEL_FLASH_LITE,
-            _     => MODEL_31B,
+            _ => MODEL_31B,
         }
     }
 
     pub fn failover_model(_current_model: &str) -> &'static str {
-        MODEL_31B 
+        MODEL_31B
     }
 }
 
 impl Default for AgentFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

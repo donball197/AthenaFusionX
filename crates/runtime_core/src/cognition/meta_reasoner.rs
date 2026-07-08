@@ -1,7 +1,7 @@
+use crate::hypothesis_engine::HypothesisEngine;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::hypothesis_engine::HypothesisEngine;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GoTResolution {
@@ -21,19 +21,19 @@ pub struct Hypothesis {
 pub struct MetaReasoner;
 
 impl MetaReasoner {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub async fn execute_with_got(
         client: &Client,
         api_key: &str,
         directive: &str,
     ) -> Result<String> {
-        let resolution = HypothesisEngine::evaluate_fault(
-            client,
-            api_key,
-            directive,
-            "MetaReasoner GoT call",
-        ).await.map_err(|e| anyhow!("GoT failed: {}", e))?;
+        let resolution =
+            HypothesisEngine::evaluate_fault(client, api_key, directive, "MetaReasoner GoT call")
+                .await
+                .map_err(|e| anyhow!("GoT failed: {}", e))?;
 
         Ok(format!(
             "[GoT] Root Cause: {}\nSelected: {} (prob {:.2})",

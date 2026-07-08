@@ -1,6 +1,3 @@
-use std::io::{self, Write};
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
 use nexus_runtime_core::{
     cluster::ClusterMesh,
     distributed_scheduler::DistributedScheduler,
@@ -9,17 +6,22 @@ use nexus_runtime_core::{
     task_manager::{send_task, TaskContext},
 };
 use nexus_substrate::memory::MemoryPalace;
+use std::io::{self, Write};
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    
+
     println!("\x1b[36m==================================================\x1b[0m");
     println!("\x1b[1;36m>> NEXUS SINGULARITY v3.0 — SOVEREIGN CLI ONLINE\x1b[0m");
     println!("\x1b[36m==================================================\x1b[0m");
 
     let api_key = std::env::var("GEMINI_API_KEY")
-        .expect("Fatal: GEMINI_API_KEY not found in .env file.").trim().to_string();
+        .expect("Fatal: GEMINI_API_KEY not found in .env file.")
+        .trim()
+        .to_string();
 
     let (tx, mut rx) = broadcast::channel::<String>(256);
     let memory = Arc::new(Mutex::new(MemoryPalace::new("nexus_cli.db").await?));
@@ -36,25 +38,25 @@ async fn main() -> anyhow::Result<()> {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
                 let msg_type = parsed["type"].as_str().unwrap_or("LOG");
                 let payload = parsed["payload"].as_str().unwrap_or("");
-                
+
                 match msg_type {
-                    "NEURAL_THOUGHT" => {},
+                    "NEURAL_THOUGHT" => {}
                     "NEURAL_STREAM" => {
-                        if last_type != "NEURAL_STREAM" { 
-                            print!("\x1b[0m\n\x1b[1;36m[CORTEX EXECUTING]\x1b[0m\n\x1b[36m"); 
+                        if last_type != "NEURAL_STREAM" {
+                            print!("\x1b[0m\n\x1b[1;36m[CORTEX EXECUTING]\x1b[0m\n\x1b[36m");
                         }
                         print!("{}", payload);
                         let _ = io::stdout().flush();
                         last_type = "NEURAL_STREAM".to_string();
-                    },
+                    }
                     "TASK_STATUS" => {
                         println!("\x1b[0m\n\x1b[1;33m[SYS]\x1b[0m {}", payload);
                         last_type = "TASK_STATUS".to_string();
-                    },
+                    }
                     "LOG_EVENT" => {
                         println!("\x1b[0m\n\x1b[1;90m[EVENT]\x1b[0m {}", payload);
                         last_type = "LOG_EVENT".to_string();
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -73,7 +75,9 @@ async fn main() -> anyhow::Result<()> {
         stdin.read_line(&mut input)?;
         let command = input.trim();
 
-        if command.is_empty() { continue; }
+        if command.is_empty() {
+            continue;
+        }
 
         match command {
             "/exit" | "/quit" => {
@@ -109,11 +113,7 @@ async fn main() -> anyhow::Result<()> {
                     tx: tx.clone(),
                     dist: dist.clone(),
                 };
-                let response = send_task(
-                    orchestrator.clone(),
-                    ctx,
-                    directive
-                ).await;
+                let response = send_task(orchestrator.clone(), ctx, directive).await;
                 println!("\n\x1b[0m\x1b[1;32m[MISSION COMPLETE]\x1b[0m {}", response);
             }
         }

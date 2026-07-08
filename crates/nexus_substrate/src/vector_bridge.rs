@@ -5,9 +5,7 @@ use serde_json::json;
 pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
     // 1. ATTEMPT CUTTING-EDGE LOCAL LITERT MINION (Reflex Embedder)
     // We use a fast timeout (800ms) so it doesn't block if the minion is offline
-    let local_client = Client::builder()
-        .timeout(std::time::Duration::from_millis(800))
-        .build()?;
+    let local_client = Client::builder().timeout(std::time::Duration::from_millis(800)).build()?;
 
     let local_url = "http://127.0.0.1:5001/embed";
     let local_payload = json!({ "text": text });
@@ -33,7 +31,8 @@ pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
     let _ = crate::token_ledger::wait_for_quota("gemini-embedding-2", 500).await;
 
     let external_client = Client::new();
-    let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent";
+    let url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent";
 
     let payload = json!({
         "model": "models/gemini-embedding-2",

@@ -4,16 +4,17 @@
 extern "C" {}
 
 // Project Nexus Singularity v3.0.0 — Sovereign Context Index
-use turbovec::TurboQuantIndex;
 use std::collections::HashMap;
 use std::path::Path;
+use turbovec::TurboQuantIndex;
 
 pub struct VectorVault {
     index: TurboQuantIndex,
     id_map: HashMap<usize, u64>, // Maps TurboVec Index to SQLite ID!
     current_idx: usize,
     dimension: usize,
-    #[allow(dead_code)] bit_width: usize,
+    #[allow(dead_code)]
+    bit_width: usize,
 }
 
 impl VectorVault {
@@ -29,7 +30,11 @@ impl VectorVault {
 
     pub fn commit_state(&mut self, id: u64, embedding: &[f32]) -> Result<(), String> {
         if embedding.len() != self.dimension {
-            return Err(format!("Dimension mismatch: expected {}, got {}", self.dimension, embedding.len()));
+            return Err(format!(
+                "Dimension mismatch: expected {}, got {}",
+                self.dimension,
+                embedding.len()
+            ));
         }
         self.index.add(embedding);
         self.id_map.insert(self.current_idx, id);
@@ -37,8 +42,14 @@ impl VectorVault {
         Ok(())
     }
 
-    pub fn recall_context(&self, query_embedding: &[f32], k: usize) -> Result<(Vec<f32>, Vec<u64>), String> {
-        if query_embedding.len() != self.dimension { return Err("Query embedding mismatch".into()); }
+    pub fn recall_context(
+        &self,
+        query_embedding: &[f32],
+        k: usize,
+    ) -> Result<(Vec<f32>, Vec<u64>), String> {
+        if query_embedding.len() != self.dimension {
+            return Err("Query embedding mismatch".into());
+        }
         let results = self.index.search(query_embedding, k);
         let mut resolved_ids = Vec::new();
         for raw_idx in results.indices {

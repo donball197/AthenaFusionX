@@ -1,14 +1,19 @@
-use anyhow::{anyhow, Result};
 use crate::agent_protocol::AgentAction;
-use nexus_substrate::memory::MemoryPalace;
-use crate::shared_state::VmoState;
 use crate::distributed_scheduler::DistributedScheduler;
+use crate::shared_state::VmoState;
+use anyhow::{anyhow, Result};
+use nexus_substrate::memory::MemoryPalace;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::path::{Path, PathBuf};
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum FsmState { Idle, Executing, Complete, Fault }
+pub enum FsmState {
+    Idle,
+    Executing,
+    Complete,
+    Fault,
+}
 
 pub struct RoboticExecutor {
     pub current_state: FsmState,
@@ -21,9 +26,11 @@ pub fn sanitize(path: &str) -> Result<PathBuf> {
     if (path.starts_with('/') && !path.starts_with("/tmp/")) || path.contains("..") {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
     }
-    
+
     let p = Path::new(path);
-    if (p.is_absolute() && !path.starts_with("/tmp/")) || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if (p.is_absolute() && !path.starts_with("/tmp/"))
+        || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
     }
     Ok(p.to_path_buf())
@@ -45,13 +52,19 @@ impl RoboticExecutor {
         let mut observations = Vec::new();
 
         for action in actions {
-            match self.execute_single_action(action, memory.clone(), vmo_state.clone(), dist.clone()).await {
+            match self
+                .execute_single_action(action, memory.clone(), vmo_state.clone(), dist.clone())
+                .await
+            {
                 Ok(obs) => {
                     let summary = obs.lines().next().unwrap_or("[OK]");
-                    let _ = self.tx.send(serde_json::json!({
-                        "type": "LOG_EVENT",
-                        "payload": format!("[EXECUTOR] Action executed: {}", summary)
-                    }).to_string());
+                    let _ = self.tx.send(
+                        serde_json::json!({
+                            "type": "LOG_EVENT",
+                            "payload": format!("[EXECUTOR] Action executed: {}", summary)
+                        })
+                        .to_string(),
+                    );
                     observations.push(obs);
                 }
                 Err(e) => {
@@ -79,7 +92,7 @@ impl RoboticExecutor {
                 let out = crate::podman::PodmanShield::execute(&command)?;
                 let mut stdout = String::from_utf8_lossy(&out.stdout).into_owned();
                 let mut stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-                
+
                 // ⚡ DEFENSE IN DEPTH 1: Truncate raw command output at the source
                 if stdout.len() > 8000 { stdout.truncate(8000); stdout.push_str("
 ...[STDOUT TRUNCATED: OUTPUT TOO LARGE]"); }
@@ -99,7 +112,7 @@ impl RoboticExecutor {
             AgentAction::ReadFile { path, .. } => {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
-                
+
                 // ⚡ SOVEREIGN RAG: Vectorize and store in MemoryPalace
                 // Use a 8k token safe-chunk for the embedding API
                 let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
@@ -109,14 +122,14 @@ impl RoboticExecutor {
                 } else {
                     let _ = mem.store_memory("ReadFile", &path, &content, None).await;
                 }
-                
+
                 // Return a truncated preview to the immediate GoT loop to prevent context overflow
                 let return_content = if content.len() > 1500 {
                     format!("{}...\n\n[CONTENT TRUNCATED. FULL DATA SAVED TO MEMORY PALACE VECTOR VAULT. USE search_memory TO EXPLORE DEEPER.]", &content[..1500])
                 } else {
                     content.clone()
                 };
-                
+
                 Ok(format!("[READ_OK] {}\nCONTENT PREVIEW:\n{}", path, return_content))
             }
             AgentAction::ReadFunction { path, function_name, .. } => {
@@ -140,7 +153,7 @@ impl RoboticExecutor {
             AgentAction::SearchMemory { query, .. } => {
                 let mem = _memory.lock().await;
                 let mut results_text = String::new();
-                
+
                 // 1. Semantic Vector Search
                 if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await {
                     if let Ok(results) = mem.semantic_search(&emb).await {
@@ -150,7 +163,7 @@ impl RoboticExecutor {
                         }
                     }
                 }
-                
+
                 // 2. Fallback to FTS5 Lexical Search if Vector fails or is empty
                 if results_text.is_empty() {
                     if let Ok(results) = mem.search_memories(&query).await {
@@ -160,10 +173,10 @@ impl RoboticExecutor {
                         }
                     }
                 }
-                
-                if results_text.is_empty() { 
+
+                if results_text.is_empty() {
                     Ok(format!("[SEARCH_OK] No memories found in VectorVault for: {}", query))
-                } else { 
+                } else {
                     Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
                 }
             }
@@ -216,7 +229,10 @@ impl RoboticExecutor {
         }.await;
 
         if result.is_ok() {
-            crate::governance::protocol::GOVERNANCE.lock().await.record(ledger_action, "robotic_executor");
+            crate::governance::protocol::GOVERNANCE
+                .lock()
+                .await
+                .record(ledger_action, "robotic_executor");
         }
 
         result

@@ -1,7 +1,7 @@
+use crate::wasm_runtime::WasmRuntime;
 use anyhow::Result;
 use std::time::Instant;
-use sysinfo::{System, CpuRefreshKind, MemoryRefreshKind, RefreshKind};
-use crate::wasm_runtime::WasmRuntime;
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 #[derive(Debug, Clone)]
 pub struct FitnessReport {
@@ -14,21 +14,26 @@ pub struct FitnessReport {
 pub struct FitnessEvaluator;
 
 impl FitnessEvaluator {
-    pub fn evaluate_wasm_cell(wasm_bytes: &[u8], func_name: &str, payload: &[u8]) -> Result<FitnessReport> {
+    pub fn evaluate_wasm_cell(
+        wasm_bytes: &[u8],
+        func_name: &str,
+        payload: &[u8],
+    ) -> Result<FitnessReport> {
         let mut sys = System::new_with_specifics(
             RefreshKind::new()
                 .with_cpu(CpuRefreshKind::everything())
                 .with_memory(MemoryRefreshKind::everything()),
         );
         sys.refresh_all();
-        
+
         // 1. Capture ARM64 Baseline Metrics
         let mem_before = sys.used_memory() as f32 / 1024.0;
         let temp_before = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
             .unwrap_or_else(|_| "45000".to_string())
             .trim()
             .parse::<f32>()
-            .unwrap_or(45000.0) / 1000.0;
+            .unwrap_or(45000.0)
+            / 1000.0;
 
         // 2. Execute the Generated WASM Payload
         let start = Instant::now();
@@ -42,7 +47,8 @@ impl FitnessEvaluator {
             .unwrap_or_else(|_| "45000".to_string())
             .trim()
             .parse::<f32>()
-            .unwrap_or(45000.0) / 1000.0;
+            .unwrap_or(45000.0)
+            / 1000.0;
 
         // Ensure we don't divide by zero
         let memory_delta = (mem_after - mem_before).max(0.1);

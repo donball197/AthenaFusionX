@@ -12,14 +12,34 @@ impl ArbiterAgent {
 
     pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
         let dangerous_patterns = [
-            "rm -rf /", "rm -rf ~", "mkfs", "> /dev/sda", "> /dev/nvme",
-            "chmod 777 /", "/etc/shadow", "mv /etc/", "mv /usr/",
-            ":(){ :|:& };:", "dd if=/dev/zero", "fork bomb",
-            "sudo su", "sudo -i", "sudo bash", "sudo sh",
-            "passwd root", "chown root", "$'\\x", "\\u0072\\u006d",
-            "base64 -d |", "eval $(", "exec(",
-            "curl | bash", "wget | bash", "curl | sh",
-            "history -c", "unset HISTFILE",
+            "rm -rf /",
+            "rm -rf ~",
+            "mkfs",
+            "> /dev/sda",
+            "> /dev/nvme",
+            "chmod 777 /",
+            "/etc/shadow",
+            "mv /etc/",
+            "mv /usr/",
+            ":(){ :|:& };:",
+            "dd if=/dev/zero",
+            "fork bomb",
+            "sudo su",
+            "sudo -i",
+            "sudo bash",
+            "sudo sh",
+            "passwd root",
+            "chown root",
+            "$'\\x",
+            "\\u0072\\u006d",
+            "base64 -d |",
+            "eval $(",
+            "exec(",
+            "curl | bash",
+            "wget | bash",
+            "curl | sh",
+            "history -c",
+            "unset HISTFILE",
         ];
 
         let normalized = command.to_lowercase();
@@ -67,34 +87,52 @@ impl ArbiterAgent {
     }
 
     pub fn bft_consensus(vectors: &[Vec<f32>], epsilon: f32) -> Option<Vec<f32>> {
-        if vectors.is_empty() { return None; }
+        if vectors.is_empty() {
+            return None;
+        }
         let n = vectors.len();
         let threshold = (2 * n / 3) + 1;
         let dim = vectors[0].len();
-        if vectors.iter().any(|v| v.len() != dim) { return None; }
+        if vectors.iter().any(|v| v.len() != dim) {
+            return None;
+        }
 
         let (best_idx, neighbor_count) = (0..n)
             .map(|i| {
                 let neighbors = (0..n)
                     .filter(|&j| {
-                        vectors[i].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon
-                    }).count();
+                        vectors[i]
+                            .iter()
+                            .zip(vectors[j].iter())
+                            .map(|(a, b)| (a - b).abs())
+                            .sum::<f32>()
+                            < epsilon
+                    })
+                    .count();
                 (i, neighbors)
             })
             .max_by_key(|&(_, count)| count)?;
 
-        if neighbor_count < threshold { return None; }
+        if neighbor_count < threshold {
+            return None;
+        }
 
         let agreeing: Vec<&Vec<f32>> = (0..n)
             .filter(|&j| {
-                vectors[best_idx].iter().zip(vectors[j].iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() < epsilon
+                vectors[best_idx]
+                    .iter()
+                    .zip(vectors[j].iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .sum::<f32>()
+                    < epsilon
             })
-            .map(|j| &vectors[j]).collect();
-            
+            .map(|j| &vectors[j])
+            .collect();
+
         let centroid: Vec<f32> = (0..dim)
             .map(|k| agreeing.iter().map(|v| v[k]).sum::<f32>() / agreeing.len() as f32)
             .collect();
-            
+
         Some(centroid)
     }
 }

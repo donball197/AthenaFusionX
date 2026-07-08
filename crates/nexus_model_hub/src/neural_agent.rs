@@ -23,13 +23,18 @@ impl MicroAgent {
     }
 
     pub async fn prepare_and_run(
-        &self, client: &Client, api_key: &str, user_text: &str, ctx: ContextPacket,
+        &self,
+        client: &Client,
+        api_key: &str,
+        user_text: &str,
+        ctx: ContextPacket,
     ) -> Result<(String, u128)> {
         let start = std::time::Instant::now();
         let model = ctx.model_override.as_deref().unwrap_or("gemma-4-31b-it");
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, api_key.trim());
 
-        let combined_text = format!("SYSTEM: {}\nUSER: {}", ctx.system_prompt.unwrap_or_default(), user_text);
+        let combined_text =
+            format!("SYSTEM: {}\nUSER: {}", ctx.system_prompt.unwrap_or_default(), user_text);
         let payload = json!({
             "contents": [{ "role": "user", "parts": [{ "text": combined_text }] }],
             "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
@@ -47,15 +52,21 @@ impl MicroAgent {
             while let Some(pos) = buffer.find("\n\n") {
                 let event = buffer.drain(..pos + 2).collect::<String>();
                 let clean = event.trim_start_matches("data: ").trim();
-                
-                if clean.is_empty() || clean == "[DONE]" { continue; }
-                
+
+                if clean.is_empty() || clean == "[DONE]" {
+                    continue;
+                }
+
                 if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                    if let Some(parts) = val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                    if let Some(parts) =
+                        val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
+                    {
                         for part in parts {
                             if let Some(token) = part["text"].as_str() {
                                 full_response.push_str(token);
-                                let _ = self.tx.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());
+                                let _ = self.tx.send(
+                                    json!({"type": "NEURAL_STREAM", "payload": token}).to_string(),
+                                );
                             }
                         }
                     }
