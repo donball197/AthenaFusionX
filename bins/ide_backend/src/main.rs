@@ -1,81 +1,56 @@
-mod scheduler;
+#![allow(dead_code, unused_must_use, unused_imports, unused_variables)]
+mod auth; mod broker; mod cluster_api; mod dream_cycle; mod edge_worker;
+mod fs_watcher; mod gateway_trait; mod heartbeat; mod logger; mod scheduler;
+mod security; mod server; mod server_terminal; mod system_monitor;
+mod telemetry_bridge; mod thermal_governor; mod vitals_handler; mod ws_bridge;
 
-use axum::{routing::get, Json, Router};
-use scheduler::{
-    CognitiveTask, DeterministicScheduler, ExecutionClass, ResourceBudget, RuntimeCounters,
-    TaskState,
-};
-use serde::Serialize;
-use std::{
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
-};
-use uuid::Uuid;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use secrecy::SecretString;
+use std::path::PathBuf;
 
-#[derive(Serialize)]
-struct TaskView {
-    id: String,
-    class: String,
-}
+use nexus_substrate::memory::MemoryPalace;
+use nexus_runtime_core::shared_state::VmoState;
+use nexus_runtime_core::cluster::ClusterMesh;
+use nexus_runtime_core::distributed_scheduler::DistributedScheduler;
+use nexus_runtime_core::orchestrator::Orchestrator;
+use nexus_model_hub::neural_agent::MicroAgent;
+use nexus_runtime_core::arbiter_agent::ArbiterAgent;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt::init();
+    logger::init();
+    tracing::info!(">> [BOOT] NEXUS IDE BACKEND INITIALIZING...");
 
-    // 1. Initialize persistent scheduler state
-    let scheduler = Arc::new(Mutex::new(DeterministicScheduler::new()));
-
-    // 2. Pre-seed with the tasks you verified earlier
-    {
-        let mut kernel = scheduler.lock().unwrap();
-        let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-
-        kernel.submit(CognitiveTask {
-            id: Uuid::new_v4(),
-            lineage_id: Uuid::new_v4(),
-            parent_lineage_id: None,
-            execution_class: ExecutionClass::SovereignInference,
-            state: TaskState::Ready,
-            static_priority: 10,
-            dynamic_priority: 0,
-            budget: ResourceBudget {
-                cpu_budget_ms: 2000,
-                token_budget: 4096,
-                max_memory_bytes: 512,
-                io_weight: 4,
-            },
-            counters: RuntimeCounters {
-                cpu_time_used_ms: 0,
-                tokens_consumed: 0,
-                memory_used_bytes: 0,
-                io_operations: 0,
-            },
-            created_at: current_timestamp,
-        });
+    if let Err(e) = security::write_startup_token() {
+        tracing::warn!("Could not write UI token (ensure NEXUS_AUTH_KEY is >=32 bytes in .env): {}", e);
     }
 
-    // 3. Setup API Gateway
-    let app = Router::new().route(
-        "/api/tasks",
-        get({
-            let scheduler = Arc::clone(&scheduler);
-            move || async move {
-                let kernel = scheduler.lock().unwrap();
-                let tasks: Vec<TaskView> = kernel
-                    .queue
-                    .iter()
-                    .map(|t| TaskView {
-                        id: t.id.to_string(),
-                        class: format!("{:?}", t.execution_class),
-                    })
-                    .collect();
-                Json(tasks)
-            }
-        }),
-    );
+    let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_else(|_| "DUMMY_KEY".to_string());
+    let (tx, _) = broadcast::channel::<String>(256);
+    let memory = Arc::new(Mutex::new(MemoryPalace::new("nexus_backend.db").await?));
+    let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+    let cluster = Arc::new(ClusterMesh::new());
+    let dist = Arc::new(DistributedScheduler::new(cluster.clone()));
+    let orchestrator = Arc::new(Orchestrator::new());
+    let client = reqwest::Client::new();
+    
+    let agent = Arc::new(MicroAgent::init(tx.clone())?);
+    let arbiter = Arc::new(ArbiterAgent::new(agent.clone()));
+    let monitor = Arc::new(Mutex::new(system_monitor::SystemMonitor::new()));
 
-    println!("⚡ COGNITIVE KERNEL SERVICE ONLINE at 0.0.0.0:3000");
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let state = Arc::new(server::AppState {
+        client, monitor: monitor.clone(), agent, orchestrator, memory,
+        api_key: SecretString::new(api_key.into_boxed_str()), tx: tx.clone(), arbiter,
+        workspace_root: PathBuf::from("."), vmo_state, cluster, dist,
+    });
+
+    heartbeat::spawn(tx.clone());
+    telemetry_bridge::spawn(tx.clone(), monitor, Arc::new(std::sync::atomic::AtomicU32::new(1000)));
+    thermal_governor::spawn();
+
+    tracing::info!("⚡ COGNITIVE KERNEL SERVICE ONLINE at 0.0.0.0:3000");
+    server::start_server(state).await;
+    Ok(())
 }

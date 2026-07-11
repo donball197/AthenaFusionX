@@ -46,9 +46,11 @@ impl DistributedScheduler {
         }
 
         let url = format!("http://{}:{}/api/cluster/forge", host, port);
+        let mesh_token = std::env::var("NEXUS_MESH_TOKEN")
+            .map_err(|_| anyhow!("NEXUS_MESH_TOKEN env var not set -- refusing to contact mesh node"))?;
         let res = reqwest::Client::new()
             .post(&url)
-            .header("Authorization", "SOVEREIGN")
+            .header("Authorization", mesh_token)
             .json(&Req { code })
             .send()
             .await?;
@@ -95,9 +97,11 @@ impl DistributedScheduler {
         }
 
         let url = format!("http://{}:{}/api/cluster/run", host, port);
+        let mesh_token = std::env::var("NEXUS_MESH_TOKEN")
+            .map_err(|_| anyhow!("NEXUS_MESH_TOKEN env var not set -- refusing to contact mesh node"))?;
         let res = reqwest::Client::new()
             .post(&url)
-            .header("Authorization", "SOVEREIGN")
+            .header("Authorization", mesh_token)
             .json(&Req { wasm_b64: general_purpose::STANDARD.encode(&wasm), func_name, input })
             .send()
             .await?;

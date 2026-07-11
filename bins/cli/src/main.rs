@@ -54,7 +54,8 @@ async fn main() -> anyhow::Result<()> {
                         last_type = "TASK_STATUS".to_string();
                     }
                     "LOG_EVENT" => {
-                        println!("\x1b[0m\n\x1b[1;90m[EVENT]\x1b[0m {}", payload);
+                        // ⚡ Print exactly what the Cortex streams, preserving its native ANSI colors!
+                        println!("{}", payload);
                         last_type = "LOG_EVENT".to_string();
                     }
                     _ => {}

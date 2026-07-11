@@ -1,3 +1,4 @@
+pub mod schema_law;
 pub mod agent_protocol;
 pub mod agent_runtime;
 pub mod agents;

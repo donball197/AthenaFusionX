@@ -27,3 +27,5 @@ mime_guess = { workspace = true }
 parking_lot = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
+nexus_model_hub = { path = "../../crates/nexus_model_hub" }
+once_cell = "1.19"

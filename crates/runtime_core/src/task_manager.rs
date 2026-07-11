@@ -88,6 +88,12 @@ pub async fn send_task(
                     node.objective, belief
                 )
             }
+            Ok(CortexOutcome::Halted { reasoning }) => {
+                format!(
+                    "[DAG NODE HALTED] Ancestor node '{}' self-halted: {}",
+                    node.objective, reasoning
+                )
+            }
             Ok(CortexOutcome::TurnsExhausted { best_belief }) => {
                 mission_had_failures = true;
                 let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX INCOMPLETE] Node {} exhausted turns without proving strategy (best belief {:.2}).", task_id, best_belief)}).to_string());

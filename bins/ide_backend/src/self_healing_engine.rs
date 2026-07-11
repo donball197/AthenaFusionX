@@ -96,8 +96,7 @@ pub fn spawn(
                         directive = format!("{}\n\nGoT RCA: {}\nProposed Fix: {}", directive, got.root_cause_analysis, got.selected_path.proposed_fix_action);
                     }
 
-                    nexus_runtime_core::task_manager::send_task(
-                        orchestrator.clone(),
+                    nexus_runtime_core::task_manager_v4::send_task_v4(
                         nexus_runtime_core::task_manager::TaskContext {
                             client: client.clone(), api_key: api_key.clone(), memory: memory.clone(), vmo_state: vmo_state.clone(), tx: tx.clone(), dist: dist.clone()
                         },

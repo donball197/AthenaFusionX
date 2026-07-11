@@ -75,11 +75,18 @@ struct VmoEntropyRes {
 
 // --- Middleware: Sovereign Guard ---
 async fn auth_guard(req: Request<Body>, next: axum::middleware::Next) -> impl IntoResponse {
+    let expected = match std::env::var("NEXUS_MESH_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "NEXUS_MESH_TOKEN not configured on this node")
+                .into_response()
+        }
+    };
     let auth_header = req.headers().get("Authorization").and_then(|v| v.to_str().ok());
-    if auth_header == Some("SOVEREIGN") {
+    if auth_header == Some(expected.as_str()) {
         next.run(req).await
     } else {
-        (StatusCode::UNAUTHORIZED, "Access Denied: SOVEREIGN token required").into_response()
+        (StatusCode::UNAUTHORIZED, "Access Denied").into_response()
     }
 }
 

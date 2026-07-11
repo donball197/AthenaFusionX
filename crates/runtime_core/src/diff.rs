@@ -14,6 +14,14 @@ impl DiffEngine {
             return Ok(original.to_string());
         }
 
+        // ⚡ IDEMPOTENCY GUARD: Prevent the agent from injecting the same code multiple times
+        // If the replacement block is substantial and already exists in the file (ignoring indentation), reject it.
+        if replace.trim().len() > 15 && Self::apply_agnostic(original, replace, "").is_some() {
+            return Err(anyhow!(
+                "PATCH_REJECTED_IDEMPOTENT: The replacement text is already fully present in the file. Do not duplicate it."
+            ));
+        }
+
         // Tier 1: Exact match (fastest, most precise)
         if let Some(pos) = original.find(search) {
             return Ok(replace_first_occurrence(original, pos, search.len(), replace));

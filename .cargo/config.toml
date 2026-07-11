@@ -2,8 +2,15 @@
 rustflags = [
     "-C", "target-cpu=cortex-a73",
     "-C", "target-feature=-fp16",
+    # Linker flags - lld can help, but disable if you get linker errors
     "-C", "link-arg=-fuse-ld=lld",
     "-C", "link-arg=-Wl,--as-needed",
     "-C", "link-arg=-Wl,--gc-sections",
 ]
-jobs = 2
+
+# IMPORTANT: Use 1 job on Duet to stay under 1.5GB RAM
+# Change to 2 only if you're sure you have headroom
+jobs = 1
+
+# Uncomment below if you install sccache later
+# rustc-wrapper = "sccache"

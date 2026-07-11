@@ -1,22 +1,30 @@
-const AUTH_HEADER = 'Basic YWRtaW46cGFzc3dvcmQ=';
+import { authState } from '../stores/auth.svelte.ts';
 
 export const uplink = {
     async post(path, body) {
-        return await fetch(path, {
+        const headers = { 'Content-Type': 'application/json' };
+        if (authState.token) {
+            headers['Authorization'] = `Bearer ${authState.token}`;
+        }
+        
+        const res = await fetch(path, {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': AUTH_HEADER
-            },
+            headers,
             body: JSON.stringify(body)
         });
+        
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        return res;
     },
+    
     async json(path) {
-        const res = await fetch(path, {
-            headers: {
-                'Authorization': AUTH_HEADER
-            }
-        });
+        const headers = {};
+        if (authState.token) {
+            headers['Authorization'] = `Bearer ${authState.token}`;
+        }
+        
+        const res = await fetch(path, { headers });
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
         return await res.json();
     }
 };

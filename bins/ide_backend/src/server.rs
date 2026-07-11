@@ -4,7 +4,7 @@ use axum::{
     http::{header, StatusCode, Uri},
     response::IntoResponse,
     routing::{get, post},
-    Router, Json,
+    Router, Json, middleware,
 };
 use rust_embed::RustEmbed;
 use std::path::{Path, PathBuf};
@@ -15,16 +15,16 @@ use serde_json::json;
 use serde::Deserialize;
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::{ws_bridge, vitals_handler, cluster_api};
+use crate::{ws_bridge, vitals_handler, cluster_api, security};
 
 #[derive(RustEmbed)]
-#[folder = "../../ui/dist/"]
+#[folder = "ui/dist/"] 
 struct Assets;
 
 pub struct AppState {
     pub client:             reqwest::Client,
     pub monitor:            Arc<tokio::sync::Mutex<crate::system_monitor::SystemMonitor>>,
-    pub agent:              Arc<nexus_runtime_core::neural_agent::MicroAgent>,
+    pub agent:              Arc<nexus_model_hub::neural_agent::MicroAgent>,
     pub orchestrator:       Arc<nexus_runtime_core::orchestrator::Orchestrator>,
     pub memory:             Arc<tokio::sync::Mutex<MemoryPalace>>,
     pub api_key:            SecretString,
@@ -46,8 +46,7 @@ pub async fn unified_gateway(State(state): State<Arc<AppState>>, Json(intent): J
     let s = state.clone();
     tokio::spawn(async move {
         let d = nexus_runtime_core::cli_utils::inject_workspace_dna(&directive_str).await;
-        nexus_runtime_core::task_manager::send_task(
-            s.orchestrator.clone(),
+        nexus_runtime_core::task_manager_v4::send_task_v4(
             nexus_runtime_core::task_manager::TaskContext {
                 client: s.client.clone(),
                 api_key: s.api_key.expose_secret().to_string(),
@@ -128,47 +127,25 @@ pub async fn fs_list_handler(State(state): State<Arc<AppState>>, Query(q): Query
     }
 }
 
-// Basic Authentication Middleware
-async fn basic_auth(
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    // Exempt WebSocket telemetry to avoid browser header issues and WS drops
-    if req.uri().path() == "/ws/telemetry" {
-        return next.run(req).await;
-    }
-
-    if let Some(auth_header) = req.headers().get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            // Check for valid Base64 encoded: "admin:password" => "YWRtaW46cGFzc3dvcmQ="
-            if auth_str == "Basic YWRtaW46cGFzc3dvcmQ=" {
-                return next.run(req).await;
-            }
-        }
-    }
-
-    // Unsuccessful authentication prompts a re-authentication WWW-Authenticate header block
-    (
-        StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, "Basic realm=\"Nexus\"")],
-        "Unauthorized",
-    ).into_response()
-}
-
 pub async fn start_server(state: Arc<AppState>) {
+    // ⚡ SUTURE: Secure API Routes behind Auth Guard
+    let api_routes = Router::new()
+        .route("/auth/login", post(security::login_handler)) // ⚡ The Login Bridge
+        .route("/task", post(unified_gateway))
+        .route("/metrics", get(metrics_handler))
+        .route("/fs/read", get(fs_read_handler))
+        .route("/fs/write", post(fs_write_handler))
+        .route("/fs/list", get(fs_list_handler))
+        .route("/vitals", get(vitals_handler::handle_vitals))
+        .route("/cluster/nodes", get(cluster_api::list_nodes))
+        .route_layer(middleware::from_fn(security::sovereign_auth_guard));
+
     let app = Router::new()
-        .route("/api/task", post(unified_gateway))
-        .route("/api/metrics", get(metrics_handler))
-        .route("/api/fs/read", get(fs_read_handler))
-        .route("/api/fs/write", post(fs_write_handler))
-        .route("/api/fs/list", get(fs_list_handler))
-        .route("/api/vitals", get(vitals_handler::handle_vitals))
-        .route("/api/cluster/nodes", get(cluster_api::list_nodes))
+        .nest("/api", api_routes)
         .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
         .fallback(static_handler)
-        .layer(axum::middleware::from_fn(basic_auth))
         .with_state(state);
-
+        
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -176,8 +153,7 @@ pub async fn start_server(state: Arc<AppState>) {
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/').to_string();
     let final_path = if path.is_empty() { "index.html".to_string() } else { path };
-
-    // Fallback Matrix: Check direct path, then explicit relative path format
+    
     let asset = Assets::get(&final_path)
         .or_else(|| Assets::get(&format!("./{}", final_path)));
 

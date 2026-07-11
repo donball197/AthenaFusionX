@@ -1,21 +1,6 @@
 use crate::hypothesis_engine::HypothesisEngine;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GoTResolution {
-    pub root_cause_analysis: String,
-    pub hypotheses: Vec<Hypothesis>,
-    pub selected_path: Hypothesis,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Hypothesis {
-    pub description: String,
-    pub probability_score: f32,
-    pub proposed_fix_action: String,
-}
 
 #[derive(Default)]
 pub struct MetaReasoner;

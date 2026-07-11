@@ -1,6 +1,5 @@
 pub mod agentic_runtime;
 pub mod auditor_agent;
-pub mod memory_actor;
 pub mod scout_agent;
 pub mod shell_agent;
 pub mod v2_worker;

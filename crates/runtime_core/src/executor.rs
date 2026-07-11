@@ -134,7 +134,8 @@ impl RoboticExecutor {
             }
             AgentAction::ReadFunction { path, function_name, .. } => {
                 let safe_path = sanitize(&path)?;
-                let content = tokio::fs::read_to_string(&safe_path).await?;
+                let content = crate::ast_editor::AstEditor::read_function(safe_path.to_str().unwrap_or(&path), &function_name)
+                    .map_err(|e| anyhow::anyhow!("AST_FAULT: {}", e))?;
                 Ok(format!("[READ_FUNCTION_OK] '{}' from {}\nCONTENT:\n{}", function_name, path, content))
             }
             AgentAction::DiffPatch { path, search, replace, .. } => {

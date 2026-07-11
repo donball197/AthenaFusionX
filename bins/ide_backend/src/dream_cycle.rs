@@ -20,9 +20,11 @@ pub fn spawn(
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(30 * 60));
         ticker.tick().await; // skip immediate first tick
+
         loop {
             ticker.tick().await;
             tracing::info!("[DREAM_CYCLE] Beginning synthesis pass…");
+
             let _ = tx.send(
                 serde_json::json!({"type":"LOG_EVENT","payload":"[DREAM] Synthesis cycle awakening…"})
                     .to_string()
@@ -49,7 +51,8 @@ pub fn spawn(
                 context
             );
 
-            let ctx = nexus_runtime_core::neural_agent::ContextPacket {
+            // ✅ FIXED: ContextPacket comes from nexus_model_hub
+            let ctx = nexus_model_hub::neural_agent::ContextPacket {
                 system_prompt: Some("Output plain text only. One paragraph.".into()),
                 model_override: Some("gemma-4-26b-a4b-it".into()),
                 ..Default::default()
@@ -69,8 +72,3 @@ pub fn spawn(
         }
     });
 }
-
-            // Low memory maintenance for Duet 2
-            let mem = memory.lock().await;
-            let _ = mem.lightweight_maintenance().await;
-

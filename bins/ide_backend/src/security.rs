@@ -3,8 +3,27 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
+    Json,
 };
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub key: String,
+}
+
+pub async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoResponse {
+    let expected = std::env::var("NEXUS_AUTH_KEY").unwrap_or_default();
+    if payload.key == expected && !expected.is_empty() {
+        match auth::issue_sovereign_token() {
+            Ok(token) => Json(serde_json::json!({ "token": token })).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Token gen failed: {}", e)).into_response(),
+        }
+    } else {
+        (StatusCode::UNAUTHORIZED, "Invalid master key").into_response()
+    }
+}
 
 pub async fn sovereign_auth_guard(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
     if req.uri().path() == "/api/auth/login" {

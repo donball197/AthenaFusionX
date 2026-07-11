@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = [
     "crates/runtime_core",
     "crates/identity",
@@ -11,9 +12,9 @@ members = [
     "bins/cli",
     "bins/node",
     "bins/ide_backend",
-    "apps/telemetry_node"
-, "target_dummy"]
-resolver = "2"
+    "apps/telemetry_node",
+    "target_dummy"
+]
 
 [workspace.package]
 edition = "2021"
@@ -45,10 +46,10 @@ wasmtime               = "45.0.2"
 wasmtime-wasi          = "45.0.2"
 
 [profile.dev]
-opt-level = 0
-debug = true
+opt-level = 1
+debug = "line-tables-only"
 incremental = true
-codegen-units = 256
+codegen-units = 2
 panic = "abort"
 
 [profile.release]
@@ -65,3 +66,14 @@ opt-level = "z"
 
 [workspace.lints.clippy]
 needless-question-mark = "allow"
+
+# ============================================================
+# Fast iteration profile - optimized for low RAM devices
+# ============================================================
+[profile.fast]
+inherits = "dev"
+opt-level = 0
+debug = false
+incremental = true
+panic = "abort"
+codegen-units = 4

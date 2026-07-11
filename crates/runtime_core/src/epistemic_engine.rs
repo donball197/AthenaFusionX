@@ -44,36 +44,27 @@ impl EpistemicEngine {
                     {
                         retries += 1;
 
-                        // ⚡ SUTURE: Increased to 6 retries with Exponential Backoff
                         if retries > 6 {
                             println!("\x1b[31m>> [API FATAL] {} exhausted 6 retries. Falling back...\x1b[0m", short_name);
                             break;
                         }
 
-                        // Exponential backoff calculation: 4, 8, 16, 32...
                         let backoff_secs = 2_u64.pow(retries as u32) * 2;
-                        let actual_sleep = std::cmp::min(backoff_secs, 45); // Cap sleep at 45s
+                        let actual_sleep = std::cmp::min(backoff_secs, 45);
 
                         println!("\x1b[33m>> [API RETRY] {} hit transient fault ({}). Backing off {}s (Attempt {}/6)...\x1b[0m", short_name, err, actual_sleep, retries);
                         tokio::time::sleep(Duration::from_secs(actual_sleep)).await;
                         continue;
                     } else {
-                        println!(
-                            "\x1b[31m>> [API ERROR] {} returned fatal error: {}\x1b[0m",
-                            short_name, err
-                        );
+                        println!("\x1b[31m>> [API ERROR] {} returned fatal error: {}\x1b[0m", short_name, err);
                         break;
                     }
                 }
 
                 let mut final_text = String::new();
-                if let Some(parts) =
-                    body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
-                {
+                if let Some(parts) = body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
                     for part in parts {
-                        if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
-                            continue;
-                        }
+                        if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) { continue; }
                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                             final_text.push_str(text);
                         }
@@ -82,9 +73,7 @@ impl EpistemicEngine {
 
                 if final_text.trim().is_empty() {
                     retries += 1;
-                    if retries > 4 {
-                        break;
-                    }
+                    if retries > 4 { break; }
                     let backoff_secs = 2_u64.pow(retries as u32) * 2;
                     println!("\x1b[33m>> [API THROTTLE] {} hit rate limit (empty response). Backing off {}s...\x1b[0m", short_name, backoff_secs);
                     sleep(Duration::from_secs(backoff_secs)).await;
@@ -115,7 +104,19 @@ impl EpistemicEngine {
         strategy: &str,
         evidence_so_far: &str,
     ) -> Result<String> {
-        let prompt = format!("You are the Action Strategist.\nORIGINAL DIRECTIVE (stay strictly within its scope -- do not investigate other files unless the directive or evidence explicitly points there): {}\nSTRATEGY: {}\nEVIDENCE GATHERED SO FAR:\n{}\nPropose the exact next step to fulfill the strategy. CRITICAL RULE: NEVER run `find /` or search the root directory! Only search the current working directory (`.`). OUTPUT ONLY YOUR PROPOSED NEXT STEP IN PLAIN TEXT.", mission, strategy, evidence_so_far);
+        let prompt = format!(
+            "You are the Action Strategist.\n\
+             ORIGINAL DIRECTIVE (stay strictly within its scope): {}\n\
+             STRATEGY: {}\n\
+             EVIDENCE GATHERED SO FAR:\n{}\n\
+             Propose the exact next step to fulfill the strategy.\n\
+             CRITICAL RULES:\n\
+             1. NEVER run `find /` or search the root directory! Only search the current working directory (`.`).\n\
+             2. ANTI-PARALYSIS PROTOCOL: If the evidence shows you have already read the target files or gathered enough context, you MUST immediately propose a concrete mutation (e.g., diff_patch, patch_function, write_file) or execute a terminal command. Do NOT propose redundant 'cat', 'ls', or 'grep' operations.\n\
+             3. If the directive is fully satisfied based on the evidence, output exactly: halt\n\
+             OUTPUT ONLY YOUR PROPOSED NEXT STEP IN PLAIN TEXT.",
+             mission, strategy, evidence_so_far
+        );
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }});
         Self::safe_api_call(client, api_key, &get_light_models(), &payload).await
     }
@@ -127,7 +128,17 @@ impl EpistemicEngine {
         proposed_action: &str,
         world_context: &str,
     ) -> Result<CriticResponse> {
-        let prompt = format!("You are the Adversarial Critic.\nSTRATEGY: {}\nPROPOSED ACTION: {}\nWORLD CONTEXT: {}\nEvaluate if this action is safe and logically sound. \nCRITICAL RULE: Always allow 'read_file' and 'find' operations even if the path is not visible in the WORLD CONTEXT. A failed read is safe exploration. Do not veto read operations for missing paths.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, proposed_action, world_context);
+        let prompt = format!(
+            "You are the Adversarial Critic.\n\
+             STRATEGY: {}\n\
+             PROPOSED ACTION: {}\n\
+             WORLD CONTEXT: {}\n\
+             Evaluate if this action is safe and logically sound. \n\
+             CRITICAL RULE: Always allow 'read_file' and 'find' operations even if the path is not visible in the WORLD CONTEXT.\n\
+             OUTPUT ONLY VALID JSON:\n\
+             {{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", 
+             strategy, proposed_action, world_context
+        );
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
         let text = Self::safe_api_call(client, api_key, &get_heavy_models(), &payload).await?;
         serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))
@@ -140,7 +151,10 @@ impl EpistemicEngine {
         proposed_action: &str,
     ) -> Result<String> {
         let prompt = format!(
-            "You are the Action Translator.\nSTRATEGY: {}\nPROPOSED ACTION: {}\nCRITICAL RULE: Translate the PROPOSED ACTION into exactly ONE JSON Array using the explicit JSON object schema below:\n\
+            "You are the Action Translator.\n\
+             STRATEGY: {}\n\
+             PROPOSED ACTION: {}\n\
+             CRITICAL RULE: Translate the PROPOSED ACTION into exactly ONE JSON Array using the explicit JSON object schema below:\n\
              VALID JSON ACTIONS (MUST MATCH RUST ENUM EXACTLY):\n\
              1. [{{ \"type\": \"execute_command\", \"command\": \"<bash_command>\", \"reasoning\": \"...\" }}]\n\
              2. [{{ \"type\": \"read_file\", \"path\": \"<filepath>\", \"reasoning\": \"...\" }}]\n\
@@ -148,7 +162,7 @@ impl EpistemicEngine {
              4. [{{ \"type\": \"diff_patch\", \"path\": \"<filepath>\", \"search\": \"<search>\", \"replace\": \"<replace>\", \"reasoning\": \"...\" }}]\n\
              5. [{{ \"type\": \"patch_function\", \"path\": \"<filepath>\", \"function_name\": \"<name>\", \"new_body\": \"<full source>\", \"reasoning\": \"...\" }}]\n\
              6. [{{ \"type\": \"halt\", \"reasoning\": \"...\" }}]\n\
-             NOTE: Do NOT use types like 'find_file', 'ls_tree', or 'grep_code'. If you need to search or list, use 'execute_command' (e.g. command: 'ls -F' or command: 'find .').\n\
+             NOTE: Do NOT use types like 'find_file', 'ls_tree', or 'grep_code'. If you need to search or list, use 'execute_command'.\n\
              Select ONLY the relevant action object and enclose it in a JSON array. Do not output anything else.",
             strategy, proposed_action
         );
@@ -163,7 +177,19 @@ impl EpistemicEngine {
         evidence: &str,
     ) -> Result<CriticResponse> {
         let truncated_evidence: String = evidence.chars().take(8000).collect();
-        let prompt = format!("You are the Scientific Evaluator.\nSTRATEGY: {}\nEVIDENCE GATHERED:\n{}\nDoes this evidence progress the strategy? If the evidence shows a successful compilation or successful file creation, give a positive modifier. If it is neutral observation, return 0.0.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, truncated_evidence);
+        let prompt = format!(
+            "You are the Scientific Evaluator.\n\
+             STRATEGY: {}\n\
+             EVIDENCE GATHERED:\n{}\n\
+             Does this evidence advance the strategy?\n\
+             CRITICAL RULES:\n\
+             1. If the evidence shows successful mutations (writes, patches, halts) or passing tests, grant a strong positive modifier (+0.3 to +0.5).\n\
+             2. If the evidence is merely a successful file read or directory listing, grant a tiny modifier (0.0 to +0.1).\n\
+             3. ANTI-PARALYSIS PROTOCOL: If the evidence indicates the agent is repeating the same read/list operations without mutating code, or failing continuously, grant a NEGATIVE modifier (-0.3 to -0.5) to force a pivot.\n\
+             OUTPUT ONLY VALID JSON:\n\
+             {{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", 
+             strategy, truncated_evidence
+        );
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
         let text = Self::safe_api_call(client, api_key, &get_heavy_models(), &payload).await?;
         serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))

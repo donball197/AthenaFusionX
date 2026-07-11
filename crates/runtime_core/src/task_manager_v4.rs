@@ -1,6 +1,4 @@
-use crate::cognition::meta_reasoner::MetaReasoner;
 use crate::cortical_loop::{CortexOutcome, CorticalLoop};
-use crate::hypothesis::HypothesisGenerator;
 use crate::runtime_metrics::RuntimeMetrics;
 use crate::task_manager::TaskContext;
 use crate::world_model::WorldModel;
@@ -13,15 +11,10 @@ pub async fn send_task_v4(ctx: TaskContext, directive: &str) -> Result<String> {
     metrics.inc_tasks();
 
     // Wire hypothesis logic
-    let _ = HypothesisGenerator::generate(directive).await;
+    let _ = crate::hypothesis::HypothesisGenerator::generate(directive).await;
 
     // Wire meta_reasoner
-    let _ = MetaReasoner::execute_with_got(&ctx.client, &ctx.api_key, directive).await;
-
-    // Wire memory actors (activating both variations to repair orphaned signatures)
-    let (_tx_mem, rx_mem) = tokio::sync::mpsc::channel::<crate::memory_actor::MemoryCommand>(1);
-    let _mem_actor_1 = crate::memory_actor::MemoryActor::new(rx_mem);
-    let (_mem_actor_2, _handle) = crate::agents::memory_actor::MemoryActor::start();
+    let _ = crate::cognition::meta_reasoner::MetaReasoner::execute_with_got(&ctx.client, &ctx.api_key, directive).await;
 
     // Wire unified CorticalLoop
     let world_model = Arc::new(WorldModel::new());
@@ -33,9 +26,13 @@ pub async fn send_task_v4(ctx: TaskContext, directive: &str) -> Result<String> {
         ctx.dist.clone(),
         ctx.tx.clone(),
     );
+    
     match cortex.ignite(directive).await? {
         CortexOutcome::Proven { belief } => {
             Ok(format!("CorticalLoop Execution Complete (belief {:.2})", belief))
+        }
+        CortexOutcome::Halted { reasoning } => {
+            Ok(format!("CorticalLoop Halted intentionally. Reasoning: {}", reasoning))
         }
         CortexOutcome::TurnsExhausted { best_belief } => Err(anyhow::anyhow!(
             "CorticalLoop exhausted turns without proving the strategy (best belief {:.2})",
