@@ -1,0 +1,44 @@
+
+pub fn calculate(value: i32) -> i32 {
+
+    value - 10
+
+}
+
+
+pub fn unrelated_function() -> &'static str {
+
+    "UNCHANGED"
+
+}
+
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+
+    #[test]
+    fn calculation_should_add_ten() {
+
+        assert_eq!(
+            calculate(20),
+            30
+        );
+
+    }
+
+
+    #[test]
+    fn unrelated_should_remain() {
+
+        assert_eq!(
+            unrelated_function(),
+            "UNCHANGED"
+        );
+
+    }
+
+}
+

@@ -1,19 +1,30 @@
 #!/bin/bash
 
-# Project Nexus Singularity v3.0 - Cortex Manifest
-# Target: Root Setup Diagnostics & Configuration Generation
+# ================================================
+# Project Nexus Singularity v3.1 - Enhanced Cortex Manifest
+# Enhanced with better filtering, categorization, and recommendations
+# ================================================
 
-set -e # Exit immediately on uncontrolled errors
+set -e
 
-# 1. Dependency Validation
+# Colors
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+CYAN='\033[36m'
+PURPLE='\033[35m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# 1. Dependency Check
 for cmd in curl jq; do
     if ! command -v "$cmd" &> /dev/null; then
-        echo -e "\033[31m[ERROR] Critical dependency '$cmd' is not installed.\033[0m"
+        echo -e "${RED}[ERROR] Critical dependency '$cmd' is missing.${RESET}"
         exit 1
     fi
 done
 
-# 2. Environment Sourcing
+# 2. API Key Check
 if [ -f .env ]; then
     set -a
     source .env
@@ -21,22 +32,22 @@ if [ -f .env ]; then
 fi
 
 if [ -z "$GEMINI_API_KEY" ]; then
-    echo -e "\033[31m[ERROR] GEMINI_API_KEY is not set in .env\033[0m"
+    echo -e "${RED}[ERROR] GEMINI_API_KEY not found in .env${RESET}"
     exit 1
 fi
 
-echo -e "\033[1;36m>> GENERATING FULL CORTEX MANIFEST [NEXUS v3.0]\033[0m"
-echo -e "\033[90mQuerying Google AI Studio for production-ready text generation endpoints...\033[0m\n"
+echo -e "${BOLD}${CYAN}>> GENERATING ENHANCED CORTEX MANIFEST [NEXUS v3.1]${RESET}"
+echo -e "${CYAN}Querying Google AI Studio for all active models...\n${RESET}"
 
-# 3. Robust API Fetching
+# Fetch models
 RAW_DATA=$(curl -sS -f "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY" || echo "")
 
 if [ -z "$RAW_DATA" ]; then
-    echo -e "\033[31m[ERROR] Failed to fetch data. Verify network connection and API Key validity.\033[0m"
+    echo -e "${RED}[ERROR] Failed to fetch models. Check network / API key.${RESET}"
     exit 1
 fi
 
-# 4. Ultra-Fast Token Formatter
+# Enhanced formatter
 format_tokens() {
     local num=$1
     if [ "$num" -ge 1000000 ]; then
@@ -48,65 +59,90 @@ format_tokens() {
     fi
 }
 
-# 5. Output Generation
-printf "\033[1;37m%-35s | %-10s | %-8s | %-8s | %-4s | %-25s\033[0m\n" "MODEL ID" "VERSION" "IN_TOK" "OUT_TOK" "TEMP" "DISPLAY NAME"
-printf "%-35s-|-%-10s-|-%-8s-|-%-8s-|-%-4s-|-%-25s\n" "-----------------------------------" "----------" "--------" "--------" "----" "-------------------------"
+# Header
+printf "${BOLD}%-38s | %-10s | %-9s | %-9s | %-6s | %-22s${RESET}\n" \
+    "MODEL ID" "VERSION" "INPUT" "OUTPUT" "TEMP" "CATEGORY"
 
-# Parse with jq: Filter specifically for generateContent to exclude pure embedding/image models
+printf "%-38s-|-%-10s-|-%-9s-|-%-9s-|-%-6s-|-%-22s\n" \
+    "-------------------------------------" "----------" "---------" "---------" "------" "----------------------"
+
+# Main enhanced parsing
 echo "$RAW_DATA" | jq -r '
     .models[] | 
     select(.supportedGenerationMethods != null) |
     select(.supportedGenerationMethods | index("generateContent")) |
-    [
-        (.name | sub("^models/"; "")), 
-        (.version // "N/A"),
-        (.inputTokenLimit // 0), 
-        (.outputTokenLimit // 0), 
-        (.temperature // 0.0),
-        (.displayName // "N/A")
-    ] | @tsv
+    {
+        name: (.name | sub("^models/"; "")),
+        version: (.version // "N/A"),
+        input: (.inputTokenLimit // 0),
+        output: (.outputTokenLimit // 0),
+        temp: (.temperature // 0.0),
+        display: (.displayName // "N/A")
+    } | 
+    [.name, .version, .input, .output, .temp, .display] | @tsv
 ' | while IFS=$'\t' read -r name version in_lim out_lim temp display; do
 
-    # Logic-based Color Coding
-    if [[ "$name" == *"3.5"* ]] || [[ "$name" == *"3.1"* ]]; then
-        COLOR="\033[1;32m" # Green (Cutting Edge)
-    elif [[ "$name" == *"gemma"* ]]; then
-        COLOR="\033[1;35m" # Purple (Open Weights Reasoning)
-    elif [[ "$name" == *"deep-research"* ]]; then
-        COLOR="\033[1;33m" # Yellow (Specialist)
+    # Category & Color
+    if [[ "$name" == *"gemma-4-31b"* ]]; then
+        COLOR="${PURPLE}"; CAT="GEMMA-4-HEAVY"
+    elif [[ "$name" == *"gemma-4-26b"* ]]; then
+        COLOR="${PURPLE}"; CAT="GEMMA-4-MOE"
+    elif [[ "$name" == *"flash-lite"* ]]; then
+        COLOR="${GREEN}"; CAT="FLASH-LITE"
+    elif [[ "$name" == *"3.5-flash"* ]] || [[ "$name" == *"3.1-flash"* ]]; then
+        COLOR="${GREEN}"; CAT="FLASH"
+    elif [[ "$name" == *"pro"* ]] || [[ "$name" == *"deep-research"* ]]; then
+        COLOR="${YELLOW}"; CAT="HEAVY/PRO"
+    elif [[ "$name" == *"image"* ]] || [[ "$name" == *"vision"* ]]; then
+        COLOR="${CYAN}"; CAT="MULTIMODAL"
     elif [[ "$name" == *"preview"* ]] || [[ "$name" == *"latest"* ]]; then
-        COLOR="\033[36m"   # Cyan (Experimental)
+        COLOR="${CYAN}"; CAT="PREVIEW"
     else
-        COLOR="\033[0m"    # Default
+        COLOR="${RESET}"; CAT="STANDARD"
     fi
 
     in_fmt=$(format_tokens "$in_lim")
     out_fmt=$(format_tokens "$out_lim")
-    
-    # Safely truncate display name
-    if [ "${#display}" -gt 24 ]; then 
-        disp_fmt="${display:0:21}..."
+
+    # Truncate display name
+    if [ "${#display}" -gt 21 ]; then 
+        disp_fmt="${display:0:18}..."
     else
         disp_fmt="$display"
     fi
 
-    printf "${COLOR}%-35s\033[0m | %-10s | %-8s | %-8s | %-4s | %-25s\n" "$name" "$version" "$in_fmt" "$out_fmt" "$temp" "$disp_fmt"
+    printf "${COLOR}%-38s${RESET} | %-10s | %-9s | %-9s | %-6s | %-22s\n" \
+        "$name" "$version" "$in_fmt" "$out_fmt" "$temp" "$CAT"
 done
 
-echo -e "\n\033[1;36m>> RECOMMENDED RUST CASCADE (crates/runtime_core/src/model_config.rs)\033[0m"
-echo -e "Based on the live endpoints above, your engine should use these exact IDs to prevent 404s/429s:"
-echo -e "\033[90m// ⚡ THE DEEP CASCADE: Auto-Generated by models.sh\033[0m"
-echo -e "\033[32mpub fn get_light_models() -> Vec<String> {\033[0m"
-echo -e "    vec!["
-echo -e "        \033[33m\"gemini-3.5-flash\".to_string()\033[0m,      // Tier 1: Fastest standard model"
-echo -e "        \033[33m\"gemini-3.1-flash-lite\".to_string()\033[0m, // Tier 2: Low-latency fallback"
-echo -e "        \033[33m\"gemini-2.5-flash\".to_string()\033[0m,      // Tier 3: Verified rock-solid fallback"
-echo -e "    ]"
-echo -e "\033[32m}\033[0m\n"
-echo -e "\033[32mpub fn get_heavy_models() -> Vec<String> {\033[0m"
-echo -e "    vec!["
-echo -e "        \033[33m\"gemma-4-31b-it\".to_string()\033[0m,        // Tier 1: Heavy Open Weights reasoning"
-echo -e "        \033[33m\"gemini-3.1-pro-preview\".to_string()\033[0m,  // Tier 2: Complex system context"
-echo -e "        \033[33m\"gemma-4-26b-a4b-it\".to_string()\033[0m,    // Tier 3: MoE fallback"
-echo -e "    ]"
-echo -e "\033[32m}\033[0m"
+# === RECOMMENDED CASCADES ===
+echo -e "\n${BOLD}${CYAN}>> RECOMMENDED RUST CASCADES [v3.1]${RESET}"
+
+cat << 'EOF'
+pub fn get_light_models() -> Vec<String> {
+    vec![
+        "gemini-3.5-flash".to_string(),           // Tier 1 - Best balance
+        "gemini-3.1-flash-lite".to_string(),      // Tier 2 - Fast & cheap
+        "gemini-2.5-flash".to_string(),           // Tier 3 - Ultra stable
+    ]
+}
+
+pub fn get_heavy_models() -> Vec<String> {
+    vec![
+        "gemma-4-31b-it".to_string(),             // Best open reasoning (262K)
+        "gemini-3.1-pro-preview".to_string(),     // Frontier closed model
+        "gemma-4-26b-a4b-it".to_string(),         // Efficient MoE fallback (262K)
+    ]
+}
+
+pub fn get_flash_lite_models() -> Vec<String> {
+    vec![
+        "gemini-3.1-flash-lite".to_string(),      // Primary Flash Lite
+        "gemini-3.1-flash-lite-preview".to_string(),
+        "gemini-flash-lite-latest".to_string(),
+    ]
+}
+EOF
+
+echo -e "\n${GREEN}✅ Enhanced manifest generated successfully!${RESET}"
+echo -e "${YELLOW}Pro Tip:${RESET} Gemma-4-31B is excellent for deep reasoning with 262K context."

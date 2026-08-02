@@ -1,0 +1,10 @@
+[package]
+name = "diag_util"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+libc = "0.2.186"
+
+[lints]
+workspace = true

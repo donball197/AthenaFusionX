@@ -1,7 +1,8 @@
 [workspace]
-resolver = "2"
 members = [
+    "apps/impact_engine",
     "crates/runtime_core",
+    "crates/executive_cortex",
     "crates/identity",
     "crates/memory_graph",
     "crates/protocol",
@@ -14,6 +15,12 @@ members = [
     "bins/ide_backend",
     "apps/telemetry_node",
     "target_dummy"
+, "apps/logic_cell", "apps/symbol_graph", "apps/repository_planner", "apps/hello_sidecar", "apps/impact_analyzer", "apps/mutation_planner", "apps/verification_runner",   "apps/execution_auditor",
+  "apps/mutation_ranker",
+]
+resolver = "2"
+exclude = [
+    "comparison_workspace"
 ]
 
 [workspace.package]
@@ -47,9 +54,9 @@ wasmtime-wasi          = "45.0.2"
 
 [profile.dev]
 opt-level = 1
-debug = "line-tables-only"
-incremental = true
-codegen-units = 2
+debug = false
+incremental = false
+codegen-units = 1
 panic = "abort"
 
 [profile.release]
@@ -66,14 +73,3 @@ opt-level = "z"
 
 [workspace.lints.clippy]
 needless-question-mark = "allow"
-
-# ============================================================
-# Fast iteration profile - optimized for low RAM devices
-# ============================================================
-[profile.fast]
-inherits = "dev"
-opt-level = 0
-debug = false
-incremental = true
-panic = "abort"
-codegen-units = 4

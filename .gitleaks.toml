@@ -1,0 +1,7 @@
+[allowlist]
+regexes = [
+  # Add specific patterns to ignore if necessary
+]
+
+[secrets]
+# Enable standard Gitleaks rules

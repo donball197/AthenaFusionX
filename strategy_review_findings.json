@@ -1,0 +1,7 @@
+{
+  "review_status": "completed",
+  "invalidated_assumptions": [
+    "Prior roadmap failed to account for dense inter-module coupling inside bins/ide_backend/src/main.rs (auth, broker, cluster_api, dream_cycle, edge_worker, fs_watcher, gateway_trait, heartbeat, logger, scheduler, security, self_healing_engine, server, server_terminal, system_monitor, telemetry_bridge, thermal_governor, vitals_handler, ws_bridge)",
+    "apps/ coupling requires prioritizing core subsystem stabilization before edge app integrations"
+  ]
+}

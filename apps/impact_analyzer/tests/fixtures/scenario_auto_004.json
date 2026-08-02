@@ -1,0 +1,45 @@
+{
+  "scenario_id": "AUTO-MUT-004",
+  "description": "Autonomous fixture generated from cargo-mutants: BinaryOperator on evaluate_signal",
+  "inputs": {
+    "target_mutation": {
+      "symbol_id": "evaluate_signal",
+      "mutation_type": "BinaryOperator"
+    },
+    "mock_graph": {
+      "nodes": [
+        {
+          "id": "evaluate_signal",
+          "type": "fn"
+        },
+        {
+          "id": "evaluate_signal_caller",
+          "type": "fn"
+        },
+        {
+          "id": "ui::telemetry",
+          "type": "struct"
+        }
+      ],
+      "edges": [
+        {
+          "source": "evaluate_signal_caller",
+          "target": "evaluate_signal"
+        },
+        {
+          "source": "ui::telemetry",
+          "target": "evaluate_signal_caller"
+        }
+      ]
+    }
+  },
+  "expected_outputs": {
+    "impact_classification": "HIGH",
+    "critical_blast_radius": [
+      "evaluate_signal_caller"
+    ],
+    "low_impact_radius": [
+      "ui::telemetry"
+    ]
+  }
+}

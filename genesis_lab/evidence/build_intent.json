@@ -1,0 +1,6 @@
+{
+ "objective":"Create Fibonacci utility library",
+ "sandbox":true,
+ "requires_tests":true,
+ "workspace_isolation":true
+}

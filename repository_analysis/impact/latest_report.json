@@ -1,0 +1,9 @@
+{
+  "target_node": "calculate_warp_trajectory",
+  "blast_radius": 3,
+  "affected_nodes": [
+    "warp_core_controller",
+    "navigation_matrix",
+    "calculate_warp_trajectory"
+  ]
+}

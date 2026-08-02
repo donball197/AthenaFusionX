@@ -61,3 +61,11 @@ wire_modes_and_governance.py
 .env
 *.db*
 target_dummy/
+genesis_lab/target/
+
+# Rust Artifacts
+target/
+**/target/
+*.rlib
+*.so
+repository_analysis/symbol_graph.json

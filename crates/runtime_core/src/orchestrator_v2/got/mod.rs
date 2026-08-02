@@ -9,5 +9,3 @@ pub enum GoTOperation {
     Score,
     KeepBest { n: usize },
 }
-
-

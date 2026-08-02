@@ -1,11 +1,11 @@
 use crate::distributed_scheduler::DistributedScheduler;
+use crate::memory_cortex::MemoryCortex;
 use crate::shared_state::VmoState;
-use nexus_substrate::memory::MemoryPalace;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub struct SubstrateContext {
-    pub memory: Arc<Mutex<MemoryPalace>>,
+    pub memory: Arc<MemoryCortex>,
     pub vmo_state: Arc<Mutex<VmoState>>,
     pub dist: Arc<DistributedScheduler>,
 }

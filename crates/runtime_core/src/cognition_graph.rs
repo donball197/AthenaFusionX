@@ -5,9 +5,19 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     Observation,
+    Verification,
+    Reflection,
     Hypothesis,
     ProposedAction { action_json: String },
     Strategy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationReport {
+    pub goal_satisfied: bool,
+    pub evidence_confidence: f32,
+    pub independent_check_passed: bool,
+    pub rationale: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

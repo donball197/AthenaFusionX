@@ -14,9 +14,14 @@ impl PlannerAgent {
         let system_instruction =
             "You are a headless JSON API. You MUST output ONLY a valid, raw JSON array. \
             Do NOT use markdown formatting like ```json. Do NOT write any conversational text. \
-            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`. CRITICAL RULE: If the directive involves modifying Rust code, your DAG MUST include a final task to verify integrity by running `cargo clippy --workspace --all-targets -j 1 -- -D warnings`. \
-            CRITICAL: The ONLY valid fields for each object are 'id', 'objective', 'deps', 'required_agent', and 'success_criteria'. \
-            DO NOT output any other fields like 'params', 'required_files', or 'Architectural_Strategies'. Embed all details into the 'objective' string.";
+            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`. \
+            CRITICAL RULE 1: POLYGLOT TOOLING MATRIX. Assign correct CLI tools based on language. For Rust: `cargo clippy --workspace` & `cargo bench`. For Python: `python3 -m py_compile` & `python3 -m timeit`. For JS/TS: `node -c` & `npm run lint`. STILL use symbol_graph to mathematically resolve ALL paths! CRITICAL RULE: NEVER propose or execute `cargo clean` or `make clean`. Rely on incremental compilation! \
+            CRITICAL RULE 2 [AST-FIRST]: You are in a Zero Fragmentation multi-crate workspace. NEVER guess file paths. Before invoking read_file, you MUST query the symbol_graph to resolve the exact absolute workspace path. Do not use raw OS shell commands like find.
+            CRITICAL RULE 2: You MUST explicitly chain your tasks using the 'deps' array so they execute in a strict, linear sequence. Task 2 must depend on Task 1, Task 3 must depend on Task 2, etc. DO NOT leave the 'deps' array empty unless it is the very first task. \
+            CRITICAL RULE 3: The ONLY valid fields for each object are 'id', 'objective', 'deps', 'required_agent', and 'success_criteria'. \
+            CRITICAL RULE 4: THE EVIDENCE VERIFICATION TAXONOMY. If a task requires generating a report, analysis, or quantitative claim, you MUST embed instructions in the 'objective' requiring the use of epistemic tags: [Observed], [Derived], [Measured], [Hypothesis]. \
+            DO NOT output any other fields like 'params', 'required_files', or 'Architectural_Strategies'. Embed all details into the 'objective' string. \
+            ANTI-ANCHORING RULE: The example below exists solely to show you the required JSON structure. Your plan's tasks must be derived entirely from the REAL DIRECTIVE.";
 
         let payload = serde_json::json!({
             "systemInstruction": {
@@ -25,15 +30,15 @@ impl PlannerAgent {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [{ "text": "DIRECTIVE: Audit the codebase for secrets.\nUse world model knowledge. Prefer targeted reads over broad grep." }]
+                    "parts": [{ "text": "FORMAT EXAMPLE ONLY:\nDIRECTIVE: Add a one-line comment to README.md." }]
                 },
                 {
                     "role": "model",
-                    "parts": [{ "text": "[\n  {\n    \"id\": \"task_1\",\n    \"objective\": \"Scan src/ for API keys\",\n    \"deps\": [],\n    \"required_agent\": \"AuditorAgent\",\n    \"success_criteria\": [\"Scan completes\"]\n  }\n]" }]
+                    "parts": [{ "text": "[\n  {\n    \"id\": \"task_1\",\n    \"objective\": \"Add comment to README.md\",\n    \"deps\": [],\n    \"required_agent\": \"GeneralAgent\",\n    \"success_criteria\": [\"Edit completes\"]\n  }\n]" }]
                 },
                 {
                     "role": "user",
-                    "parts": [{ "text": format!("DIRECTIVE: {}", directive) }]
+                    "parts": [{ "text": format!("REAL DIRECTIVE: {}", directive) }]
                 },
                 {
                     "role": "model",
@@ -66,7 +71,6 @@ impl PlannerAgent {
                     let status = res.status();
                     let body: Value = res.json().await.unwrap_or_default();
 
-                    // ⚡ SUTURE: Hardened Status Trap
                     if status == 429 || status.as_u16() == 503 {
                         let wait = attempts * 5;
                         tracing::warn!(
@@ -103,7 +107,6 @@ impl PlannerAgent {
                         continue;
                     }
 
-                    // RE-ATTACH THE PRE-FILLED BRACKET
                     if !text.starts_with('[') {
                         text = format!("[{}", text);
                     }
@@ -120,16 +123,13 @@ impl PlannerAgent {
                     match serde_json::from_str::<Vec<TaskNode>>(&array_str) {
                         Ok(nodes) => {
                             if nodes.is_empty() {
-                                tracing::warn!("[PLANNER] Empty task array generated. Retrying...");
                                 continue;
                             }
-
                             let mut graph = TaskGraph::new();
                             for mut node in nodes {
                                 node.status = TaskStatus::Pending;
                                 graph.nodes.insert(node.id.clone(), node);
                             }
-
                             return Ok(graph);
                         }
                         Err(e) => {
@@ -141,11 +141,6 @@ impl PlannerAgent {
                 }
                 Err(e) => {
                     last_error = e.to_string();
-                    tracing::warn!(
-                        "[PLANNER] Transport drop on attempt {}/6: {}. Retrying in 4s...",
-                        attempts,
-                        last_error
-                    );
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 }
             }
@@ -168,21 +163,17 @@ impl PlannerAgent {
                 _ => {}
             }
         }
-
         let partial = &text[start..];
         let mut end_idx = partial.len();
-
         while let Some(last_close) = partial[..end_idx].rfind('}') {
             let candidate = format!("{}]", &partial[..=last_close]);
             let clean_candidate: String =
                 candidate.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
-
             if serde_json::from_str::<serde_json::Value>(&clean_candidate).is_ok() {
                 return Some(clean_candidate);
             }
             end_idx = last_close;
         }
-
         None
     }
 }

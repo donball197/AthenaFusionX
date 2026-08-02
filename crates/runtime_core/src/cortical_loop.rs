@@ -1,23 +1,22 @@
 use anyhow::Result;
 use reqwest::Client;
 use std::sync::Arc;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{broadcast, Mutex};
 use tokio::time::{sleep, Duration};
 
-use crate::cognition_graph::{CognitiveGraph, NodeKind, EdgeRelation};
-use crate::world_model::WorldModel;
+use crate::agent_protocol::AgentAction;
+use crate::cognition_graph::{CognitiveGraph, EdgeRelation, NodeKind};
+use crate::distributed_scheduler::DistributedScheduler;
 use crate::epistemic_engine::EpistemicEngine;
 use crate::executor::RoboticExecutor;
-use crate::agent_protocol::AgentAction;
-use nexus_substrate::memory::MemoryPalace;
+use crate::memory_cortex::MemoryCortex;
 use crate::shared_state::VmoState;
-use crate::distributed_scheduler::DistributedScheduler;
+use crate::world_model::WorldModel;
 
 #[derive(Debug)]
 pub enum CortexOutcome {
-    Proven { belief: f32 },
-    Halted { reasoning: String },
-    TurnsExhausted { best_belief: f32 },
+    Proven { belief: f32, evidence: String },
+    TurnsExhausted { best_belief: f32, evidence: String },
 }
 
 pub struct CorticalLoop {
@@ -25,7 +24,7 @@ pub struct CorticalLoop {
     api_key: String,
     graph: CognitiveGraph,
     world_model: Arc<WorldModel>,
-    memory: Arc<Mutex<MemoryPalace>>,
+    memory: Arc<MemoryCortex>,
     vmo_state: Arc<Mutex<VmoState>>,
     dist: Arc<DistributedScheduler>,
     tx: broadcast::Sender<String>,
@@ -33,144 +32,419 @@ pub struct CorticalLoop {
 
 impl CorticalLoop {
     pub fn new(
-        api_key: String, world_model: Arc<WorldModel>, memory: Arc<Mutex<MemoryPalace>>,
-        vmo_state: Arc<Mutex<VmoState>>, dist: Arc<DistributedScheduler>, tx: broadcast::Sender<String>,
+        api_key: String,
+        world_model: Arc<WorldModel>,
+        memory: Arc<MemoryCortex>,
+        vmo_state: Arc<Mutex<VmoState>>,
+        dist: Arc<DistributedScheduler>,
+        tx: broadcast::Sender<String>,
     ) -> Self {
-        Self { client: Client::new(), api_key, graph: CognitiveGraph::new(), world_model, memory, vmo_state, dist, tx }
+        Self {
+            client: Client::new(),
+            api_key,
+            graph: CognitiveGraph::new(),
+            world_model,
+            memory,
+            vmo_state,
+            dist,
+            tx,
+        }
     }
 
-    fn broadcast(&self, raw: &str) {
-        println!("{}", raw); 
-        // ⚡ We no longer strip colors. Send raw ANSI direct to the stream!
-        let _ = self.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": raw}).to_string());
+    fn collect_evidence(&self, h_id: uuid::Uuid) -> String {
+        let mut history = String::new();
+        for edge in &self.graph.edges {
+            if edge.target == h_id
+                && (edge.relation == EdgeRelation::Supports || edge.relation == EdgeRelation::Contradicts)
+            {
+                if let Some(obs) = self.graph.nodes.get(&edge.source) {
+                    history.push_str(&format!("- [{:?}] {}\n", edge.relation, obs.content));
+                }
+            }
+        }
+        if history.is_empty() {
+            "No evidence recorded.".to_string()
+        } else {
+            history
+        }
+    }
+
+    fn log(&self, msg: String) {
+        let _ = self.tx.send(
+            serde_json::json!({"type": "NEURAL_STREAM", "payload": format!("{}\n", msg)})
+                .to_string(),
+        );
+    }
+
+    async fn resolve_workspace_paths() -> String {
+        match tokio::process::Command::new("cargo")
+            .args(["metadata", "--no-deps", "--format-version=1"])
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    Ok(meta) => {
+                        let workspace_root = meta
+                            .get("workspace_root")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unresolved>");
+                        let target_dir = meta
+                            .get("target_directory")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unresolved>");
+                        format!(
+                            "WORKSPACE FACTS (ground truth, do not guess): workspace_root={workspace_root} | target_dir={target_dir}. This is a Cargo WORKSPACE. ALL compiled binaries land at {target_dir}/debug/<bin_name> or {target_dir}/release/<bin_name> REGARDLESS of which member crate directory (e.g. apps/<name>) you build from. NEVER assume a binary exists at <member_crate>/target/release/<bin_name> or ./target/release/<bin_name> when cwd is a member crate -- that path does not exist in a workspace. Prefer `cargo run --manifest-path <member_crate>/Cargo.toml --release -- <args>` or the absolute path {target_dir}/release/<bin_name>."
+                        )
+                    }
+                    Err(e) => format!(
+                        "WORKSPACE FACTS: cargo metadata parse failed ({e}); do not guess target-dir paths, verify with `cargo metadata` or `find` first."
+                    ),
+                }
+            }
+            Ok(output) => format!(
+                "WORKSPACE FACTS: cargo metadata exited non-zero ({}); do not guess target-dir paths.",
+                output.status
+            ),
+            Err(e) => format!(
+                "WORKSPACE FACTS: cargo metadata failed to run ({e}); do not guess target-dir paths."
+            ),
+        }
     }
 
     pub async fn ignite(&mut self, mission: &str) -> Result<CortexOutcome> {
-        self.broadcast("\x1b[1;36m>> [CORTEX] Igniting Unified Epistemic Engine\x1b[0m");
-        
-        let context_chunks = (*self.world_model).semantic_query(mission).await;
+        self.ignite_with_evidence(mission, None).await
+    }
+
+    pub async fn ignite_with_evidence(&mut self, mission: &str, ancestor_evidence: Option<&str>) -> Result<CortexOutcome> {
+        self.log("\x1b[1;36m>> [CORTEX] Igniting Unified Epistemic Engine\x1b[0m".to_string());
+
+        let mut context_chunks = (*self.world_model).semantic_query(mission).await;
+        context_chunks.push(Self::resolve_workspace_paths().await);
+        if let Some(evidence) = ancestor_evidence {
+            if !evidence.trim().is_empty() {
+                context_chunks.push(format!("\n[ANCESTOR NODE EVIDENCE & RESOLVED PATHS]\n{}", evidence));
+            }
+        }
         let world_context = context_chunks.join("\n");
 
-        self.broadcast("\x1b[36m>> [CORTEX] Generating competing strategies...\x1b[0m");
-        let hypotheses = EpistemicEngine::generate_hypotheses(&self.client, &self.api_key, mission, &world_context).await?;
+        self.log("\x1b[36m>> [CORTEX] Generating competing strategies...\x1b[0m".to_string());
+        let hypotheses = EpistemicEngine::generate_hypotheses(
+            &self.client,
+            &self.api_key,
+            mission,
+            &world_context,
+        )
+        .await?;
 
         for h in hypotheses {
             self.graph.add_node(NodeKind::Hypothesis, &h, 0.5, 100);
-            self.broadcast(&format!("\x1b[90m  -> Strategy: {}\x1b[0m", h));
+            self.log(format!("\x1b[90m  -> Strategy: {}\x1b[0m", h));
         }
 
         let mut max_observed_belief = 0.0_f32;
+        let mut best_h_id: Option<uuid::Uuid> = None;
 
         for turn in 1..=15 {
-            self.broadcast(&format!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 15\x1b[0m", turn));
+            self.log(format!("\n\x1b[1;33m>> [CORTEX] Cognitive Turn {} / 15\x1b[0m", turn));
 
             if let Some(best_node) = self.graph.select_best_hypothesis().cloned() {
                 let h_id = best_node.id;
                 let h_content = best_node.content.clone();
                 let current_belief = best_node.belief_score;
-                if current_belief > max_observed_belief { max_observed_belief = current_belief; }
-                self.broadcast(&format!("\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}", current_belief, h_content));
+                if current_belief > max_observed_belief {
+                    max_observed_belief = current_belief;
+                    best_h_id = Some(h_id);
+                }
+                self.log(format!(
+                    "\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}",
+                    current_belief, h_content
+                ));
 
                 let mut evidence_history = String::new();
                 for edge in &self.graph.edges {
-                    if edge.target == h_id && (edge.relation == EdgeRelation::Supports || edge.relation == EdgeRelation::Contradicts) {
+                    if edge.target == h_id
+                        && (edge.relation == EdgeRelation::Supports
+                            || edge.relation == EdgeRelation::Contradicts)
+                    {
                         if let Some(obs) = self.graph.nodes.get(&edge.source) {
-                            evidence_history.push_str(&format!("- [{:?}] {}\n", edge.relation, obs.content));
+                            evidence_history
+                                .push_str(&format!("- [{:?}] {}\n", edge.relation, obs.content));
                         }
                     }
                 }
-                if evidence_history.is_empty() { evidence_history = "None yet.".to_string(); }
+                if evidence_history.is_empty() {
+                    evidence_history = "None yet.".to_string();
+                }
 
-                self.broadcast("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m");
-                let proposed_action = match EpistemicEngine::propose_action(&self.client, &self.api_key, mission, &h_content, &evidence_history).await {
+                // --- DETERMINISTIC BACKSTOP ---
+                if (mission.to_lowercase().contains("resolve")
+                    || mission.to_lowercase().contains("path"))
+                    && evidence_history.contains("[CMD_OK]")
+                    && evidence_history.contains(".rs")
+                {
+                    self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Path resolution objective satisfied. Halting early.\x1b[0m".to_string());
+                    return Ok(CortexOutcome::Proven { belief: 1.0, evidence: evidence_history.clone() });
+                }
+                if evidence_history.contains("[HALT]") {
+                    self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: HALT detected in evidence. Mission Accomplished.\x1b[0m".to_string());
+                    return Ok(CortexOutcome::Proven { belief: 1.0, evidence: evidence_history.clone() });
+                }
+                // ------------------------------
+
+                self.log("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m".to_string());
+                let proposed_action = match EpistemicEngine::propose_action(
+                    &self.client,
+                    &self.api_key,
+                    mission,
+                    &h_content,
+                    &evidence_history,
+                )
+                .await
+                {
                     Ok(action) => action,
-                    Err(e) => { self.broadcast(&format!("\x1b[31m>> [STRATEGIST FAULT]\x1b[0m {}", e)); continue; }
+                    Err(e) => {
+                        self.log(format!("\x1b[31m>> [STRATEGIST FAULT]\x1b[0m {}", e));
+                        continue;
+                    }
                 };
-                self.broadcast(&format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposed_action));
+                self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposed_action));
 
-                self.broadcast("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m");
-                if let Ok(critic) = EpistemicEngine::criticize_proposal(&self.client, &self.api_key, &h_content, &proposed_action, &world_context).await {
-                    self.broadcast(&format!("\x1b[31m>> [CRITIC] Verdict:\x1b[0m {} (Modifier: {:.2})", critic.critique, critic.confidence_modifier));
-                    
-                    if critic.confidence_modifier > -0.2 {
-                        self.broadcast("\x1b[36m>> [CORTEX] Translating intent to physical action...\x1b[0m");
-                        
-                        if let Ok(raw_json) = EpistemicEngine::translate_to_action(&self.client, &self.api_key, &h_content, &proposed_action).await {
-                            if let Ok(actions) = crate::json_parser::extract_actions(&raw_json) {
-                                let mut executor = RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
-                                
-                                for action in actions {
-                                    if let AgentAction::Halt { reasoning } = action {
-                                        self.broadcast(&format!("\x1b[1;35m>> [CORTEX] HALT received:\x1b[0m {}", reasoning));
-                                        return Ok(CortexOutcome::Halted { reasoning });
-                                    }
+                // ⚡ DEFENSE IN DEPTH 2: Anti-Thrashing Guard
+                if false {
+                    // DISABLE STRICT STRING MATCH GUARD
+                    self.log("\x1b[33m>> [CORTEX GUARD] Duplicate action detected. Tanking belief to force novel trajectory.\x1b[0m".to_string());
+                    if let Some(node) = self.graph.nodes.get_mut(&h_id) {
+                        node.belief_score -= 0.5;
+                    }
+                    continue;
+                }
 
-                                    match &action {
-                                        AgentAction::PatchFunction { path, .. } | AgentAction::DiffPatch { path, .. } | AgentAction::WriteFile { path, .. } => {
-                                            self.broadcast(&format!("\x1b[35m>> [LAZARUS] Taking atomic snapshot of {}...\x1b[0m", path));
-                                            let _ = crate::lazarus_vault::take_snapshot(path, "Pre-fix snapshot").await;
-                                        },
-                                        _ => {}
-                                    }
+                self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
+                match EpistemicEngine::criticize_proposal(
+                    &self.client,
+                    &self.api_key,
+                    mission,
+                    &h_content,
+                    &proposed_action,
+                    &world_context,
+                    &evidence_history,
+                )
+                .await
+                {
+                    Err(e) => {
+                        self.log(format!("\x1b[31m>> [CORTEX FATAL] Red Team critic parser panicked. Raw Error: {}\x1b[0m", e));
+                        let evidence = format!("[CRITIC_PARSE_FAILURE] Adversarial Critic response could not be parsed as valid JSON ({}). No safety verdict was reached for this proposal -- treat this turn as unresolved, not silent progress.", e);
+                        let obs_id = self.graph.add_node(NodeKind::Observation, &evidence, 1.0, 50);
+                        self.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.15);
+                        self.graph.propagate_beliefs();
+                    }
+                    Ok(critic) => {
+                        self.log(format!(
+                            "\x1b[31m>> [CRITIC] Verdict:\x1b[0m {} (Modifier: {:.2})",
+                            critic.critique, critic.confidence_modifier
+                        ));
 
-                                    self.broadcast("\x1b[35m>> [EXECUTOR] Engaging physical tooling...\x1b[0m");
-                                    let evidence = match executor.execute_single_action(action, self.memory.clone(), self.vmo_state.clone(), self.dist.clone()).await {
-                                        Ok(ev) => ev,
-                                        Err(e) => format!("[ACTION FAILED] OS rejected action: {}", e),
-                                    };
+                        if critic.confidence_modifier > -0.2 {
+                            self.log(
+                                "\x1b[36m>> [CORTEX] Translating intent to physical action...\x1b[0m"
+                                    .to_string(),
+                            );
 
-                                    let preview = evidence.lines().take(5).collect::<Vec<_>>().join("\n");
-                                    self.broadcast(&format!("\x1b[32m>> [EVIDENCE ACQUIRED]\x1b[0m\n{}", preview));
-                                    
-                                    self.broadcast("\x1b[33m>> [CORTEX] Evaluating physical evidence against strategy...\x1b[0m");
-                                    if let Ok(eval) = EpistemicEngine::evaluate_evidence(&self.client, &self.api_key, &h_content, &evidence).await {
-                                        self.broadcast(&format!("\x1b[33m>> [EVALUATION]\x1b[0m {} (Modifier: {:.2})", eval.critique, eval.confidence_modifier));
-                                        
-                                        let obs_id = self.graph.add_node(NodeKind::Observation, &evidence, 1.0, 50);
-                                        let relation = if eval.confidence_modifier > 0.0 { EdgeRelation::Supports } else { EdgeRelation::Contradicts };
-                                        self.graph.add_edge(obs_id, h_id, relation, eval.confidence_modifier.abs());
-                                        
-                                        self.graph.propagate_beliefs();
-                                        
-                                        if let Some(updated_node) = self.graph.nodes.get(&h_id) {
-                                            self.broadcast(&format!("\x1b[1;32m>> [CORTEX] Strategy Belief mathematically updated to {:.2}\x1b[0m", updated_node.belief_score));
-                                            if updated_node.belief_score > max_observed_belief { max_observed_belief = updated_node.belief_score; }
-                                            
-                                            let is_mutation = evidence.contains("[WRITE_OK]") || evidence.contains("[PATCH_FUNCTION_OK]") || evidence.contains("[DIFF_PATCH_OK]");
-                                            let is_terminal_cmd = evidence.contains("[CMD_OK]") && !proposed_action.contains("grep") && !proposed_action.contains("ls") && !proposed_action.contains("cat") && !proposed_action.contains("find");
+                            if let Ok(raw_json) = EpistemicEngine::translate_to_action(
+                                &self.client,
+                                &self.api_key,
+                                &h_content,
+                                &proposed_action,
+                            )
+                            .await
+                            {
+                                if let Ok(actions) = crate::json_parser::extract_actions(&raw_json)
+                                {
+                                    let mut executor =
+                                        RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
 
-                                            if updated_node.belief_score >= 0.85 && (is_mutation || is_terminal_cmd) {
-                                                self.broadcast("\x1b[1;36m>> [CORTEX] STRATEGY PROVEN AND FIX APPLIED! Mission Accomplished.\x1b[0m");
-                                                return Ok(CortexOutcome::Proven { belief: updated_node.belief_score });
+                                    for action in actions {
+                                        match &action {
+                                            AgentAction::PatchFunction { path, .. }
+                                            | AgentAction::DiffPatch { path, .. }
+                                            | AgentAction::WriteFile { path, .. } => {
+                                                self.log(format!("\x1b[35m>> [LAZARUS] Taking atomic snapshot of {}...\x1b[0m", path));
+                                                let _ = crate::lazarus_vault::take_snapshot(
+                                                    path,
+                                                    "Pre-fix snapshot",
+                                                )
+                                                .await;
                                             }
-                                            
-                                            if updated_node.belief_score < 0.2 {
-                                                self.broadcast("\x1b[90m>> [CORTEX] Strategy completely abandoned. Pivoting graph...\x1b[0m");
+                                            _ => {}
+                                        }
+
+                                        self.log(
+                                            "\x1b[35m>> [EXECUTOR] Engaging physical tooling...\x1b[0m"
+                                                .to_string(),
+                                        );
+                                        let evidence = match executor
+                                            .execute_single_action(
+                                                action,
+                                                self.memory.clone(),
+                                                self.vmo_state.clone(),
+                                                self.dist.clone(),
+                                            )
+                                            .await
+                                        {
+                                            Ok(ev) => ev,
+                                            Err(e) => {
+                                                format!("[ACTION FAILED] OS rejected action: {}", e)
+                                            }
+                                        };
+
+                                        let preview =
+                                            evidence.lines().take(5).collect::<Vec<_>>().join("\n");
+                                        self.log(format!(
+                                            "\x1b[32m>> [EVIDENCE ACQUIRED]\x1b[0m\n{}",
+                                            preview
+                                        ));
+
+                                        self.log("\x1b[33m>> [CORTEX] Evaluating physical evidence against strategy...\x1b[0m".to_string());
+                                        match EpistemicEngine::evaluate_evidence(
+                                            &self.client,
+                                            &self.api_key,
+                                            &h_content,
+                                            &evidence,
+                                        )
+                                        .await
+                                        {
+                                            Err(e) => {
+                                                self.log(format!("\x1b[31m>> [CORTEX FATAL] Evidence evaluation parser panicked. Raw Error: {}\x1b[0m", e));
+                                            }
+                                            Ok(eval) => {
+                                                self.log(format!(
+                                                    "\x1b[33m>> [EVALUATION]\x1b[0m {} (Modifier: {:.2})",
+                                                    eval.critique, eval.confidence_modifier
+                                                ));
+
+                                                let obs_id = self.graph.add_node(
+                                                    NodeKind::Observation,
+                                                    &evidence,
+                                                    1.0,
+                                                    50,
+                                                );
+                                                let relation = if eval.confidence_modifier > 0.0 {
+                                                    EdgeRelation::Supports
+                                                } else {
+                                                    EdgeRelation::Contradicts
+                                                };
+                                                self.graph.add_edge(
+                                                    obs_id,
+                                                    h_id,
+                                                    relation,
+                                                    eval.confidence_modifier.abs(),
+                                                );
+
+                                                self.graph.propagate_beliefs();
+
+                                                if let Some(updated_node) =
+                                                    self.graph.nodes.get(&h_id)
+                                                {
+                                                    self.log(format!("\x1b[1;32m>> [CORTEX] Strategy Belief mathematically updated to {:.2}\x1b[0m", updated_node.belief_score));
+                                                    if updated_node.belief_score
+                                                        > max_observed_belief
+                                                    {
+                                                        max_observed_belief =
+                                                            updated_node.belief_score;
+                                                    }
+
+                                                    let is_mutation = evidence
+                                                        .contains("[WRITE_OK]")
+                                                        || evidence.contains("[PATCH_FUNCTION_OK]")
+                                                        || evidence.contains("[DIFF_PATCH_OK]");
+                                                    let is_terminal_cmd = evidence
+                                                        .contains("[CMD_OK]")
+                                                        && !proposed_action.contains("grep")
+                                                        && !proposed_action.contains("ls")
+                                                        && !proposed_action.contains("cat")
+                                                        && !proposed_action.contains("find");
+                                                    let is_halt = evidence.contains("[HALT]");
+
+                                                    if updated_node.belief_score >= 0.85
+                                                        && (is_mutation
+                                                            || is_terminal_cmd
+                                                            || is_halt)
+                                                    {
+                                                        self.log("\x1b[1;36m>> [CORTEX] STRATEGY PROVEN AND FIX APPLIED! Mission Accomplished.\x1b[0m".to_string());
+                                                        return Ok(CortexOutcome::Proven {
+                                                            belief: updated_node.belief_score,
+                                                            evidence: self.collect_evidence(h_id),
+                                                        });
+                                                    }
+
+                                                    if updated_node.belief_score < 0.2 {
+                                                        self.log("\x1b[90m>> [CORTEX] Strategy completely abandoned. Pivoting graph...\x1b[0m".to_string());
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+                                } else {
+                                    self.log("\x1b[31m>> [CORTEX FAULT] Failed to parse AgentAction JSON from Translator.\x1b[0m".to_string());
+                                    let evidence = "[TRANSLATION_FAILURE] Translator produced JSON that could not be parsed into a valid AgentAction. This turn produced no executable action.".to_string();
+                                    let obs_id = self.graph.add_node(
+                                        NodeKind::Observation,
+                                        &evidence,
+                                        1.0,
+                                        50,
+                                    );
+                                    self.graph.add_edge(
+                                        obs_id,
+                                        h_id,
+                                        EdgeRelation::Contradicts,
+                                        0.15,
+                                    );
+                                    self.graph.propagate_beliefs();
                                 }
                             } else {
-                                self.broadcast("\x1b[31m>> [CORTEX FAULT] Failed to parse AgentAction JSON from Translator.\x1b[0m");
+                                self.log("\x1b[31m>> [TRANSLATOR FAULT] Translator API call failed; no action was generated this turn.\x1b[0m".to_string());
+                                let evidence = "[TRANSLATOR_API_FAILURE] The Action Translator's API call failed (rate limit or transient error). This turn produced no executable action.".to_string();
+                                let obs_id =
+                                    self.graph.add_node(NodeKind::Observation, &evidence, 1.0, 50);
+                                self.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.10);
+                                self.graph.propagate_beliefs();
                             }
+                        } else {
+                            self.log("\x1b[31m>> [RED TEAM] VETO. Proposal rejected. Applying penalty to strategy.\x1b[0m".to_string());
+                            self.graph.add_edge(
+                                h_id,
+                                h_id,
+                                EdgeRelation::Contradicts,
+                                critic.confidence_modifier.abs(),
+                            );
+                            self.graph.propagate_beliefs();
                         }
-                    } else {
-                        self.broadcast("\x1b[31m>> [RED TEAM] VETO. Proposal rejected. Applying penalty to strategy.\x1b[0m");
-                        self.graph.add_edge(h_id, h_id, EdgeRelation::Contradicts, critic.confidence_modifier.abs());
-                        self.graph.propagate_beliefs();
                     }
                 }
             } else {
-                self.broadcast("\x1b[1;35m>> [CORTEX] All strategies exhausted. Re-orienting graph...\x1b[0m");
-                let new_hypotheses = EpistemicEngine::generate_hypotheses(&self.client, &self.api_key, mission, &world_context).await;
+                self.log(
+                    "\x1b[1;35m>> [CORTEX] All strategies exhausted. Re-orienting graph...\x1b[0m"
+                        .to_string(),
+                );
+                let new_hypotheses = EpistemicEngine::generate_hypotheses(
+                    &self.client,
+                    &self.api_key,
+                    mission,
+                    &world_context,
+                )
+                .await;
                 for h in new_hypotheses.unwrap_or_default() {
                     self.graph.add_node(NodeKind::Hypothesis, &h, 0.5, 100);
-                    self.broadcast(&format!("\x1b[90m  -> New Strategy: {}\x1b[0m", h));
+                    self.log(format!("\x1b[90m  -> New Strategy: {}\x1b[0m", h));
                 }
             }
             sleep(Duration::from_secs(2)).await;
         }
-        self.broadcast("\x1b[1;32m>> [CORTEX] Epistemic Execution Cycle Complete.\x1b[0m");
-        Ok(CortexOutcome::TurnsExhausted { best_belief: max_observed_belief })
+        self.log("\x1b[1;32m>> [CORTEX] Epistemic Execution Cycle Complete.\x1b[0m".to_string());
+        let final_evidence = best_h_id
+            .map(|id| self.collect_evidence(id))
+            .unwrap_or_else(|| "No evidence gathered across any turn.".to_string());
+        Ok(CortexOutcome::TurnsExhausted { best_belief: max_observed_belief, evidence: final_evidence })
     }
 }

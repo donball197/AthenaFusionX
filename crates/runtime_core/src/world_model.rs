@@ -38,7 +38,7 @@ impl WorldModel {
     pub async fn semantic_query(&self, _mission: &str) -> Vec<String> {
         let mut chunks = Vec::new();
 
-        // ⚡ Give the Cortex eyes: Pull the actual file tree so the agent stops guessing!
+        // 1. Inject Repository File Tree Context
         if let Ok(out) = Command::new("find")
             .args([
                 ".",
@@ -64,8 +64,17 @@ impl WorldModel {
             if out.status.success() {
                 let files = String::from_utf8_lossy(&out.stdout);
                 chunks.push("[REPOSITORY FILE TREE (Depth 4)]".to_string());
-                chunks.push(files.chars().take(6000).collect()); // Shield against blowout
+                chunks.push(files.chars().take(6000).collect());
             }
+        }
+
+        // 2. Inject Verified Machine-Readable Tool Contracts into Context
+        chunks.push("\n[AVAILABLE WORKSPACE TOOL CONTRACTS]".to_string());
+        for tool in crate::policy::TOOL_CONTRACTS {
+            chunks.push(format!(
+                "• Tool '{}': Usage -> {}\n  Binary -> {}",
+                tool.name, tool.usage_pattern, tool.binary_path
+            ));
         }
 
         chunks

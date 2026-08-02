@@ -1,0 +1,197 @@
+use crate::model_config::{get_heavy_models, get_light_models};
+use anyhow::{anyhow, Result};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio::time::{sleep, Duration};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CriticResponse {
+    pub critique: String,
+    pub confidence_modifier: f32,
+}
+
+pub struct EpistemicEngine;
+
+impl EpistemicEngine {
+    async fn safe_api_call(
+        client: &Client,
+        api_key: &str,
+        models: &[String],
+        payload: &Value,
+    ) -> Result<String> {
+        let mut last_err = anyhow!("No models available in cascade.");
+        for model_endpoint in models {
+            let short_name = model_endpoint.split(':').next().unwrap_or("Model");
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                model_endpoint.replace("models/", ""),
+                api_key
+            );
+            let mut retries = 0;
+
+            loop {
+                let res = client.post(&url).json(payload).send().await?;
+                let body: Value = res.json().await.unwrap_or_default();
+
+                if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
+                    last_err = anyhow!("API Error: {}", err);
+
+                    if err.contains("Internal error")
+                        || err.contains("high demand")
+                        || err.contains("quota")
+                        || err.contains("rate limit")
+                    {
+                        retries += 1;
+
+                        if retries > 6 {
+                            println!("\x1b[31m>> [API FATAL] {} exhausted 6 retries. Falling back...\x1b[0m", short_name);
+                            break;
+                        }
+
+                        let backoff_secs = 2_u64.pow(retries as u32) * 2;
+                        let actual_sleep = std::cmp::min(backoff_secs, 45);
+
+                        println!("\x1b[33m>> [API RETRY] {} hit transient fault ({}). Backing off {}s (Attempt {}/6)...\x1b[0m", short_name, err, actual_sleep, retries);
+                        tokio::time::sleep(Duration::from_secs(actual_sleep)).await;
+                        continue;
+                    } else {
+                        println!("\x1b[31m>> [API ERROR] {} returned fatal error: {}\x1b[0m", short_name, err);
+                        break;
+                    }
+                }
+
+                let mut final_text = String::new();
+                if let Some(parts) = body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                    for part in parts {
+                        if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) { continue; }
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                            final_text.push_str(text);
+                        }
+                    }
+                }
+
+                if final_text.trim().is_empty() {
+                    retries += 1;
+                    if retries > 4 { break; }
+                    let backoff_secs = 2_u64.pow(retries as u32) * 2;
+                    println!("\x1b[33m>> [API THROTTLE] {} hit rate limit (empty response). Backing off {}s...\x1b[0m", short_name, backoff_secs);
+                    sleep(Duration::from_secs(backoff_secs)).await;
+                    continue;
+                }
+                return Ok(final_text.replace("```json", "").replace("```", "").trim().to_string());
+            }
+        }
+        Err(anyhow!("Model Cascade Exhausted. Final error: {}", last_err))
+    }
+
+    pub async fn generate_hypotheses(
+        client: &Client,
+        api_key: &str,
+        problem: &str,
+        world_context: &str,
+    ) -> Result<Vec<String>> {
+        let prompt = format!("You are AthenaFusionX. Analyze this directive.\nDIRECTIVE: {}\nWORLD CONTEXT: {}\nGenerate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS. No markdown.", problem, world_context);
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 2048 }});
+        let text = Self::safe_api_call(client, api_key, &get_light_models(), &payload).await?;
+        serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))
+    }
+
+    pub async fn propose_action(
+        client: &Client,
+        api_key: &str,
+        mission: &str,
+        strategy: &str,
+        evidence_so_far: &str,
+    ) -> Result<String> {
+        let prompt = format!(
+            "You are the Action Strategist.\n\
+             ORIGINAL DIRECTIVE (stay strictly within its scope): {}\n\
+             STRATEGY: {}\n\
+             EVIDENCE GATHERED SO FAR:\n{}\n\
+             Propose the exact next step to fulfill the strategy.\n\
+             CRITICAL RULES:\n\
+             1. NEVER run `find /` or search the root directory! Only search the current working directory (`.`).\n\
+             2. ANTI-PARALYSIS PROTOCOL: If the evidence shows you have already read the target files or gathered enough context, you MUST immediately propose a concrete mutation (e.g., diff_patch, patch_function, write_file) or execute a terminal command. Do NOT propose redundant 'cat', 'ls', or 'grep' operations.\n\
+             3. If the directive is fully satisfied based on the evidence, output exactly: halt\n\
+             OUTPUT ONLY YOUR PROPOSED NEXT STEP IN PLAIN TEXT.",
+             mission, strategy, evidence_so_far
+        );
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }});
+        Self::safe_api_call(client, api_key, &get_light_models(), &payload).await
+    }
+
+    pub async fn criticize_proposal(
+        client: &Client,
+        api_key: &str,
+        strategy: &str,
+        proposed_action: &str,
+        world_context: &str,
+    ) -> Result<CriticResponse> {
+        let prompt = format!(
+            "You are the Adversarial Critic.\n\
+             STRATEGY: {}\n\
+             PROPOSED ACTION: {}\n\
+             WORLD CONTEXT: {}\n\
+             Evaluate if this action is safe and logically sound. \n\
+             CRITICAL RULE: Always allow 'read_file' and 'find' operations even if the path is not visible in the WORLD CONTEXT.\n\
+             OUTPUT ONLY VALID JSON:\n\
+             {{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", 
+             strategy, proposed_action, world_context
+        );
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
+        let text = Self::safe_api_call(client, api_key, &get_light_models(), &payload).await?;
+        serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))
+    }
+
+    pub async fn translate_to_action(
+        client: &Client,
+        api_key: &str,
+        strategy: &str,
+        proposed_action: &str,
+    ) -> Result<String> {
+        let prompt = format!(
+            "You are the Action Translator.\n\
+             STRATEGY: {}\n\
+             PROPOSED ACTION: {}\n\
+             CRITICAL RULE: Translate the PROPOSED ACTION into exactly ONE JSON Array using the explicit JSON object schema below:\n\
+             VALID JSON ACTIONS (MUST MATCH RUST ENUM EXACTLY):\n\
+             1. [{{ \"type\": \"execute_command\", \"command\": \"<bash_command>\", \"reasoning\": \"...\" }}]\n\
+             2. [{{ \"type\": \"read_file\", \"path\": \"<filepath>\", \"reasoning\": \"...\" }}]\n\
+             3. [{{ \"type\": \"write_file\", \"path\": \"<filepath>\", \"content\": \"<data>\", \"reasoning\": \"...\" }}]\n\
+             4. [{{ \"type\": \"diff_patch\", \"path\": \"<filepath>\", \"search\": \"<search>\", \"replace\": \"<replace>\", \"reasoning\": \"...\" }}]\n\
+             5. [{{ \"type\": \"patch_function\", \"path\": \"<filepath>\", \"function_name\": \"<name>\", \"new_body\": \"<full source>\", \"reasoning\": \"...\" }}]\n\
+             6. [{{ \"type\": \"halt\", \"reasoning\": \"...\" }}]\n\
+             NOTE: Do NOT use types like 'find_file', 'ls_tree', or 'grep_code'. If you need to search or list, use 'execute_command'.\n\
+             Select ONLY the relevant action object and enclose it in a JSON array. Do not output anything else.",
+            strategy, proposed_action
+        );
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 2048 }});
+        Self::safe_api_call(client, api_key, &get_light_models(), &payload).await
+    }
+
+    pub async fn evaluate_evidence(
+        client: &Client,
+        api_key: &str,
+        strategy: &str,
+        evidence: &str,
+    ) -> Result<CriticResponse> {
+        let truncated_evidence: String = evidence.chars().take(8000).collect();
+        let prompt = format!(
+            "You are the Scientific Evaluator.\n\
+             STRATEGY: {}\n\
+             EVIDENCE GATHERED:\n{}\n\
+             Does this evidence advance the strategy?\n\
+             CRITICAL RULES:\n\
+             1. If the evidence shows successful mutations (writes, patches, halts) or passing tests, grant a strong positive modifier (+0.3 to +0.5).\n\
+             2. If the evidence is merely a successful file read or directory listing, grant a tiny modifier (0.0 to +0.1).\n\
+             3. ANTI-PARALYSIS PROTOCOL: If the evidence indicates the agent is repeating the same read/list operations without mutating code, or failing continuously, grant a NEGATIVE modifier (-0.3 to -0.5) to force a pivot.\n\
+             OUTPUT ONLY VALID JSON:\n\
+             {{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", 
+             strategy, truncated_evidence
+        );
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
+        let text = Self::safe_api_call(client, api_key, &get_light_models(), &payload).await?;
+        serde_json::from_str(&text).map_err(|e| anyhow!("Parse error: {}", e))
+    }
+}

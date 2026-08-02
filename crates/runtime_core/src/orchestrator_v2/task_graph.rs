@@ -44,6 +44,9 @@ pub struct TaskNode {
     #[serde(default)]
     pub execution_state: TaskExecutionState,
 
+    #[serde(default)]
+    pub output_evidence: Option<String>,
+
     // HEFT Optimization field
     #[serde(default)]
     pub priority: usize,
@@ -74,6 +77,7 @@ impl TaskGraph {
                 objective: String::new(),
                 success_criteria: Vec::new(),
                 execution_state: TaskExecutionState::default(),
+                output_evidence: None,
                 priority: 0,
             },
         );

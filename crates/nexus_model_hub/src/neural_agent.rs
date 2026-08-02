@@ -57,11 +57,8 @@ impl MicroAgentBuilder {
         if self.model.is_none() {
             return Err(BuilderError::MissingField("model".to_string()));
         }
-        
-        Ok(MicroAgent {
-            memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)),
-            tx,
-        })
+
+        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)), tx })
     }
 }
 
@@ -76,10 +73,7 @@ impl MicroAgent {
     }
 
     pub fn init(tx: broadcast::Sender<String>) -> Result<Self> {
-        Ok(MicroAgent {
-            memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)),
-            tx,
-        })
+        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)), tx })
     }
 
     pub async fn prepare_and_run(
@@ -97,27 +91,37 @@ impl MicroAgent {
             api_key.trim()
         );
 
-        let system_instruction = context.system_prompt.unwrap_or_else(|| "You are NEXUS.".to_string());
+        let system_instruction =
+            context.system_prompt.unwrap_or_else(|| "You are NEXUS.".to_string());
 
-        let mut enriched = format!("SYSTEM: {}
+        let mut enriched = format!(
+            "SYSTEM: {}
 
 USER REQUEST:
-{}", system_instruction, user_text);
+{}",
+            system_instruction, user_text
+        );
         if let Some(code) = &context.file_content {
-            enriched += &format!("
+            enriched += &format!(
+                "
 
 ACTIVE FILE CONTENT:
 ```
 {}
-```", code);
+```",
+                code
+            );
         }
         if let Some(logs) = &context.terminal_log {
-            enriched += &format!("
+            enriched += &format!(
+                "
 
 RECENT TERMINAL LOGS:
 ```
 {}
-```", logs);
+```",
+                logs
+            );
         }
 
         let mut history: Vec<Value> = self.memory.lock().unwrap().iter().cloned().collect();
@@ -136,7 +140,8 @@ RECENT TERMINAL LOGS:
             }
         });
 
-        let response = client.post(&url).json(&payload).send().await.context("API request failed")?;
+        let response =
+            client.post(&url).json(&payload).send().await.context("API request failed")?;
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
         let mut stream = response.bytes_stream();
@@ -148,21 +153,31 @@ RECENT TERMINAL LOGS:
                     let line_bytes: Vec<u8> = byte_buffer.drain(..=pos).collect();
                     let line = String::from_utf8_lossy(&line_bytes);
                     let clean = line.trim_start_matches("data: ").trim();
-                    if clean.is_empty() || clean == "[DONE]" { continue; }
+                    if clean.is_empty() || clean == "[DONE]" {
+                        continue;
+                    }
 
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                        if let Some(parts) = val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                        if let Some(parts) =
+                            val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
+                        {
                             for part in parts {
                                 if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
                                     if let Some(token) = part.get("text").and_then(|t| t.as_str()) {
-                                        let _ = self.tx.send(json!({"type": "NEURAL_THOUGHT", "payload": token}).to_string());
+                                        let _ = self.tx.send(
+                                            json!({"type": "NEURAL_THOUGHT", "payload": token})
+                                                .to_string(),
+                                        );
                                     }
                                     continue;
                                 }
-                                
+
                                 if let Some(token) = part.get("text").and_then(|t| t.as_str()) {
                                     full_response.push_str(token);
-                                    let _ = self.tx.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());
+                                    let _ = self.tx.send(
+                                        json!({"type": "NEURAL_STREAM", "payload": token})
+                                            .to_string(),
+                                    );
                                 }
                             }
                         }
@@ -197,21 +212,31 @@ fn rough_token_count(text: &str) -> usize {
 fn estimate_message_tokens(msg: &Value) -> usize {
     let empty_vec = Vec::new();
     let parts = msg.pointer("/parts").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
-    parts.iter()
-        .filter_map(|p| p.get("text").and_then(|t| t.as_str()).or_else(|| p.get("functionCall").and_then(|fc| fc.as_str())).or_else(|| p.get("functionResponse").and_then(|fr| fr.as_str())))
+    parts
+        .iter()
+        .filter_map(|p| {
+            p.get("text")
+                .and_then(|t| t.as_str())
+                .or_else(|| p.get("functionCall").and_then(|fc| fc.as_str()))
+                .or_else(|| p.get("functionResponse").and_then(|fr| fr.as_str()))
+        })
         .map(rough_token_count)
         .sum::<usize>()
         + 10
 }
 
 fn trim_history_token_aware(history: &mut Vec<Value>, current_user_msg: &str) {
-    if history.is_empty() { return; }
+    if history.is_empty() {
+        return;
+    }
 
     let current_tokens = rough_token_count(current_user_msg) + RESERVED_TOKENS;
     let mut total_tokens: usize = history.iter().map(estimate_message_tokens).sum();
     total_tokens += current_tokens;
 
-    if total_tokens <= SOFT_TOKEN_LIMIT { return; }
+    if total_tokens <= SOFT_TOKEN_LIMIT {
+        return;
+    }
 
     while total_tokens > SOFT_TOKEN_LIMIT && history.len() >= 4 {
         if let (Some(old_user), Some(old_model)) = (history.first(), history.get(1)) {

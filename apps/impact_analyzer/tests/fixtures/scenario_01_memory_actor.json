@@ -1,0 +1,35 @@
+{
+  "scenario_id": "ST-001",
+  "description": "Mutating the core memory actor should flag a HIGH impact on the planner and executor.",
+  
+  "inputs": {
+    "target_mutation": {
+      "symbol_id": "runtime_core::memory::MemoryActor",
+      "mutation_type": "STRUCT_MODIFICATION"
+    },
+    "mock_graph": {
+      "nodes": [
+        {"id": "runtime_core::memory::MemoryActor", "type": "struct"},
+        {"id": "cognition::reflection::Engine", "type": "struct"},
+        {"id": "planner::ExecutionDAG", "type": "struct"},
+        {"id": "ui::dashboard::Telemetry", "type": "struct"}
+      ],
+      "edges": [
+        {"source": "planner::ExecutionDAG", "target": "runtime_core::memory::MemoryActor"},
+        {"source": "cognition::reflection::Engine", "target": "runtime_core::memory::MemoryActor"},
+        {"source": "ui::dashboard::Telemetry", "target": "cognition::reflection::Engine"}
+      ]
+    }
+  },
+
+  "expected_outputs": {
+    "impact_classification": "HIGH",
+    "critical_blast_radius": [
+      "planner::ExecutionDAG",
+      "cognition::reflection::Engine"
+    ],
+    "low_impact_radius": [
+      "ui::dashboard::Telemetry"
+    ]
+  }
+}

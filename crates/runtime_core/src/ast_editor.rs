@@ -10,7 +10,7 @@ impl AstEditor {
     pub fn read_function(path: &str, function_name: &str) -> Result<String> {
         let source_code = fs::read_to_string(path)?;
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_rust::language())?;
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
 
         let tree = parser
             .parse(&source_code, None)
@@ -20,7 +20,7 @@ impl AstEditor {
             "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
             function_name
         );
-        let query = Query::new(&tree_sitter_rust::language(), &query_str)?;
+        let query = Query::new(&tree_sitter_rust::LANGUAGE.into(), &query_str)?;
         let mut cursor = QueryCursor::new();
         let matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
         for m in matches {
@@ -40,7 +40,7 @@ impl AstEditor {
     pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
         let source_code = fs::read_to_string(path)?;
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_rust::language())?;
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
 
         let tree = parser
             .parse(&source_code, None)
@@ -51,7 +51,7 @@ impl AstEditor {
             "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
             function_name
         );
-        let query = Query::new(&tree_sitter_rust::language(), &query_str)?;
+        let query = Query::new(&tree_sitter_rust::LANGUAGE.into(), &query_str)?;
         let mut cursor = QueryCursor::new();
         let matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
         for m in matches {

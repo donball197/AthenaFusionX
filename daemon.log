@@ -1,0 +1,23 @@
+[2m2026-08-02T19:56:01.046382Z[0m [32m INFO[0m [2mnexus_ide_backend::logger[0m[2m:[0m >> [LOGGER] Tracing substrate online
+[2m2026-08-02T19:56:01.046910Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m ==================================================
+[2m2026-08-02T19:56:01.046997Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> NEXUS SINGULARITY v4.0 — DAEMON ONLINE
+[2m2026-08-02T19:56:01.047040Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m ==================================================
+[32m>> [SECURITY] Startup token written to .nexus_ui_token (0600)[0m
+[2m2026-08-02T19:56:02.097015Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/sum.wasm"
+[2m2026-08-02T19:56:02.097478Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/logic_cell.wasm"
+[2m2026-08-02T19:56:02.097848Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/hello_sidecar.wasm"
+[2m2026-08-02T19:56:02.099107Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> Core Subsystems online. Binding Axum API Gateway to 0.0.0.0:3000...
+[2m2026-08-02T19:56:02.210765Z[0m [31mERROR[0m [2mnexus_ide_backend[0m[2m:[0m [SIDECAR] Failed to execute "sidecars/logic_cell.wasm": failed to find function export `_start`
+[2m2026-08-02T19:56:02.210817Z[0m [31mERROR[0m [2mnexus_ide_backend[0m[2m:[0m [SIDECAR] Failed to execute "sidecars/sum.wasm": failed to find function export `_start`
+>> [WASM CELL] Hello from the WebAssembly Sandbox!
+[2m2026-08-02T19:56:11.124721Z[0m [32m INFO[0m [2mnexus_runtime_core::metrics[0m[2m:[0m Task counter incremented
+[2m2026-08-02T20:17:23.218251Z[0m [32m INFO[0m [2mnexus_runtime_core::metrics[0m[2m:[0m Task counter incremented
+[2m2026-08-02T20:19:48.606585Z[0m [32m INFO[0m [2mnexus_runtime_core::governance::protocol[0m[2m:[0m \x1b[34m[GOVERNANCE] Checkpoint: Root=0x9857e8bd74d08894 (Size: 10)\x1b[0m
+[2m2026-08-02T20:23:44.223150Z[0m [33m WARN[0m [2mnexus_runtime_core::json_parser[0m[2m:[0m [JSON PARSER] Could not parse action payload. Falling back safely.
+[2m2026-08-02T20:24:01.300235Z[0m [33m WARN[0m [2mnexus_runtime_core::json_parser[0m[2m:[0m [JSON PARSER] Could not parse action payload. Falling back safely.
+[2m2026-08-02T20:24:06.133788Z[0m [33m WARN[0m [2mnexus_runtime_core::json_parser[0m[2m:[0m [JSON PARSER] Could not parse action payload. Falling back safely.
+[2m2026-08-02T20:25:02.248153Z[0m [33m WARN[0m [2mnexus_runtime_core::json_parser[0m[2m:[0m [JSON PARSER] Could not parse action payload. Falling back safely.
+[2m2026-08-02T20:25:07.367905Z[0m [33m WARN[0m [2mnexus_runtime_core::json_parser[0m[2m:[0m [JSON PARSER] Could not parse action payload. Falling back safely.
+[2m2026-08-02T20:26:02.085420Z[0m [32m INFO[0m [2mnexus_ide_backend::dream_cycle[0m[2m:[0m [DREAM_CYCLE] Beginning synthesis pass…
+[2m2026-08-02T20:26:26.187007Z[0m [32m INFO[0m [2mnexus_ide_backend::dream_cycle[0m[2m:[0m [DREAM_CYCLE] Insight stored
+[2m2026-08-02T20:28:22.963823Z[0m [33m WARN[0m [2mnexus_runtime_core::json_parser[0m[2m:[0m [JSON PARSER] Could not parse action payload. Falling back safely.

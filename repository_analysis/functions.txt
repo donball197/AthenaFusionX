@@ -1,0 +1,33 @@
+crates/nexus_model_hub/src/neural_agent.rs:fn rough_token_count(text: &str) -> usize {
+crates/nexus_model_hub/src/neural_agent.rs:fn estimate_message_tokens(msg: &Value) -> usize {
+crates/nexus_model_hub/src/neural_agent.rs:fn trim_history_token_aware(history: &mut Vec<Value>, current_user_msg: &str) {
+crates/nexus_search/build.rs:fn main() {
+crates/nexus_substrate/src/kernel/mod.rs:pub fn get_active_vmos() -> u32 {
+crates/nexus_substrate/src/kernel/mod.rs:pub fn calculate_entropy(handle: u32) -> f32 {
+crates/nexus_substrate/src/token_ledger.rs:fn http_rpm_limit() -> u32 {
+crates/nexus_substrate/src/token_ledger.rs:pub fn http_check(ip: &str) -> Result<(), u64> {
+crates/nexus_substrate/src/token_ledger.rs:fn generate_seed() -> u64 {
+crates/nexus_substrate/src/vector_bridge.rs:pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+crates/protocol/src/lib.rs:pub fn init_protocol() {
+crates/runtime_core/src/cluster.rs:fn now_secs() -> u64 {
+crates/runtime_core/src/diff.rs:fn replace_first_occurrence(s: &str, pos: usize, old_len: usize, new: &str) -> String {
+crates/runtime_core/src/lazarus_vault.rs:fn fnv_hex(data: &[u8]) -> String {
+crates/runtime_core/src/lazarus_vault.rs:fn epoch_secs() -> u64 {
+crates/runtime_core/src/lazarus_vault.rs:fn uuid_v4() -> String {
+crates/runtime_core/src/metrics.rs:pub fn get_metrics_text() -> String {
+crates/runtime_core/src/orchestrator_v2/task_graph.rs:fn default_status() -> TaskStatus {
+crates/runtime_core/src/agent_protocol.rs:fn default_confidence() -> f32 {
+crates/runtime_core/src/config_loader.rs:pub fn validate_config() -> Config {
+crates/runtime_core/src/json_parser.rs:pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
+crates/runtime_core/src/math_utils.rs:pub fn fibonacci(n: u32) -> Option<u128> {
+crates/runtime_core/src/model_config.rs:pub fn get_light_models() -> Vec<String> {
+crates/runtime_core/src/model_config.rs:pub fn get_heavy_models() -> Vec<String> {
+crates/runtime_core/src/executive_cortex.rs:pub fn evaluate_causal_memory(
+crates/runtime_core/src/executor.rs:pub fn sanitize(path: &str) -> Result<PathBuf> {
+crates/runtime_core/src/reflection_engine.rs:pub fn classify_lesson(lesson: &str) -> crate::memory_semantic::SemanticMemory {
+crates/runtime_core/src/mutation_critic.rs:pub fn evaluate(proposed_code: &str) -> Evaluation {
+crates/runtime_core/src/mutation_critic.rs:pub fn evaluate_evidence(proposed_code: &str) -> Evaluation {
+crates/runtime_core/src/mutation_memory/retrieval.rs:pub fn find_similar(
+crates/cognitive_core/src/lib.rs:pub fn add(left: u64, right: u64) -> u64 {
+crates/nexus_telemetry/src/lib.rs:pub fn add(left: u64, right: u64) -> u64 {
+crates/terminal_core/src/lib.rs:pub fn add(left: u64, right: u64) -> u64 {

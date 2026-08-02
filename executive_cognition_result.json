@@ -1,0 +1,9 @@
+{
+  "test": "executive_closed_loop",
+  "initial_strategy": "largest_model",
+  "failure_detected": true,
+  "reflection_completed": true,
+  "memory_written": true,
+  "second_attempt_strategy": "resource_aware_routing",
+  "adaptation_expected": true
+}

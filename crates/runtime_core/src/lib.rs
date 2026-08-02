@@ -1,4 +1,3 @@
-pub mod schema_law;
 pub mod agent_protocol;
 pub mod agent_runtime;
 pub mod agents;
@@ -36,8 +35,44 @@ pub mod policy;
 pub mod router;
 pub mod runtime_metrics;
 pub mod shared_state;
+pub mod sidecar_host;
 pub mod task_manager;
-pub mod task_manager_v4;
 pub mod wasm_forge;
 pub mod wasm_runtime;
 pub mod world_model;
+
+pub mod verification;
+
+pub mod intent_contract;
+
+pub mod motor_cortex;
+
+pub mod cognitive_events;
+
+pub mod belief_engine;
+pub mod belief_update;
+pub mod causal_recall;
+pub mod memory_consolidation;
+pub mod memory_cortex;
+pub mod memory_recall;
+pub mod memory_semantic;
+pub mod memory_types;
+pub mod reflection_engine;
+
+pub mod belief_feedback;
+
+pub mod belief_policy;
+
+pub mod goal_adaptation;
+
+pub mod belief_audit;
+pub mod belief_causality;
+pub mod belief_causality_audit;
+pub mod belief_delta;
+pub mod belief_prediction;
+pub mod belief_transition;
+pub mod belief_transition_audit;
+pub mod belief_validation;
+pub mod belief_validation_engine;
+
+pub mod executive_cortex;

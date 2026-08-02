@@ -1,4 +1,13 @@
 [build]
+# IMPORTANT: Use 1 job on Duet to stay under 1.5GB RAM
+# Change to 2 only if you're sure you have headroom
+jobs = 1
+
+# Uncomment below if you install sccache later
+rustc-wrapper = "sccache"
+
+# Native ARM64 optimizations strictly scoped to your hardware muscles
+[target.aarch64-unknown-linux-gnu]
 rustflags = [
     "-C", "target-cpu=cortex-a73",
     "-C", "target-feature=-fp16",
@@ -8,9 +17,14 @@ rustflags = [
     "-C", "link-arg=-Wl,--gc-sections",
 ]
 
-# IMPORTANT: Use 1 job on Duet to stay under 1.5GB RAM
-# Change to 2 only if you're sure you have headroom
-jobs = 1
+# Strict isolation for WebAssembly to prevent native target contamination
+[target.wasm32-wasip1]
+rustflags = []
 
-# Uncomment below if you install sccache later
-# rustc-wrapper = "sccache"
+[target.wasm32-unknown-unknown]
+rustflags = []
+
+
+[env]
+CARGO_INCREMENTAL = "0"
+SCCACHE_DIR = "/mnt/chromeos/removable/Memorex USB/AthenaFusionX/sccache"

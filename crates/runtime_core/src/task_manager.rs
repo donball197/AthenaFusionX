@@ -1,3 +1,4 @@
+use crate::memory_cortex::MemoryCortex;
 use crate::{
     cortical_loop::{CortexOutcome, CorticalLoop},
     distributed_scheduler::DistributedScheduler,
@@ -7,7 +8,6 @@ use crate::{
     shared_state::VmoState,
     world_model::WorldModel,
 };
-use nexus_substrate::memory::MemoryPalace;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, Mutex};
 pub struct TaskContext {
     pub client: Client,
     pub api_key: String,
-    pub memory: Arc<Mutex<MemoryPalace>>,
+    pub memory: Arc<MemoryCortex>,
     pub vmo_state: Arc<Mutex<VmoState>>,
     pub tx: broadcast::Sender<String>,
     pub dist: Arc<DistributedScheduler>,
@@ -58,8 +58,13 @@ pub async fn send_task(
         let mut task_context_history = String::new();
         for dep in &node.deps {
             if let Some(out) = task_outputs.get(dep) {
+                let bounded_out = if out.len() > 1500 {
+                    format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", &out[..1500])
+                } else {
+                    out.clone()
+                };
                 task_context_history
-                    .push_str(&format!("---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n", dep, out));
+                    .push_str(&format!("---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n", dep, bounded_out));
             }
         }
 
@@ -82,22 +87,16 @@ pub async fn send_task(
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting GoT Epistemic Loop for Node {}", task_id)}).to_string());
 
         let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
-            Ok(CortexOutcome::Proven { belief }) => {
+            Ok(CortexOutcome::Proven { belief, evidence }) => {
                 format!(
-                    "[DAG NODE COMPLETE] Ancestor node '{}' concluded execution (belief {:.2}).",
-                    node.objective, belief
+                    "[DAG NODE COMPLETE] Objective: {}\nBelief: {:.2}\nEvidence:\n{}",
+                    node.objective, belief, evidence
                 )
             }
-            Ok(CortexOutcome::Halted { reasoning }) => {
-                format!(
-                    "[DAG NODE HALTED] Ancestor node '{}' self-halted: {}",
-                    node.objective, reasoning
-                )
-            }
-            Ok(CortexOutcome::TurnsExhausted { best_belief }) => {
+            Ok(CortexOutcome::TurnsExhausted { best_belief, evidence }) => {
                 mission_had_failures = true;
                 let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX INCOMPLETE] Node {} exhausted turns without proving strategy (best belief {:.2}).", task_id, best_belief)}).to_string());
-                format!("[DAG NODE INCOMPLETE] Ancestor node '{}' did NOT conclude successfully — best belief {:.2}. Treat this dependency as unresolved.", node.objective, best_belief)
+                format!("[DAG NODE INCOMPLETE] Objective: {}\nBest belief: {:.2}\nPartial evidence:\n{}\nTreat this dependency as unresolved.", node.objective, best_belief, evidence)
             }
             Err(e) => {
                 mission_had_failures = true;

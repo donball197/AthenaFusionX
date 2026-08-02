@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FaultHypothesis {
+pub struct Hypothesis {
     pub description: String,
     pub probability_score: f32,
     pub proposed_fix_action: String,
@@ -12,8 +12,8 @@ pub struct FaultHypothesis {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GoTResolution {
     pub root_cause_analysis: String,
-    pub hypotheses: Vec<FaultHypothesis>,
-    pub selected_path: FaultHypothesis,
+    pub hypotheses: Vec<Hypothesis>,
+    pub selected_path: Hypothesis,
 }
 
 pub struct HypothesisEngine;
@@ -26,8 +26,16 @@ impl HypothesisEngine {
         fault_log: &str,
     ) -> Result<GoTResolution> {
         let system_instruction =
-            "You are the NEXUS Graph of Thoughts (GoT) Engine.\n             A task has failed. You must perform non-linear reasoning:\n             1. Analyze the fault.\n             2. Generate exactly 3 distinct hypotheses for WHY it failed.\n             3. Assign a mathematical probability score (0.0 to 1.0) to each.\n             4. Select the highest probability hypothesis as the 'selected_path'.\n             Output ONLY valid JSON matching this schema:\n             { \"root_cause_analysis\": \"...\", \"hypotheses\": [ { \"description\": \"...\", \"probability_score\": 0.9, \"proposed_fix_action\": \"...\" } ], \"selected_path\": { ... } }";
+            "You are the NEXUS Graph of Thoughts (GoT) Engine.\n\
+             A task has failed. You must perform non-linear reasoning:\n\
+             1. Analyze the fault.\n\
+             2. Generate exactly 3 distinct hypotheses for WHY it failed.\n\
+             3. Assign a mathematical probability score (0.0 to 1.0) to each.\n\
+             4. Select the highest probability hypothesis as the 'selected_path'.\n\
+             Output ONLY valid JSON matching this schema:\n\
+             { \"root_cause_analysis\": \"...\", \"hypotheses\": [ { \"description\": \"...\", \"probability_score\": 0.9, \"proposed_fix_action\": \"...\" } ], \"selected_path\": { ... } }";
 
+        // ⚡ FIX 4: Removed responseMimeType here too for Gemma compatibility.
         let payload = serde_json::json!({
             "systemInstruction": { "parts": [{ "text": system_instruction }] },
             "contents": [

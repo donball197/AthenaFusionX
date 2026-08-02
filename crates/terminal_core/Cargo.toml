@@ -1,0 +1,9 @@
+[package]
+name = "terminal_core"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

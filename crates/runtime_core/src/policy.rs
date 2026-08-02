@@ -33,3 +33,33 @@ impl ExecutionSandbox {
         }
     }
 }
+
+/// Explicit Machine-Readable Tool Contracts to prevent CLI flag-guessing.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ToolContract {
+    pub name: &'static str,
+    pub binary_path: &'static str,
+    pub flags: &'static [&'static str],
+    pub usage_pattern: &'static str,
+}
+
+pub const TOOL_CONTRACTS: &[ToolContract] = &[
+    ToolContract {
+        name: "impact_analyzer",
+        binary_path: "target/release/impact_analyzer",
+        flags: &["--target", "--symbol-graph", "--mutation-map", "--output"],
+        usage_pattern: "impact_analyzer --target <symbol> --output /tmp/impact.json OR impact_analyzer <target> --output /tmp/impact.json",
+    },
+    ToolContract {
+        name: "execution_auditor",
+        binary_path: "target/release/execution_auditor",
+        flags: &["--trace-file", "--file", "-f", "--output"],
+        usage_pattern: "execution_auditor --trace-file <log_path> --output /tmp/audit.json OR execution_auditor <log_path>",
+    },
+    ToolContract {
+        name: "mutation_ranker",
+        binary_path: "target/release/mutation_ranker",
+        flags: &["--candidate", "--impact-report", "--health-report", "--output"],
+        usage_pattern: "mutation_ranker --candidate <target> --impact-report /tmp/impact.json --health-report /tmp/audit.json --output /tmp/verdict.json",
+    },
+];

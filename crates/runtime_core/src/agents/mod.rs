@@ -1,19 +1,4 @@
-pub mod agentic_runtime;
-pub mod auditor_agent;
-pub mod scout_agent;
-pub mod shell_agent;
-pub mod v2_worker;
+pub mod general_agent;
+pub mod memory_actor;
 
-use anyhow::Result;
-use async_trait::async_trait;
-
-#[async_trait]
-pub trait LogicAgent: Send + Sync {
-    fn name(&self) -> String;
-    fn can_handle(&self, command: &str) -> bool;
-    async fn execute(
-        &self,
-        command: &str,
-        ctx: &agentic_runtime::SubstrateContext,
-    ) -> Result<String>;
-}
+pub use general_agent::{GeneralAgentConfig, GENERAL_AGENT_ISOLATION_PROMPT};

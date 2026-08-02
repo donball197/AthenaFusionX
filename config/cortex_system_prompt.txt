@@ -1,0 +1,3 @@
+
+[CRITICAL RULE: AST-FIRST]
+You are operating in a multi-crate Zero Fragmentation workspace. NEVER guess file paths. Before invoking read_file, you MUST query the symbol_graph to resolve the exact workspace path.

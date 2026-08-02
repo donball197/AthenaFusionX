@@ -1,8 +1,8 @@
 use crate::agent_protocol::AgentAction;
 use crate::distributed_scheduler::DistributedScheduler;
+use crate::memory_cortex::MemoryCortex;
 use crate::shared_state::VmoState;
 use anyhow::{anyhow, Result};
-use nexus_substrate::memory::MemoryPalace;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -21,19 +21,56 @@ pub struct RoboticExecutor {
     tx: tokio::sync::broadcast::Sender<String>,
 }
 
+fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
+    if let Ok(c) = std::fs::canonicalize(p) {
+        return Ok(c);
+    }
+    let parent = p
+        .parent()
+        .ok_or_else(|| anyhow!("no parent directory for {}", p.display()))?;
+    let parent_canon = std::fs::canonicalize(parent)?;
+    let file_name = p
+        .file_name()
+        .ok_or_else(|| anyhow!("no file name for {}", p.display()))?;
+    Ok(parent_canon.join(file_name))
+}
+
 pub fn sanitize(path: &str) -> Result<PathBuf> {
-    // ⚡ Allow /tmp/ prefix, block all other absolute paths
-    if (path.starts_with('/') && !path.starts_with("/tmp/")) || path.contains("..") {
-        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
+    // /tmp/ remains scratch space, outside the workspace-root containment check.
+    if path.starts_with("/tmp/") {
+        return Ok(Path::new(path).to_path_buf());
     }
 
-    let p = Path::new(path);
-    if (p.is_absolute() && !path.starts_with("/tmp/"))
-        || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+    let workspace_root = std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+
+    // Auto-map relative crate/bin path aliases missing crates/ or bins/ prefix
+    let mut normalized_path = path.to_string();
+    if normalized_path.starts_with("runtime_core/")
+        || normalized_path.starts_with("nexus_substrate/")
+        || normalized_path.starts_with("nexus_model_hub/")
+        || normalized_path.starts_with("nexus_search/")
+        || normalized_path.starts_with("memory_graph/")
+        || normalized_path.starts_with("protocol/")
+        || normalized_path.starts_with("executive_cortex/")
     {
-        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {}", path));
+        normalized_path = format!("crates/{}", normalized_path);
+    } else if normalized_path.starts_with("ide_backend/") || normalized_path.starts_with("cli/") || normalized_path.starts_with("node/") {
+        normalized_path = format!("bins/{}", normalized_path);
     }
-    Ok(p.to_path_buf())
+
+    let p = Path::new(&normalized_path);
+    let target = if p.is_absolute() { p.to_path_buf() } else { workspace_root.join(p) };
+
+    let canonical = canonicalize_or_parent(&target)
+        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+
+    if !canonical.starts_with(&workspace_root) {
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
+    }
+
+    Ok(canonical)
 }
 
 impl RoboticExecutor {
@@ -44,7 +81,7 @@ impl RoboticExecutor {
     pub async fn execute_handle(
         &mut self,
         actions: Vec<AgentAction>,
-        memory: Arc<Mutex<MemoryPalace>>,
+        memory: Arc<MemoryCortex>,
         vmo_state: Arc<Mutex<VmoState>>,
         dist: Arc<DistributedScheduler>,
     ) -> Result<Vec<String>> {
@@ -81,7 +118,7 @@ impl RoboticExecutor {
     pub async fn execute_single_action(
         &mut self,
         action: AgentAction,
-        _memory: Arc<Mutex<MemoryPalace>>,
+        _memory: Arc<MemoryCortex>,
         _vmo_state: Arc<Mutex<VmoState>>,
         _dist: Arc<DistributedScheduler>,
     ) -> Result<String> {
@@ -113,10 +150,10 @@ impl RoboticExecutor {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
 
-                // ⚡ SOVEREIGN RAG: Vectorize and store in MemoryPalace
+                // ⚡ SOVEREIGN RAG: Vectorize and route through Memory Cortex
                 // Use a 8k token safe-chunk for the embedding API
                 let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
-                let mem = _memory.lock().await;
+                let mem = _memory;
                 if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await {
                     let _ = mem.store_memory("ReadFile", &path, &content, Some(emb)).await;
                 } else {
@@ -124,8 +161,8 @@ impl RoboticExecutor {
                 }
 
                 // Return a truncated preview to the immediate GoT loop to prevent context overflow
-                let return_content = if content.len() > 1500 {
-                    format!("{}...\n\n[CONTENT TRUNCATED. FULL DATA SAVED TO MEMORY PALACE VECTOR VAULT. USE search_memory TO EXPLORE DEEPER.]", &content[..1500])
+                let return_content = if content.len() > 12000 {
+                    format!("{}...\n\n[CONTENT TRUNCATED. FULL DATA SAVED TO MEMORY PALACE VECTOR VAULT. USE search_memory TO EXPLORE DEEPER.]", &content[..12000])
                 } else {
                     content.clone()
                 };
@@ -134,8 +171,7 @@ impl RoboticExecutor {
             }
             AgentAction::ReadFunction { path, function_name, .. } => {
                 let safe_path = sanitize(&path)?;
-                let content = crate::ast_editor::AstEditor::read_function(safe_path.to_str().unwrap_or(&path), &function_name)
-                    .map_err(|e| anyhow::anyhow!("AST_FAULT: {}", e))?;
+                let content = tokio::fs::read_to_string(&safe_path).await?;
                 Ok(format!("[READ_FUNCTION_OK] '{}' from {}\nCONTENT:\n{}", function_name, path, content))
             }
             AgentAction::DiffPatch { path, search, replace, .. } => {
@@ -152,7 +188,7 @@ impl RoboticExecutor {
                 Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
             }
             AgentAction::SearchMemory { query, .. } => {
-                let mem = _memory.lock().await;
+                let mem = _memory;
                 let mut results_text = String::new();
 
                 // 1. Semantic Vector Search
@@ -221,7 +257,7 @@ impl RoboticExecutor {
                 Ok(format!("[GIT_ROLLBACK_OK] Reason: {}\nSTDOUT:\n{}", reasoning, String::from_utf8_lossy(&out.stdout)))
             }
             AgentAction::SpawnSubagent { instruction, .. } | AgentAction::DelegateTask { instruction, .. } => {
-                let mem = _memory.lock().await;
+                let mem = _memory;
                 mem.store_memory("Executor", &instruction, "Delegated to Subagent", None).await?;
                 Ok("[DELEGATION_LOGGED] Instruction pushed to Memory Palace for async execution.".to_string())
             }

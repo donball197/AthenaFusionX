@@ -1,0 +1,15 @@
+[package]
+name = "evolution_engine"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono = { version = "0.4.45", features = ["serde"] }
+hex = "0.4.3"
+rand = "0.8"
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+[lints]
+workspace = true

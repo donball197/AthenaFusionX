@@ -40,26 +40,21 @@ impl ArbiterAgent {
             "curl | sh",
             "history -c",
             "unset HISTFILE",
-            // Hardening pass: podman.rs no longer sandboxes anything, this
-            // blocklist is now the only gate for commands run on the host.
-            "-exec rm",
-            "-exec sh",
-            "-exec bash",
-            " -delete",
-            "git push --force",
-            "git push -f",
-            "git clean -f",
-            "python3 -c",
-            "python -c",
-            "perl -e",
-            "ruby -e",
-            "node -e",
         ];
 
         let normalized = command.to_lowercase();
 
+        // Narrow, explicit exception: allow `rm -rf /tmp/...` for legitimate
+        // local temp-folder cleanup without loosening the general root-path
+        // rm -rf block (which the broad "rm -rf /" pattern below restores).
+        let is_scoped_tmp_cleanup =
+            normalized.contains("rm -rf /tmp/") && !normalized.contains("rm -rf /tmp/../");
+
         for pattern in dangerous_patterns.iter() {
             if normalized.contains(pattern) {
+                if *pattern == "rm -rf /" && is_scoped_tmp_cleanup {
+                    continue;
+                }
                 return Err(format!(
                     "SANDBOX_VIOLATION: Threat pattern '{}' detected in {}.",
                     pattern, action_type

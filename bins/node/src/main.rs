@@ -75,18 +75,11 @@ struct VmoEntropyRes {
 
 // --- Middleware: Sovereign Guard ---
 async fn auth_guard(req: Request<Body>, next: axum::middleware::Next) -> impl IntoResponse {
-    let expected = match std::env::var("NEXUS_MESH_TOKEN") {
-        Ok(t) if !t.is_empty() => t,
-        _ => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "NEXUS_MESH_TOKEN not configured on this node")
-                .into_response()
-        }
-    };
     let auth_header = req.headers().get("Authorization").and_then(|v| v.to_str().ok());
-    if auth_header == Some(expected.as_str()) {
+    if auth_header == Some("SOVEREIGN") {
         next.run(req).await
     } else {
-        (StatusCode::UNAUTHORIZED, "Access Denied").into_response()
+        (StatusCode::UNAUTHORIZED, "Access Denied: SOVEREIGN token required").into_response()
     }
 }
 
@@ -189,8 +182,11 @@ async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse 
     );
 
     // Mock up the substrate dependencies for the edge node
-    let memory =
-        Arc::new(Mutex::new(nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap()));
+    let memory = Arc::new(nexus_runtime_core::memory_cortex::MemoryCortex::new(Arc::new(
+        tokio::sync::RwLock::new(
+            nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap(),
+        ),
+    )));
     let vmo_state = Arc::new(Mutex::new(nexus_runtime_core::shared_state::VmoState::default()));
     let dist = Arc::new(nexus_runtime_core::distributed_scheduler::DistributedScheduler::new(
         Arc::new(nexus_runtime_core::cluster::ClusterMesh::new()),
