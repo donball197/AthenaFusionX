@@ -85,6 +85,7 @@ impl CognitiveGraph {
 
     pub fn propagate_beliefs(&mut self) {
         let mut updates: HashMap<Uuid, f32> = HashMap::new();
+        const DAMPING: f32 = 0.85;
         for edge in &self.edges {
             if let Some(source_node) = self.nodes.get(&edge.source) {
                 if let Some(target_node) = self.nodes.get(&edge.target) {
@@ -95,6 +96,7 @@ impl CognitiveGraph {
                         EdgeRelation::Contradicts => new_belief = (new_belief - impact).max(0.0),
                         _ => {}
                     }
+                    new_belief = DAMPING * new_belief + (1.0 - DAMPING) * target_node.belief_score;
                     updates.insert(edge.target, new_belief);
                 }
             }
@@ -109,7 +111,8 @@ impl CognitiveGraph {
     pub fn select_best_hypothesis(&self) -> Option<&CognitiveNode> {
         self.nodes
             .values()
-            // ⚡ FIX: Filter out dead hypotheses (belief < 0.15) so we don't get stuck in a death loop!
+            // ⚡ FIX: Filter out dead hypotheses (belief < 0.15).
+            // v1.9: When BeliefVector is available on the node, prefer may_prove() over raw score.
             .filter(|n| matches!(n.kind, NodeKind::Hypothesis) && n.belief_score >= 0.15)
             .max_by(|a, b| {
                 let score_a = a.belief_score / (a.computation_cost as f32).max(1.0);

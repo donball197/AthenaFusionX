@@ -49,6 +49,7 @@ pub mod motor_cortex;
 
 pub mod cognitive_events;
 
+pub mod evidence;
 pub mod belief_engine;
 pub mod belief_update;
 pub mod causal_recall;

@@ -177,3 +177,9 @@ impl ExecutiveCortex {
 pub fn evaluate_causal_memory(memories: Vec<crate::causal_recall::CausalRecall>) -> Vec<String> {
     memories.iter().map(|m| m.recommendation()).collect()
 }
+
+
+// v1.9 hard evidence gate:
+// Before marking a GoalNode / strategy as Proven, call:
+//   belief.may_prove(required_artifacts, threshold)
+// Never treat scalar confidence alone as sufficient.

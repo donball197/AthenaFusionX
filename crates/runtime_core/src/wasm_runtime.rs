@@ -6,7 +6,15 @@ pub struct WasmRuntime;
 impl WasmRuntime {
     fn make_engine() -> Result<Engine> {
         let mut config = Config::new();
+        // Size + speed balance for ARM64 / low-RAM nodes
+        config.cranelift_opt_level(OptLevel::SpeedAndSize);
+        // Hard limits so sidecars cannot starve the cortex
         config.consume_fuel(true);
+        config.epoch_interruption(true);
+        // Cheaper instantiation
+        config.memory_init_cow(true);
+        // Avoid memory spikes on constrained devices
+        config.parallel_compilation(false);
         Ok(Engine::new(&config)?)
     }
 
