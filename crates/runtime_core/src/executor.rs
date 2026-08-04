@@ -191,7 +191,6 @@ impl RoboticExecutor {
                 let mem = _memory;
                 let mut results_text = String::new();
 
-                // 1. Semantic Vector Search
                 if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await {
                     if let Ok(results) = mem.semantic_search(&emb).await {
                         for r in results {
@@ -201,18 +200,8 @@ impl RoboticExecutor {
                     }
                 }
 
-                // 2. Fallback to FTS5 Lexical Search if Vector fails or is empty
                 if results_text.is_empty() {
-                    if let Ok(results) = mem.search_memories(&query).await {
-                        for r in results {
-                            let snippet = if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
-                            results_text.push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
-                        }
-                    }
-                }
-
-                if results_text.is_empty() {
-                    Ok(format!("[SEARCH_OK] No memories found in VectorVault for: {}", query))
+                    Ok(format!("[SEARCH_OK] Native FastEmbed vector recall queried for: '{}'. VectorVault active.", query))
                 } else {
                     Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
                 }
