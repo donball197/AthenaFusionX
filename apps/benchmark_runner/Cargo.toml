@@ -1,0 +1,10 @@
+[package]
+name = "benchmark_runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+nexus_ide_backend = { path = "../../bins/ide_backend" }
