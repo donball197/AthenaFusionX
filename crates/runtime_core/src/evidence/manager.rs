@@ -21,9 +21,11 @@ impl EvidenceManager {
         obs: Observation,
         strategy_id: Option<Uuid>,
     ) -> Evidence {
-        let kind = Evidence::classify(&obs.raw, obs.success);
+        let (kind, failure) = Evidence::classify(&obs.raw, obs.success);
         let belief_delta = self.compute_belief_delta(&obs, kind);
-        Evidence::from_observation(obs, kind, belief_delta, strategy_id)
+        let mut ev = Evidence::from_observation(obs, kind, belief_delta, strategy_id);
+        ev.observation.failure_kind = failure;
+        ev
     }
 
     /// Async path with smart escalation.
@@ -34,12 +36,14 @@ impl EvidenceManager {
         client: &Client,
         api_key: &str,
     ) -> Evidence {
-        let kind = Evidence::classify(&obs.raw, obs.success);
+        let (kind, failure) = Evidence::classify(&obs.raw, obs.success);
 
         // Fast path
         if !Self::should_escalate(&obs, kind) {
             let belief_delta = self.compute_belief_delta(&obs, kind);
-            return Evidence::from_observation(obs, kind, belief_delta, strategy_id);
+            let mut ev = Evidence::from_observation(obs, kind, belief_delta, strategy_id);
+            ev.observation.failure_kind = failure;
+            return ev;
         }
 
         // Slow path
@@ -48,19 +52,23 @@ impl EvidenceManager {
             obs.raw.len()
         );
 
-        match EpistemicEngine::evaluate_evidence(client, api_key, "Analyze observation", &obs.raw).await {
+        match EpistemicEngine::evaluate_evidence(client, api_key, "Analyze observation", &obs.source, &obs.raw).await {
             Ok(response) => {
                 // Map the 1D float back into a multi-dimensional BeliefVector
                 let val = response.confidence_modifier;
                 let delta = BeliefVector::new(val * 0.5, val, val * -0.2, val * 0.3);
-                Evidence::from_observation(obs, kind, delta, strategy_id)
+                let mut ev = Evidence::from_observation(obs, kind, delta, strategy_id);
+                ev.observation.failure_kind = failure;
+                ev
             },
             Err(e) => {
                 println!(
                     "\x1b[33m>> [EVIDENCE] Escalation failed ({}) — falling back to Neutral/ZERO\x1b[0m",
                     e
                 );
-                Evidence::from_observation(obs, EvidenceKind::Neutral, BeliefVector::ZERO, strategy_id)
+                let mut ev = Evidence::from_observation(obs, EvidenceKind::Neutral, BeliefVector::ZERO, strategy_id);
+                ev.observation.failure_kind = failure;
+                ev
             }
         }
     }

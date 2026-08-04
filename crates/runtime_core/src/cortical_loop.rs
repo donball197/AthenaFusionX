@@ -123,7 +123,17 @@ impl CorticalLoop {
         context_chunks.push(Self::resolve_workspace_paths().await);
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
-                context_chunks.push(format!("\n[ANCESTOR NODE EVIDENCE & RESOLVED PATHS]\n{}", evidence));
+                let ancestor_succeeded = evidence.contains("[CMD_OK]")
+                    || evidence.contains("[READ_OK]")
+                    || evidence.contains("[WRITE_OK]")
+                    || evidence.contains("[DIFF_PATCH_OK]")
+                    || evidence.contains("[PATCH_FUNCTION_OK]");
+                let label = if ancestor_succeeded {
+                    "[ANCESTOR NODE EVIDENCE & RESOLVED PATHS]"
+                } else {
+                    "[ANCESTOR NODE FAILURE -- DO NOT TREAT PATHS BELOW AS RESOLVED]"
+                };
+                context_chunks.push(format!("\n{}\n{}", label, evidence));
             }
         }
         let world_context = context_chunks.join("\n");
@@ -178,8 +188,23 @@ impl CorticalLoop {
                 }
 
                 // --- DETERMINISTIC BACKSTOP ---
-                if (mission.to_lowercase().contains("resolve")
-                    || mission.to_lowercase().contains("path"))
+                let lower_m = mission.to_lowercase();
+
+                let is_pure_read = lower_m.contains("read")
+                    && !lower_m.contains("overhead")
+                    && !lower_m.contains("evaluate")
+                    && !lower_m.contains("benchmark");
+
+                if is_pure_read && evidence_history.contains("[READ_OK]")
+                {
+                    self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Source code read objective satisfied. Halting early.\x1b[0m".to_string());
+                    return Ok(CortexOutcome::Proven { belief: 1.0, evidence: evidence_history.clone() });
+                }
+                let is_path_task = lower_m.contains("resolve absolute path") || lower_m.contains("query symbol_graph");
+                let is_report_task = lower_m.contains("report") || lower_m.contains("synthesize") || lower_m.contains("verdict");
+
+                if is_path_task
+                    && !is_report_task
                     && evidence_history.contains("[CMD_OK]")
                     && evidence_history.contains(".rs")
                 {
@@ -198,6 +223,7 @@ impl CorticalLoop {
                     &self.api_key,
                     mission,
                     &h_content,
+                    &world_context,
                     &evidence_history,
                 )
                 .await
@@ -259,12 +285,28 @@ impl CorticalLoop {
                             )
                             .await
                             {
-                                if let Ok(actions) = crate::json_parser::extract_actions(&raw_json)
+                                if let Ok(mut actions) = crate::json_parser::extract_actions(&raw_json)
                                 {
-                                    let mut executor =
-                                        RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
+                                    if actions.is_empty() && !proposed_action.trim().is_empty() {
+                                        self.log("\x1b[33m>> [CORTEX FALLBACK] Translator produced empty JSON. Executing proposed action directly as command...\x1b[0m".to_string());
+                                        actions.push(AgentAction::ExecuteCommand {
+                                            command: proposed_action.clone(),
+                                            reasoning: "Fallback raw command execution".to_string(),
+                                            confidence: 0.8,
+                                        });
+                                    }
 
-                                    for action in actions {
+                                    if actions.is_empty() {
+                                        self.log("\x1b[31m>> [CORTEX FAULT] Translator produced an empty action list.\x1b[0m".to_string());
+                                        let evidence = "[TRANSLATION_EMPTY] Translator produced an empty action list. This turn produced no executable action.".to_string();
+                                        let obs_id = self.graph.add_node(NodeKind::Observation, &evidence, 1.0, 50);
+                                        self.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.15);
+                                        self.graph.propagate_beliefs();
+                                    } else {
+                                        let mut executor =
+                                            RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
+
+                                        for action in actions {
                                         match &action {
                                             AgentAction::PatchFunction { path, .. }
                                             | AgentAction::DiffPatch { path, .. }
@@ -310,6 +352,7 @@ impl CorticalLoop {
                                             &self.client,
                                             &self.api_key,
                                             &h_content,
+                                            &proposed_action,
                                             &evidence,
                                         )
                                         .await
@@ -385,6 +428,7 @@ impl CorticalLoop {
                                             }
                                         }
                                     }
+                                    }
                                 } else {
                                     self.log("\x1b[31m>> [CORTEX FAULT] Failed to parse AgentAction JSON from Translator.\x1b[0m".to_string());
                                     let evidence = "[TRANSLATION_FAILURE] Translator produced JSON that could not be parsed into a valid AgentAction. This turn produced no executable action.".to_string();
@@ -448,3 +492,8 @@ impl CorticalLoop {
         Ok(CortexOutcome::TurnsExhausted { best_belief: max_observed_belief, evidence: final_evidence })
     }
 }
+
+
+// v1.9: Prefer BeliefState::may_prove / BeliefVector::may_prove before
+// treating any node as proven. Example:
+//   if belief.may_prove(1, 0.75) { /* complete node */ }

@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::Duration;
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CriticResponse {
     pub critique: String,
@@ -17,7 +16,7 @@ pub struct CriticResponse {
 pub struct EpistemicEngine;
 
 impl EpistemicEngine {
-    async fn safe_api_call(
+    pub async fn safe_api_call(
         client: &Client,
         api_key: &str,
         models: &[String],
@@ -81,6 +80,10 @@ impl EpistemicEngine {
                 } else {
                     if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
                         last_err = anyhow!("Gemini API Error: {}", err);
+                        if err.contains("quota") || err.contains("rate limit") || err.contains("RESOURCE_EXHAUSTED") {
+                            crate::model_config::report_rate_limit(model_endpoint);
+                            break;
+                        }
                         if err.contains("Internal error")
                             || err.contains("quota")
                             || err.contains("rate limit")
@@ -104,6 +107,13 @@ impl EpistemicEngine {
                         body.pointer("/choices/0/message/content").and_then(|v| v.as_str())
                     {
                         final_text = content.to_string();
+                    }
+                    if final_text.trim().is_empty() {
+                        if let Some(rc) =
+                            body.pointer("/choices/0/message/reasoning_content").and_then(|v| v.as_str())
+                        {
+                            final_text = rc.to_string();
+                        }
                     }
                 } else {
                     if let Some(parts) =
@@ -150,7 +160,25 @@ impl EpistemicEngine {
         )
         .await?;
         let clean_text = sanitize_json_escapes(&text);
-        serde_json::from_str(&clean_text).map_err(|e| anyhow!("Parse error: {}", e))
+
+        if let Ok(hyps) = serde_json::from_str::<Vec<String>>(&clean_text) {
+            if !hyps.is_empty() {
+                return Ok(hyps);
+            }
+        }
+
+        let lines: Vec<String> = text
+            .lines()
+            .map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == '•' || c.is_ascii_digit() || c == '.' || c == '>').trim().to_string())
+            .filter(|l| !l.is_empty() && l.len() > 5)
+            .take(3)
+            .collect();
+
+        if !lines.is_empty() {
+            Ok(lines)
+        } else {
+            Ok(vec![format!("Execute directive: {}", problem)])
+        }
     }
 
     pub async fn propose_action(
@@ -158,9 +186,13 @@ impl EpistemicEngine {
         api_key: &str,
         mission: &str,
         strategy: &str,
+        world_context: &str,
         evidence_so_far: &str,
     ) -> Result<String> {
-        let prompt = format!("You are the Action Strategist.\nORIGINAL DIRECTIVE (You must execute the exact steps requested here. Stay strictly within its scope -- do not investigate other files unless the directive or evidence explicitly points there): {}\nSTRATEGY: {}\nEVIDENCE GATHERED SO FAR:\n{}\nPropose the exact next step to fulfill the strategy. CRITICAL RULE: If the EVIDENCE GATHERED SO FAR contains an exact file path outputted by the symbol_graph or a previous command (e.g., STDOUT: ./bins/ide_backend/src/system_monitor.rs), you MUST use that exact absolute path in your next read_file or diff_patch proposal. Do not truncate the path. NEVER run `find /`. CRITICAL RULE: If the EVIDENCE GATHERED SO FAR proves that your current strategy is fully complete, your IMMEDIATE next proposal MUST be to output `halt` to declare victory and exit the loop. Do not repeat successful commands! or search the root directory! Only search the current working directory (`.`). CRITICAL RULE: If evidence shows a compiler error citing a specific file (e.g., `--> <path>:<line>`), your IMMEDIATE next proposal MUST be to read that exact file using `read_file` if not read yet, before attempting patches or re-reading files. CRITICAL RULE: If your objective is to CREATE or WRITE a file, your immediate next action MUST be to use `write_file`.\nOUTPUT ONLY YOUR PROPOSED NEXT STEP IN PLAIN TEXT.", mission, strategy, evidence_so_far);
+        let prompt = format!("You are the Action Strategist.\nORIGINAL DIRECTIVE: {}\nSTRATEGY: {}\nWORLD CONTEXT: {}\nEVIDENCE GATHERED SO FAR:\n{}\nPropose the exact next step to fulfill the strategy.\nCRITICAL RULE 0: Do NOT propose directory-listing or file-discovery commands (ls -R, find, cat on an unconfirmed path) if the relevant file tree or path is already visible in WORLD CONTEXT above.\nCRITICAL RULE 1: If the EVIDENCE GATHERED SO FAR contains an exact file path outputted by symbol_graph or a previous command, you MUST use that exact path.\nCRITICAL RULE 2: If the EVIDENCE GATHERED SO FAR contains a Critic rejection or veto (marked [Contradicts]) that suggests a specific tool, command, or action to try next, your proposal MUST adopt that suggested action. DO NOT RE-PROPOSE AN ACTION THAT WAS JUST REJECTED.\nCRITICAL RULE 3: If the EVIDENCE GATHERED SO FAR proves your current strategy is fully complete with [CMD_OK] or [READ_OK] outputs satisfying the directive, your IMMEDIATE next proposal MUST be 'halt'.\n
+CRITICAL RULE 4: TOOLCHAIN TRUST & EXPLORATORY GRACE
+If the Strategist proposes executing a workspace tool (e.g., benchmark_runner, mutation_ranker, execution_auditor, impact_analyzer) via target/release/ or cargo run, you MUST ASSUME the tool exists and is authorized. Do NOT veto execution on the basis of missing prerequisite files (like trace logs, json reports, or candidates) if the tool is actively being invoked to analyze a target. Allow exploratory tool execution.
+ Do not repeat successful commands.\nCRITICAL RULE 4: When invoking workspace binaries (impact_analyzer, execution_auditor, mutation_ranker, symbol_graph), ALWAYS use 'cargo run --bin <bin_name> -- <args>' or the absolute debug path '/home/donball197/AthenaFusionX/target/debug/<bin_name>'. NEVER execute 'apps/<bin_name>' directly because 'apps/' is a source directory, not an executable binary.\nOUTPUT ONLY A SINGLE LINE CONTAINING THE EXACT COMMAND OR ACTION. DO NOT INCLUDE EXPLANATIONS, REASONING, OR PREAMBLE.", mission, strategy, world_context, evidence_so_far);
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }});
         Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload)
             .await
@@ -198,11 +230,12 @@ impl EpistemicEngine {
             "You are the Action Translator.\nSTRATEGY: {}\nPROPOSED ACTION: {}\nCRITICAL RULE: Translate the PROPOSED ACTION into exactly ONE JSON Array using the explicit JSON object schema below:\n\
              VALID JSON ACTIONS (MUST MATCH RUST ENUM EXACTLY):\n\
              1. [{{ \"type\": \"execute_command\", \"command\": \"<bash_command>\", \"reasoning\": \"...\" }}]\n\
-             2. [{{ \"type\": \"read_file\", \"path\": \"<filepath>\", \"reasoning\": \"...\" }}]\n\
-             3. [{{ \"type\": \"write_file\", \"path\": \"<filepath>\", \"content\": \"<EXACT_DATA_ESCAPED>\", \"reasoning\": \"...\" }}]\n\
-             4. [{{ \"type\": \"diff_patch\", \"path\": \"<filepath>\", \"search\": \"<search>\", \"replace\": \"<replace>\", \"reasoning\": \"...\" }}]\n\
-             5. [{{ \"type\": \"patch_function\", \"path\": \"<filepath>\", \"function_name\": \"<name>\", \"new_body\": \"<full source>\", \"reasoning\": \"...\" }}]\n\
-             6. [{{ \"type\": \"halt\", \"reasoning\": \"...\" }}]\n\
+             2. [{{ \"type\": \"search_memory\", \"query\": \"<search_query>\", \"reasoning\": \"...\" }}]\n\
+             3. [{{ \"type\": \"read_file\", \"path\": \"<filepath>\", \"reasoning\": \"...\" }}]\n\
+             4. [{{ \"type\": \"write_file\", \"path\": \"<filepath>\", \"content\": \"<EXACT_DATA_ESCAPED>\", \"reasoning\": \"...\" }}]\n\
+             5. [{{ \"type\": \"diff_patch\", \"path\": \"<filepath>\", \"search\": \"<search>\", \"replace\": \"<replace>\", \"reasoning\": \"...\" }}]\n\
+             6. [{{ \"type\": \"patch_function\", \"path\": \"<filepath>\", \"function_name\": \"<name>\", \"new_body\": \"<full source>\", \"reasoning\": \"...\" }}]\n\
+             7. [{{ \"type\": \"halt\", \"reasoning\": \"...\" }}]\n\
              NOTE: If the PROPOSED ACTION contains source code, you MUST escape all newlines (\\n) and double quotes (\\\") inside the 'content' or 'new_body' fields so the JSON parses correctly.\n\
              Select ONLY the relevant action object and enclose it in a JSON array. Do not output anything else.",
             strategy, proposed_action
@@ -212,6 +245,7 @@ impl EpistemicEngine {
             "generationConfig": {
                 "temperature": 0.0,
                 "responseMimeType": "application/json",
+                "maxOutputTokens": 4096,
                 "responseSchema": {
                     "type": "ARRAY",
                     "items": {
@@ -225,6 +259,7 @@ impl EpistemicEngine {
                             "replace": { "type": "STRING" },
                             "function_name": { "type": "STRING" },
                             "new_body": { "type": "STRING" },
+                            "query": { "type": "STRING" },
                             "reasoning": { "type": "STRING" }
                         },
                         "required": ["type", "reasoning"]
@@ -240,15 +275,17 @@ impl EpistemicEngine {
         client: &Client,
         api_key: &str,
         strategy: &str,
+        action: &str,
         evidence: &str,
     ) -> Result<CriticResponse> {
         let truncated_evidence: String = evidence.chars().take(8000).collect();
-        let prompt = format!("You are the Scientific Evaluator.\nSTRATEGY: {}\nEVIDENCE GATHERED:\n{}\nDoes this evidence represent meaningful partial progress toward the strategy? If it gathers useful context (like listing a directory or reading a file), give a positive modifier. DO NOT demand the entire strategy be completed in one step.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, truncated_evidence);
+        let prompt = format!("You are the Scientific Evaluator.\nSTRATEGY: {}\nACTION TAKEN: {}\nEVIDENCE GATHERED:\n{}\nDoes this evidence represent meaningful partial progress toward the strategy? If it gathers useful context (like listing a directory or reading a file), give a positive modifier. DO NOT demand the entire strategy be completed in one step.\nHALT RULE: If ACTION TAKEN is 'halt' and the EVIDENCE GATHERED (this turn or earlier in context) already shows a concrete success marker ([CMD_OK], [READ_OK], [WRITE_OK]) satisfying the strategy, this is a CORRECT completion, not a loss of progress -- give a positive modifier, not negative.\nMUTATION RULE: A successful mutating command (write, patch, mv, rm, mkdir, etc.) with [CMD_OK] and no stdout is genuine positive progress, not neutral reconnaissance -- do not score it 0.0 solely for lacking output.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, action, truncated_evidence);
         let payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.0,
                 "responseMimeType": "application/json",
+                "maxOutputTokens": 4096,
                 "responseSchema": {
                     "type": "OBJECT",
                     "properties": {
