@@ -121,6 +121,7 @@ impl CorticalLoop {
 
         let mut context_chunks = (*self.world_model).semantic_query(mission).await;
         context_chunks.push(Self::resolve_workspace_paths().await);
+        context_chunks.push("CRITICAL RULE FOR WRITING FILES: Do not use shell commands to write files. To write or overwrite a file, output EXACTLY this XML block in your proposal:\n<write_file path=\"exact/path.rs\">\n[RAW FILE CONTENT HERE]\n</write_file>".to_string());
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
                 let ancestor_succeeded = evidence.contains("[CMD_OK]")
@@ -198,7 +199,7 @@ impl CorticalLoop {
                 if is_pure_read && evidence_history.contains("[READ_OK]")
                 {
                     self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Source code read objective satisfied. Halting early.\x1b[0m".to_string());
-                    return Ok(CortexOutcome::Proven { belief: 1.0, evidence: evidence_history.clone() });
+                    // return Ok(CortexOutcome::Proven { belief: 1.0, evidence: evidence_history.clone() });
                 }
                 let is_path_task = lower_m.contains("resolve absolute path") || lower_m.contains("query symbol_graph");
                 let is_report_task = lower_m.contains("report") || lower_m.contains("synthesize") || lower_m.contains("verdict");
@@ -235,16 +236,6 @@ impl CorticalLoop {
                     }
                 };
                 self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposed_action));
-
-                // ⚡ DEFENSE IN DEPTH 2: Anti-Thrashing Guard
-                if false {
-                    // DISABLE STRICT STRING MATCH GUARD
-                    self.log("\x1b[33m>> [CORTEX GUARD] Duplicate action detected. Tanking belief to force novel trajectory.\x1b[0m".to_string());
-                    if let Some(node) = self.graph.nodes.get_mut(&h_id) {
-                        node.belief_score -= 0.5;
-                    }
-                    continue;
-                }
 
                 self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
                 match EpistemicEngine::criticize_proposal(
@@ -288,12 +279,30 @@ impl CorticalLoop {
                                 if let Ok(mut actions) = crate::json_parser::extract_actions(&raw_json)
                                 {
                                     if actions.is_empty() && !proposed_action.trim().is_empty() {
-                                        self.log("\x1b[33m>> [CORTEX FALLBACK] Translator produced empty JSON. Executing proposed action directly as command...\x1b[0m".to_string());
-                                        actions.push(AgentAction::ExecuteCommand {
-                                            command: proposed_action.clone(),
-                                            reasoning: "Fallback raw command execution".to_string(),
-                                            confidence: 0.8,
-                                        });
+                                        let action_str = proposed_action.trim();
+                                        if let (Some(start_tag), Some(end_quotes)) = (action_str.find("<write_file path=\""), action_str.find("\">")) {
+                                            let path = action_str[start_tag + 18..end_quotes].to_string();
+                                            if let Some(close_tag) = action_str.find("</write_file>") {
+                                                let content_start = end_quotes + 2;
+                                                let content = action_str[content_start..close_tag].trim_start_matches('\n').trim_end_matches('\n').to_string();
+                                                self.log("\x1b[32m>> [CORTEX INTERCEPT] Native XML Tool Intercept: Handling <write_file> directly.\x1b[0m".to_string());
+                                                actions.push(AgentAction::WriteFile {
+                                                    path,
+                                                    content,
+                                                    reasoning: "Intercepted XML write_file block".to_string(),
+                                                    confidence: 0.9,
+                                                });
+                                            } else {
+                                                self.log("\x1b[31m>> [CORTEX FAULT] Found <write_file> but missing </write_file>.\x1b[0m".to_string());
+                                            }
+                                        } else {
+                                            self.log("\x1b[33m>> [CORTEX FALLBACK] Translator produced empty JSON. Executing proposed action directly...\x1b[0m".to_string());
+                                            actions.push(AgentAction::ExecuteCommand {
+                                                command: proposed_action.clone(),
+                                                reasoning: "Fallback raw command execution".to_string(),
+                                                confidence: 0.8,
+                                            });
+                                        }
                                     }
 
                                     if actions.is_empty() {
@@ -397,11 +406,11 @@ impl CorticalLoop {
                                                             updated_node.belief_score;
                                                     }
 
-                                                    let is_mutation = evidence
+                                                    let _is_mutation = evidence
                                                         .contains("[WRITE_OK]")
                                                         || evidence.contains("[PATCH_FUNCTION_OK]")
                                                         || evidence.contains("[DIFF_PATCH_OK]");
-                                                    let is_terminal_cmd = evidence
+                                                    let _is_terminal_cmd = evidence
                                                         .contains("[CMD_OK]")
                                                         && !proposed_action.contains("grep")
                                                         && !proposed_action.contains("ls")
@@ -409,10 +418,7 @@ impl CorticalLoop {
                                                         && !proposed_action.contains("find");
                                                     let is_halt = evidence.contains("[HALT]");
 
-                                                    if updated_node.belief_score >= 0.85
-                                                        && (is_mutation
-                                                            || is_terminal_cmd
-                                                            || is_halt)
+                                                    if updated_node.belief_score >= 0.85 && is_halt
                                                     {
                                                         self.log("\x1b[1;36m>> [CORTEX] STRATEGY PROVEN AND FIX APPLIED! Mission Accomplished.\x1b[0m".to_string());
                                                         return Ok(CortexOutcome::Proven {
@@ -455,9 +461,11 @@ impl CorticalLoop {
                                 self.graph.propagate_beliefs();
                             }
                         } else {
-                            self.log("\x1b[31m>> [RED TEAM] VETO. Proposal rejected. Applying penalty to strategy.\x1b[0m".to_string());
+                            self.log("\x1b[31m>> [RED TEAM] VETO. Proposal rejected. Injecting Critic rationale into Memory Graph.\x1b[0m".to_string());
+                            let veto_msg = format!("[RED TEAM VETO] Action \"{}\" was blocked. Critic feedback: {}", proposed_action.trim(), critic.critique);
+                            let veto_obs_id = self.graph.add_node(NodeKind::Observation, &veto_msg, 1.0, 50);
                             self.graph.add_edge(
-                                h_id,
+                                veto_obs_id,
                                 h_id,
                                 EdgeRelation::Contradicts,
                                 critic.confidence_modifier.abs(),
