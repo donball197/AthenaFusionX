@@ -28,12 +28,13 @@ fn main() -> Result<()> {
         .with_context(|| format!("Failed to read patch payload: {}", args.patch_file))?;
 
     // 1. Parse the original file into an AST
-    let mut ast: syn::File = syn::parse_file(&src)
-        .with_context(|| "Failed to parse target file as a valid Rust AST")?;
+    let mut ast: syn::File =
+        syn::parse_file(&src).with_context(|| "Failed to parse target file as a valid Rust AST")?;
 
     // 2. Parse the LLM's patch into a valid Function AST node
-    let patch_ast: syn::ItemFn = syn::parse_str(&patch_src)
-        .with_context(|| "Patch payload must contain a complete, valid Rust function definition (signature + body).")?;
+    let patch_ast: syn::ItemFn = syn::parse_str(&patch_src).with_context(|| {
+        "Patch payload must contain a complete, valid Rust function definition (signature + body)."
+    })?;
 
     let mut replaced = false;
 
@@ -54,8 +55,10 @@ fn main() -> Result<()> {
                             // Convert the ItemFn into an ImplItemFn using quote
                             let method_tokens = quote::quote!(#patch_ast);
                             let new_method: syn::ImplItemFn = syn::parse2(method_tokens)
-                                .with_context(|| "Failed to convert patch into an impl block method")?;
-                            
+                                .with_context(|| {
+                                    "Failed to convert patch into an impl block method"
+                                })?;
+
                             *method = new_method;
                             replaced = true;
                             break;
@@ -68,7 +71,11 @@ fn main() -> Result<()> {
     }
 
     if !replaced {
-        anyhow::bail!("Symbol '{}' not found in {}. Ensure the symbol name is correct.", args.symbol, args.target);
+        anyhow::bail!(
+            "Symbol '{}' not found in {}. Ensure the symbol name is correct.",
+            args.symbol,
+            args.target
+        );
     }
 
     // 4. Unparse the mutated AST back to perfectly formatted Rust code
@@ -78,7 +85,10 @@ fn main() -> Result<()> {
     fs::write(&args.target, formatted_code)
         .with_context(|| format!("Failed to write mutated code back to {}", args.target))?;
 
-    println!("[OK] Semantic AST mutation successful. Symbol '{}' replaced and auto-formatted in {}.", args.symbol, args.target);
+    println!(
+        "[OK] Semantic AST mutation successful. Symbol '{}' replaced and auto-formatted in {}.",
+        args.symbol, args.target
+    );
 
     Ok(())
 }

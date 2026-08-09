@@ -29,6 +29,11 @@ wit-bindgen-rt = { version = "0.39", features = ["bitflags"] }
 nexus_substrate = { path = "../nexus_substrate" }
 nexus_model_hub = { path = "../nexus_model_hub" }
 thiserror = "2.0.19"
+walkdir = "2.5.0"
 
 [lints]
 workspace = true
+
+[features]
+default = []
+cognition_v5 = []

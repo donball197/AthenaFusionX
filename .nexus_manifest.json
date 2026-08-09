@@ -57,14 +57,7 @@
   },
   {
     "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-v4-flash",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-v4-pro",
+    "name": "deepseek-ai/deepseek-v4-flash-0731",
     "context": "Dynamic",
     "category": "NVIDIA",
     "color": "\u001b[92m"
@@ -282,13 +275,6 @@
   {
     "provider": "Nvidia",
     "name": "mistralai/mistral-large-2-instruct",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-medium-3.5-128b",
     "context": "Dynamic",
     "category": "MISTRAL",
     "color": "\u001b[34m"

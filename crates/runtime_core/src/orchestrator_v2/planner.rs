@@ -1,179 +1,153 @@
-use crate::orchestrator_v2::task_graph::{TaskGraph, TaskNode, TaskStatus};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use reqwest::Client;
-use serde_json::Value;
+use std::collections::HashMap;
+use crate::orchestrator_v2::task_graph::{TaskGraph, TaskNode, TaskStatus, TaskExecutionState};
 
 pub struct PlannerAgent;
 
 impl PlannerAgent {
+    pub async fn decompose_task(
+        client: &Client,
+        api_key: &str,
+        directive: &str,
+    ) -> Result<TaskGraph> {
+        Self::generate_plan(client, api_key, directive).await
+    }
+
     pub async fn generate_plan(
         client: &Client,
         api_key: &str,
         directive: &str,
     ) -> Result<TaskGraph> {
-        let system_instruction =
-            "You are a headless JSON API. You MUST output ONLY a valid, raw JSON array. \
-            Do NOT use markdown formatting like ```json. Do NOT write any conversational text. \
-            Do NOT explain your steps. Your output must start exactly with `[` and end with `]`. \
-            CRITICAL RULE 1: POLYGLOT TOOLING MATRIX. Assign correct CLI tools based on language. For Rust: `cargo clippy --workspace` & `cargo bench`. For Python: `python3 -m py_compile` & `python3 -m timeit`. For JS/TS: `node -c` & `npm run lint`. STILL use symbol_graph to mathematically resolve ALL paths! CRITICAL RULE: NEVER propose or execute `cargo clean` or `make clean`. Rely on incremental compilation! \
-            CRITICAL RULE 2 [AST-FIRST]: You are in a Zero Fragmentation multi-crate workspace. NEVER guess file paths. Before invoking read_file, you MUST query the symbol_graph to resolve the exact absolute workspace path. Do not use raw OS shell commands like find.
-            CRITICAL RULE 2: You MUST explicitly chain your tasks using the 'deps' array so they execute in a strict, linear sequence. Task 2 must depend on Task 1, Task 3 must depend on Task 2, etc. DO NOT leave the 'deps' array empty unless it is the very first task. \
-            CRITICAL RULE 3: The ONLY valid fields for each object are 'id', 'objective', 'deps', 'required_agent', and 'success_criteria'. \
-            CRITICAL RULE 4: THE EVIDENCE VERIFICATION TAXONOMY. If a task requires generating a report, analysis, or quantitative claim, you MUST embed instructions in the 'objective' requiring the use of epistemic tags: [Observed], [Derived], [Measured], [Hypothesis]. \
-            DO NOT output any other fields like 'params', 'required_files', or 'Architectural_Strategies'. Embed all details into the 'objective' string. \
-            ANTI-ANCHORING RULE: The example below exists solely to show you the required JSON structure. Your plan's tasks must be derived entirely from the REAL DIRECTIVE.";
-
-        let payload = serde_json::json!({
-            "systemInstruction": {
-                "parts": [{ "text": system_instruction }]
-            },
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{ "text": "FORMAT EXAMPLE ONLY:\nDIRECTIVE: Add a one-line comment to README.md." }]
-                },
-                {
-                    "role": "model",
-                    "parts": [{ "text": "[\n  {\n    \"id\": \"task_1\",\n    \"objective\": \"Add comment to README.md\",\n    \"deps\": [],\n    \"required_agent\": \"GeneralAgent\",\n    \"success_criteria\": [\"Edit completes\"]\n  }\n]" }]
-                },
-                {
-                    "role": "user",
-                    "parts": [{ "text": format!("REAL DIRECTIVE: {}", directive) }]
-                },
-                {
-                    "role": "model",
-                    "parts": [{ "text": "[" }] // ⚡ FORCE PRE-FILL
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.1,
-                "topK": 40,
-                "topP": 0.95,
-                "maxOutputTokens": 8192
-            }
-        });
-
-        let base_url = std::env::var("NEXUS_API_GATEWAY")
-            .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
-
-        let url = format!(
-            "{}/v1beta/models/gemini-3.1-flash-lite:generateContent?key={}",
-            base_url, api_key
+        let prompt = format!(
+            "You are the Lead DAG Planner Agent for AthenaFusionX.\n\
+             Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.\n\
+             CRITICAL RULE [GRANULARITY]: Break complex directives into many small, isolated nodes. If asked to fix multiple vulnerabilities or modify multiple files, create at least one distinct node for EACH file/vulnerability.\n\
+             CRITICAL RULE [ROUTER LOCATION]: The Executive Cortex router is located at 'crates/runtime_core/src/router.rs'. Always use 'crates/runtime_core/src/router.rs' in task objectives when referring to the router.\n\
+             CRITICAL RULE [DEPENDENCY INFERENCE]: If one task reads, parses, or consumes a file or resource that another task generates, writes, or produces, the consuming task's 'deps' array MUST include the producing task's id. Never schedule a read of a path before the task that creates it.\n\
+             CRITICAL RULE [TERMINAL STEPS]: A directive step that is purely a control-flow or meta instruction (e.g. \"halt\", \"stop\", \"done\", \"finish execution\", \"end mission\") is NOT real work and MUST NOT become its own node. Omit it from the graph entirely -- mission completion is handled automatically once all real work nodes finish.\n\
+             DIRECTIVE: {}\n\
+             OUTPUT ONLY VALID JSON with this exact structure:\n\
+             {{\n  \"nodes\": {{\n    \"task_1\": {{\n      \"id\": \"task_1\",\n      \"deps\": [],\n      \"required_agent\": \"CodeAnalyzer\",\n      \"objective\": \"...\"\n    }}\n  }}\n}}",
+            directive
         );
 
-        let mut attempts = 0;
-        let mut last_error = String::new();
+        let payload = serde_json::json!({
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 2048 }
+        });
 
-        while attempts < 6 {
-            attempts += 1;
-            match client.post(&url).json(&payload).send().await {
-                Ok(res) => {
-                    let status = res.status();
-                    let body: Value = res.json().await.unwrap_or_default();
+        let text_res = crate::epistemic_engine::EpistemicEngine::safe_api_call(
+            client,
+            api_key,
+            &crate::model_config::get_heavy_models(),
+            &payload,
+        )
+        .await;
 
-                    if status == 429 || status.as_u16() == 503 {
-                        let wait = attempts * 5;
-                        tracing::warn!(
-                            "[PLANNER] API Throttled ({}). Retrying in {}s...",
-                            status,
-                            wait
-                        );
-                        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-                        continue;
-                    }
-
-                    if let Some(err) = body.pointer("/error/message").and_then(|s| s.as_str()) {
-                        if err.contains("Internal error")
-                            || err.contains("high demand")
-                            || err.contains("quota")
-                            || err.contains("rate limit")
-                        {
-                            tracing::warn!("[PLANNER] Transient fault: {}. Retrying...", err);
-                            tokio::time::sleep(std::time::Duration::from_secs(attempts * 5)).await;
-                            continue;
-                        }
-                        return Err(anyhow!("API Error: {}", err));
-                    }
-
-                    let mut text = body
-                        .pointer("/candidates/0/content/parts/0/text")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    if text.trim().is_empty() {
-                        tracing::warn!("[PLANNER] Empty response received. Retrying...");
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-
-                    if !text.starts_with('[') {
-                        text = format!("[{}", text);
-                    }
-
-                    let array_str = match Self::extract_json_array(&text) {
-                        Some(s) => s,
-                        None => {
-                            tracing::warn!("[PLANNER] JSON format fracture. Retrying...");
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            continue;
-                        }
-                    };
-
-                    match serde_json::from_str::<Vec<TaskNode>>(&array_str) {
-                        Ok(nodes) => {
-                            if nodes.is_empty() {
-                                continue;
-                            }
-                            let mut graph = TaskGraph::new();
-                            for mut node in nodes {
-                                node.status = TaskStatus::Pending;
-                                graph.nodes.insert(node.id.clone(), node);
-                            }
-                            return Ok(graph);
-                        }
-                        Err(e) => {
-                            tracing::warn!("[PLANNER] DAG Parse Fracture: {}. Retrying...", e);
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            continue;
-                        }
-                    }
-                }
-                Err(e) => {
-                    last_error = e.to_string();
-                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-                }
-            }
+        match text_res {
+            Ok(text) => match Self::parse_task_graph(&text, directive) {
+                Ok(graph) if !graph.nodes.is_empty() => Ok(graph),
+                _ => Ok(Self::create_fallback_graph(directive)),
+            },
+            Err(_) => Ok(Self::create_fallback_graph(directive)),
         }
-        Err(anyhow!("FATAL TRANSPORT FRACTURE after 6 attempts. Last error: {}", last_error))
     }
 
-    fn extract_json_array(text: &str) -> Option<String> {
-        let start = text.find('[')?;
-        let mut depth = 0;
-        for (i, c) in text[start..].char_indices() {
-            match c {
-                '[' => depth += 1,
-                ']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(text[start..=start + i].to_string());
+    fn parse_task_graph(text: &str, directive: &str) -> Result<TaskGraph> {
+        let clean = text.replace("```json", "").replace("```", "").trim().to_string();
+
+        if let Ok(mut graph) = serde_json::from_str::<TaskGraph>(&clean) {
+            Self::strip_terminal_nodes(&mut graph);
+            if !graph.nodes.is_empty() {
+                return Ok(graph);
+            }
+        }
+
+        if let (Some(start), Some(end)) = (clean.find('{'), clean.rfind('}')) {
+            if start <= end {
+                let slice = &clean[start..=end];
+                if let Ok(mut graph) = serde_json::from_str::<TaskGraph>(slice) {
+                    Self::strip_terminal_nodes(&mut graph);
+                    if !graph.nodes.is_empty() {
+                        return Ok(graph);
                     }
                 }
-                _ => {}
             }
         }
-        let partial = &text[start..];
-        let mut end_idx = partial.len();
-        while let Some(last_close) = partial[..end_idx].rfind('}') {
-            let candidate = format!("{}]", &partial[..=last_close]);
-            let clean_candidate: String =
-                candidate.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
-            if serde_json::from_str::<serde_json::Value>(&clean_candidate).is_ok() {
-                return Some(clean_candidate);
+
+        if let Ok(nodes_arr) = serde_json::from_str::<Vec<serde_json::Value>>(&clean) {
+            let mut map = HashMap::new();
+            for (idx, item) in nodes_arr.into_iter().enumerate() {
+                let id = item.get("id").and_then(|v| v.as_str()).map(ToString::to_string)
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Missing task ID in graph, auto-generating fallback: task_{}", idx + 1);
+                        format!("task_{}", idx + 1)
+                    });
+                let obj = item.get("objective").or_else(|| item.get("description"))
+                    .and_then(|v| v.as_str()).unwrap_or(directive).to_string();
+
+                let lower_obj = obj.trim().to_lowercase();
+                if lower_obj == "halt" || lower_obj == "halt." || lower_obj == "halt execution" || lower_obj == "halt execution." || lower_obj.starts_with("halt execution") {
+                    continue;
+                }
+
+                let deps = item.get("deps").or_else(|| item.get("dependencies"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(ToString::to_string)).collect())
+                    .unwrap_or_default();
+                let agent = item.get("required_agent").or_else(|| item.get("agent"))
+                    .and_then(|v| v.as_str()).unwrap_or("CodeAnalyzer").to_string();
+
+                map.insert(id.clone(), TaskNode {
+                    id,
+                    deps,
+                    required_agent: agent,
+                    status: TaskStatus::Pending,
+                    objective: obj,
+                    success_criteria: vec![],
+                    execution_state: TaskExecutionState::default(),
+                    output_evidence: None,
+                    priority: idx + 1,
+                });
             }
-            end_idx = last_close;
+            if !map.is_empty() {
+                return Ok(TaskGraph { nodes: map });
+            }
         }
-        None
+
+        Ok(Self::create_fallback_graph(directive))
+    }
+
+    fn strip_terminal_nodes(graph: &mut TaskGraph) {
+        let terminal_ids: Vec<String> = graph.nodes.iter()
+            .filter(|(_, node)| {
+                let obj = node.objective.trim().to_lowercase();
+                obj == "halt" || obj == "halt." || obj == "halt execution" || obj == "halt execution." || obj.starts_with("halt execution") || obj.starts_with("stop execution") || obj.starts_with("end mission")
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in terminal_ids {
+            graph.nodes.remove(&id);
+        }
+    }
+
+    fn create_fallback_graph(directive: &str) -> TaskGraph {
+        let mut nodes = HashMap::new();
+
+        nodes.insert("task_1".to_string(), TaskNode {
+            id: "task_1".to_string(),
+            deps: vec![],
+            required_agent: "CodeAnalyzer".to_string(),
+            status: TaskStatus::Pending,
+            objective: directive.to_string(),
+            success_criteria: vec![],
+            execution_state: TaskExecutionState::default(),
+            output_evidence: None,
+            priority: 1,
+        });
+
+        TaskGraph { nodes }
     }
 }

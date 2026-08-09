@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex};
 
 use nexus_runtime_core::cluster::ClusterMesh;
 use nexus_runtime_core::distributed_scheduler::DistributedScheduler;
@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, _) = broadcast::channel::<String>(256);
 
-    let palace = Arc::new(RwLock::new(MemoryPalace::new("nexus_daemon.db").await?));
+    let palace = Arc::new(MemoryPalace::new("nexus_daemon.db").await?);
 
     // 👇 The crucial fix: We clone the palace Arc so it can be shared!
     let memory = Arc::new(MemoryCortex::new(palace.clone()));
@@ -110,7 +110,17 @@ async fn main() -> anyhow::Result<()> {
                     let host = sidecar_host.clone();
                     tokio::task::spawn_blocking(move || {
                         if let Err(e) = host.load_and_run(&path) {
-                            tracing::error!("[SIDECAR] Failed to execute {:?}: {}", path, e);
+                            let err_str = e.to_string();
+                            if err_str.contains("_start")
+                                || err_str.contains("failed to find function export")
+                            {
+                                tracing::debug!(
+                                    "[SIDECAR] Loaded library module {:?} (no _start export)",
+                                    path
+                                );
+                            } else {
+                                tracing::error!("[SIDECAR] Failed to execute {:?}: {}", path, e);
+                            }
                         }
                     });
                 }

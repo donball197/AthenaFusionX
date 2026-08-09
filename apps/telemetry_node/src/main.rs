@@ -5,21 +5,23 @@ use tokio::time::{timeout, Duration};
 async fn main() {
     println!("Starting telemetry node diagnostics...");
 
-    let mut monitor = SystemMonitor::new();
-
     // Wrap the diagnostic check in a 5-second timeout to prevent thread blocking
-    let result = timeout(Duration::from_secs(5), async {
-        // Perform the vitals check
+    let result = timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || {
+        let mut monitor = SystemMonitor::new();
         monitor.get_vitals()
-    })
+    }))
     .await;
 
     match result {
-        Ok(vitals) => {
+        Ok(Ok(vitals)) => {
             println!("Diagnostics passed successfully!");
             println!("CPU Load: {:.2}%", vitals.cpu_load * 100.0);
             println!("RAM: {:.2} GB / {:.2} GB", vitals.ram_gb, vitals.total_ram_gb);
             println!("Temperature: {:.2} C", vitals.temperature);
+        }
+        Ok(Err(_)) => {
+            eprintln!("ERROR: Thread panicked!");
+            std::process::exit(1);
         }
         Err(_) => {
             eprintln!("ERROR: System diagnostics timed out after 5 seconds!");

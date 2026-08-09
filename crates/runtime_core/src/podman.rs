@@ -9,7 +9,11 @@ impl PodmanShield {
         {
             return Err(Error::new(ErrorKind::PermissionDenied, e));
         }
-        let mut child = Command::new("sh");
+        // Use bash, not POSIX sh -- the Strategist routinely proposes bash-only
+        // syntax (${PIPESTATUS[0]}, the `time` keyword, etc.) which fails under
+        // sh with cryptic errors like "Bad substitution", wasting turns before
+        // any working command is found.
+        let mut child = Command::new("bash");
         child.arg("-c").arg(command);
         for (key, value) in std::env::vars() {
             if key != "CARGO_BUILD_TARGET" {
@@ -25,7 +29,8 @@ impl PodmanShield {
         // get tagged [CMD_OK] by the executor, which the Cortical Loop's
         // is_terminal_cmd heuristic then treats as proof of success.
         if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stderr = String::from_utf8(out.stderr.clone())
+                .unwrap_or_else(|_| "[INVALID UTF-8 IN STDERR]".to_string());
             return Err(Error::other(format!(
                 "Command failed with status: {}\nSTDERR:\n{}",
                 out.status, stderr

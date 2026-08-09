@@ -84,26 +84,30 @@ impl CognitiveGraph {
     }
 
     pub fn propagate_beliefs(&mut self) {
-        let mut updates: HashMap<Uuid, f32> = HashMap::new();
+        // Accumulate signed impacts first so multiple edges targeting the same
+        // hypothesis are combined instead of overwriting each other.
+        let mut delta: HashMap<Uuid, f32> = HashMap::new();
         const DAMPING: f32 = 0.85;
+
         for edge in &self.edges {
-            if let Some(source_node) = self.nodes.get(&edge.source) {
-                if let Some(target_node) = self.nodes.get(&edge.target) {
-                    let impact = source_node.belief_score * edge.weight;
-                    let mut new_belief = target_node.belief_score;
-                    match edge.relation {
-                        EdgeRelation::Supports => new_belief = (new_belief + impact).min(1.0),
-                        EdgeRelation::Contradicts => new_belief = (new_belief - impact).max(0.0),
-                        _ => {}
-                    }
-                    new_belief = DAMPING * new_belief + (1.0 - DAMPING) * target_node.belief_score;
-                    updates.insert(edge.target, new_belief);
-                }
-            }
+            let Some(source_node) = self.nodes.get(&edge.source) else {
+                continue;
+            };
+            let impact = source_node.belief_score * edge.weight;
+            let signed = match edge.relation {
+                EdgeRelation::Supports => impact,
+                EdgeRelation::Contradicts => -impact,
+                // Prerequisite / DerivesFrom intentionally ignored for score updates
+                _ => continue,
+            };
+            *delta.entry(edge.target).or_insert(0.0) += signed;
         }
-        for (id, new_score) in updates {
+
+        for (id, d) in delta {
             if let Some(node) = self.nodes.get_mut(&id) {
-                node.belief_score = new_score;
+                let candidate = (node.belief_score + d).clamp(0.0, 1.0);
+                // Keep a fraction of the previous score (PageRank-style damping)
+                node.belief_score = DAMPING * candidate + (1.0 - DAMPING) * node.belief_score;
             }
         }
     }

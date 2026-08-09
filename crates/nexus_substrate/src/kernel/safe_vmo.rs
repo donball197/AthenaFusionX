@@ -14,6 +14,9 @@ impl SafeVmo {
     }
 
     pub fn write(&self, offset: usize, data: &[u8]) -> Result<(), KernelError> {
+        if self.size == 0 {
+            return Err(KernelError::InvalidArgs);
+        }
         let end = offset.checked_add(data.len()).ok_or(KernelError::InvalidArgs)?;
         if end > self.size {
             return Err(KernelError::InvalidArgs);

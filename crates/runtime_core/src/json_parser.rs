@@ -21,7 +21,16 @@ pub fn sanitize_json_escapes(raw: &str) -> String {
             }
             '\\' => {
                 if let Some(&next) = chars.peek() {
-                    if next == '"' || next == '\\' || next == '/' || next == 'b' || next == 'f' || next == 'n' || next == 'r' || next == 't' || next == 'u' {
+                    if next == '"'
+                        || next == '\\'
+                        || next == '/'
+                        || next == 'b'
+                        || next == 'f'
+                        || next == 'n'
+                        || next == 'r'
+                        || next == 't'
+                        || next == 'u'
+                    {
                         out.push('\\');
                     } else {
                         out.push_str("\\\\");

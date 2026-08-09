@@ -1,6 +1,10 @@
 [workspace]
 members = [
-    "apps/impact_engine",
+    "apps/benchmark_runner",
+    "crates/nexus_edge_minion",
+    "apps/universal_patcher",
+    "apps/code_auditor",
+    "apps/ast_patcher",
     "crates/runtime_core",
     "crates/executive_cortex",
     "crates/identity",
@@ -14,10 +18,20 @@ members = [
     "bins/node",
     "bins/ide_backend",
     "apps/telemetry_node",
-    "target_dummy"
-, "apps/logic_cell", "apps/symbol_graph", "apps/repository_planner", "apps/hello_sidecar", "apps/impact_analyzer", "apps/mutation_planner", "apps/verification_runner",   "apps/execution_auditor",
-  "apps/mutation_ranker",
-]
+    "target_dummy",
+    "apps/logic_cell",
+    "apps/symbol_graph",
+    "apps/repository_planner",
+    "apps/hello_sidecar",
+    "apps/impact_analyzer",
+    "apps/mutation_planner",
+    "apps/verification_runner",
+    "apps/execution_auditor",
+    "apps/mutation_ranker",
+    "apps/math_utils",
+    "apps/wasm_tester",
+    "apps/wasm_tester"
+, "crates/nexus_dag_orchestrator"]
 resolver = "2"
 exclude = [
     "comparison_workspace"

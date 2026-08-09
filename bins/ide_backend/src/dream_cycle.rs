@@ -1,6 +1,6 @@
 use nexus_substrate::memory::MemoryPalace;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 
 pub fn init() {
@@ -8,7 +8,7 @@ pub fn init() {
 }
 
 pub fn spawn(
-    palace: Arc<RwLock<MemoryPalace>>,
+    palace: Arc<MemoryPalace>,
     tx: broadcast::Sender<String>,
     client: reqwest::Client,
     api_key: String,
@@ -25,10 +25,7 @@ pub fn spawn(
                     .to_string()
             );
 
-            let strands = {
-                let mem = palace.read().await;
-                mem.fetch_random_strands(8).await.unwrap_or_default()
-            };
+            let strands = palace.fetch_random_strands(8).await.unwrap_or_default();
 
             if strands.is_empty() {
                 continue;
@@ -54,8 +51,7 @@ pub fn spawn(
 
             match orchestrator.run(prompt, ctx, &client, &api_key, Some(tx.clone())).await {
                 Ok(insight) => {
-                    let mem = palace.read().await;
-                    if let Err(e) = mem.store_insight(&insight).await {
+                    if let Err(e) = palace.store_insight(&insight).await {
                         tracing::warn!("[DREAM_CYCLE] Failed to store insight: {}", e);
                     } else {
                         tracing::info!("[DREAM_CYCLE] Insight stored");

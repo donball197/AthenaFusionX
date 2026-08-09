@@ -1,59 +1,56 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelTier {
-    Matriarch,
-    Specialist,
+    Light,
+    Heavy,
+    Sovereign,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SystemEvent {
-    NeuralThought(String),
-    TaskStatus(String),
-    LogEvent(String),
-    Heartbeat { cpu: f32, ram: f32, temp: f32 },
+    Log(String),
+    StatusUpdate(String),
+    TaskCompleted,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentStatus {
     Idle,
-    Executing,
-    Fault(String),
+    Working,
+    Faulted,
+    Completed,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentTaskType {
-    Refactor,
+    General,
+    CodeAnalysis,
+    Mutation,
     Audit,
-    SystemCheck,
-    NeuralInference,
-    Command,
-    DevOps,
-    DataAnalysis,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDirective {
-    pub id: Uuid,
+    pub id: String,
     pub task_type: AgentTaskType,
-    pub payload: String,
-    pub priority: u8,
+    pub content: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentReturn {
+    pub success: bool,
     pub status: String,
     pub output: String,
-    pub monologue: Option<String>,
+    pub confidence: f32,
 }
 
 fn default_confidence() -> f32 {
-    1.0
+    0.8
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentAction {
     #[serde(rename = "execute_command")]
     ExecuteCommand {
@@ -76,6 +73,21 @@ pub enum AgentAction {
         #[serde(default)]
         reasoning: String,
     },
+    #[serde(rename = "read_file_chunk")]
+    ReadFileChunk {
+        path: String,
+        start_line: usize,
+        max_lines: usize,
+        #[serde(default)]
+        reasoning: String,
+    },
+    #[serde(rename = "search_code")]
+    SearchCode {
+        path: String,
+        query: String,
+        #[serde(default)]
+        reasoning: String,
+    },
     #[serde(rename = "write_file")]
     WriteFile {
         path: String,
@@ -85,6 +97,15 @@ pub enum AgentAction {
         #[serde(default = "default_confidence")]
         confidence: f32,
     },
+    #[serde(rename = "replace_lines")]
+    ReplaceLines {
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        replacement: String,
+        #[serde(default)]
+        reasoning: String,
+    },
     #[serde(rename = "diff_patch")]
     DiffPatch {
         path: String,
@@ -92,8 +113,6 @@ pub enum AgentAction {
         replace: String,
         #[serde(default)]
         reasoning: String,
-        #[serde(default = "default_confidence")]
-        confidence: f32,
     },
     #[serde(rename = "patch_function")]
     PatchFunction {
@@ -102,8 +121,6 @@ pub enum AgentAction {
         new_body: String,
         #[serde(default)]
         reasoning: String,
-        #[serde(default = "default_confidence")]
-        confidence: f32,
     },
     #[serde(rename = "search_memory")]
     SearchMemory {
@@ -148,25 +165,17 @@ pub enum AgentAction {
         #[serde(default)]
         reasoning: String,
     },
+    #[serde(rename = "git_rollback")]
+    GitRollback { reasoning: String },
     #[serde(rename = "spawn_subagent")]
     SpawnSubagent {
         instruction: String,
-        tier: ModelTier,
-        limit: usize,
         #[serde(default)]
         reasoning: String,
     },
     #[serde(rename = "delegate_task")]
     DelegateTask {
         instruction: String,
-        tier: String,
-        #[serde(default)]
-        token_limit: usize,
-        #[serde(default)]
-        reasoning: String,
-    },
-    #[serde(rename = "git_rollback")]
-    GitRollback {
         #[serde(default)]
         reasoning: String,
     },

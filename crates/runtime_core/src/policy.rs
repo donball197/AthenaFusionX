@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Capability {
     ReadSubstrate,
     WriteSubstrate,
@@ -11,17 +13,18 @@ pub struct ExecutionSandbox {
 }
 
 impl ExecutionSandbox {
-    /// Default safe-mode: The agent can read, but cannot mutate or execute.
     pub fn strict_lockdown() -> Self {
         Self { active_capabilities: vec![Capability::ReadSubstrate] }
     }
 
-    /// Validates the intended action against granted capabilities before it hits the OS
     pub fn validate_intent(&self, action_type: &str) -> Result<(), String> {
         let required_token = match action_type {
-            "read_file" | "search_memory" => Capability::ReadSubstrate,
-            "write_file" | "diff_patch" | "patch_function" => Capability::WriteSubstrate,
-            "execute_command" => Capability::ExecuteSystemCall,
+            "read_file" | "read_file_chunk" | "search_code" | "search_memory" | "read_function" => {
+                Capability::ReadSubstrate
+            }
+            "write_file" | "diff_patch" | "patch_function" | "replace_lines" | "lazarus_snapshot"
+            | "export_report" => Capability::WriteSubstrate,
+            "execute_command" | "git_rollback" => Capability::ExecuteSystemCall,
             "halt" => Capability::HaltCognition,
             _ => return Err(format!("SECURITY_FAULT: Unknown action taxonomy '{}'", action_type)),
         };
@@ -34,7 +37,7 @@ impl ExecutionSandbox {
     }
 }
 
-/// Explicit Machine-Readable Tool Contracts to prevent CLI flag-guessing.
+/// Explicit Machine-Readable Tool Contracts to prevent CLI flag-guessing and false-positive Critic vetoes.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolContract {
     pub name: &'static str,
@@ -44,6 +47,66 @@ pub struct ToolContract {
 }
 
 pub const TOOL_CONTRACTS: &[ToolContract] = &[
+    ToolContract {
+        name: "execute_command",
+        binary_path: "internal::agent_action",
+        flags: &["command"],
+        usage_pattern: "execute_command <bash_command> (Executes shell command or binary in sandboxed PodmanShield environment)",
+    },
+    ToolContract {
+        name: "search_memory",
+        binary_path: "internal::agent_action",
+        flags: &["query"],
+        usage_pattern: "search_memory '<query>' (Queries native fastembed vector recall in nexus_substrate)",
+    },
+    ToolContract {
+        name: "search_code",
+        binary_path: "internal::agent_action",
+        flags: &["path", "query"],
+        usage_pattern: "search_code <path> <query> (Fast recursive search for keywords/patterns across all files in a directory)",
+    },
+    ToolContract {
+        name: "read_file",
+        binary_path: "internal::agent_action",
+        flags: &["path"],
+        usage_pattern: "read_file <filepath>",
+    },
+    ToolContract {
+        name: "read_file_chunk",
+        binary_path: "internal::agent_action",
+        flags: &["path", "start_line", "max_lines"],
+        usage_pattern: "read_file_chunk <filepath> <start_line> <max_lines> (paginated read for files too large for read_file)",
+    },
+    ToolContract {
+        name: "replace_lines",
+        binary_path: "internal::agent_action",
+        flags: &["path", "start_line", "end_line", "replacement"],
+        usage_pattern: "replace_lines <path> <start_line> <end_line> <replacement> (Surgically replaces lines without touching the rest of the file)",
+    },
+    ToolContract {
+        name: "patch_function",
+        binary_path: "internal::agent_action",
+        flags: &["path", "function_name", "new_body"],
+        usage_pattern: "patch_function <filepath> <function_name> <new_body> (Surgically replaces an entire Rust function via AST, ignoring whitespace issues. ALWAYS PREFERRED OVER write_file FOR RUST CODE.)",
+    },
+    ToolContract {
+        name: "diff_patch",
+        binary_path: "internal::agent_action",
+        flags: &["path", "search", "replace"],
+        usage_pattern: "diff_patch <filepath> <search> <replace> (Replaces exact string occurrences in a file)",
+    },
+    ToolContract {
+        name: "write_file",
+        binary_path: "internal::agent_action",
+        flags: &["path", "content"],
+        usage_pattern: "write_file <filepath> <content> (DANGEROUS: Overwrites entire file. Prefer patch_function or replace_lines)",
+    },
+    ToolContract {
+        name: "benchmark_runner",
+        binary_path: "target/release/benchmark_runner",
+        flags: &["--target", "--output", "--iterations"],
+        usage_pattern: "benchmark_runner --target <symbol> --output /tmp/benchmark.json OR benchmark_runner <target> --output /tmp/benchmark.json",
+    },
     ToolContract {
         name: "impact_analyzer",
         binary_path: "target/release/impact_analyzer",

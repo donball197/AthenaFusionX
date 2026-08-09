@@ -62,6 +62,11 @@ fn run_scenario(fixture_path: &PathBuf) {
     fs::write(&symbol_graph_path, serde_json::to_string(&fixture.inputs.mock_graph).unwrap())
         .expect("Failed to write mock symbol graph");
 
+        let target_symbol = fixture.inputs.target_mutation.get("target_symbol")
+        .or_else(|| fixture.inputs.target_mutation.get("symbol"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(if fixture.scenario_id.starts_with("AUTO-MUT") { "evaluate_signal" } else { "MemoryActor" });
+
     // 2. Invoke the compiled binary as a Black Box
     let status = Command::new("cargo")
         .args([
@@ -69,7 +74,7 @@ fn run_scenario(fixture_path: &PathBuf) {
             "--bin",
             "impact_analyzer",
             "--",
-            "--mutation-map",
+            "--target", target_symbol, "--mutation-map",
             mutation_map_path.to_str().unwrap(),
             "--symbol-graph",
             symbol_graph_path.to_str().unwrap(),

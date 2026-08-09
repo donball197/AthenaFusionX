@@ -5,6 +5,41 @@ use tokio::fs;
 
 pub struct WasmForge;
 
+/// Run wasm-opt -Oz when Binaryen is available. Returns original bytes on failure.
+fn maybe_wasm_opt(wasm_bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use tempfile::NamedTempFile;
+
+    // Fast path: wasm-opt not installed
+    if Command::new("wasm-opt").arg("--version").output().is_err() {
+        return wasm_bytes.to_vec();
+    }
+
+    let mut input = match NamedTempFile::new() {
+        Ok(f) => f,
+        Err(_) => return wasm_bytes.to_vec(),
+    };
+    if input.write_all(wasm_bytes).is_err() {
+        return wasm_bytes.to_vec();
+    }
+    let output_path = input.path().with_extension("opt.wasm");
+
+    let status = Command::new("wasm-opt")
+        .args(["-Oz", "--enable-bulk-memory", "--strip-debug", "--strip-producers"])
+        .arg(input.path())
+        .arg("-o")
+        .arg(&output_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => std::fs::read(&output_path).unwrap_or_else(|_| wasm_bytes.to_vec()),
+        _ => wasm_bytes.to_vec(),
+    }
+}
+
 impl WasmForge {
     pub async fn synthesize_cell(logic_code: &str) -> Result<String> {
         if logic_code.trim().starts_with("const std") || logic_code.contains("export fn") {
@@ -39,6 +74,7 @@ impl WasmForge {
         }
 
         let wasm_bytes = fs::read("/tmp/cell.wasm").await?;
+        let wasm_bytes = maybe_wasm_opt(&wasm_bytes);
         let b64 = general_purpose::STANDARD.encode(&wasm_bytes);
         let _ = fs::remove_file(&tmp_path).await;
         Ok(b64)
@@ -77,6 +113,7 @@ crate-type = ["cdylib"]
 
         let wasm_bytes =
             fs::read(format!("{}/target/wasm32-wasip1/release/cell.wasm", tmp_dir)).await?;
+        let wasm_bytes = maybe_wasm_opt(&wasm_bytes);
         let b64 = general_purpose::STANDARD.encode(&wasm_bytes);
         let _ = fs::remove_dir_all(&tmp_dir).await;
         Ok(b64)

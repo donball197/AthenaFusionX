@@ -1,3 +1,4 @@
+use crate::executive_cortex::{ExecutiveCommand, ExecutiveCortex};
 use crate::memory_cortex::MemoryCortex;
 use crate::{
     cortical_loop::{CortexOutcome, CorticalLoop},
@@ -9,6 +10,10 @@ use crate::{
     world_model::WorldModel,
 };
 use reqwest::Client;
+use crate::cognition::belief_engine::BeliefEngine;
+use crate::cognition::prediction_engine::PredictionEngine;
+use crate::cognition::reflection_engine::ReflectionEngine;
+use crate::cognition::traits::{MissionOutcome, Reflector};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -20,6 +25,9 @@ pub struct TaskContext {
     pub vmo_state: Arc<Mutex<VmoState>>,
     pub tx: broadcast::Sender<String>,
     pub dist: Arc<DistributedScheduler>,
+    pub belief_engine: Arc<BeliefEngine>,
+    pub prediction_engine: Arc<PredictionEngine>,
+    pub reflection_engine: Arc<ReflectionEngine>,
 }
 
 pub async fn send_task(
@@ -28,14 +36,23 @@ pub async fn send_task(
     raw_directive: &str,
 ) -> String {
     METRICS.inc_task();
-    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": "[EXECUTIVE CORTEX] Initiating DAG Decomposition..."}).to_string());
+    
+    // ⚡ 1. EXECUTIVE CORTEX GOAL INJECTION
+    let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
+    let goal_id = uuid::Uuid::new_v4();
+    let _ = command_tx.send(ExecutiveCommand::InjectGoal {
+        objective: raw_directive.to_string(),
+        parent_id: None,
+    }).await;
 
-    // Phase 1: High-Level DAG Decomposition
-    let mut graph =
-        match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
-            Ok(g) => g,
-            Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
-        };
+    tokio::spawn(executive_cortex.run_actor_loop());
+
+    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Registered goal {}. Decomposing DAG...", goal_id)}).to_string());
+
+    let mut graph = match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
+        Ok(g) => g,
+        Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
+    };
 
     graph.compute_critical_path_priorities();
     let order = match graph.resolve_execution_order() {
@@ -44,13 +61,12 @@ pub async fn send_task(
     };
 
     let plan_id = uuid::Uuid::new_v4().to_string();
-    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted. Fusing Graph of Thoughts Loop...", plan_id)}).to_string());
+    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted.", plan_id)}).to_string());
 
     let mut task_outputs: HashMap<String, String> = HashMap::new();
     let mut mission_had_failures = false;
     let world_model = Arc::new(WorldModel::new());
 
-    // Phase 2: Topologically Schedule Sub-Tasks via Scoped GoT Loops
     for task_id in order {
         let node = graph.nodes.get(&task_id).unwrap().clone();
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[SCHEDULER] Dispatching DAG Node: {}\nvia Subagent: {}", node.objective, node.required_agent)}).to_string());
@@ -63,18 +79,18 @@ pub async fn send_task(
                 } else {
                     out.clone()
                 };
-                task_context_history
-                    .push_str(&format!("---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n", dep, bounded_out));
+                task_context_history.push_str(&format!(
+                    "---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n",
+                    dep, bounded_out
+                ));
             }
         }
 
-        // Firing structured context directly into the Epistemic Engine
         let combined_mission = format!(
             "OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nLINEAGE CONTEXT:\n{}",
             node.objective, node.required_agent, task_context_history
         );
 
-        // ⚡ THE HYBRID FUSION: Execute this individual DAG node using a full adversarial Cortical Loop!
         let mut loop_cortex = CorticalLoop::new(
             ctx.api_key.clone(),
             world_model.clone(),
@@ -84,7 +100,7 @@ pub async fn send_task(
             ctx.tx.clone(),
         );
 
-        let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting GoT Epistemic Loop for Node {}", task_id)}).to_string());
+        let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting Epistemic Session for Node {}", task_id)}).to_string());
 
         let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
             Ok(CortexOutcome::Proven { belief, evidence }) => {
@@ -95,8 +111,22 @@ pub async fn send_task(
             }
             Ok(CortexOutcome::TurnsExhausted { best_belief, evidence }) => {
                 mission_had_failures = true;
-                let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX INCOMPLETE] Node {} exhausted turns without proving strategy (best belief {:.2}).", task_id, best_belief)}).to_string());
-                format!("[DAG NODE INCOMPLETE] Objective: {}\nBest belief: {:.2}\nPartial evidence:\n{}\nTreat this dependency as unresolved.", node.objective, best_belief, evidence)
+                let outcome = MissionOutcome {
+                    mission_id: uuid::Uuid::parse_str(&task_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    success: false,
+                    evidence_summary: "Turns exhausted without contract satisfaction.".to_string(),
+                    failures: vec![evidence.clone()],
+                    successful_strategies: vec![],
+                    raw_telemetry: String::new(),
+                    failed_strategy_id: None,
+                };
+                if let Ok(report) = ctx.reflection_engine.reflect(&outcome).await {
+                    for lesson in report.lessons {
+                        let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[REFLECTION ENGINE] {}", lesson)}).to_string());
+                    }
+                }
+                let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX INCOMPLETE] Node {} exhausted turns (best belief {:.2}).", task_id, best_belief)}).to_string());
+                format!("[DAG NODE INCOMPLETE] Objective: {}\nBest belief: {:.2}\nPartial evidence:\n{}", node.objective, best_belief, evidence)
             }
             Err(e) => {
                 mission_had_failures = true;
@@ -105,7 +135,13 @@ pub async fn send_task(
             }
         };
 
-        task_outputs.insert(task_id.clone(), execution_evidence);
+        task_outputs.insert(task_id.clone(), execution_evidence.clone());
+
+        // ⚡ FIX: Immediate Hard Abort if a dependency fails or runs out of turns
+        if mission_had_failures || execution_evidence.contains("[CORTEX INCOMPLETE]") || execution_evidence.contains("[DAG NODE FAILED]") || execution_evidence.contains("[DAG NODE INCOMPLETE]") {
+            let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[DAG HALT] Aborting downstream execution. Dependency '{}' failed to complete.", task_id)}).to_string());
+            break;
+        }
     }
 
     if mission_had_failures {

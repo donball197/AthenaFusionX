@@ -27,7 +27,10 @@ fn main() -> Result<()> {
         "ts" | "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "js" | "javascript" => tree_sitter_javascript::LANGUAGE.into(),
         "zig" => tree_sitter_zig::LANGUAGE.into(),
-        _ => anyhow::bail!("Unsupported language: {}. Supported: rust, python, ts, js, zig", args.language),
+        _ => anyhow::bail!(
+            "Unsupported language: {}. Supported: rust, python, ts, js, zig",
+            args.language
+        ),
     };
 
     parser.set_language(&language).context("Error loading Tree-sitter grammar")?;
@@ -35,11 +38,10 @@ fn main() -> Result<()> {
     let source_code = fs::read_to_string(&args.target)
         .with_context(|| format!("Failed to read target file: {:?}", args.target))?;
 
-    let tree = parser.parse(&source_code, None)
-        .context("Failed to parse source code")?;
+    let tree = parser.parse(&source_code, None).context("Failed to parse source code")?;
 
     let root_node = tree.root_node();
-    
+
     println!("✅ Successfully parsed {} as {}", args.target.display(), args.language);
     println!("🌲 AST Root Node Type: {:?}", root_node.kind());
     println!("📊 Total child nodes at root: {}", root_node.child_count());

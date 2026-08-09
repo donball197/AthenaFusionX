@@ -1,194 +1,5 @@
 [
   {
-    "id": "18bf68236218d777",
-    "path": "ui/src/app.css",
-    "hash": "033f40cb7c023a16",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783258478"
-  },
-  {
-    "id": "18bf682583ef802f",
-    "path": "ui/src/lib/components/WorkspaceShell.svelte",
-    "hash": "0b3d24af7c16369b",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783258487"
-  },
-  {
-    "id": "18bf682ebb262b10",
-    "path": "ui/src/app.css",
-    "hash": "59ab56ed7dc49ada",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783258527"
-  },
-  {
-    "id": "18bfc7e6fb8e03c1",
-    "path": "bins/ide_backend/Cargo.toml",
-    "hash": "63a9b81b3f02eb02",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783363772"
-  },
-  {
-    "id": "18bfc7ee6d3e7877",
-    "path": "bins/ide_backend/Cargo.toml",
-    "hash": "13a816aaa1c780a3",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783363804"
-  },
-  {
-    "id": "18bfc7f77ae58d92",
-    "path": "bins/ide_backend/Cargo.toml",
-    "hash": "13a816aaa1c780a3",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783363843"
-  },
-  {
-    "id": "18bfc8381556551e",
-    "path": "crates/runtime_core/src/cognition_graph.rs",
-    "hash": "a1a550cadadbd3a2",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783364120"
-  },
-  {
-    "id": "18c0142e3bd524c7",
-    "path": "apps/hello_world/main.rs",
-    "hash": "6ddf42ae3ffa1725",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783447641"
-  },
-  {
-    "id": "18c017d6fb48701f",
-    "path": "crates/memory_graph/src/lib.rs",
-    "hash": "81c3443d6030367e",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783451664"
-  },
-  {
-    "id": "18c0189970345d2d",
-    "path": "crates/memory_graph/src/lib.rs",
-    "hash": "ee39a699e37b1d65",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783452499"
-  },
-  {
-    "id": "18c0205720bc5036",
-    "path": "jcode_dissection.md",
-    "hash": "67e6f070b1df20bd",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783461011"
-  },
-  {
-    "id": "18c0a4c07596e65f",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "7b93657b593030e6",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783606598"
-  },
-  {
-    "id": "18c0a4d2a09630e5",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "74aa942ab0b0bf23",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783606676"
-  },
-  {
-    "id": "18c0a4de38d0c15a",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "6c07f641729aafda",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783606726"
-  },
-  {
-    "id": "18c0a51500f21524",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "7bd33835fa927268",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783606962"
-  },
-  {
-    "id": "18c0a566aff94b59",
-    "path": "crates/nexus_model_hub/Cargo.toml",
-    "hash": "d118ff34c29f3f3a",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783607312"
-  },
-  {
-    "id": "18c0a58187ee989f",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "ab25758689548097",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783607428"
-  },
-  {
-    "id": "18c0a5a64f9f1f11",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "ab25758689548097",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783607586"
-  },
-  {
-    "id": "18c0a61597935f93",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "ab25758689548097",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783608064"
-  },
-  {
-    "id": "18c0ac89ef01042d",
-    "path": "crates/runtime_core/src/distributed_scheduler.rs",
-    "hash": "1190d49f5d27eadb",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783615160"
-  },
-  {
-    "id": "18c14f85316d4cf1",
-    "path": "bins/cli/src/main.rs",
-    "hash": "f33c88479829c82a",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783794360"
-  },
-  {
-    "id": "18c155ca8e367a6f",
-    "path": "JCode_Architecture_Analysis.md",
-    "hash": "a23d11344d1944aa",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783801255"
-  },
-  {
-    "id": "18c1d8a164f1ce5f",
-    "path": "crates/runtime_core/src/wasm_runtime.rs",
-    "hash": "b4476f0a9403788a",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783945115"
-  },
-  {
-    "id": "18c1d93ac723c21b",
-    "path": "crates/runtime_core/src/wasm_runtime.rs",
-    "hash": "b4476f0a9403788a",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783945773"
-  },
-  {
-    "id": "18c1d9511c52758f",
-    "path": "crates/runtime_core/src/executor.rs",
-    "hash": "dc67572ce54e310d",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783945869"
-  },
-  {
-    "id": "18c1d95a3d83f55a",
-    "path": "crates/runtime_core/src/executor.rs",
-    "hash": "dc67572ce54e310d",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783945909"
-  },
-  {
-    "id": "18c1dfbb87b3589e",
-    "path": "crates/runtime_core/src/wasm_runtime.rs",
-    "hash": "b4476f0a9403788a",
-    "directive": "Pre-fix snapshot",
-    "timestamp": "1783952923"
-  },
-  {
     "id": "18c1e0183a320f75",
     "path": "crates/runtime_core/src/executor.rs",
     "hash": "dc67572ce54e310d",
@@ -1279,5 +1090,313 @@
     "hash": "31494f0e999b1342",
     "directive": "Pre-fix snapshot",
     "timestamp": "1785510961"
+  },
+  {
+    "id": "18c8c05ba25734f9",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "110d6b57ab1dda68",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785888752"
+  },
+  {
+    "id": "18c8c0ac0b65c91f",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "783465accb9c5c4e",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889097"
+  },
+  {
+    "id": "18c8c0ade7a62a03",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "a51cf126c2585007",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889105"
+  },
+  {
+    "id": "18c8c0afdc11d904",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "a51cf126c2585007",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889113"
+  },
+  {
+    "id": "18c8c0b27b5aa998",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "a51cf126c2585007",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889125"
+  },
+  {
+    "id": "18c8c0bd4251b0f3",
+    "path": "/home/donball197/AthenaFusionX/Cargo.toml",
+    "hash": "1ed7d3b5abbf5e14",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889171"
+  },
+  {
+    "id": "18c8c5078f2dd174",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "64e7f4d84bfdd878",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893888"
+  },
+  {
+    "id": "18c8c50b22b4b1e8",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893903"
+  },
+  {
+    "id": "18c8c50c9cefbc44",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "e64b3ba572b276e7",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893910"
+  },
+  {
+    "id": "18c8c50dfecd5d47",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893916"
+  },
+  {
+    "id": "18c8c50f60f226a3",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893922"
+  },
+  {
+    "id": "18c8c519f7d48611",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893967"
+  },
+  {
+    "id": "18c8c51b71ab853f",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893973"
+  },
+  {
+    "id": "18c8c51ce9d52a10",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893980"
+  },
+  {
+    "id": "18c8c51e57b77c30",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893986"
+  },
+  {
+    "id": "18c8c51fbb9deb86",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893992"
+  },
+  {
+    "id": "18c8c5288221d13a",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894030"
+  },
+  {
+    "id": "18c8c529fc689b19",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "5ecedabbeba9d9bd",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894036"
+  },
+  {
+    "id": "18c8c52b5e936002",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894042"
+  },
+  {
+    "id": "18c8c52ce528ff28",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894048"
+  },
+  {
+    "id": "18c8c53423b6cb09",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894079"
+  },
+  {
+    "id": "18c8c538e96d881f",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894100"
+  },
+  {
+    "id": "18c8c53a3f64853b",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894106"
+  },
+  {
+    "id": "18c8c53badae21aa",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894112"
+  },
+  {
+    "id": "18c8c54172828ae5",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894137"
+  },
+  {
+    "id": "18c8c54b144c439c",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894178"
+  },
+  {
+    "id": "18c8c55e88cc3be4",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894262"
+  },
+  {
+    "id": "18c8c56a2b0a0e75",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894312"
+  },
+  {
+    "id": "18c8c5771fcccdd8",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894367"
+  },
+  {
+    "id": "18c8c589c419c20c",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894447"
+  },
+  {
+    "id": "18c8c59a08c5f525",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "27393556c688d033",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894517"
+  },
+  {
+    "id": "18c8c5b2fb02a4a9",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894624"
+  },
+  {
+    "id": "18c8c5c1ab09b759",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894687"
+  },
+  {
+    "id": "18c8c5cb4cfe8235",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894729"
+  },
+  {
+    "id": "18c8e020697d1a92",
+    "path": "analyze_audit.py",
+    "hash": "d9f72e40e33c7998",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785923682"
+  },
+  {
+    "id": "18c93de30c6178d0",
+    "path": "remediation_plan.json",
+    "hash": "efa9d1726f477dad",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026772"
+  },
+  {
+    "id": "18c93deeaef06f9d",
+    "path": "remediation_plan.json",
+    "hash": "ca317b58690d898c",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026822"
+  },
+  {
+    "id": "18c93df52b693d51",
+    "path": "remediation_plan.json",
+    "hash": "4f74b5be15311e87",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026850"
+  },
+  {
+    "id": "18c93dfcb40738e3",
+    "path": "remediation_plan.json",
+    "hash": "0e1e4f660876264b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026882"
+  },
+  {
+    "id": "18c93e02176606a8",
+    "path": "remediation_plan.json",
+    "hash": "df0e3ee53c9ec26d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026905"
+  },
+  {
+    "id": "18c93e0d57f75f7d",
+    "path": "remediation_plan.json",
+    "hash": "f3d42d8c583184c5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026954"
+  },
+  {
+    "id": "18c93e118a145aba",
+    "path": "remediation_plan.json",
+    "hash": "08e4c6c5ed51b105",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026972"
+  },
+  {
+    "id": "18c93e152a86997a",
+    "path": "remediation_plan.json",
+    "hash": "0ad275c6d46db98c",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026987"
+  },
+  {
+    "id": "18c93e1b76975597",
+    "path": "remediation_plan.json",
+    "hash": "b5c15ebab4b73bd2",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786027014"
   }
 ]

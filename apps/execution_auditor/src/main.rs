@@ -120,7 +120,9 @@ fn analyze_log_content(content: &str) -> ExecutionAuditReport {
             }
 
             if line.contains("Strategy Belief mathematically updated to") {
-                if let Some(val_str) = line.split("Strategy Belief mathematically updated to").nth(1) {
+                if let Some(val_str) =
+                    line.split("Strategy Belief mathematically updated to").nth(1)
+                {
                     if let Ok(current_belief) = val_str.trim().parse::<f32>() {
                         if let Some(prev) = last_belief {
                             let delta = (current_belief - prev).abs();
@@ -159,8 +161,9 @@ fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
-    let file_path = parse_arg(&args, &["--trace-file", "--file", "-f", "--trace"])
-        .or_else(|| args.iter().skip(1).find(|s| !s.starts_with('-') && !s.ends_with(".json")).cloned());
+    let file_path = parse_arg(&args, &["--trace-file", "--file", "-f", "--trace"]).or_else(|| {
+        args.iter().skip(1).find(|s| !s.starts_with('-') && !s.ends_with(".json")).cloned()
+    });
 
     let log_content = if let Some(path_str) = file_path {
         let log_path = PathBuf::from(&path_str);

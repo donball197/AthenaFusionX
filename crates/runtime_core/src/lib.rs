@@ -49,10 +49,10 @@ pub mod motor_cortex;
 
 pub mod cognitive_events;
 
-pub mod evidence;
 pub mod belief_engine;
 pub mod belief_update;
 pub mod causal_recall;
+pub mod evidence;
 pub mod memory_consolidation;
 pub mod memory_cortex;
 pub mod memory_recall;
@@ -68,12 +68,13 @@ pub mod goal_adaptation;
 
 pub mod belief_audit;
 pub mod belief_causality;
-pub mod belief_causality_audit;
 pub mod belief_delta;
 pub mod belief_prediction;
 pub mod belief_transition;
-pub mod belief_transition_audit;
 pub mod belief_validation;
-pub mod belief_validation_engine;
 
 pub mod executive_cortex;
+
+pub mod completion_engine;
+pub mod action_gate;
+pub mod action_intercept;

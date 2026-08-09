@@ -89,7 +89,16 @@ async fn main() -> anyhow::Result<()> {
         }
 
         if directive.starts_with("/mutate ") {
-            let target_func = directive.strip_prefix("/mutate ").unwrap().trim();
+            let rest = directive.strip_prefix("/mutate ").unwrap().trim();
+            let mut parts = rest.splitn(2, |c: char| c == '\n' || c.is_whitespace());
+            let target_func = parts.next().unwrap_or("").trim();
+            let instruction_raw = parts.next().unwrap_or("").trim();
+            let user_instruction = if instruction_raw.is_empty() {
+                "Analyze what it does, optimize or expand its capabilities"
+            } else {
+                instruction_raw
+            };
+
             println!(
                 "\x1b[33m>> [AST] Locating '{}' in repository_analysis/symbol_graph.json...\x1b[0m",
                 target_func
@@ -121,39 +130,51 @@ async fn main() -> anyhow::Result<()> {
             if let Ok(map_data) = std::fs::read_to_string("repository_analysis/symbol_graph.json") {
                 if let Ok(map) = serde_json::from_str::<serde_json::Value>(&map_data) {
                     let mut found = false;
-                    if let Some(files) = map.as_array() {
-                        for file in files {
-                            if let Some(nodes) = file["nodes"].as_array() {
-                                for node in nodes {
-                                    if node["name"].as_str() == Some(target_func) {
-                                        let path = file["file_path"].as_str().unwrap_or("");
-                                        let start = node["start_line"].as_u64().unwrap_or(0);
-                                        let end = node["end_line"].as_u64().unwrap_or(0);
-                                        let ntype = node["node_type"].as_str().unwrap_or("");
+                    let target_suffix = format!("::{}", target_func);
+                    let empty_vec = vec![];
+                    let nodes = map
+                        .get("nodes")
+                        .and_then(|n| n.as_array())
+                        .unwrap_or_else(|| map.as_array().unwrap_or(&empty_vec));
 
-                                        println!(
-                                            "\x1b[32m>> [AST] Found {} in {} (Lines {}-{})\x1b[0m",
-                                            ntype, path, start, end
-                                        );
+                    for node in nodes {
+                        let id = node.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        if id.ends_with(&target_suffix) || name == target_func {
+                            let path = node
+                                .get("file_path")
+                                .or_else(|| node.get("path"))
+                                .and_then(|p| p.as_str())
+                                .unwrap_or("");
+                            let start =
+                                node.get("start_line").and_then(|s| s.as_u64()).unwrap_or(1);
+                            let end = node.get("end_line").and_then(|e| e.as_u64()).unwrap_or(50);
+                            let ntype = node
+                                .get("kind")
+                                .or_else(|| node.get("node_type"))
+                                .and_then(|k| k.as_str())
+                                .unwrap_or("Function");
 
-                                        let prompt = format!("MISSION UPDATE (GOD MODE):\n1. You are optimizing the {} `{}`.\n2. DO NOT read any files. The code is located in `{}` exactly from line {} to {}.\n3. IMPACT FORESIGHT: {}\n4. Analyze what it does, optimize or expand its capabilities, and immediately use your `DiffPatch` tool to apply the improvements.\n5. Once patched, run `cargo check` to verify.", ntype, target_func, path, start, end, blast_radius_info);
+                            println!(
+                                "\x1b[32m>> [AST] Found {} in {} (Lines {}-{})\x1b[0m",
+                                ntype, path, start, end
+                            );
 
-                                        println!("\x1b[36m>> [ORCHESTRATOR] Fusing Surgical Prompt with Impact Foresight...\x1b[0m");
-                                        let _res = client
-                                            .post("http://127.0.0.1:3000/api/task")
-                                            .header("Authorization", format!("Bearer {}", token))
-                                            .json(&serde_json::json!({ "directive": prompt }))
-                                            .send()
-                                            .await;
+                            let prompt = format!(
+                                "MISSION UPDATE (GOD MODE):\n1. You are optimizing the {} `{}`.\n2. DO NOT read any files. The code is located in `{}` exactly from line {} to {}.\n3. IMPACT FORESIGHT: {}\n4. INSTRUCTION: {}\n5. Immediately use your `DiffPatch` tool to apply the improvements.\n6. Once patched, run `cargo check` to verify.",
+                                ntype, target_func, path, start, end, blast_radius_info, user_instruction
+                            );
 
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if found {
-                                break;
-                            }
+                            println!("\x1b[36m>> [ORCHESTRATOR] Fusing Surgical Prompt with Impact Foresight...\x1b[0m");
+                            let _res = client
+                                .post("http://127.0.0.1:3000/api/task")
+                                .header("Authorization", format!("Bearer {}", token))
+                                .json(&serde_json::json!({ "directive": prompt }))
+                                .send()
+                                .await;
+
+                            found = true;
+                            break;
                         }
                     }
                     if !found {

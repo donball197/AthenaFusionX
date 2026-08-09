@@ -15,4 +15,6 @@ anyhow = { workspace = true }
 reqwest = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+fastembed = "4.3"
 nexus_search = { path = "../nexus_search" }
+bytes = "1.12.1"

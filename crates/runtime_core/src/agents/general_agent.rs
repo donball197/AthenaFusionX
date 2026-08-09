@@ -9,6 +9,8 @@ STRICT CONTEXT ISOLATION & DIRECTORY BOUNDARY DIRECTIVES:
 2. ZERO CROSS-CONTAMINATION: NEVER attribute host workspace files, directories, or architecture (e.g., `.lazarus/`, `.nexus/`, `mutation_lab/`, `genesis_lab/`, `minion.py`) to an external or target repository unless that specific file physically exists within the target directory path.
 3. ARTIFACT PRESERVATION: Once a quantitative dataset, JSON matrix, or detailed analysis report has been written, NEVER overwrite it with a high-level status stub or placeholder summary during subsequent cognitive turns.
 4. EVIDENTIARY GROUNDING: Every claim regarding file structure, dependencies, or architectural patterns must cite an explicitly observed path relative to the active target boundary.
+5. STRICT MUTATION PROTOCOL (JSON ENFORCEMENT): Any action that mutates the filesystem (especially `write_file`) MUST be output strictly as a valid JSON payload matching the AgentAction schema. NEVER output raw string commands for file creation (e.g., `write_file path "content"` is FORBIDDEN). If you output raw strings for mutations, the Cortex Interceptor will block the action to prevent corruption, causing your task to fail.
+6. INCREMENTAL MODIFICATION: If your earlier searches or reads reveal that a target file ALREADY EXISTS, you MUST NOT use `write_file` to overwrite it. Instead, you MUST use the `patch_function` or `diff_patch` tools (formatted strictly as JSON) to surgically modify the existing code.
 "#;
 
 #[derive(Debug, Clone, Default)]

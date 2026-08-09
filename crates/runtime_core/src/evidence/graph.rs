@@ -21,46 +21,37 @@ impl EvidenceGraph {
     /// Insert a fully materialised Evidence node.
     pub fn insert(&mut self, evidence: Evidence) {
         if let Some(strategy_id) = evidence.related_strategy_id {
-            self.by_strategy
-                .entry(strategy_id)
-                .or_default()
-                .push(evidence.clone());
+            self.by_strategy.entry(strategy_id).or_default().push(evidence.clone());
         }
         self.chronology.push(evidence.id);
     }
 
     /// Aggregate all evidence belonging to a strategy into a single BeliefVector.
-    pub fn aggregate_belief(
-        &self,
-        strategy_id: Uuid,
-        baseline: BeliefVector,
-    ) -> BeliefVector {
+    pub fn aggregate_belief(&self, strategy_id: Uuid, baseline: BeliefVector) -> BeliefVector {
         let Some(evidences) = self.by_strategy.get(&strategy_id) else {
             return baseline;
         };
 
         let mut current = baseline;
+        let mut max_residual = 0.0_f32;
 
         for ev in evidences {
             let weight = (0.35 + ev.belief_delta.evidence_quality * 0.55).clamp(0.15, 0.85);
-            current = current.update(&ev.belief_delta, weight);
+            let next = current.update(&ev.belief_delta, weight);
+            max_residual = max_residual.max(next.residual);
+            current = next;
         }
 
+        current.residual = max_residual;
         current
     }
 
     pub fn evidence_count(&self, strategy_id: Uuid) -> usize {
-        self.by_strategy
-            .get(&strategy_id)
-            .map(|v| v.len())
-            .unwrap_or(0)
+        self.by_strategy.get(&strategy_id).map(|v| v.len()).unwrap_or(0)
     }
 
     pub fn evidence_for(&self, strategy_id: Uuid) -> &[Evidence] {
-        self.by_strategy
-            .get(&strategy_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.by_strategy.get(&strategy_id).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
     pub fn chronology(&self) -> &[Uuid] {

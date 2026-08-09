@@ -178,7 +178,6 @@ pub fn evaluate_causal_memory(memories: Vec<crate::causal_recall::CausalRecall>)
     memories.iter().map(|m| m.recommendation()).collect()
 }
 
-
 // v1.9 hard evidence gate:
 // Before marking a GoalNode / strategy as Proven, call:
 //   belief.may_prove(required_artifacts, threshold)

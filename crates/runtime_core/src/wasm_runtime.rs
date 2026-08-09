@@ -10,7 +10,7 @@ impl WasmRuntime {
         config.cranelift_opt_level(OptLevel::SpeedAndSize);
         // Hard limits so sidecars cannot starve the cortex
         config.consume_fuel(true);
-        config.epoch_interruption(true);
+        config.epoch_interruption(false);
         // Cheaper instantiation
         config.memory_init_cow(true);
         // Avoid memory spikes on constrained devices

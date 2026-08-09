@@ -1,7 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceNode {
@@ -38,35 +37,29 @@ impl WorldModel {
     pub async fn semantic_query(&self, _mission: &str) -> Vec<String> {
         let mut chunks = Vec::new();
 
-        // 1. Inject Repository File Tree Context
-        if let Ok(out) = Command::new("find")
-            .args([
-                ".",
-                "-maxdepth",
-                "4",
-                "-type",
-                "f",
-                "-not",
-                "-path",
-                "*/.git/*",
-                "-not",
-                "-path",
-                "*/target/*",
-                "-not",
-                "-path",
-                "*/node_modules/*",
-                "-not",
-                "-path",
-                "*/.cold_storage/*",
-            ])
-            .output()
+        // 1. Inject Repository File Tree Context (Safe Rust Iteration)
+        let mut files = String::new();
+        for entry in walkdir::WalkDir::new(".")
+            .max_depth(4)
+            .into_iter()
+            .filter_map(|e| e.ok())
         {
-            if out.status.success() {
-                let files = String::from_utf8_lossy(&out.stdout);
-                chunks.push("[REPOSITORY FILE TREE (Depth 4)]".to_string());
-                chunks.push(files.chars().take(6000).collect());
+            if entry.file_type().is_file() {
+                let path_str = entry.path().to_string_lossy();
+                if !path_str.contains("/.git/")
+                    && !path_str.contains("/target/")
+                    && !path_str.contains("/node_modules/")
+                    && !path_str.contains("/.cold_storage/")
+                {
+                    files.push_str(&format!("{}\n", path_str));
+                }
             }
         }
+        // [FIX] Disabled truncated raw file tree to prevent 'apps/' vs 'crates/' alphabetical hallucination.
+        // if !files.is_empty() {
+        //     chunks.push("[REPOSITORY FILE TREE (Depth 4)]".to_string());
+        //     chunks.push(files.chars().take(6000).collect());
+        // }
 
         // 2. Inject Verified Machine-Readable Tool Contracts into Context
         chunks.push("\n[AVAILABLE WORKSPACE TOOL CONTRACTS]".to_string());

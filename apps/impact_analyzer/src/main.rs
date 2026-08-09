@@ -12,6 +12,7 @@ pub enum RiskClassification {
     Moderate,
     High,
     Critical,
+    Unverifiable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,16 +99,15 @@ fn compute_impact(target: &str, total_nodes: usize, edges: &[(String, String)]) 
     }
 
     let transitive_count = if visited.is_empty() { 0 } else { visited.len() - 1 };
-    let effective_total = if total_nodes == 0 { 40932 } else { total_nodes };
+    let effective_total = total_nodes.max(1); // Prevent div/0
     let blast_radius = (transitive_count as f32 / effective_total as f32).min(1.0);
 
-    let risk = if blast_radius > 0.25 || is_critical_core_symbol(target) {
+    // Phase 8C Strict Risk Assessor
+    let risk = if total_nodes == 0 {
+        RiskClassification::Unverifiable
+    } else if blast_radius > 0.25 || is_critical_core_symbol(target) {
         RiskClassification::Critical
-    } else if blast_radius > 0.10
-        || transitive_count >= 2
-        || target.to_lowercase().contains("memory")
-        || target.to_lowercase().contains("evaluate")
-    {
+    } else if blast_radius > 0.10 || transitive_count >= 2 {
         RiskClassification::High
     } else if blast_radius > 0.02 || transitive_count > 0 {
         RiskClassification::Moderate

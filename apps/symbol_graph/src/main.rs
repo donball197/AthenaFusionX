@@ -37,10 +37,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let input_path = find_map_file();
 
-    let is_query = args.iter().any(|a| a == "query" || a == "resolve" || a.starts_with("--query") || a.starts_with("--file"));
-    
-    let target = parse_arg(&args, &["--query-path", "--query", "--file", "--path", "-f"])
-        .or_else(|| {
+    let is_query = args.iter().any(|a| {
+        a == "query" || a == "resolve" || a.starts_with("--query") || a.starts_with("--file")
+    });
+
+    let target =
+        parse_arg(&args, &["--query-path", "--query", "--file", "--path", "-f"]).or_else(|| {
             if args.len() >= 3 && (args[1] == "query" || args[1] == "resolve") {
                 Some(args[2].clone())
             } else if args.len() >= 2 && !args[1].starts_with('-') {

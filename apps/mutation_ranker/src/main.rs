@@ -85,7 +85,10 @@ fn rank_mutation(
         }
         "UNVERIFIABLE" => {
             fitness -= 0.20;
-            rationale.push("Substrate execution health could not be verified from the supplied trace (-0.20)".to_string());
+            rationale.push(
+                "Substrate execution health could not be verified from the supplied trace (-0.20)"
+                    .to_string(),
+            );
         }
         _ => {}
     }
@@ -210,11 +213,20 @@ fn main() -> Result<()> {
     let (impact, impact_verified): (ImpactInput, bool) = match impact_path_str {
         Some(path_str) => {
             let path = PathBuf::from(&path_str);
-            match fs::read_to_string(&path).ok().and_then(|c| serde_json::from_str::<ImpactInput>(&c).ok()) {
+            match fs::read_to_string(&path)
+                .ok()
+                .and_then(|c| serde_json::from_str::<ImpactInput>(&c).ok())
+            {
                 Some(parsed) => (parsed, true),
                 None => {
                     eprintln!("WARNING: --impact-report at {} missing or unparseable; falling back to CRITICAL.", path_str);
-                    (ImpactInput { risk_classification: "CRITICAL".to_string(), blast_radius_score: 1.0 }, false)
+                    (
+                        ImpactInput {
+                            risk_classification: "CRITICAL".to_string(),
+                            blast_radius_score: 1.0,
+                        },
+                        false,
+                    )
                 }
             }
         }
@@ -229,7 +241,10 @@ fn main() -> Result<()> {
     let (health, health_verified): (ExecutionHealthInput, bool) = match health_path_str {
         Some(path_str) => {
             let path = PathBuf::from(&path_str);
-            match fs::read_to_string(&path).ok().and_then(|c| serde_json::from_str::<ExecutionHealthInput>(&c).ok()) {
+            match fs::read_to_string(&path)
+                .ok()
+                .and_then(|c| serde_json::from_str::<ExecutionHealthInput>(&c).ok())
+            {
                 Some(parsed) if parsed.input_validated => (parsed, true),
                 Some(_) => {
                     eprintln!(
@@ -237,15 +252,33 @@ fn main() -> Result<()> {
                          (execution_auditor did not recognize its source as a real trace); treating as unverified.",
                         path_str
                     );
-                    (ExecutionHealthInput { execution_health: "DEGRADED".to_string(), input_validated: false }, false)
+                    (
+                        ExecutionHealthInput {
+                            execution_health: "DEGRADED".to_string(),
+                            input_validated: false,
+                        },
+                        false,
+                    )
                 }
                 None => {
                     eprintln!("WARNING: --health-report at {} missing or unparseable; falling back to DEGRADED.", path_str);
-                    (ExecutionHealthInput { execution_health: "DEGRADED".to_string(), input_validated: false }, false)
+                    (
+                        ExecutionHealthInput {
+                            execution_health: "DEGRADED".to_string(),
+                            input_validated: false,
+                        },
+                        false,
+                    )
                 }
             }
         }
-        None => (ExecutionHealthInput { execution_health: "DEGRADED".to_string(), input_validated: false }, false),
+        None => (
+            ExecutionHealthInput {
+                execution_health: "DEGRADED".to_string(),
+                input_validated: false,
+            },
+            false,
+        ),
     };
 
     let verified_inputs = impact_verified && health_verified;

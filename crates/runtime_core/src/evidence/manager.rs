@@ -1,5 +1,5 @@
-use crate::evidence::{BeliefVector, Evidence, EvidenceKind, Observation};
 use crate::epistemic_engine::EpistemicEngine;
+use crate::evidence::{BeliefVector, Evidence, EvidenceKind, Observation};
 use reqwest::Client;
 use uuid::Uuid;
 
@@ -16,11 +16,7 @@ impl EvidenceManager {
     }
 
     /// Synchronous, zero-network path (kept for compatibility).
-    pub fn process_observation(
-        &self,
-        obs: Observation,
-        strategy_id: Option<Uuid>,
-    ) -> Evidence {
+    pub fn process_observation(&self, obs: Observation, strategy_id: Option<Uuid>) -> Evidence {
         let (kind, failure) = Evidence::classify(&obs.raw, obs.success);
         let belief_delta = self.compute_belief_delta(&obs, kind);
         let mut ev = Evidence::from_observation(obs, kind, belief_delta, strategy_id);
@@ -52,7 +48,15 @@ impl EvidenceManager {
             obs.raw.len()
         );
 
-        match EpistemicEngine::evaluate_evidence(client, api_key, "Analyze observation", &obs.source, &obs.raw).await {
+        match EpistemicEngine::evaluate_evidence(
+            client,
+            api_key,
+            "Analyze observation",
+            &obs.source,
+            &obs.raw,
+        )
+        .await
+        {
             Ok(response) => {
                 // Map the 1D float back into a multi-dimensional BeliefVector
                 let val = response.confidence_modifier;
@@ -60,13 +64,18 @@ impl EvidenceManager {
                 let mut ev = Evidence::from_observation(obs, kind, delta, strategy_id);
                 ev.observation.failure_kind = failure;
                 ev
-            },
+            }
             Err(e) => {
                 println!(
                     "\x1b[33m>> [EVIDENCE] Escalation failed ({}) — falling back to Neutral/ZERO\x1b[0m",
                     e
                 );
-                let mut ev = Evidence::from_observation(obs, EvidenceKind::Neutral, BeliefVector::ZERO, strategy_id);
+                let mut ev = Evidence::from_observation(
+                    obs,
+                    EvidenceKind::Neutral,
+                    BeliefVector::ZERO,
+                    strategy_id,
+                );
                 ev.observation.failure_kind = failure;
                 ev
             }

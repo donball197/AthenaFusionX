@@ -28,3 +28,10 @@ impl BeliefValidationEvent {
         Self { prediction, observed, error_score, confidence_delta, lesson }
     }
 }
+
+pub struct BeliefValidationEngine;
+impl BeliefValidationEngine {
+    pub fn validate(prediction: String, observed: String) -> BeliefValidationEvent {
+        BeliefValidationEvent::new(prediction, observed)
+    }
+}

@@ -1,7 +1,1 @@
-error: duplicate key
-  --> apps/hello_sidecar/Cargo.toml:11:2
-   |
-11 | [lib]
-   |  ^^^
-error: failed to load manifest for workspace member `/home/donball197/AthenaFusionX/apps/hello_sidecar`
-referenced by workspace at `/home/donball197/AthenaFusionX/Cargo.toml`
+error: unrecognized parameter: '-o'

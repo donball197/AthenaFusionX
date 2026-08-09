@@ -35,9 +35,7 @@ pub enum ProvenanceLevel {
 
 impl Default for ProvenanceLevel {
     fn default() -> Self {
-        Self::Hypothesized {
-            rationale: "Unverified initial assumption".to_string(),
-        }
+        Self::Hypothesized { rationale: "Unverified initial assumption".to_string() }
     }
 }
 
@@ -45,7 +43,7 @@ impl Default for ProvenanceLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
     pub raw: String,
-    pub source: String,          // "executor", "grep", "read_file", "podman", etc.
+    pub source: String, // "executor", "grep", "read_file", "podman", etc.
     pub success: bool,
     pub latency_ms: u64,
     pub failure_kind: Option<ExecutionFailureKind>,
@@ -84,10 +82,7 @@ impl Evidence {
         belief_delta: BeliefVector,
         related_strategy_id: Option<Uuid>,
     ) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
         let provenance = if obs.raw.contains("[READ_OK]") || obs.raw.contains("[CMD_OK]") {
             ProvenanceLevel::Observed { byte_count: obs.raw.len() }
@@ -127,9 +122,7 @@ impl Evidence {
         if lower.contains("no such file or directory") || lower.contains("os error 2") {
             return (
                 EvidenceKind::CommandFailure,
-                Some(ExecutionFailureKind::ResourceNotFound {
-                    target: raw.to_string(),
-                }),
+                Some(ExecutionFailureKind::ResourceNotFound { target: raw.to_string() }),
             );
         }
 
@@ -147,7 +140,8 @@ impl Evidence {
             );
         }
 
-        if lower.contains("[cmd_ok]") || lower.contains("[read_ok]") || lower.contains("[write_ok]") {
+        if lower.contains("[cmd_ok]") || lower.contains("[read_ok]") || lower.contains("[write_ok]")
+        {
             return if success {
                 (EvidenceKind::CommandSuccess, None)
             } else {
