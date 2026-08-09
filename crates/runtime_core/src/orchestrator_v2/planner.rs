@@ -79,11 +79,13 @@ impl PlannerAgent {
         if let Ok(nodes_arr) = serde_json::from_str::<Vec<serde_json::Value>>(&clean) {
             let mut map = HashMap::new();
             for (idx, item) in nodes_arr.into_iter().enumerate() {
+                // FIX: Item #13 Unwrap Masking Error patched with proper tracing fallback
                 let id = item.get("id").and_then(|v| v.as_str()).map(ToString::to_string)
                     .unwrap_or_else(|| {
                         tracing::warn!("Missing task ID in graph, auto-generating fallback: task_{}", idx + 1);
                         format!("task_{}", idx + 1)
                     });
+                
                 let obj = item.get("objective").or_else(|| item.get("description"))
                     .and_then(|v| v.as_str()).unwrap_or(directive).to_string();
 

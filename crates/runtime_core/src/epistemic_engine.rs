@@ -39,12 +39,23 @@ impl EpistemicEngine {
                         .pointer("/contents/0/parts/0/text")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    let p = serde_json::json!({
+                    
+                    let mut p = serde_json::json!({
                         "model": model_endpoint,
                         "messages": [{"role": "user", "content": text}],
                         "max_tokens": 4096,
                         "temperature": 0.1
                     });
+
+                    // ⚡ V6 NATIVE TOOL CALLING: Force JSON Schema for Nvidia/OpenAI
+                    if let Some(mime) = payload.pointer("/generationConfig/responseMimeType").and_then(|v| v.as_str()) {
+                        if mime == "application/json" {
+                            p.as_object_mut().unwrap().insert("response_format".to_string(), serde_json::json!({"type": "json_object"}));
+                            let msg = format!("{}\n\nCRITICAL: You must return a valid JSON object.", text);
+                            p["messages"][0]["content"] = serde_json::json!(msg);
+                        }
+                    }
+
                     (
                         "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
                         p,
@@ -253,11 +264,14 @@ OUTPUT ONLY A SINGLE LINE CONTAINING THE EXACT COMMAND OR ACTION. DO NOT INCLUDE
              1. [{{ \"type\": \"execute_command\", \"command\": \"<bash_command>\", \"reasoning\": \"...\" }}]\n\
              2. [{{ \"type\": \"search_memory\", \"query\": \"<search_query>\", \"reasoning\": \"...\" }}]\n\
              3. [{{ \"type\": \"read_file\", \"path\": \"<filepath>\", \"reasoning\": \"...\" }}]\n\
-             4. [{{ \"type\": \"write_file\", \"path\": \"<filepath>\", \"content\": \"<EXACT_DATA_ESCAPED>\", \"reasoning\": \"...\" }}]\n\
-             5. [{{ \"type\": \"diff_patch\", \"path\": \"<filepath>\", \"search\": \"<search>\", \"replace\": \"<replace>\", \"reasoning\": \"...\" }}]\n\
-             6. [{{ \"type\": \"patch_function\", \"path\": \"<filepath>\", \"function_name\": \"<name>\", \"new_body\": \"<full source>\", \"reasoning\": \"...\" }}]\n\
-             7. [{{ \"type\": \"halt\", \"reasoning\": \"...\" }}]\n\
-             NOTE: If the PROPOSED ACTION contains source code, you MUST escape all newlines (\\n) and double quotes (\\\") inside the 'content' or 'new_body' fields so the JSON parses correctly.\n\
+             4. [{{ \"type\": \"read_file_chunk\", \"path\": \"<filepath>\", \"start_line\": 0, \"max_lines\": 100, \"reasoning\": \"...\" }}]\n\
+             5. [{{ \"type\": \"search_code\", \"path\": \"<filepath_or_dir>\", \"query\": \"<search_pattern>\", \"reasoning\": \"...\" }}]\n\
+             6. [{{ \"type\": \"write_file\", \"path\": \"<filepath>\", \"content\": \"<EXACT_DATA_ESCAPED>\", \"reasoning\": \"...\" }}]\n\
+             7. [{{ \"type\": \"replace_lines\", \"path\": \"<filepath>\", \"start_line\": 1, \"end_line\": 5, \"replacement\": \"<new_code>\", \"reasoning\": \"...\" }}]\n\
+             8. [{{ \"type\": \"diff_patch\", \"path\": \"<filepath>\", \"search\": \"<search>\", \"replace\": \"<replace>\", \"reasoning\": \"...\" }}]\n\
+             9. [{{ \"type\": \"patch_function\", \"path\": \"<filepath>\", \"function_name\": \"<name>\", \"new_body\": \"<full source>\", \"reasoning\": \"...\" }}]\n\
+             10. [{{ \"type\": \"halt\", \"reasoning\": \"...\" }}]\n\
+             NOTE: If the PROPOSED ACTION contains source code, you MUST escape all newlines (\\n) and double quotes (\\\") inside the 'content', 'replacement', or 'new_body' fields so the JSON parses correctly.\n\
              Select ONLY the relevant action object and enclose it in a JSON array. Do not output anything else.",
             strategy, proposed_action
         );
@@ -280,7 +294,11 @@ OUTPUT ONLY A SINGLE LINE CONTAINING THE EXACT COMMAND OR ACTION. DO NOT INCLUDE
                             "replace": { "type": "STRING" },
                             "function_name": { "type": "STRING" },
                             "new_body": { "type": "STRING" },
+                            "replacement": { "type": "STRING" },
                             "query": { "type": "STRING" },
+                            "start_line": { "type": "INTEGER" },
+                            "end_line": { "type": "INTEGER" },
+                            "max_lines": { "type": "INTEGER" },
                             "reasoning": { "type": "STRING" }
                         },
                         "required": ["type", "reasoning"]
@@ -300,7 +318,7 @@ OUTPUT ONLY A SINGLE LINE CONTAINING THE EXACT COMMAND OR ACTION. DO NOT INCLUDE
         evidence: &str,
     ) -> Result<CriticResponse> {
         let truncated_evidence: String = evidence.chars().take(8000).collect();
-        let prompt = format!("You are the Scientific Evaluator.\nSTRATEGY: {}\nACTION TAKEN: {}\nEVIDENCE GATHERED:\n{}\nDoes this evidence represent meaningful partial progress toward the strategy? If it gathers useful context (like listing a directory or reading a file), give a positive modifier. DO NOT demand the entire strategy be completed in one step.\nHALT RULE: If ACTION TAKEN is 'halt' and the EVIDENCE GATHERED (this turn or earlier in context) already shows a concrete success marker ([CMD_OK], [READ_OK], [WRITE_OK]) satisfying the strategy, this is a CORRECT completion, not a loss of progress -- give a positive modifier, not negative.\nMUTATION RULE: A successful mutating command (write, patch, mv, rm, mkdir, etc.) with [CMD_OK] and no stdout is genuine positive progress, not neutral reconnaissance -- do not score it 0.0 solely for lacking output.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, action, truncated_evidence);
+        let prompt = format!("You are the Scientific Evaluator.\nSTRATEGY: {}\nACTION TAKEN: {}\nEVIDENCE GATHERED:\n{}\nDoes this evidence represent meaningful partial progress toward the strategy? If it gathers useful context (like listing a directory or reading a file), give a positive modifier. DO NOT demand the entire strategy be completed in one step.\nHALT RULE: If ACTION TAKEN is 'halt' and the EVIDENCE GATHERED (this turn or earlier in context) already shows a concrete success marker ([CMD_OK], [READ_OK], [WRITE_OK], [REPLACE_LINES_OK]) satisfying the strategy, this is a CORRECT completion, not a loss of progress -- give a positive modifier, not negative.\nMUTATION RULE: A successful mutating command (write, patch, mv, rm, mkdir, etc.) with [CMD_OK] and no stdout is genuine positive progress, not neutral reconnaissance -- do not score it 0.0 solely for lacking output.\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", strategy, action, truncated_evidence);
         let payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
