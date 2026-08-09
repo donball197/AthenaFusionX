@@ -8,3 +8,4 @@ pub trait ModelProvider: Send + Sync {
     async fn execute(&self, prompt: &str) -> Result<String, String>;
     fn get_model_name(&self) -> &str;
 }
+pub mod universal_provider;

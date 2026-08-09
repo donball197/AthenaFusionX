@@ -106,6 +106,12 @@ pub enum AgentAction {
         #[serde(default)]
         reasoning: String,
     },
+    #[serde(rename = "run_tests")]
+    RunTests {
+        test_target: String,
+        #[serde(default)]
+        reasoning: String,
+    },
     #[serde(rename = "diff_patch")]
     DiffPatch {
         path: String,

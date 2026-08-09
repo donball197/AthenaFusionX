@@ -24,7 +24,7 @@ impl ExecutionSandbox {
             }
             "write_file" | "diff_patch" | "patch_function" | "replace_lines" | "lazarus_snapshot"
             | "export_report" => Capability::WriteSubstrate,
-            "execute_command" | "git_rollback" => Capability::ExecuteSystemCall,
+            "execute_command" | "run_tests" | "git_rollback" => Capability::ExecuteSystemCall,
             "halt" => Capability::HaltCognition,
             _ => return Err(format!("SECURITY_FAULT: Unknown action taxonomy '{}'", action_type)),
         };
@@ -47,6 +47,12 @@ pub struct ToolContract {
 }
 
 pub const TOOL_CONTRACTS: &[ToolContract] = &[
+    ToolContract {
+        name: "nexus_scrape",
+        binary_path: "target/release/nexus_scrape",
+        flags: &["url", "--extract"],
+        usage_pattern: "nexus_scrape <URL> --extract \"<prompt>\" (Scrapes a website and uses an LLM to extract specific data as instructed by the prompt. Always outputs to stdout)",
+    },
     ToolContract {
         name: "execute_command",
         binary_path: "internal::agent_action",
@@ -94,6 +100,12 @@ pub const TOOL_CONTRACTS: &[ToolContract] = &[
         binary_path: "internal::agent_action",
         flags: &["path", "search", "replace"],
         usage_pattern: "diff_patch <filepath> <search> <replace> (Replaces exact string occurrences in a file)",
+    },
+    ToolContract {
+        name: "run_tests",
+        binary_path: "internal::agent_action",
+        flags: &["test_target"],
+        usage_pattern: "run_tests <test_target> (Runs cargo test on the specified package/module to verify code logic. Leave blank to test the whole workspace)",
     },
     ToolContract {
         name: "write_file",

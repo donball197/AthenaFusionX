@@ -1,58 +1,53 @@
-/**
- * Copyright 2026 Donald Ball
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-
-use axum::{
-    extract::{Json, State},
-    response::IntoResponse,
-    routing::post,
-    Router,
-};
+use axum::{extract::{Json, State}, response::IntoResponse, routing::post, Router};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
-struct ScrapeRequest {
-    url: String,
-}
+pub struct ScrapeRequest { pub url: String }
+
+#[derive(Deserialize)]
+pub struct ExtractRequest { pub url: String, pub prompt: String }
 
 #[derive(Serialize)]
-struct ScrapeResponse {
-    content: String,
+pub struct ScrapeResponse { pub content: String }
+
+async fn scrape(State(_state): State<()>, Json(payload): Json<ScrapeRequest>) -> impl IntoResponse {
+    let client = reqwest::Client::new();
+    let content = match client.get(&payload.url).send().await {
+        Ok(resp) => resp.text().await.unwrap_or_else(|_| "Failed to decode body".to_string()),
+        Err(e) => format!("Failed to fetch URL: {}", e),
+    };
+    Json(ScrapeResponse { content })
 }
 
-async fn scrape(
-    // AXUM RULE: State usually comes last or must match the Router's state type exactly
-    State(_state): State<()>,
-    Json(payload): Json<ScrapeRequest>,
-) -> impl IntoResponse {
-    // For now, we return a heartbeat to prove the drone is alive
-    let response = ScrapeResponse {
-        content: format!("Nexus Drone acknowledged URL: {}", payload.url),
+async fn extract(State(_state): State<()>, Json(payload): Json<ExtractRequest>) -> impl IntoResponse {
+    let client = reqwest::Client::new();
+    let html = match client.get(&payload.url).send().await {
+        Ok(resp) => resp.text().await.unwrap_or_default(),
+        Err(_) => return Json(ScrapeResponse { content: "Failed to fetch HTML".to_string() }),
     };
-    Json(response)
+    
+    let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    let safe_html: String = html.chars().take(20000).collect(); // Prevent context overflow
+    let user_prompt = format!("Extract data from this HTML based on the following prompt:\n{}\n\nHTML:\n{}", payload.prompt, safe_html);
+    
+    let content = match nexus_model_hub::universal_provider::UniversalProvider::generate(
+        &client, &api_key, "gemini-3.5-flash-lite", Some("You are a strict data extraction tool. Return only the requested data in a clean format."), &user_prompt, 0.1, 4096
+    ).await {
+        Ok(res) => res,
+        Err(e) => format!("LLM Extraction Error: {}", e),
+    };
+    
+    Json(ScrapeResponse { content })
 }
 
 #[tokio::main]
 async fn main() {
-    // Define the state explicitly as empty tuple ()
+    dotenvy::dotenv().ok();
     let app = Router::new()
         .route("/scrape", post(scrape))
+        .route("/extract", post(extract))
         .with_state(());
-
     let listener = tokio::net::TcpListener::bind("0.0.0.0:5000").await.unwrap();
-    println!("Nexus Scraper Drone ignited on port 5000");
+    println!(">> [DRONE] Smart Scraper ignited on port 5000");
     axum::serve(listener, app).await.unwrap();
 }

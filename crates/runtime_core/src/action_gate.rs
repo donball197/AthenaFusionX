@@ -66,6 +66,11 @@ impl ActionGate {
                     .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
 
+            MotorAction::RunTests { .. } => {
+                self.sandbox.validate_intent("run_tests")
+                    .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+            }
+
             MotorAction::DiffPatch { .. } => {
                 self.sandbox.validate_intent("diff_patch")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;

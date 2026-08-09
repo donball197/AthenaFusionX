@@ -1,10 +1,9 @@
 [workspace]
 members = [
+    "apps/nexus_ast_tool",
     "apps/benchmark_runner",
     "crates/nexus_edge_minion",
-    "apps/universal_patcher",
     "apps/code_auditor",
-    "apps/ast_patcher",
     "crates/runtime_core",
     "crates/executive_cortex",
     "crates/identity",
@@ -30,7 +29,11 @@ members = [
     "apps/mutation_ranker",
     "apps/math_utils",
     "apps/wasm_tester",
-    "apps/wasm_tester"
+    "drones/data_scraper",
+    "apps/nexus_scrape",
+    "apps/wasm_tester",
+    "drones/data_scraper",
+    "apps/nexus_scrape"
 , "crates/nexus_dag_orchestrator"]
 resolver = "2"
 exclude = [

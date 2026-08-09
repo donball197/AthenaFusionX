@@ -281,6 +281,37 @@ impl RoboticExecutor {
                     tokio::fs::write(&safe_path, new_lines.join("\n")).await?;
                     Ok(format!("[REPLACE_LINES_OK] Replaced lines {}-{} in {}", start_line, end_line, path))
                 }
+                MotorAction::RunTests { test_target } => {
+                    let cmd = if test_target.is_empty() || test_target == "." {
+                        "cargo test --workspace --color never 2>&1".to_string()
+                    } else {
+                        format!("cargo test {} --color never 2>&1", test_target)
+                    };
+                    
+                    let out = crate::podman::PodmanShield::execute(&cmd).unwrap_or_else(|e| {
+                        std::process::Output {
+                            status: std::os::unix::process::ExitStatusExt::from_raw(1),
+                            stdout: Vec::new(),
+                            stderr: format!("TEST HARNESS FAILED: {}", e).into_bytes(),
+                        }
+                    });
+                    
+                    let output_str = String::from_utf8_lossy(&out.stdout);
+                    let err_str = String::from_utf8_lossy(&out.stderr);
+                    let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
+                    
+                    let trunc = if combined.len() > 6000 {
+                        format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len()-6000..])
+                    } else {
+                        combined
+                    };
+                    
+                    if out.status.success() {
+                        Ok(format!("[TEST_OK] Tests passed for target '{}':\n{}", test_target, trunc))
+                    } else {
+                        Ok(format!("[TEST_FAILED] Tests failed for target '{}':\n{}", test_target, trunc))
+                    }
+                }
                 MotorAction::DiffPatch { path, search, replace } => {
                     let safe_path = sanitize(&path)?;
                     let original = tokio::fs::read_to_string(&safe_path).await?;
