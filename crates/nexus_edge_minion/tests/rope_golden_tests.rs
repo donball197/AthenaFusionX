@@ -13,7 +13,9 @@ fn test_rope_position_zero_invariant() {
         assert!(
             (vec[i] - original[i]).abs() < 1e-6,
             "Position 0 failed at index {}: got {}, expected {}",
-            i, vec[i], original[i]
+            i,
+            vec[i],
+            original[i]
         );
     }
 }
@@ -45,7 +47,9 @@ fn test_rope_global_partial_rotary_bounds() {
         assert!(
             (vec[i] - original[i]).abs() < 1e-6,
             "Global attention invariant failure at index {}: got {}, expected {}",
-            i, vec[i], original[i]
+            i,
+            vec[i],
+            original[i]
         );
     }
 }
@@ -76,11 +80,7 @@ fn test_rope_sliding_full_rotary() {
 #[test]
 #[should_panic(expected = "FATAL: Head dimension must be exactly 256")]
 fn test_rope_invalid_config_panic() {
-    let bad_config = RoPEConfig {
-        head_dim: 128,
-        rotary_dim: 64,
-        theta: 1_000_000.0,
-    };
+    let bad_config = RoPEConfig { head_dim: 128, rotary_dim: 64, theta: 1_000_000.0 };
     let mut vec = vec![1.0f32; 128];
     apply_rope_scalar(&mut vec, 1, &bad_config);
 }

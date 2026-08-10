@@ -69,3 +69,4 @@ target/
 *.rlib
 *.so
 repository_analysis/symbol_graph.json
+*.safetensors

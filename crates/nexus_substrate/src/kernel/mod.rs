@@ -1,8 +1,8 @@
 pub mod error;
+pub mod safe_buffer;
 pub mod safe_kernel;
 pub mod safe_vmo;
 pub mod temp_vmo;
-pub mod safe_buffer;
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;

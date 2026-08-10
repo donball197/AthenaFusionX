@@ -1,15 +1,15 @@
-use nexus_dag_orchestrator::graph::{DagManager, TaskNode, TaskStatus};
+use dotenvy::dotenv;
 use nexus_dag_orchestrator::executor::DagExecutor;
+use nexus_dag_orchestrator::graph::{DagManager, TaskNode, TaskStatus};
 use nexus_dag_orchestrator::planner::DagPlanner;
 use std::env;
 use std::thread;
 use std::time::Duration;
-use dotenvy::dotenv;
 
 fn main() {
     dotenv().ok();
     let args: Vec<String> = env::args().collect();
-    
+
     // Accept objective from CLI or use a default test objective
     let objective = if args.len() > 1 {
         args[1..].join(" ")
@@ -24,7 +24,7 @@ fn main() {
     println!("==================================================");
 
     println!("[*] Executive Cortex: Generating DAG blueprint...");
-    
+
     let planned_tasks = match DagPlanner::generate_dag(&objective) {
         Ok(tasks) => tasks,
         Err(e) => {
@@ -37,7 +37,12 @@ fn main() {
 
     let mut manager = DagManager::new();
     for pt in planned_tasks {
-        println!("  -> Node: [{}] Tier: [{}] Deps: {:?}", pt.id, pt.required_tier.to_uppercase(), pt.dependencies);
+        println!(
+            "  -> Node: [{}] Tier: [{}] Deps: {:?}",
+            pt.id,
+            pt.required_tier.to_uppercase(),
+            pt.dependencies
+        );
         manager.add_task(TaskNode {
             id: pt.id,
             description: pt.description,
@@ -53,7 +58,8 @@ fn main() {
     println!("\n[*] Executing Directed Acyclic Graph...\n");
 
     loop {
-        let all_complete = executor.manager.nodes.values().all(|n| n.status == TaskStatus::Completed);
+        let all_complete =
+            executor.manager.nodes.values().all(|n| n.status == TaskStatus::Completed);
         if all_complete {
             println!("\n[+] DAG Execution Complete. All nodes synchronized.");
             break;

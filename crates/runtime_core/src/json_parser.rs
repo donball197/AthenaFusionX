@@ -52,8 +52,23 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         return Ok(vec![]);
     }
 
-    let trimmed = text.replace("```json", "").replace("```", "");
-    let clean_text = sanitize_json_escapes(trimmed.trim());
+    let mut text_clean = text;
+    if text_clean.starts_with("```json") {
+        text_clean = text_clean.trim_start_matches("```json").trim_start();
+    } else if text_clean.starts_with("```") {
+        text_clean = text_clean.trim_start_matches("```").trim_start();
+    }
+    text_clean = text_clean.trim_end_matches("```").trim_end();
+
+    let json_str = if let (Some(start), Some(end)) = (text_clean.find('['), text_clean.rfind(']')) {
+        &text_clean[start..=end]
+    } else if let (Some(start), Some(end)) = (text_clean.find('{'), text_clean.rfind('}')) {
+        &text_clean[start..=end]
+    } else {
+        text_clean
+    };
+
+    let clean_text = sanitize_json_escapes(json_str);
 
     if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
         return Ok(actions);

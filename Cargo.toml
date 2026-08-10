@@ -28,6 +28,7 @@ members = [
     "apps/execution_auditor",
     "apps/mutation_ranker",
     "apps/math_utils",
+    "drones/pr_reviewer",
     "apps/wasm_tester",
     "drones/data_scraper",
     "apps/nexus_scrape",

@@ -75,6 +75,6 @@ pub mod belief_validation;
 
 pub mod executive_cortex;
 
-pub mod completion_engine;
 pub mod action_gate;
 pub mod action_intercept;
+pub mod completion_engine;

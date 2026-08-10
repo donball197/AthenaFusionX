@@ -1,3 +1,7 @@
+use crate::cognition::belief_engine::BeliefEngine;
+use crate::cognition::prediction_engine::PredictionEngine;
+use crate::cognition::reflection_engine::ReflectionEngine;
+use crate::cognition::traits::{MissionOutcome, Reflector};
 use crate::executive_cortex::{ExecutiveCommand, ExecutiveCortex};
 use crate::memory_cortex::MemoryCortex;
 use crate::{
@@ -10,10 +14,6 @@ use crate::{
     world_model::WorldModel,
 };
 use reqwest::Client;
-use crate::cognition::belief_engine::BeliefEngine;
-use crate::cognition::prediction_engine::PredictionEngine;
-use crate::cognition::reflection_engine::ReflectionEngine;
-use crate::cognition::traits::{MissionOutcome, Reflector};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -36,23 +36,26 @@ pub async fn send_task(
     raw_directive: &str,
 ) -> String {
     METRICS.inc_task();
-    
+
     // ⚡ 1. EXECUTIVE CORTEX GOAL INJECTION
     let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
     let goal_id = uuid::Uuid::new_v4();
-    let _ = command_tx.send(ExecutiveCommand::InjectGoal {
-        objective: raw_directive.to_string(),
-        parent_id: None,
-    }).await;
+    let _ = command_tx
+        .send(ExecutiveCommand::InjectGoal {
+            objective: raw_directive.to_string(),
+            parent_id: None,
+        })
+        .await;
 
     tokio::spawn(executive_cortex.run_actor_loop());
 
     let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Registered goal {}. Decomposing DAG...", goal_id)}).to_string());
 
-    let mut graph = match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
-        Ok(g) => g,
-        Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
-    };
+    let mut graph =
+        match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
+            Ok(g) => g,
+            Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
+        };
 
     graph.compute_critical_path_priorities();
     let order = match graph.resolve_execution_order() {
@@ -112,7 +115,8 @@ pub async fn send_task(
             Ok(CortexOutcome::TurnsExhausted { best_belief, evidence }) => {
                 mission_had_failures = true;
                 let outcome = MissionOutcome {
-                    mission_id: uuid::Uuid::parse_str(&task_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    mission_id: uuid::Uuid::parse_str(&task_id)
+                        .unwrap_or_else(|_| uuid::Uuid::new_v4()),
                     success: false,
                     evidence_summary: "Turns exhausted without contract satisfaction.".to_string(),
                     failures: vec![evidence.clone()],
@@ -138,7 +142,11 @@ pub async fn send_task(
         task_outputs.insert(task_id.clone(), execution_evidence.clone());
 
         // ⚡ FIX: Immediate Hard Abort if a dependency fails or runs out of turns
-        if mission_had_failures || execution_evidence.contains("[CORTEX INCOMPLETE]") || execution_evidence.contains("[DAG NODE FAILED]") || execution_evidence.contains("[DAG NODE INCOMPLETE]") {
+        if mission_had_failures
+            || execution_evidence.contains("[CORTEX INCOMPLETE]")
+            || execution_evidence.contains("[DAG NODE FAILED]")
+            || execution_evidence.contains("[DAG NODE INCOMPLETE]")
+        {
             let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[DAG HALT] Aborting downstream execution. Dependency '{}' failed to complete.", task_id)}).to_string());
             break;
         }

@@ -1,7 +1,7 @@
 use crate::graph::{DagManager, TaskStatus};
-use std::process::{Command, Stdio};
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 pub struct DagExecutor {
     pub manager: DagManager,
@@ -13,14 +13,15 @@ impl DagExecutor {
     }
 
     fn get_minion_binary_path() -> PathBuf {
-        let mut path = env::current_exe().unwrap_or_else(|_| PathBuf::from("target/debug/nexus_minion"));
+        let mut path =
+            env::current_exe().unwrap_or_else(|_| PathBuf::from("target/debug/nexus_minion"));
         path.pop();
-        
+
         let bin_path = path.join("nexus_minion");
         if bin_path.exists() {
             bin_path
         } else {
-            PathBuf::from("target/debug/nexus_minion") 
+            PathBuf::from("target/debug/nexus_minion")
         }
     }
 
@@ -42,7 +43,11 @@ impl DagExecutor {
             };
 
             println!("\n==================================================");
-            println!("[Orchestrator] Dispatching Task: [{}] (Tier: {})", task_id, tier.to_uppercase());
+            println!(
+                "[Orchestrator] Dispatching Task: [{}] (Tier: {})",
+                task_id,
+                tier.to_uppercase()
+            );
             println!("Objective: {}", description);
             println!("==================================================");
 
@@ -62,7 +67,10 @@ impl DagExecutor {
                     executed_count += 1;
                 }
                 Ok(exit_status) => {
-                    eprintln!("\n[Orchestrator] Task [{}] FAILED with code: {}", task_id, exit_status);
+                    eprintln!(
+                        "\n[Orchestrator] Task [{}] FAILED with code: {}",
+                        task_id, exit_status
+                    );
                     if let Some(node) = self.manager.nodes.get_mut(&task_id) {
                         node.status = TaskStatus::Failed;
                     }

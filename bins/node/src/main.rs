@@ -186,36 +186,72 @@ async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse 
 
     // Mock up the substrate dependencies for the edge node
     let memory = Arc::new(nexus_runtime_core::memory_cortex::MemoryCortex::new(Arc::new(
-        nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap()
+        nexus_substrate::memory::MemoryPalace::new(":memory:").await.unwrap(),
     )));
     let vmo_state = Arc::new(Mutex::new(nexus_runtime_core::shared_state::VmoState::default()));
     let dist = Arc::new(nexus_runtime_core::distributed_scheduler::DistributedScheduler::new(
         Arc::new(nexus_runtime_core::cluster::ClusterMesh::new()),
     ));
 
-    
-        let motor_action = match action {
-            nexus_runtime_core::agent_protocol::AgentAction::ExecuteCommand { command, .. } => nexus_runtime_core::motor_cortex::MotorAction::ExecuteCommand { command },
-            nexus_runtime_core::agent_protocol::AgentAction::WriteFile { path, content, .. } => nexus_runtime_core::motor_cortex::MotorAction::WriteFile { path, content },
-            nexus_runtime_core::agent_protocol::AgentAction::ReadFile { path, .. } => nexus_runtime_core::motor_cortex::MotorAction::ReadFile { path },
-            nexus_runtime_core::agent_protocol::AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => nexus_runtime_core::motor_cortex::MotorAction::ReadFileChunk { path, start_line, max_lines },
-            nexus_runtime_core::agent_protocol::AgentAction::SearchCode { path, query, .. } => nexus_runtime_core::motor_cortex::MotorAction::SearchCode { path, query },
-            nexus_runtime_core::agent_protocol::AgentAction::DiffPatch { path, search, replace, .. } => nexus_runtime_core::motor_cortex::MotorAction::DiffPatch { path, search, replace },
-            nexus_runtime_core::agent_protocol::AgentAction::PatchFunction { path, function_name, new_body, .. } => nexus_runtime_core::motor_cortex::MotorAction::PatchFunction { path, function_name, new_body },
-            nexus_runtime_core::agent_protocol::AgentAction::SearchMemory { query, .. } => nexus_runtime_core::motor_cortex::MotorAction::SearchMemory { query },
-            nexus_runtime_core::agent_protocol::AgentAction::Halt { reasoning } => nexus_runtime_core::motor_cortex::MotorAction::Halt { reasoning },
-            _ => nexus_runtime_core::motor_cortex::MotorAction::Halt { reasoning: "unmapped".to_string() },
-        };
-        let motor_cmd = nexus_runtime_core::motor_cortex::MotorCommand {
-                command_id: uuid::Uuid::new_v4(),
-                intent_id: uuid::Uuid::new_v4(),
-                goal_id: None,
-                action: motor_action,
-                capability: nexus_runtime_core::policy::Capability::ExecuteSystemCall, // Human override
-                expected_outcome: "CLI_DIRECT_INVOCATION".to_string(),
-                created_at: 0,
-            };
-            match executor.execute_motor_command(motor_cmd, memory, vmo_state, dist).await {
+    let motor_action = match action {
+        nexus_runtime_core::agent_protocol::AgentAction::ExecuteCommand { command, .. } => {
+            nexus_runtime_core::motor_cortex::MotorAction::ExecuteCommand { command }
+        }
+        nexus_runtime_core::agent_protocol::AgentAction::WriteFile { path, content, .. } => {
+            nexus_runtime_core::motor_cortex::MotorAction::WriteFile { path, content }
+        }
+        nexus_runtime_core::agent_protocol::AgentAction::ReadFile { path, .. } => {
+            nexus_runtime_core::motor_cortex::MotorAction::ReadFile { path }
+        }
+        nexus_runtime_core::agent_protocol::AgentAction::ReadFileChunk {
+            path,
+            start_line,
+            max_lines,
+            ..
+        } => nexus_runtime_core::motor_cortex::MotorAction::ReadFileChunk {
+            path,
+            start_line,
+            max_lines,
+        },
+        nexus_runtime_core::agent_protocol::AgentAction::SearchCode { path, query, .. } => {
+            nexus_runtime_core::motor_cortex::MotorAction::SearchCode { path, query }
+        }
+        nexus_runtime_core::agent_protocol::AgentAction::DiffPatch {
+            path,
+            search,
+            replace,
+            ..
+        } => nexus_runtime_core::motor_cortex::MotorAction::DiffPatch { path, search, replace },
+        nexus_runtime_core::agent_protocol::AgentAction::PatchFunction {
+            path,
+            function_name,
+            new_body,
+            ..
+        } => nexus_runtime_core::motor_cortex::MotorAction::PatchFunction {
+            path,
+            function_name,
+            new_body,
+        },
+        nexus_runtime_core::agent_protocol::AgentAction::SearchMemory { query, .. } => {
+            nexus_runtime_core::motor_cortex::MotorAction::SearchMemory { query }
+        }
+        nexus_runtime_core::agent_protocol::AgentAction::Halt { reasoning } => {
+            nexus_runtime_core::motor_cortex::MotorAction::Halt { reasoning }
+        }
+        _ => nexus_runtime_core::motor_cortex::MotorAction::Halt {
+            reasoning: "unmapped".to_string(),
+        },
+    };
+    let motor_cmd = nexus_runtime_core::motor_cortex::MotorCommand {
+        command_id: uuid::Uuid::new_v4(),
+        intent_id: uuid::Uuid::new_v4(),
+        goal_id: None,
+        action: motor_action,
+        capability: nexus_runtime_core::policy::Capability::ExecuteSystemCall, // Human override
+        expected_outcome: "CLI_DIRECT_INVOCATION".to_string(),
+        created_at: 0,
+    };
+    match executor.execute_motor_command(motor_cmd, memory, vmo_state, dist).await {
         Ok(obs) => (StatusCode::OK, obs).into_response(),
         Err(e) => {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("ACTION_FAILED: {}", e)).into_response()

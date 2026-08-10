@@ -1,7 +1,7 @@
+use crate::orchestrator_v2::task_graph::{TaskExecutionState, TaskGraph, TaskNode, TaskStatus};
 use anyhow::Result;
 use reqwest::Client;
 use std::collections::HashMap;
-use crate::orchestrator_v2::task_graph::{TaskGraph, TaskNode, TaskStatus, TaskExecutionState};
 
 pub struct PlannerAgent;
 
@@ -80,38 +80,66 @@ impl PlannerAgent {
             let mut map = HashMap::new();
             for (idx, item) in nodes_arr.into_iter().enumerate() {
                 // FIX: Item #13 Unwrap Masking Error patched with proper tracing fallback
-                let id = item.get("id").and_then(|v| v.as_str()).map(ToString::to_string)
+                let id = item
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
                     .unwrap_or_else(|| {
-                        tracing::warn!("Missing task ID in graph, auto-generating fallback: task_{}", idx + 1);
-                        format!("task_{}", idx + 1)
+                        let f_id = format!("task_fallback_{}", uuid::Uuid::new_v4().simple());
+                        tracing::warn!(
+                            "Missing task ID in graph, auto-generating unique fallback: {}",
+                            f_id
+                        );
+                        f_id
                     });
-                
-                let obj = item.get("objective").or_else(|| item.get("description"))
-                    .and_then(|v| v.as_str()).unwrap_or(directive).to_string();
+
+                let obj = item
+                    .get("objective")
+                    .or_else(|| item.get("description"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(directive)
+                    .to_string();
 
                 let lower_obj = obj.trim().to_lowercase();
-                if lower_obj == "halt" || lower_obj == "halt." || lower_obj == "halt execution" || lower_obj == "halt execution." || lower_obj.starts_with("halt execution") {
+                if lower_obj == "halt"
+                    || lower_obj == "halt."
+                    || lower_obj == "halt execution"
+                    || lower_obj == "halt execution."
+                    || lower_obj.starts_with("halt execution")
+                {
                     continue;
                 }
 
-                let deps = item.get("deps").or_else(|| item.get("dependencies"))
+                let deps = item
+                    .get("deps")
+                    .or_else(|| item.get("dependencies"))
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(ToString::to_string)).collect())
+                    .map(|arr| {
+                        arr.iter().filter_map(|x| x.as_str().map(ToString::to_string)).collect()
+                    })
                     .unwrap_or_default();
-                let agent = item.get("required_agent").or_else(|| item.get("agent"))
-                    .and_then(|v| v.as_str()).unwrap_or("CodeAnalyzer").to_string();
+                let agent = item
+                    .get("required_agent")
+                    .or_else(|| item.get("agent"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("CodeAnalyzer")
+                    .to_string();
 
-                map.insert(id.clone(), TaskNode {
-                    id,
-                    deps,
-                    required_agent: agent,
-                    status: TaskStatus::Pending,
-                    objective: obj,
-                    success_criteria: vec![],
-                    execution_state: TaskExecutionState::default(),
-                    output_evidence: None,
-                    priority: idx + 1,
-                });
+                map.insert(
+                    id.clone(),
+                    TaskNode {
+                        id,
+                        deps,
+                        required_agent: agent,
+                        status: TaskStatus::Pending,
+                        objective: obj,
+                        success_criteria: vec![],
+                        execution_state: TaskExecutionState::default(),
+                        output_evidence: None,
+                        priority: idx + 1,
+                    },
+                );
             }
             if !map.is_empty() {
                 return Ok(TaskGraph { nodes: map });
@@ -122,10 +150,18 @@ impl PlannerAgent {
     }
 
     fn strip_terminal_nodes(graph: &mut TaskGraph) {
-        let terminal_ids: Vec<String> = graph.nodes.iter()
+        let terminal_ids: Vec<String> = graph
+            .nodes
+            .iter()
             .filter(|(_, node)| {
                 let obj = node.objective.trim().to_lowercase();
-                obj == "halt" || obj == "halt." || obj == "halt execution" || obj == "halt execution." || obj.starts_with("halt execution") || obj.starts_with("stop execution") || obj.starts_with("end mission")
+                obj == "halt"
+                    || obj == "halt."
+                    || obj == "halt execution"
+                    || obj == "halt execution."
+                    || obj.starts_with("halt execution")
+                    || obj.starts_with("stop execution")
+                    || obj.starts_with("end mission")
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -138,17 +174,20 @@ impl PlannerAgent {
     fn create_fallback_graph(directive: &str) -> TaskGraph {
         let mut nodes = HashMap::new();
 
-        nodes.insert("task_1".to_string(), TaskNode {
-            id: "task_1".to_string(),
-            deps: vec![],
-            required_agent: "CodeAnalyzer".to_string(),
-            status: TaskStatus::Pending,
-            objective: directive.to_string(),
-            success_criteria: vec![],
-            execution_state: TaskExecutionState::default(),
-            output_evidence: None,
-            priority: 1,
-        });
+        nodes.insert(
+            "task_1".to_string(),
+            TaskNode {
+                id: "task_1".to_string(),
+                deps: vec![],
+                required_agent: "CodeAnalyzer".to_string(),
+                status: TaskStatus::Pending,
+                objective: directive.to_string(),
+                success_criteria: vec![],
+                execution_state: TaskExecutionState::default(),
+                output_evidence: None,
+                priority: 1,
+            },
+        );
 
         TaskGraph { nodes }
     }

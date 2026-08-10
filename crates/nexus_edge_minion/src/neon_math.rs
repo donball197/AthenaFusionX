@@ -4,13 +4,7 @@ use half::bf16;
 use std::arch::aarch64::*;
 
 #[inline(always)]
-pub fn matvec_bf16_to_f32(
-    w: &[bf16],
-    x: &[bf16],
-    y: &mut [f32],
-    m: usize,
-    n: usize,
-) {
+pub fn matvec_bf16_to_f32(w: &[bf16], x: &[bf16], y: &mut [f32], m: usize, n: usize) {
     assert_eq!(w.len(), m * n);
     assert_eq!(x.len(), n);
     assert_eq!(y.len(), m);
@@ -33,17 +27,9 @@ pub fn matvec_bf16_to_f32(
     }
 }
 
-
-
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn matvec_bf16_neon_v2(
-    w: &[bf16],
-    x: &[bf16],
-    y: &mut [f32],
-    m: usize,
-    n: usize,
-) {
+unsafe fn matvec_bf16_neon_v2(w: &[bf16], x: &[bf16], y: &mut [f32], m: usize, n: usize) {
     for i in 0..m {
         let mut acc0 = vdupq_n_f32(0.0);
         let mut acc1 = vdupq_n_f32(0.0);

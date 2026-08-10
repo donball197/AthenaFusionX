@@ -1,19 +1,16 @@
 //! Nexus Edge Minion Binary Runner - Multi-Step Autoregressive Stress Test
 //! Orchestrates local inference execution against the USB safetensors substrate.
 
-use std::env::consts;
-use std::env;
-use std::time::Instant;
 use nexus_edge_minion::inference_engine::InferenceEngine;
+use std::env;
+use std::env::consts;
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
-    let prompt = if args.len() > 1 {
-        args[1].clone()
-    } else {
-        "Substrate readiness verified.".to_string()
-    };
+    let prompt =
+        if args.len() > 1 { args[1].clone() } else { "Substrate readiness verified.".to_string() };
 
     println!(">> [NEXUS MINION] Initializing execution pipeline...");
     println!(">> [NEXUS MINION] Task Prompt: \"{}\"", prompt);
@@ -27,15 +24,18 @@ async fn main() {
             Ok(mut engine) => {
                 println!(">> [LOCAL EDGE] Safetensors weights mapped successfully.");
                 let mut hidden_state = vec![0.0f32; 1536];
-                
+
                 let num_steps = 5;
-                println!(">> [STRESS TEST] Running multi-step autoregressive loop ({} tokens)...", num_steps);
-                
+                println!(
+                    ">> [STRESS TEST] Running multi-step autoregressive loop ({} tokens)...",
+                    num_steps
+                );
+
                 let start_time = Instant::now();
                 for pos in 0..num_steps {
                     let token_id = (100 + pos) as u32;
                     let step_start = Instant::now();
-                    
+
                     match engine.step(token_id, pos, &mut hidden_state) {
                         Ok(_) => {
                             let duration = step_start.elapsed();
@@ -50,11 +50,12 @@ async fn main() {
                         }
                     }
                 }
-                
+
                 let total_duration = start_time.elapsed();
-                println!(">> [STRESS TEST] Completed {} steps in {:.2}s ({:.2} tokens/sec)", 
-                    num_steps, 
-                    total_duration.as_secs_f64(), 
+                println!(
+                    ">> [STRESS TEST] Completed {} steps in {:.2}s ({:.2} tokens/sec)",
+                    num_steps,
+                    total_duration.as_secs_f64(),
                     num_steps as f64 / total_duration.as_secs_f64()
                 );
             }
@@ -63,7 +64,9 @@ async fn main() {
             }
         }
     } else {
-        println!(">> [CLOUD ROUTE] NEXUS_CACHE_DIR not set. Handing off to API Gateway powerhouse...");
+        println!(
+            ">> [CLOUD ROUTE] NEXUS_CACHE_DIR not set. Handing off to API Gateway powerhouse..."
+        );
     }
 
     println!(">> [NEXUS MINION] Execution cycle complete.");

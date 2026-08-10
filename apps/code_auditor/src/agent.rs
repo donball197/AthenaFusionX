@@ -1,8 +1,8 @@
 //! agent.rs
-//! 
+//!
 //! Hollowed-out Code Analysis Agent that bridges the standalone Code Auditor
-//! into the Nexus Singularity Executive Cortex. 
-//! 
+//! into the Nexus Singularity Executive Cortex.
+//!
 //! Bypasses local inference entirely to enforce Zero Fragmentation across ARM64.
 
 use anyhow::{Context, Result};
@@ -35,7 +35,8 @@ pub struct CodeAnalysisAgent {
     api_key: String,
     repo_path: PathBuf,
     model_name: String, // Dynamically pulled from config, NEVER hardwired.
-    #[allow(dead_code)] max_iterations: u32,
+    #[allow(dead_code)]
+    max_iterations: u32,
 }
 
 impl CodeAnalysisAgent {
@@ -47,14 +48,7 @@ impl CodeAnalysisAgent {
         model_name: String,
         #[allow(dead_code)] max_iterations: u32,
     ) -> Self {
-        Self {
-            orchestrator,
-            client,
-            api_key,
-            repo_path,
-            model_name,
-            max_iterations,
-        }
+        Self { orchestrator, client, api_key, repo_path, model_name, max_iterations }
     }
 
     /// Compiles the cognitive context for the sub-agent, locking it to the target directory.
@@ -116,8 +110,9 @@ impl CodeAnalysisAgent {
         let clean_json = self.extract_json(&raw_response);
 
         // Deserialize the LLM output directly into the structs required by main.rs
-        let issues: Vec<ReportedIssue> = serde_json::from_str(&clean_json)
-            .context("Failed to deserialize LLM output. Model may have hallucinated the JSON schema.")?;
+        let issues: Vec<ReportedIssue> = serde_json::from_str(&clean_json).context(
+            "Failed to deserialize LLM output. Model may have hallucinated the JSON schema.",
+        )?;
 
         Ok(issues)
     }

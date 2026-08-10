@@ -57,10 +57,10 @@ impl EdgeLoader {
 
         Ok(TensorSlice {
             engine: self,
-            c_view,          // move happens here
+            c_view, // move happens here
             data,
             shape,
-            dtype,           // already copied
+            dtype, // already copied
         })
     }
 }

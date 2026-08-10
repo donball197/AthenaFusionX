@@ -16,26 +16,30 @@ struct Args {
 async fn main() {
     let args = Args::parse();
     let client = reqwest::Client::new();
-    
+
     let (endpoint, payload) = if let Some(prompt) = args.extract {
         ("http://127.0.0.1:5000/extract", json!({"url": args.url, "prompt": prompt}))
     } else {
         ("http://127.0.0.1:5000/scrape", json!({"url": args.url}))
     };
-    
+
     println!("\x1b[36m>> Sending request to Nexus Drone...\x1b[0m");
     let res = client.post(endpoint).json(&payload).send().await;
-    
+
     match res {
         Ok(resp) => {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            
+
             if let Ok(json_resp) = serde_json::from_str::<serde_json::Value>(&text) {
                 if let Some(content) = json_resp.get("content").and_then(|c| c.as_str()) {
-                    println!("\n\x1b[1;32m================ EXTRACTION RESULT ================\x1b[0m\n");
+                    println!(
+                        "\n\x1b[1;32m================ EXTRACTION RESULT ================\x1b[0m\n"
+                    );
                     println!("{}", content);
-                    println!("\n\x1b[1;32m===================================================\x1b[0m");
+                    println!(
+                        "\n\x1b[1;32m===================================================\x1b[0m"
+                    );
                     return;
                 }
             }
@@ -43,6 +47,9 @@ async fn main() {
             println!("\x1b[33m[DEBUG] Drone returned HTTP {}\x1b[0m", status);
             println!("\x1b[31m[RAW DRONE OUTPUT]:\n{}\x1b[0m", text);
         }
-        Err(e) => println!("\x1b[31m[ERROR] Could not connect to drone: {}. Is the drone running?\x1b[0m", e),
+        Err(e) => println!(
+            "\x1b[31m[ERROR] Could not connect to drone: {}. Is the drone running?\x1b[0m",
+            e
+        ),
     }
 }

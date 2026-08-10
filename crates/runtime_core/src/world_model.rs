@@ -39,11 +39,7 @@ impl WorldModel {
 
         // 1. Inject Repository File Tree Context (Safe Rust Iteration)
         let mut files = String::new();
-        for entry in walkdir::WalkDir::new(".")
-            .max_depth(4)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in walkdir::WalkDir::new(".").max_depth(4).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {
                 let path_str = entry.path().to_string_lossy();
                 if !path_str.contains("/.git/")

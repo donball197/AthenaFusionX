@@ -1,7 +1,7 @@
 use serde::Deserialize;
-use std::error::Error;
-use std::env;
 use serde_json::json;
+use std::env;
+use std::error::Error;
 
 #[derive(Debug, Deserialize)]
 pub struct PlannedTask {
@@ -15,10 +15,12 @@ pub struct DagPlanner;
 
 impl DagPlanner {
     fn resolve_provider() -> (String, String, String) {
-        let model = env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "gemini-3.5-flash".to_string());
+        let model =
+            env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "gemini-3.5-flash".to_string());
         if model.contains("gemini") {
             (
-                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                    .to_string(),
                 env::var("GEMINI_API_KEY").unwrap_or_default(),
                 model,
             )
@@ -57,10 +59,8 @@ impl DagPlanner {
             .send_json(payload)?;
 
         let response_json: serde_json::Value = response.into_json()?;
-        let mut text = response_json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("[]")
-            .to_string();
+        let mut text =
+            response_json["choices"][0]["message"]["content"].as_str().unwrap_or("[]").to_string();
 
         // Sanitize LLM formatting drift
         text = text.replace("```json", "").replace("```", "").trim().to_string();

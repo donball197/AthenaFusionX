@@ -1,4 +1,4 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskStatus {
@@ -23,9 +23,7 @@ pub struct DagManager {
 
 impl DagManager {
     pub fn new() -> Self {
-        Self {
-            nodes: HashMap::new(),
-        }
+        Self { nodes: HashMap::new() }
     }
 
     /// Adds a new task to the execution graph.

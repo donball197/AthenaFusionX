@@ -39,7 +39,7 @@ impl EpistemicEngine {
                         .pointer("/contents/0/parts/0/text")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    
+
                     let mut p = serde_json::json!({
                         "model": model_endpoint,
                         "messages": [{"role": "user", "content": text}],
@@ -48,10 +48,19 @@ impl EpistemicEngine {
                     });
 
                     // ⚡ V6 NATIVE TOOL CALLING: Force JSON Schema for Nvidia/OpenAI
-                    if let Some(mime) = payload.pointer("/generationConfig/responseMimeType").and_then(|v| v.as_str()) {
+                    if let Some(mime) = payload
+                        .pointer("/generationConfig/responseMimeType")
+                        .and_then(|v| v.as_str())
+                    {
                         if mime == "application/json" {
-                            p.as_object_mut().unwrap().insert("response_format".to_string(), serde_json::json!({"type": "json_object"}));
-                            let msg = format!("{}\n\nCRITICAL: You must return a valid JSON object.", text);
+                            p.as_object_mut().unwrap().insert(
+                                "response_format".to_string(),
+                                serde_json::json!({"type": "json_object"}),
+                            );
+                            let msg = format!(
+                                "{}\n\nCRITICAL: You must return a valid JSON object.",
+                                text
+                            );
                             p["messages"][0]["content"] = serde_json::json!(msg);
                         }
                     }
@@ -86,7 +95,9 @@ impl EpistemicEngine {
                     Err(e) => {
                         last_err = anyhow::anyhow!("JSON Parse Error: {}", e);
                         retries += 1;
-                        if retries > 2 { break; }
+                        if retries > 2 {
+                            break;
+                        }
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         continue;
                     }
@@ -100,7 +111,10 @@ impl EpistemicEngine {
                 } else {
                     if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
                         last_err = anyhow!("Gemini API Error: {}", err);
-                        if err.contains("quota") || err.contains("rate limit") || err.contains("RESOURCE_EXHAUSTED") {
+                        if err.contains("quota")
+                            || err.contains("rate limit")
+                            || err.contains("RESOURCE_EXHAUSTED")
+                        {
                             crate::model_config::report_rate_limit(model_endpoint);
                             break;
                         }
@@ -129,8 +143,9 @@ impl EpistemicEngine {
                         final_text = content.to_string();
                     }
                     if final_text.trim().is_empty() {
-                        if let Some(rc) =
-                            body.pointer("/choices/0/message/reasoning_content").and_then(|v| v.as_str())
+                        if let Some(rc) = body
+                            .pointer("/choices/0/message/reasoning_content")
+                            .and_then(|v| v.as_str())
                         {
                             final_text = rc.to_string();
                         }
@@ -189,7 +204,19 @@ impl EpistemicEngine {
 
         let lines: Vec<String> = text
             .lines()
-            .map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == '•' || c.is_ascii_digit() || c == '.' || c == '>').trim().to_string())
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches(|c: char| {
+                        c == '-'
+                            || c == '*'
+                            || c == '•'
+                            || c.is_ascii_digit()
+                            || c == '.'
+                            || c == '>'
+                    })
+                    .trim()
+                    .to_string()
+            })
             .filter(|l| !l.is_empty() && l.len() > 5)
             .take(3)
             .collect();
@@ -224,6 +251,7 @@ CRITICAL RULE 4: TOOLCHAIN TRUST & EXPLORATORY GRACE
 If the Strategist proposes executing a workspace tool (e.g., benchmark_runner, mutation_ranker, execution_auditor, impact_analyzer) via target/release/ or cargo run, you MUST ASSUME the tool exists and is authorized. Do NOT veto execution on the basis of missing prerequisite files (like trace logs, json reports, or candidates) if the tool is actively being invoked to analyze a target. Allow exploratory tool execution. Do not repeat successful commands.
 CRITICAL RULE 5: When invoking workspace binaries (impact_analyzer, execution_auditor, mutation_ranker, symbol_graph), ALWAYS use 'cargo run --bin <bin_name> -- <args>' or the absolute debug path '/home/donball197/AthenaFusionX/target/debug/<bin_name>'. NEVER execute 'apps/<bin_name>' directly because 'apps/' is a source directory, not an executable binary.
 CRITICAL RULE 6: SCRIPT ENVIRONMENT: Any proposed inline scripts (Python/Bash) MUST rely strictly on standard system libraries (e.g., os, sys, json in Python). Do NOT assume third-party packages like 'toml' or 'requests' are installed.
+CRITICAL RULE 7: ANTI-CHAINING: NEVER chain commands using '&&', '||', or ';'. You MUST execute EXACTLY ONE command per turn. If you need to run multiple commands, propose the first one now, and wait for the evidence before proposing the next.
 OUTPUT ONLY A SINGLE LINE CONTAINING THE EXACT COMMAND OR ACTION. DO NOT INCLUDE EXPLANATIONS, REASONING, OR PREAMBLE.", mission, strategy, world_context, evidence_so_far);
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }});
         Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload)

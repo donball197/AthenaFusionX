@@ -1,5 +1,5 @@
-use crate::cognitive_events::CognitiveEvent;
 use crate::cognition_graph::{CognitiveGraph, EdgeRelation, NodeKind};
+use crate::cognitive_events::CognitiveEvent;
 use crate::completion_engine::{CognitiveBudget, SubgoalCompletionEngine, SubgoalContract};
 use crate::epistemic_engine::CriticResponse;
 use std::collections::HashSet;
@@ -100,7 +100,8 @@ impl EpistemicSession {
         let mut history = String::new();
         for edge in &self.graph.edges {
             if edge.target == h_id
-                && (edge.relation == EdgeRelation::Supports || edge.relation == EdgeRelation::Contradicts)
+                && (edge.relation == EdgeRelation::Supports
+                    || edge.relation == EdgeRelation::Contradicts)
             {
                 if let Some(obs) = self.graph.nodes.get(&edge.source) {
                     history.push_str(&format!("- [{:?}] {}\n", edge.relation, obs.content));

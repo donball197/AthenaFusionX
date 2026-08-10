@@ -5,10 +5,10 @@
 //! yet implemented -- that's the next roadmap milestone. Until it exists,
 //! the attention branch's contribution is a placeholder zero vector.
 
-use half::bf16;
-use crate::attention::{AttentionBlock, rms_norm_in_place};
+use crate::attention::{rms_norm_in_place, AttentionBlock};
 use crate::kv_cache::StaticKVCache;
 use crate::neon_math::matvec_bf16_to_f32;
+use half::bf16;
 
 const HIDDEN_SIZE: usize = 1536;
 const PER_LAYER_DIM: usize = 256;
@@ -85,7 +85,14 @@ impl DecoderLayer {
             let v_proj = weights.v_proj.expect("is_kv_source=true requires v_proj");
             let k_norm = weights.k_norm.expect("is_kv_source=true requires k_norm");
             self.attn.project_and_cache(
-                &x, weights.q_proj, k_proj, v_proj, weights.q_norm, k_norm, position, kv_cache,
+                &x,
+                weights.q_proj,
+                k_proj,
+                v_proj,
+                weights.q_norm,
+                k_norm,
+                position,
+                kv_cache,
             )
         } else {
             self.attn.project_q_only(&x, weights.q_proj, weights.q_norm, position)
@@ -98,7 +105,7 @@ impl DecoderLayer {
 
         rms_norm_in_place(&mut attn_out, weights.post_attention_layernorm);
         for i in 0..HIDDEN_SIZE {
-            hidden_state[i] = residual[i] + attn_out[i];
+            hidden_state[i] = residual[i] + attn_out[i] * weights.layer_scalar;
         }
 
         // ---- MLP block ----
@@ -123,13 +130,19 @@ impl DecoderLayer {
 
         rms_norm_in_place(&mut mlp_out, weights.post_feedforward_layernorm);
         for i in 0..HIDDEN_SIZE {
-            hidden_state[i] = residual[i] + mlp_out[i];
+            hidden_state[i] = residual[i] + mlp_out[i] * weights.layer_scalar;
         }
 
         // ---- PLE stage 2 injection ----
         let x_bf16: Vec<bf16> = hidden_state.iter().map(|&v| bf16::from_f32(v)).collect();
         let mut ple_gate = vec![0.0f32; PER_LAYER_DIM];
-        matvec_bf16_to_f32(weights.per_layer_input_gate, &x_bf16, &mut ple_gate, PER_LAYER_DIM, HIDDEN_SIZE);
+        matvec_bf16_to_f32(
+            weights.per_layer_input_gate,
+            &x_bf16,
+            &mut ple_gate,
+            PER_LAYER_DIM,
+            HIDDEN_SIZE,
+        );
         for g in ple_gate.iter_mut() {
             *g = gelu_tanh(*g);
         }
@@ -141,16 +154,18 @@ impl DecoderLayer {
 
         let injected_bf16: Vec<bf16> = injected.iter().map(|&v| bf16::from_f32(v)).collect();
         let mut ple_out = vec![0.0f32; HIDDEN_SIZE];
-        matvec_bf16_to_f32(weights.per_layer_projection, &injected_bf16, &mut ple_out, HIDDEN_SIZE, PER_LAYER_DIM);
+        matvec_bf16_to_f32(
+            weights.per_layer_projection,
+            &injected_bf16,
+            &mut ple_out,
+            HIDDEN_SIZE,
+            PER_LAYER_DIM,
+        );
         rms_norm_in_place(&mut ple_out, weights.post_per_layer_input_norm);
         for i in 0..HIDDEN_SIZE {
-            hidden_state[i] += ple_out[i];
+            hidden_state[i] += ple_out[i] * weights.layer_scalar;
         }
 
-        // ---- layer_scalar ----
-        for v in hidden_state.iter_mut() {
-            *v *= weights.layer_scalar;
-        }
     }
 }
 

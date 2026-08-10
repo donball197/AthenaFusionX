@@ -37,12 +37,15 @@ fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     let target_symbol = parse_arg(&args, &["--target", "-t"])
-        .or_else(|| args.iter().skip(1).find(|s| !s.starts_with('-') && !s.ends_with(".json")).cloned())
-        .unwrap_or_else(|| "bins/ide_backend/src/system_monitor.rs::SystemMonitor::get_vitals".to_string());
+        .or_else(|| {
+            args.iter().skip(1).find(|s| !s.starts_with('-') && !s.ends_with(".json")).cloned()
+        })
+        .unwrap_or_else(|| {
+            "bins/ide_backend/src/system_monitor.rs::SystemMonitor::get_vitals".to_string()
+        });
 
-    let iterations: usize = parse_arg(&args, &["--iterations", "-i"])
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+    let iterations: usize =
+        parse_arg(&args, &["--iterations", "-i"]).and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     let output_path = parse_arg(&args, &["--output", "-o"]).map(PathBuf::from);
 

@@ -1,9 +1,9 @@
 //! Micro-Agent API Gateway
 //! Executes live HTTP/REST dispatch with multi-provider failover cascades.
 
-use std::error::Error;
-use std::env;
 use serde_json::json;
+use std::env;
+use std::error::Error;
 
 #[derive(Debug, Clone)]
 pub struct AgentRequest {
@@ -30,24 +30,34 @@ impl ApiGateway {
     fn resolve_provider(&self, model_name: &str) -> (String, String) {
         if model_name.contains("gemini") {
             (
-                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
-                env::var("GEMINI_API_KEY").unwrap_or_default()
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                    .to_string(),
+                env::var("GEMINI_API_KEY").unwrap_or_default(),
             )
-        } else if model_name.contains("nvidia") || model_name.contains("nemotron") || model_name.contains("llama") || model_name.contains("gemma") {
+        } else if model_name.contains("nvidia")
+            || model_name.contains("nemotron")
+            || model_name.contains("llama")
+            || model_name.contains("gemma")
+        {
             (
                 "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
-                env::var("NVIDIA_API_KEY").unwrap_or_default()
+                env::var("NVIDIA_API_KEY").unwrap_or_default(),
             )
         } else {
             (
-                env::var("NEXUS_API_ENDPOINT").unwrap_or_else(|_| "https://api.example.com/v1/chat/completions".to_string()),
-                env::var("NEXUS_AUTH_KEY").unwrap_or_default()
+                env::var("NEXUS_API_ENDPOINT")
+                    .unwrap_or_else(|_| "https://api.example.com/v1/chat/completions".to_string()),
+                env::var("NEXUS_AUTH_KEY").unwrap_or_default(),
             )
         }
     }
 
     /// Executes the request, cascading through the provided model list on failure.
-    pub fn dispatch_cascade(&self, request: AgentRequest, cascade: &[String]) -> Result<AgentResponse, Box<dyn Error>> {
+    pub fn dispatch_cascade(
+        &self,
+        request: AgentRequest,
+        cascade: &[String],
+    ) -> Result<AgentResponse, Box<dyn Error>> {
         if cascade.is_empty() {
             return Err("FATAL: Empty cascade list provided.".into());
         }
@@ -86,21 +96,16 @@ impl ApiGateway {
             {
                 Ok(response) => {
                     let response_json: serde_json::Value = response.into_json()?;
-                    
+
                     let text = response_json["choices"][0]["message"]["content"]
                         .as_str()
                         .unwrap_or("[ERROR: Failed to parse model response]")
                         .to_string();
 
-                    let tokens_used = response_json["usage"]["total_tokens"]
-                        .as_u64()
-                        .unwrap_or(0) as usize;
+                    let tokens_used =
+                        response_json["usage"]["total_tokens"].as_u64().unwrap_or(0) as usize;
 
-                    return Ok(AgentResponse {
-                        text,
-                        tokens_used,
-                        model_used: model.to_string(),
-                    });
+                    return Ok(AgentResponse { text, tokens_used, model_used: model.to_string() });
                 }
                 Err(e) => {
                     println!("  -> [FAIL] {} unreachable or returned error: {}", model, e);

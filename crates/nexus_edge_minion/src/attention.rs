@@ -5,9 +5,9 @@
 //! attention scores (QK^T / softmax / *V). That's still the next roadmap
 //! milestone; the returned Q is what that step will consume.
 
-use crate::rope::{apply_rope_scalar, RoPEConfig, AttentionMode};
 use crate::kv_cache::StaticKVCache;
 use crate::neon_math::matvec_bf16_to_f32;
+use crate::rope::{apply_rope_scalar, AttentionMode, RoPEConfig};
 use half::bf16;
 
 /// RMSNorm applied in place using Gemma's (1 + weight) convention -- Gemma's

@@ -6,10 +6,13 @@ async fn main() {
     println!("Starting telemetry node diagnostics...");
 
     // Wrap the diagnostic check in a 5-second timeout to prevent thread blocking
-    let result = timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || {
-        let mut monitor = SystemMonitor::new();
-        monitor.get_vitals()
-    }))
+    let result = timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking(move || {
+            let mut monitor = SystemMonitor::new();
+            monitor.get_vitals()
+        }),
+    )
     .await;
 
     match result {

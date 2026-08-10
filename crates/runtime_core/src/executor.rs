@@ -265,19 +265,19 @@ impl RoboticExecutor {
                     let lines: Vec<&str> = content.split('\n').collect();
                     let start_idx = start_line.saturating_sub(1);
                     let end_idx = end_line.saturating_sub(1);
-                    
+
                     if start_idx > lines.len() || start_idx > end_idx {
                         return Err(anyhow::anyhow!("Invalid line range for replacement"));
                     }
                     let end_idx_actual = std::cmp::min(end_idx, lines.len().saturating_sub(1));
-                    
+
                     let before = lines[..start_idx].to_vec();
                     let after = if end_idx_actual + 1 < lines.len() { lines[end_idx_actual + 1..].to_vec() } else { vec![] };
-                    
+
                     let mut new_lines = before;
                     new_lines.push(replacement.as_str());
                     new_lines.extend(after);
-                    
+
                     tokio::fs::write(&safe_path, new_lines.join("\n")).await?;
                     Ok(format!("[REPLACE_LINES_OK] Replaced lines {}-{} in {}", start_line, end_line, path))
                 }
@@ -287,7 +287,7 @@ impl RoboticExecutor {
                     } else {
                         format!("cargo test {} --color never 2>&1", test_target)
                     };
-                    
+
                     let out = crate::podman::PodmanShield::execute(&cmd).unwrap_or_else(|e| {
                         std::process::Output {
                             status: std::os::unix::process::ExitStatusExt::from_raw(1),
@@ -295,17 +295,17 @@ impl RoboticExecutor {
                             stderr: format!("TEST HARNESS FAILED: {}", e).into_bytes(),
                         }
                     });
-                    
+
                     let output_str = String::from_utf8_lossy(&out.stdout);
                     let err_str = String::from_utf8_lossy(&out.stderr);
                     let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
-                    
+
                     let trunc = if combined.len() > 6000 {
                         format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len()-6000..])
                     } else {
                         combined
                     };
-                    
+
                     if out.status.success() {
                         Ok(format!("[TEST_OK] Tests passed for target '{}':\n{}", test_target, trunc))
                     } else {

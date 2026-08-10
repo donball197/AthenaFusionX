@@ -60,9 +60,15 @@ pub async fn unified_gateway(
                 vmo_state: s.vmo_state.clone(),
                 tx: s.tx.clone(),
                 dist: s.dist.clone(),
-                belief_engine: Arc::new(nexus_runtime_core::cognition::belief_engine::BeliefEngine::new()),
-                prediction_engine: Arc::new(nexus_runtime_core::cognition::prediction_engine::PredictionEngine::new()),
-                reflection_engine: Arc::new(nexus_runtime_core::cognition::reflection_engine::ReflectionEngine::new()),
+                belief_engine: Arc::new(
+                    nexus_runtime_core::cognition::belief_engine::BeliefEngine::new(),
+                ),
+                prediction_engine: Arc::new(
+                    nexus_runtime_core::cognition::prediction_engine::PredictionEngine::new(),
+                ),
+                reflection_engine: Arc::new(
+                    nexus_runtime_core::cognition::reflection_engine::ReflectionEngine::new(),
+                ),
             },
             &d,
         )

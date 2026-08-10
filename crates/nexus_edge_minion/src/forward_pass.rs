@@ -8,10 +8,10 @@
 //! sliding layers in that region source from layer 13, global layers from
 //! layer 14 (both derived generally below, not hardcoded).
 
-use std::collections::HashMap;
 use crate::decoder_layer::{DecoderLayer, DecoderLayerWeights};
 use crate::kv_cache::StaticKVCache;
 use crate::rope::AttentionMode;
+use std::collections::HashMap;
 
 pub const NUM_LAYERS: usize = 35;
 pub const HIDDEN_SIZE: usize = 1536;

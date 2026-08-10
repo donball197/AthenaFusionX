@@ -17,6 +17,7 @@ memmap2 = { version = "0.9", optional = true }
 half = "2.3"
 ureq = { version = "2", features = ["json"] }
 dotenvy.workspace = true
+tokenizers = "0.20"
 
 [[bin]]
 name = "nexus_minion"

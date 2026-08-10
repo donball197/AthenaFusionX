@@ -26,19 +26,11 @@ impl RoPEConfig {
             // k_proj[512,1536] / o_proj[1536,4096] / q_norm[512] / k_norm[512]
             // -> head_dim=512 (8 heads * 512 = 4096), matching config's
             // global_head_dim. partial_rotary_factor=0.25 of 512 = 128.
-            AttentionMode::Global => Self {
-                head_dim: 512,
-                rotary_dim: 128,
-                theta: 1_000_000.0,
-            },
+            AttentionMode::Global => Self { head_dim: 512, rotary_dim: 128, theta: 1_000_000.0 },
             // Confirmed via real layer.0 tensor shapes: q_proj[2048,1536] /
             // k_proj[256,1536] / o_proj[1536,2048] / q_norm[256] / k_norm[256]
             // -> head_dim=256 (8 heads * 256 = 2048), full rotary.
-            AttentionMode::Sliding => Self {
-                head_dim: 256,
-                rotary_dim: 256,
-                theta: 10_000.0,
-            },
+            AttentionMode::Sliding => Self { head_dim: 256, rotary_dim: 256, theta: 10_000.0 },
         }
     }
 
@@ -61,11 +53,7 @@ impl RoPEConfig {
 
 /// Authoritative scalar reference implementation for Proportional RoPE.
 /// Transforms Q or K vectors in place. Dimensions beyond rotary_dim act as identity.
-pub fn apply_rope_scalar(
-    vec: &mut [f32],
-    position: usize,
-    config: &RoPEConfig,
-) {
+pub fn apply_rope_scalar(vec: &mut [f32], position: usize, config: &RoPEConfig) {
     config.validate();
     assert_eq!(
         vec.len(),
@@ -96,11 +84,7 @@ pub fn apply_rope_scalar(
 }
 
 #[cfg(target_arch = "aarch64")]
-pub unsafe fn apply_rope_neon(
-    vec: &mut [f32],
-    position: usize,
-    config: &RoPEConfig,
-) {
+pub unsafe fn apply_rope_neon(vec: &mut [f32], position: usize, config: &RoPEConfig) {
     // Phase 1 initial state: delegate to scalar reference until NEON vector layout is verified
     apply_rope_scalar(vec, position, config);
 }

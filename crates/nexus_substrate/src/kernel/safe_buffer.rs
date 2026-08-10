@@ -12,10 +12,7 @@ pub struct SafeBuffer {
 
 impl SafeBuffer {
     pub fn new(max_capacity: usize) -> Self {
-        Self {
-            buf: BytesMut::with_capacity(max_capacity),
-            max_capacity,
-        }
+        Self { buf: BytesMut::with_capacity(max_capacity), max_capacity }
     }
 
     pub fn write_safe(&mut self, data: &[u8]) -> Result<(), BufferError> {

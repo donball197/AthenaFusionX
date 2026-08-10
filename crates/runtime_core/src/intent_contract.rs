@@ -10,10 +10,6 @@ pub struct IntentContract {
 
 impl IntentContract {
     pub fn new(rationale: &str, belief_score: f32) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            rationale: rationale.to_string(),
-            belief_score,
-        }
+        Self { id: Uuid::new_v4(), rationale: rationale.to_string(), belief_score }
     }
 }

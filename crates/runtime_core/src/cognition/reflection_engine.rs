@@ -16,7 +16,7 @@ impl ReflectionEngine {
 impl Reflector for ReflectionEngine {
     async fn reflect(&self, outcome: &MissionOutcome) -> anyhow::Result<ReflectionReport> {
         let mut lessons = Vec::new();
-        
+
         if !outcome.success && !outcome.failures.is_empty() {
             for failure in &outcome.failures {
                 // Formatting matches what [ANCESTOR NODE EVIDENCE] expects
