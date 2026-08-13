@@ -2,100 +2,78 @@ use crate::agent_protocol::AgentAction;
 use anyhow::Result;
 
 /// Public shared JSON string escape sanitizer.
-pub fn sanitize_json_escapes(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
+pub fn sanitize_json_escapes(json_str: &str) -> String {
+    let mut sanitized = String::with_capacity(json_str.len() + 128);
     let mut in_string = false;
-    let mut chars = raw.chars().peekable();
+    let mut last_char = ' ';
 
-    while let Some(c) = chars.next() {
+    for c in json_str.chars() {
         match c {
-            '"' => {
+            '"' if last_char != '\\' => {
                 in_string = !in_string;
-                out.push('"');
+                sanitized.push('"');
             }
-            '\n' if in_string => {
-                out.push_str("\\n");
-            }
-            '\r' if in_string => {
-                out.push_str("\\r");
-            }
+            '\n' if in_string => sanitized.push_str("\\n"),
+            '\r' if in_string => sanitized.push_str("\\r"),
+            '\t' if in_string => sanitized.push_str("\\t"),
             '\\' => {
-                if let Some(&next) = chars.peek() {
-                    if next == '"'
-                        || next == '\\'
-                        || next == '/'
-                        || next == 'b'
-                        || next == 'f'
-                        || next == 'n'
-                        || next == 'r'
-                        || next == 't'
-                        || next == 'u'
-                    {
-                        out.push('\\');
-                    } else {
-                        out.push_str("\\\\");
-                    }
-                } else {
-                    out.push_str("\\\\");
-                }
+                sanitized.push('\\');
             }
-            _ => out.push(c),
+            _ => sanitized.push(c),
         }
+        last_char = c;
     }
-    out
+    sanitized
 }
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let text = response.trim();
+    if text.is_empty() || text == "[]" { return Ok(vec![]); }
 
-    if text.is_empty() || text == "[]" {
-        return Ok(vec![]);
+    // 1. Aggressively carve out code blocks
+    let mut extracted = text;
+    if let Some(start) = text.find("```json") {
+        if let Some(end) = text[start + 7..].find("```") {
+            extracted = &text[start + 7 .. start + 7 + end];
+        }
+    } else if let Some(start) = text.find("```") {
+        if let Some(end) = text[start + 3..].find("```") {
+            extracted = &text[start + 3 .. start + 3 + end];
+        }
     }
 
-    let mut text_clean = text;
-    if text_clean.starts_with("```json") {
-        text_clean = text_clean.trim_start_matches("```json").trim_start();
-    } else if text_clean.starts_with("```") {
-        text_clean = text_clean.trim_start_matches("```").trim_start();
-    }
-    text_clean = text_clean.trim_end_matches("```").trim_end();
+    extracted = extracted.trim();
 
-    let json_str = if let (Some(start), Some(end)) = (text_clean.find('['), text_clean.rfind(']')) {
-        &text_clean[start..=end]
-    } else if let (Some(start), Some(end)) = (text_clean.find('{'), text_clean.rfind('}')) {
-        &text_clean[start..=end]
-    } else {
-        text_clean
-    };
+    // 2. Locate boundaries
+    let json_str = if let (Some(s), Some(e)) = (extracted.find('['), extracted.rfind(']')) {
+        &extracted[s..=e]
+    } else if let (Some(s), Some(e)) = (extracted.find('{'), extracted.rfind('}')) {
+        &extracted[s..=e]
+    } else { return Err(anyhow::anyhow!("No JSON boundaries found in model output.")); };
 
     let clean_text = sanitize_json_escapes(json_str);
 
-    if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
-        return Ok(actions);
+    // ANTI-DEGENERACY GATE
+    if clean_text.contains("00000000000000000000") || clean_text.len() > 25_000 {
+        tracing::error!("[CORTEX PARSE ABORT] Token Resonance / Runaway block. Returning safe halt.");
+        return Ok(vec![]);
     }
 
-    if let Ok(single) = serde_json::from_str::<AgentAction>(&clean_text) {
-        return Ok(vec![single]);
-    }
-
-    if let (Some(start), Some(end)) = (clean_text.find('['), clean_text.rfind(']')) {
-        if start < end {
-            let slice = &clean_text[start..=end];
-            if let Ok(actions) = serde_json::from_str::<Vec<AgentAction>>(slice) {
-                return Ok(actions);
+    // 3. Serializer & Transparent Fallback Log
+    match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
+        Ok(actions) => Ok(actions),
+        Err(e1) => {
+            match serde_json::from_str::<AgentAction>(&clean_text) {
+                Ok(single) => Ok(vec![single]),
+                Err(e2) => {
+                    let snippet = if clean_text.len() > 400 { &clean_text[..400] } else { &clean_text };
+                    tracing::warn!(
+                        "[JSON PARSER] Serialization Failure!\nArray Err: {}\nSingle Err: {}\n--- OFFENDING SNIPPET ---\n{}\n-------------------------", 
+                        e1, e2, snippet
+                    );
+                    Err(anyhow::anyhow!("JSON serialization failed. Invalid format."))
+                }
             }
         }
     }
-
-    if let (Some(start), Some(end)) = (clean_text.find('{'), clean_text.rfind('}')) {
-        if start < end {
-            let slice = &clean_text[start..=end];
-            if let Ok(single) = serde_json::from_str::<AgentAction>(slice) {
-                return Ok(vec![single]);
-            }
-        }
-    }
-
-    tracing::warn!("[JSON PARSER] Could not parse action payload. Falling back safely.");
-    Ok(vec![])
 }
