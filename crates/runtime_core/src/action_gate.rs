@@ -23,6 +23,11 @@ impl ActionGate {
     /// Enforces deterministic security inspection on sealed MotorCommands.
     pub fn approve(&self, command: &MotorCommand) -> Result<()> {
         match &command.action {
+        &MotorAction::PatchFile { .. } => {
+                self.sandbox
+                    .validate_intent("patch_file")
+                    .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+            },
             MotorAction::ExecuteCommand { command: cmd_str } => {
                 let cmd_lower = cmd_str.to_lowercase();
                 if cmd_lower.contains("rm -rf /")

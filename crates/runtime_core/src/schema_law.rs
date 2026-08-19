@@ -5,6 +5,7 @@ pub const SYSTEM_JSON_SCHEMA: &str = r#"MANDATORY SCHEMA:
   { "type": "read_file", "path": "...", "reasoning": "..." },
   { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
   { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." },
+  { "type": "patch_file", "path": "...", "target": "...", "replacement": "...", "reasoning": "..." },
   { "type": "patch_function", "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." },
   { "type": "search_memory", "query": "...", "reasoning": "..." },
   { "type": "vmo_create", "size": 1024, "reasoning": "..." },

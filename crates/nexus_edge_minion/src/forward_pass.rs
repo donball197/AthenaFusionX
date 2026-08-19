@@ -96,6 +96,17 @@ impl ForwardOrchestrator {
     /// design sketch, not compile-verified against a real EdgeLoader-backed
     /// implementation -- expect possible borrow-checker friction wiring this
     /// up for real, more so than the more mechanical files from before.
+    /// Returns the number of tokens currently held in the KV cache at the
+    /// given cache index (0..kv_boundary). Diagnostic only.
+    pub fn kv_cache_len(&self, cache_idx: usize) -> Option<usize> {
+        self.caches.get(cache_idx).map(|c| c.len())
+    }
+
+    /// Returns the total number of distinct KV caches (== kv_boundary).
+    pub fn kv_cache_count(&self) -> usize {
+        self.caches.len()
+    }
+
     pub fn execute_token_step<'a>(
         &mut self,
         hidden_state: &mut [f32],
@@ -122,5 +133,11 @@ impl ForwardOrchestrator {
                 &mut self.caches[cache_idx],
             );
         }
+    }
+}
+
+impl Default for ForwardOrchestrator {
+    fn default() -> Self {
+        Self::new()
     }
 }

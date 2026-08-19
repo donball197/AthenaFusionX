@@ -106,7 +106,7 @@ pub async fn send_task(
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting Epistemic Session for Node {}", task_id)}).to_string());
 
         let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
-            Ok(CortexOutcome::Proven { belief, evidence }) => {
+            Ok(CortexOutcome::CompletionProposed { belief, evidence }) => {
                 format!(
                     "[DAG NODE COMPLETE] Objective: {}\nBelief: {:.2}\nEvidence:\n{}",
                     node.objective, belief, evidence

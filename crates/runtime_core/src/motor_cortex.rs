@@ -11,6 +11,11 @@ pub enum MotorAction {
     ReadFile { path: String },
     ReadFileChunk { path: String, start_line: usize, max_lines: usize },
     SearchCode { path: String, query: String },
+    PatchFile {
+        path: String,
+        target: String,
+        replacement: String,
+    },
     SearchMemory { query: String },
     ReplaceLines { path: String, start_line: usize, end_line: usize, replacement: String },
     RunTests { test_target: String },
@@ -51,6 +56,7 @@ impl MotorCortex {
             }
             AgentAction::SearchCode { path, query, .. } => MotorAction::SearchCode { path, query },
             AgentAction::SearchMemory { query, .. } => MotorAction::SearchMemory { query },
+            AgentAction::PatchFile { path, target, replacement, .. } => MotorAction::PatchFile { path, target, replacement },
             AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
                 MotorAction::ReplaceLines { path, start_line, end_line, replacement }
             }

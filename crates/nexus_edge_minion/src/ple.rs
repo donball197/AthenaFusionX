@@ -56,7 +56,7 @@ impl Stage2PLE {
         for i in 0..hidden_states.len() {
             let x = hidden_states[i];
             // Approximate GELU activation: 0.5 * x * (1.0 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-            let inner = 0.7978845608_f32 * (x + 0.044715_f32 * x.powi(3));
+            let inner = 0.797_884_6_f32 * (x + 0.044715_f32 * x.powi(3));
             let gelu = 0.5_f32 * x * (1.0_f32 + inner.tanh());
 
             // Apply conditioning scale and add residual

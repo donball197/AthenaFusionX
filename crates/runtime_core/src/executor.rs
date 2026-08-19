@@ -89,10 +89,22 @@ pub fn sanitize(path: &str) -> Result<PathBuf> {
             }
         }
 
-        let crates_fallback = workspace_root.join("crates");
-        if crates_fallback.exists() {
-            return Ok(crates_fallback);
-        }
+        // NOTE: deliberately no longer falling back to the bare `crates/`
+        // directory here. A genuinely missing file (e.g. a new file the
+        // agent hasn't written yet) used to silently resolve to that
+        // directory instead of a clear not-found error -- WriteFile's
+        // caller then tried to write file content INTO the crates/
+        // directory itself, producing a confusing "Is a directory (os
+        // error 21)" instead of a message that says the path is new.
+        // Confirmed live: this exact fallback caused every write_file
+        // attempt at a new top-level file to fail this way. Return a
+        // clear not-found error instead; WriteFile has its own path
+        // resolution for new files and does not call sanitize() at all.
+        return Err(anyhow!(
+            "PATH_NOT_FOUND: {} does not exist in the workspace (tried {}, crate-relative, and filename search)",
+            path,
+            target.display()
+        ));
     }
 
     let canonical =
@@ -156,9 +168,9 @@ impl RoboticExecutor {
                         stdout_trunc.truncate(8000);
                         stdout_trunc.push_str("\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]");
                     }
-                    if stderr_trunc.len() > 8000 {
-                        stderr_trunc.truncate(8000);
-                        stderr_trunc.push_str("\n...[STDERR TRUNCATED: OUTPUT TOO LARGE]");
+                    if stderr_trunc.len() > 1500 {
+                        let offset = stderr_trunc.len() - 1500;
+                        stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", &stderr_trunc[offset..]);
                     }
 
                     let mut res = format!("[CMD_OK] Status: {}\n", out.status);
@@ -174,7 +186,38 @@ impl RoboticExecutor {
                     Ok(res)
                 }
                 MotorAction::WriteFile { path, content } => {
-                    let safe_path = sanitize(&path)?;
+                    let raw_path = Path::new(&path);
+
+                    let workspace_root = std::env::current_dir()
+                        .and_then(std::fs::canonicalize)
+                        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+
+                    // An absolute path used to be blanket-rejected here, which blocked
+                    // even legitimate targets like <workspace_root>/some_file.md -- the
+                    // real security guarantee is the bounds check below, not whether the
+                    // path happened to be written as absolute or relative. Resolve either
+                    // form the same way sanitize() does for ReadFile: join relative paths
+                    // onto the workspace root, take absolute paths as given, then
+                    // canonicalize (falling back to the canonicalized parent when the
+                    // target file doesn't exist yet, which is the common case for a new
+                    // write) and check the RESULT against the workspace root. This still
+                    // blocks /etc/shadow (its canonicalized parent is /etc, not under the
+                    // workspace root) and still blocks ../ escapes (canonicalize resolves
+                    // them), while allowing an absolute path that's actually inside the
+                    // workspace, same as an equivalent relative one would be.
+                    let target = if raw_path.is_absolute() {
+                        raw_path.to_path_buf()
+                    } else {
+                        workspace_root.join(raw_path)
+                    };
+
+                    let safe_path = canonicalize_or_parent(&target)
+                        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+
+                    if !safe_path.starts_with(&workspace_root) {
+                        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
+                    }
+
                     if let Ok(existing) = tokio::fs::read_to_string(&safe_path).await {
                         if existing == content {
                             return Ok(format!("[WRITE_NOOP] {} -- content identical to existing file", path));
@@ -197,8 +240,11 @@ impl RoboticExecutor {
                         let _ = mem.store_memory("ReadFile", &path, &content, None).await;
                     }
 
-                    let return_content = if content.len() > 12000 {
-                        format!("{}...\n\n[CONTENT TRUNCATED. FULL DATA SAVED TO VECTOR VAULT.]", &content[..12000])
+                    let total_lines = content.lines().count();
+                    let return_content = if content.len() > 16000 {
+                        format!("{}...
+
+[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: {}. USE THE `read_file_chunk` TOOL BY SPECIFYING `start_line` AND `max_lines` TO READ BEYOND THIS POINT.]", &content[..16000], total_lines)
                     } else {
                         content.clone()
                     };
@@ -344,6 +390,18 @@ impl RoboticExecutor {
                         Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
                     }
                 }
+                                MotorAction::PatchFile { path, target, replacement } => {
+                    let safe_path = sanitize(&path)?;
+                    let file_content = tokio::fs::read_to_string(&safe_path).await
+                        .map_err(|e| anyhow!("Failed to read file: {}", e))?;
+                    if !file_content.contains(&target) {
+                        return Err(anyhow!("Target string not found in file: {}", target));
+                    }
+                    let new_content = file_content.replace(&target, &replacement);
+                    tokio::fs::write(&safe_path, new_content).await
+                        .map_err(|e| anyhow!("Failed to write file: {}", e))?;
+                    Ok(format!("Successfully patched file: {}", path))
+                },
                 MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
             }
         }.await;

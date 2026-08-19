@@ -17,7 +17,7 @@ impl LocalSandbox {
                 }
                 if !stderr.is_empty() {
                     if !res.is_empty() {
-                        res.push_str("\n");
+                        res.push('\n');
                     }
                     res.push_str(&format!("[STDERR] {}", stderr));
                 }

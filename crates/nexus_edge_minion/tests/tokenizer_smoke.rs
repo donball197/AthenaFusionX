@@ -1,5 +1,5 @@
 use nexus_edge_minion::tokenizer::NexusTokenizer;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn find_tokenizer_json() -> Option<PathBuf> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -22,8 +22,8 @@ fn test_tokenizer_roundtrip() {
     };
     println!(">> [TEST] Using tokenizer.json at: {}", path.display());
 
-    let tok = NexusTokenizer::from_file(path.to_str().unwrap())
-        .expect("Failed to load tokenizer.json");
+    let tok =
+        NexusTokenizer::from_file(path.to_str().unwrap()).expect("Failed to load tokenizer.json");
 
     let text = "The capital of France is";
     let ids = tok.encode(text, true).expect("encode failed");

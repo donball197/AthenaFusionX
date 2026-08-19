@@ -20,6 +20,11 @@ pub struct SystemGenome {
 
 impl SystemGenome {
     pub fn baseline() -> Self {
+        let heavy = std::env::var("NEXUS_HEAVY_MODEL")
+            .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
+        let light = std::env::var("NEXUS_LIGHT_MODEL")
+            .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+
         Self {
             generation: 0,
             hash: "genesis_0000".to_string(),
@@ -29,8 +34,8 @@ impl SystemGenome {
                 heuristic_reward: 0.30,
             },
             active_wasm_modules: vec![],
-            primary_heavy_model: "gemma-4-31b-it".to_string(),
-            primary_light_model: "gemini-3.1-flash-lite".to_string(),
+            primary_heavy_model: heavy,
+            primary_light_model: light,
             fitness_score: 100.0,
         }
     }

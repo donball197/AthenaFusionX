@@ -16,6 +16,7 @@ pub struct EpistemicSession {
     pub executed_actions: HashSet<String>,
     pub max_observed_belief: f32,
     pub best_hypothesis_id: Option<Uuid>,
+    pub consecutive_mutation_vetoes: u32,
 }
 
 impl EpistemicSession {
@@ -30,6 +31,7 @@ impl EpistemicSession {
             executed_actions: HashSet::new(),
             max_observed_belief: 0.0,
             best_hypothesis_id: None,
+            consecutive_mutation_vetoes: 0,
         }
     }
 
@@ -93,7 +95,7 @@ impl EpistemicSession {
     }
 
     pub fn is_subgoal_satisfied(&self, current_belief: f32) -> bool {
-        SubgoalCompletionEngine::evaluate(&self.contract, &self.local_evidence, current_belief)
+        if current_belief < 0.85 { return false; } SubgoalCompletionEngine::evaluate(&self.contract, &self.local_evidence, current_belief)
     }
 
     pub fn collect_evidence(&self, h_id: Uuid) -> String {

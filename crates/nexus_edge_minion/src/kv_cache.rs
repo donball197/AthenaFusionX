@@ -55,6 +55,10 @@ impl StaticKVCache {
         self.active_tokens
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.active_tokens == 0
+    }
+
     pub fn capacity(&self) -> usize {
         self.max_seq_len
     }

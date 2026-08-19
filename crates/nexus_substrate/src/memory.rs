@@ -1,9 +1,9 @@
 use nexus_search::VectorVault;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, FromRow, Row, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, FromRow, Row, SqlitePool, Executor};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use parking_lot::Mutex;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentMemory {
@@ -31,17 +31,17 @@ impl MemoryPalace {
         if !Path::new(db_path).exists() {
             std::fs::File::create(db_path).ok();
         }
+        let connect_options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(db_path)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+            .pragma("cache_size", "-16000");
+
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
-            .connect(&format!("sqlite:{}", db_path))
+            .connect_with(connect_options)
             .await?;
 
-        sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
-        sqlx::query("PRAGMA cache_size=-16000;").execute(&pool).await?;
-        sqlx::query("PRAGMA synchronous=NORMAL;").execute(&pool).await?;
-
-        // ⚡ Initialize Vector Vault for O(1) Scalable Semantic Recall
-        // Gemini embedding dimension is 768, using 8-bit quantization
         let vault = Arc::new(Mutex::new(VectorVault::new(768, 4)));
 
         let palace = Self { pool, vault };
@@ -52,14 +52,13 @@ impl MemoryPalace {
     }
 
     async fn hydrate_vault(&self) -> Result<(), sqlx::Error> {
-        let rows =
-            sqlx::query("SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query("SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL")
+            .fetch_all(&self.pool)
+            .await?;
 
         let count = rows.len();
         if count > 0 {
-            let mut vault_guard = self.vault.lock().await;
+            let mut vault_guard = self.vault.lock();
             for row in rows {
                 let id: i64 = row.get("id");
                 let emb_str: Option<String> = row.get("embedding");
@@ -78,71 +77,69 @@ impl MemoryPalace {
     }
 
     pub async fn init_full_schema(&self) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS neural_context (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                origin TEXT NOT NULL,
-                directive TEXT NOT NULL,
-                result TEXT NOT NULL,
-                embedding TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            );",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.pool
+            .execute(
+                "CREATE TABLE IF NOT EXISTS neural_context (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    origin TEXT NOT NULL,
+                    directive TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    embedding TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                );",
+            )
+            .await?;
 
-        sqlx::query(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
-                directive, result, content='neural_context', content_rowid='id'
-            );",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.pool
+            .execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
+                    directive, result, content='neural_context', content_rowid='id'
+                );",
+            )
+            .await?;
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS system_insights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                summary TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            );",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.pool
+            .execute(
+                "CREATE TABLE IF NOT EXISTS system_insights (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    summary TEXT NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                );",
+            )
+            .await?;
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS cognition_provenance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                vmo_handle_id INTEGER NOT NULL,
-                payload_blob BLOB NOT NULL,
-                timestamp INTEGER NOT NULL,
-                thermal_at_suture REAL,
-                reason TEXT NOT NULL
-            );",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.pool
+            .execute(
+                "CREATE TABLE IF NOT EXISTS cognition_provenance (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    vmo_handle_id INTEGER NOT NULL,
+                    payload_blob BLOB NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    thermal_at_suture REAL,
+                    reason TEXT NOT NULL
+                );",
+            )
+            .await?;
 
-        // ⚡ V3 EXECUTIVE CORTEX SCHEMA
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS plan_runs (
-                id TEXT PRIMARY KEY,
-                root_directive TEXT NOT NULL,
-                graph_json TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.pool
+            .execute(
+                "CREATE TABLE IF NOT EXISTS plan_runs (
+                    id TEXT PRIMARY KEY,
+                    root_directive TEXT NOT NULL,
+                    graph_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );",
+            )
+            .await?;
 
-        // Dynamic schema evolution for legacy databases
-        sqlx::query("ALTER TABLE plan_runs ADD COLUMN root_directive TEXT NOT NULL DEFAULT '';")
-            .execute(&self.pool)
+        self.pool
+            .execute("ALTER TABLE plan_runs ADD COLUMN root_directive TEXT NOT NULL DEFAULT '';")
             .await
             .ok();
-        sqlx::query("ALTER TABLE plan_runs ADD COLUMN graph_json TEXT NOT NULL DEFAULT '';")
-            .execute(&self.pool)
+        self.pool
+            .execute("ALTER TABLE plan_runs ADD COLUMN graph_json TEXT NOT NULL DEFAULT '';")
             .await
             .ok();
 
@@ -179,9 +176,8 @@ impl MemoryPalace {
 
         tx.commit().await?;
 
-        // ⚡ Inject into high-speed vector vault if embedding exists
         if let Some(vec) = embedding {
-            let mut vault = self.vault.lock().await;
+            let mut vault = self.vault.lock();
             let _ = vault.commit_state(row_id as u64, &vec);
         }
 
@@ -217,11 +213,11 @@ impl MemoryPalace {
         Ok(rows
             .into_iter()
             .map(|row| AgentMemory {
-                id: row.get(0),
-                origin: row.get(1),
-                directive: row.get(2),
-                result: row.get(3),
-                timestamp: row.get(4),
+                id: row.get("id"),
+                origin: row.get("origin"),
+                directive: row.get("directive"),
+                result: row.get("result"),
+                timestamp: row.get("timestamp"),
             })
             .collect())
     }
@@ -231,7 +227,7 @@ impl MemoryPalace {
         query_vec: &[f32],
     ) -> Result<Vec<AgentMemory>, sqlx::Error> {
         let matched_ids = {
-            let vault = self.vault.lock().await;
+            let vault = self.vault.lock();
             match vault.recall_context(query_vec, 3) {
                 Ok((_scores, ids)) => ids,
                 Err(e) => {
@@ -272,8 +268,8 @@ impl MemoryPalace {
         sqlx::query("DELETE FROM memory_search").execute(&self.pool).await?;
         sqlx::query("DELETE FROM system_insights").execute(&self.pool).await?;
 
-        let mut vault = self.vault.lock().await;
-        *vault = VectorVault::new(768, 4); // Re-instantiate to clear RAM
+        let mut vault = self.vault.lock();
+        *vault = VectorVault::new(768, 4);
 
         Ok(())
     }
@@ -293,7 +289,6 @@ impl MemoryPalace {
             .collect())
     }
 
-    // ── Provenance/suture methods ──
     pub async fn save_provenance(
         &self,
         handle: i64,
@@ -323,7 +318,6 @@ impl MemoryPalace {
         Ok(rows)
     }
 
-    // ── V3 EXECUTIVE CORTEX DURABLE STATE ──
     pub async fn upsert_plan_run(
         &self,
         id: &str,

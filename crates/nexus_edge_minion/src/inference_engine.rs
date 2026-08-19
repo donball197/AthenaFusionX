@@ -93,7 +93,8 @@ impl InferenceEngine {
         }
         eprintln!("[dbg] after token embed: hs[0..4]={:?}", &hidden_state[0..4]);
 
-        let ple_ts = self.loader.get_tensor("model.language_model.embed_tokens_per_layer.weight")?;
+        let ple_ts =
+            self.loader.get_tensor("model.language_model.embed_tokens_per_layer.weight")?;
         let ple_tt = ple_ts.as_bf16()?;
         let scale_ple = (PLE_LAYER_DIM as f32).sqrt();
         let raw_ple: Vec<f32> = ple_tt.data[tok * PLE_TOTAL..(tok + 1) * PLE_TOTAL]
@@ -106,14 +107,22 @@ impl InferenceEngine {
             raw_ple.iter().filter(|v| **v != 0.0).count()
         );
 
-        let proj_ts = self.loader.get_tensor("model.language_model.per_layer_model_projection.weight")?;
+        let proj_ts =
+            self.loader.get_tensor("model.language_model.per_layer_model_projection.weight")?;
         let proj_tt = proj_ts.as_bf16()?;
         let hidden_bf16: Vec<bf16> = hidden_state.iter().map(|&v| bf16::from_f32(v)).collect();
         let mut proj = vec![0.0f32; PLE_TOTAL];
-        crate::neon_math::matvec_bf16_to_f32(proj_tt.data, &hidden_bf16, &mut proj, PLE_TOTAL, HIDDEN);
+        crate::neon_math::matvec_bf16_to_f32(
+            proj_tt.data,
+            &hidden_bf16,
+            &mut proj,
+            PLE_TOTAL,
+            HIDDEN,
+        );
         eprintln!("[dbg] proj[0..4] pre-norm={:?}", &proj[0..4]);
 
-        let norm_ts = self.loader.get_tensor("model.language_model.per_layer_projection_norm.weight")?;
+        let norm_ts =
+            self.loader.get_tensor("model.language_model.per_layer_projection_norm.weight")?;
         let norm_tt = norm_ts.as_bf16()?;
         let norm_w: Vec<f32> = norm_tt.data.iter().map(|v| v.to_f32()).collect();
         for chunk in proj.chunks_mut(PLE_LAYER_DIM) {
@@ -144,61 +153,70 @@ impl InferenceEngine {
             &[]
         };
 
-        self.orchestrator.execute_token_step(hidden_state, &per_layer_inputs, position, |layer_idx| {
-            let prefix = format!("model.language_model.layers.{}", layer_idx);
-            let norms = &self.cached_norms[layer_idx];
+        self.orchestrator.execute_token_step(
+            hidden_state,
+            &per_layer_inputs,
+            position,
+            |layer_idx| {
+                let prefix = format!("model.language_model.layers.{}", layer_idx);
+                let norms = &self.cached_norms[layer_idx];
 
-            let gate_proj = get_mmap_bf16(&format!("{}.mlp.gate_proj.weight", prefix));
-            let mlp_intermediate_size =
-                if !gate_proj.is_empty() { gate_proj.len() / 1536 } else { 12288 };
+                let gate_proj = get_mmap_bf16(&format!("{}.mlp.gate_proj.weight", prefix));
+                let mlp_intermediate_size =
+                    if !gate_proj.is_empty() { gate_proj.len() / 1536 } else { 12288 };
 
-            let q_proj = get_mmap_bf16(&format!("{}.self_attn.q_proj.weight", prefix));
-            if layer_idx == 0 {
-                eprintln!("[dbg] layer 0 q_proj.len()={} gate_proj.len()={}", q_proj.len(), gate_proj.len());
-            }
+                let q_proj = get_mmap_bf16(&format!("{}.self_attn.q_proj.weight", prefix));
+                if layer_idx == 0 {
+                    eprintln!(
+                        "[dbg] layer 0 q_proj.len()={} gate_proj.len()={}",
+                        q_proj.len(),
+                        gate_proj.len()
+                    );
+                }
 
-            let layer_scalar = self
-                .loader
-                .get_tensor(&format!("{}.layer_scalar", prefix))
-                .ok()
-                .and_then(|ts| ts.as_bf16().ok())
-                .and_then(|tt| tt.data.first().map(|v| v.to_f32()))
-                .unwrap_or(1.0);
-            if layer_idx == 0 {
-                eprintln!("[dbg] layer 0 layer_scalar={}", layer_scalar);
-            }
+                let layer_scalar = self
+                    .loader
+                    .get_tensor(&format!("{}.layer_scalar", prefix))
+                    .ok()
+                    .and_then(|ts| ts.as_bf16().ok())
+                    .and_then(|tt| tt.data.first().map(|v| v.to_f32()))
+                    .unwrap_or(1.0);
+                if layer_idx == 0 {
+                    eprintln!("[dbg] layer 0 layer_scalar={}", layer_scalar);
+                }
 
-            DecoderLayerWeights {
-                input_layernorm: &norms.input_layernorm,
-                post_attention_layernorm: &norms.post_attention_layernorm,
-                pre_feedforward_layernorm: &norms.pre_feedforward_layernorm,
-                post_feedforward_layernorm: &norms.post_feedforward_layernorm,
+                DecoderLayerWeights {
+                    input_layernorm: &norms.input_layernorm,
+                    post_attention_layernorm: &norms.post_attention_layernorm,
+                    pre_feedforward_layernorm: &norms.pre_feedforward_layernorm,
+                    post_feedforward_layernorm: &norms.post_feedforward_layernorm,
 
-                q_proj,
-                q_norm: &norms.q_norm,
-                k_proj: Some(get_mmap_bf16(&format!("{}.self_attn.k_proj.weight", prefix))),
-                v_proj: Some(get_mmap_bf16(&format!("{}.self_attn.v_proj.weight", prefix))),
-                k_norm: Some(&norms.k_norm),
-                o_proj: get_mmap_bf16(&format!("{}.self_attn.o_proj.weight", prefix)),
+                    q_proj,
+                    q_norm: &norms.q_norm,
+                    k_proj: Some(get_mmap_bf16(&format!("{}.self_attn.k_proj.weight", prefix))),
+                    v_proj: Some(get_mmap_bf16(&format!("{}.self_attn.v_proj.weight", prefix))),
+                    k_norm: Some(&norms.k_norm),
+                    o_proj: get_mmap_bf16(&format!("{}.self_attn.o_proj.weight", prefix)),
 
-                gate_proj,
-                up_proj: get_mmap_bf16(&format!("{}.mlp.up_proj.weight", prefix)),
-                down_proj: get_mmap_bf16(&format!("{}.mlp.down_proj.weight", prefix)),
-                mlp_intermediate_size,
+                    gate_proj,
+                    up_proj: get_mmap_bf16(&format!("{}.mlp.up_proj.weight", prefix)),
+                    down_proj: get_mmap_bf16(&format!("{}.mlp.down_proj.weight", prefix)),
+                    mlp_intermediate_size,
 
-                per_layer_input_gate: get_mmap_bf16(&format!(
-                    "{}.per_layer_input_gate.weight",
-                    prefix
-                )),
-                per_layer_projection: get_mmap_bf16(&format!(
-                    "{}.per_layer_projection.weight",
-                    prefix
-                )),
-                post_per_layer_input_norm: &norms.post_per_layer_input_norm,
+                    per_layer_input_gate: get_mmap_bf16(&format!(
+                        "{}.per_layer_input_gate.weight",
+                        prefix
+                    )),
+                    per_layer_projection: get_mmap_bf16(&format!(
+                        "{}.per_layer_projection.weight",
+                        prefix
+                    )),
+                    post_per_layer_input_norm: &norms.post_per_layer_input_norm,
 
-                layer_scalar,
-            }
-        });
+                    layer_scalar,
+                }
+            },
+        );
 
         eprintln!("[dbg] hidden_state post-layers[0..4]={:?}", &hidden_state[0..4]);
         eprintln!(
@@ -211,7 +229,8 @@ impl InferenceEngine {
         // Final RMSNorm before any LM-head / logits step (model.language_model.norm.weight)
         if let Ok(final_norm_ts) = self.loader.get_tensor("model.language_model.norm.weight") {
             if let Ok(final_norm_tt) = final_norm_ts.as_bf16() {
-                let final_norm_w: Vec<f32> = final_norm_tt.data.iter().map(|v| v.to_f32()).collect();
+                let final_norm_w: Vec<f32> =
+                    final_norm_tt.data.iter().map(|v| v.to_f32()).collect();
                 if final_norm_w.len() == hidden_state.len() {
                     crate::attention::rms_norm_in_place(hidden_state, &final_norm_w);
                     eprintln!("[dbg] hidden_state post-final-norm[0..4]={:?}", &hidden_state[0..4]);
@@ -224,10 +243,20 @@ impl InferenceEngine {
                 }
             }
         } else {
-            eprintln!("[dbg][WARN] model.language_model.norm.weight not found, skipping final norm");
+            eprintln!(
+                "[dbg][WARN] model.language_model.norm.weight not found, skipping final norm"
+            );
         }
 
         Ok(())
+    }
+
+    /// Diagnostic: KV cache length at cache index 0 (layer 0's own cache,
+    /// since layer 0 is always a KV-source layer -- before the shared-KV
+    /// boundary). Grows by 1 per step() call, up to that cache's capacity
+    /// (sliding_window=512 or GLOBAL_MAX_CONTEXT=8192 depending on type).
+    pub fn kv_cache_len0(&self) -> Option<usize> {
+        self.orchestrator.kv_cache_len(0)
     }
 
     /// Computes logits from a (post-final-norm) hidden state via the tied LM
@@ -247,7 +276,13 @@ impl InferenceEngine {
 
         let hidden_bf16: Vec<bf16> = hidden_state.iter().map(|&v| bf16::from_f32(v)).collect();
         let mut logits = vec![0.0f32; vocab];
-        crate::neon_math::matvec_bf16_to_f32(embed_tt.data, &hidden_bf16, &mut logits, vocab, hidden_dim);
+        crate::neon_math::matvec_bf16_to_f32(
+            embed_tt.data,
+            &hidden_bf16,
+            &mut logits,
+            vocab,
+            hidden_dim,
+        );
 
         const SOFTCAP: f32 = 30.0;
         for l in logits.iter_mut() {

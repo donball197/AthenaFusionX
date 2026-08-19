@@ -1,10 +1,13 @@
 use nexus_edge_minion::api_gateway::{AgentRequest, ApiGateway};
 
 #[test]
-fn test_api_gateway_gemma4_dispatch() {
-    let gateway = ApiGateway::new("https://api.example.com/v1", "test-key");
+fn test_api_gateway_error_cascade() {
+    let gateway = ApiGateway::new();
     let req = AgentRequest { prompt: "Test prompt".to_string(), temperature: 0.7, max_tokens: 64 };
-    let res = gateway.dispatch(req).unwrap();
-    assert!(res.text.contains("gemma-4-31-it"));
-    assert_eq!(res.tokens_used, 64);
+    
+    // Test that an unreachable/dummy model correctly exhausts the cascade
+    // and returns an Err safely instead of panicking.
+    let res = gateway.dispatch_cascade(req, &["dummy_model".to_string()]);
+    
+    assert!(res.is_err(), "Gateway should cleanly return an Err when all models fail.");
 }

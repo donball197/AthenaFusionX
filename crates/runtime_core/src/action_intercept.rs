@@ -6,8 +6,9 @@ use crate::agent_protocol::AgentAction;
 /// exactly why it's the first piece pulled out of the ~500-line
 /// ignite_with_evidence function in cortical_loop.rs.
 ///
-/// Returns None if the text doesn't match any known tool prefix; the caller
-/// falls back further to raw ExecuteCommand (see cortical_loop.rs).
+/// Returns None if the text doesn't match any known tool prefix or labeled
+/// multi-line form; the caller falls back further to raw ExecuteCommand
+/// (see cortical_loop.rs).
 ///
 /// NOTE: deliberately does NOT include a write_file branch. That branch was
 /// removed from cortical_loop.rs earlier this session (see [CORTEX SAFETY]
@@ -16,6 +17,7 @@ use crate::agent_protocol::AgentAction;
 pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
     let action_str = action_str.trim();
 
+    // --- Prefix form (translator / single-line) ---
     if let Some(cmd) = action_str.strip_prefix("execute_command") {
         let clean_cmd = cmd.trim().trim_matches('\'').trim_matches('"').to_string();
         return Some(AgentAction::ExecuteCommand {
@@ -24,7 +26,6 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
             confidence: 0.9,
         });
     }
-
     if action_str.starts_with("search_code") {
         let parts: Vec<&str> = action_str.split_whitespace().collect();
         if parts.len() >= 3 {
@@ -38,7 +39,6 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         }
         return None;
     }
-
     if action_str.starts_with("read_file_chunk") {
         let parts: Vec<&str> = action_str.split_whitespace().collect();
         if parts.len() >= 2 {
@@ -54,7 +54,6 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         }
         return None;
     }
-
     if let Some(stripped) = action_str.strip_prefix("diff_patch ") {
         let parts: Vec<&str> = stripped.split_whitespace().collect();
         if parts.len() >= 3 {
@@ -70,7 +69,6 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         }
         return None;
     }
-
     if let Some(stripped) = action_str.strip_prefix("patch_function ") {
         let parts: Vec<&str> = stripped.split_whitespace().collect();
         if parts.len() >= 3 {
@@ -86,14 +84,12 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         }
         return None;
     }
-
     if let Some(path) = action_str.strip_prefix("read_file ") {
         return Some(AgentAction::ReadFile {
             path: path.trim().to_string(),
             reasoning: "Intercepted fallback read_file".to_string(),
         });
     }
-
     if let Some(raw_query) = action_str.strip_prefix("search_memory") {
         let query = raw_query.trim().trim_matches('\'').trim_matches('"').to_string();
         return Some(AgentAction::SearchMemory {
@@ -102,7 +98,105 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         });
     }
 
+    // --- Labeled multi-line form (Strategist NL) ---
+    // Matches proposals like:
+    //   Tool: read_file
+    //   Target Path: /tmp/openfang/SECURITY.md
+    // Does not handle write_file (same safety contract as above).
+    if let Some(action) = intercept_labeled_proposal(action_str) {
+        return Some(action);
+    }
+
     None
+}
+
+/// Strategist-style labeled proposals (Tool: / Target Path: / Command: / Query:).
+fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
+    let lower = text.to_lowercase();
+
+    // read_file
+    if lower.contains("tool: read_file")
+        || lower.contains("use the `read_file`")
+        || lower.contains("use the read_file")
+    {
+        if let Some(path) =
+            labeled_value(text, &["Target Path:", "target path:", "Path:", "path:"])
+        {
+            if looks_like_path(&path) {
+                return Some(AgentAction::ReadFile {
+                    path,
+                    reasoning: "Intercepted labeled read_file".to_string(),
+                });
+            }
+        }
+    }
+
+    // search_code
+    if lower.contains("tool: search_code")
+        || lower.contains("use the `search_code`")
+        || lower.contains("use the search_code")
+    {
+        let path = labeled_value(text, &["Path:", "path:"]);
+        let query = labeled_value(text, &["Query:", "query:"]);
+        if let (Some(path), Some(query)) = (path, query) {
+            if looks_like_path(&path) && !query.is_empty() {
+                return Some(AgentAction::SearchCode {
+                    path,
+                    query,
+                    reasoning: "Intercepted labeled search_code".to_string(),
+                });
+            }
+        }
+    }
+
+    // execute_command — require Tool/Command labels, not bare "git clone" anywhere
+    if lower.contains("tool: execute_command")
+        || lower.contains("use the execute_command")
+        || lower.contains("use the `execute_command`")
+    {
+        if let Some(cmd) = labeled_value(text, &["Command:", "command:"]) {
+            let cmd = cmd.trim().trim_matches('`').to_string();
+            if !cmd.is_empty() && !cmd.to_lowercase().starts_with("tool") {
+                return Some(AgentAction::ExecuteCommand {
+                    command: cmd,
+                    reasoning: "Intercepted labeled execute_command".to_string(),
+                    confidence: 0.85,
+                });
+            }
+        }
+    }
+
+    None
+}
+
+fn labeled_value(text: &str, markers: &[&str]) -> Option<String> {
+    for marker in markers {
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.len() >= marker.len()
+                && trimmed[..marker.len()].eq_ignore_ascii_case(marker)
+            {
+                let rest = trimmed[marker.len()..]
+                    .trim()
+                    .trim_matches('`')
+                    .trim_matches('"');
+                if !rest.is_empty() {
+                    return Some(rest.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn looks_like_path(p: &str) -> bool {
+    p.starts_with('/')
+        || p.starts_with("./")
+        || p.ends_with(".rs")
+        || p.ends_with(".toml")
+        || p.ends_with(".md")
+        || p.ends_with(".json")
+        || p.contains('/')
 }
 
 #[cfg(test)]
@@ -122,13 +216,59 @@ mod tests {
 
     #[test]
     fn no_write_file_branch() {
-        // write_file must NOT be handled here -- deliberately excluded after
-        // the corruption incident. Should fall through to None.
         assert!(intercept_fallback_action("write_file foo.rs bar").is_none());
     }
 
     #[test]
     fn unrecognized_returns_none() {
         assert!(intercept_fallback_action("halt").is_none());
+    }
+
+    #[test]
+    fn labeled_read_file() {
+        let text = "I will use the `read_file` tool.\n\
+                    Tool: read_file\n\
+                    Target Path: /tmp/openfang/SECURITY.md\n";
+        match intercept_fallback_action(text) {
+            Some(AgentAction::ReadFile { path, .. }) => {
+                assert_eq!(path, "/tmp/openfang/SECURITY.md");
+            }
+            other => panic!("expected ReadFile, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn labeled_execute_command() {
+        let text = "Tool: execute_command\nCommand: ls -R /tmp/openfang\n";
+        match intercept_fallback_action(text) {
+            Some(AgentAction::ExecuteCommand { command, .. }) => {
+                assert_eq!(command, "ls -R /tmp/openfang");
+            }
+            other => panic!("expected ExecuteCommand, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn labeled_search_code() {
+        let text = "Tool: search_code\nPath: /tmp/openfang/crates/openfang-memory\nQuery: sqlite\n";
+        match intercept_fallback_action(text) {
+            Some(AgentAction::SearchCode { path, query, .. }) => {
+                assert_eq!(path, "/tmp/openfang/crates/openfang-memory");
+                assert_eq!(query, "sqlite");
+            }
+            other => panic!("expected SearchCode, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn labeled_still_rejects_write_file() {
+        let text = "Tool: write_file\nPath: foo.rs\nContent: evil\n";
+        assert!(intercept_fallback_action(text).is_none());
+    }
+
+    #[test]
+    fn bare_git_clone_without_tool_label_is_not_intercepted() {
+        // Must not match loose substrings — only labeled Tool/Command form.
+        assert!(intercept_fallback_action("git clone --depth 1 https://example.com/repo.git").is_none());
     }
 }

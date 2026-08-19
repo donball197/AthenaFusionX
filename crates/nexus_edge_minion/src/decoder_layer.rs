@@ -165,11 +165,10 @@ impl DecoderLayer {
         for i in 0..HIDDEN_SIZE {
             hidden_state[i] += ple_out[i] * weights.layer_scalar;
         }
-
     }
 }
 
 fn gelu_tanh(x: f32) -> f32 {
-    let inner = 0.7978845608_f32 * (x + 0.044715_f32 * x.powi(3));
+    let inner = 0.797_884_6_f32 * (x + 0.044715_f32 * x.powi(3));
     0.5 * x * (1.0 + inner.tanh())
 }

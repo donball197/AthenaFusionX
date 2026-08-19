@@ -1,5 +1,12 @@
-pub const MODEL_FLASH_LITE: &str = "gemini-3.1-flash-lite";
-pub const MODEL_31B: &str = "gemma-4-31b-it";
+use std::env;
+
+pub fn get_flash_lite_model() -> String {
+    env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string())
+}
+
+pub fn get_heavy_model() -> String {
+    env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string())
+}
 
 pub struct AgentFactory;
 
@@ -8,18 +15,18 @@ impl AgentFactory {
         Self
     }
 
-    pub fn get_model_for_turn(turn: usize, error_count: usize) -> &'static str {
+    pub fn get_model_for_turn(turn: usize, error_count: usize) -> String {
         if error_count > 0 {
-            return MODEL_31B;
+            return get_heavy_model();
         }
         match turn {
-            0..=4 => MODEL_FLASH_LITE,
-            _ => MODEL_31B,
+            0..=4 => get_flash_lite_model(),
+            _ => get_heavy_model(),
         }
     }
 
-    pub fn failover_model(_current_model: &str) -> &'static str {
-        MODEL_31B
+    pub fn failover_model(_current_model: &str) -> String {
+        get_heavy_model()
     }
 }
 

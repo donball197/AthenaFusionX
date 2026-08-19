@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{sqlite::{SqlitePoolOptions, SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous}, SqlitePool};
 
 pub struct SqliteStore {
     pool: SqlitePool,
@@ -7,13 +7,15 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub async fn new(path: &str) -> Result<Self> {
+        let connect_options = SqliteConnectOptions::new()
+            .filename(path)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal);
+
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
-            .connect(&format!("sqlite:{}", path))
+            .connect_with(connect_options)
             .await?;
-
-        sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await?;
-        sqlx::query("PRAGMA synchronous=NORMAL;").execute(&pool).await?;
 
         sqlx::query(
             "

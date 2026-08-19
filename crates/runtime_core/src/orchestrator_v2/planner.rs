@@ -22,10 +22,12 @@ impl PlannerAgent {
         let prompt = format!(
             "You are the Lead DAG Planner Agent for AthenaFusionX.\n\
              Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.\n\
-             CRITICAL RULE [GRANULARITY]: Break complex directives into many small, isolated nodes. If asked to fix multiple vulnerabilities or modify multiple files, create at least one distinct node for EACH file/vulnerability.\n\
+             CRITICAL RULE [GRANULARITY]: YOU MUST BREAK COMPLEX DIRECTIVES INTO AT LEAST 3 DISTINCT NODES. A single node 'task_1' is a FAILURE. If auditing or analyzing, create separate nodes for 'discovery', 'analysis', and 'reporting'. If modifying files, create one node per file.
+             CRITICAL RULE [JSON ESCAPING]: Do NOT use raw newlines inside JSON strings. Use \n.\n\
              CRITICAL RULE [ROUTER LOCATION]: The Executive Cortex router is located at 'crates/runtime_core/src/router.rs'. Always use 'crates/runtime_core/src/router.rs' in task objectives when referring to the router.\n\
              CRITICAL RULE [DEPENDENCY INFERENCE]: If one task reads, parses, or consumes a file or resource that another task generates, writes, or produces, the consuming task's 'deps' array MUST include the producing task's id. Never schedule a read of a path before the task that creates it.\n\
              CRITICAL RULE [TERMINAL STEPS]: A directive step that is purely a control-flow or meta instruction (e.g. \"halt\", \"stop\", \"done\", \"finish execution\", \"end mission\") is NOT real work and MUST NOT become its own node. Omit it from the graph entirely -- mission completion is handled automatically once all real work nodes finish.\n\
+             CRITICAL RULE [CONDITIONAL REMEDIATION]: Do not create a separate downstream node whose entire purpose is to \"fix\", \"remediate\", or \"correct\" something that a prior diagnostic node has not yet confirmed exists. When a directive says something like \"check X, then fix any issues found\" or \"run tests and correct all errors\", scope that as a SINGLE node (e.g. \"check X and fix any issues found\") rather than splitting diagnosis and remediation into two nodes -- the outcome depends on what the diagnostic step actually discovers, and a separate node presupposes there is necessarily something to fix.\n\
              DIRECTIVE: {}\n\
              OUTPUT ONLY VALID JSON with this exact structure:\n\
              {{\n  \"nodes\": {{\n    \"task_1\": {{\n      \"id\": \"task_1\",\n      \"deps\": [],\n      \"required_agent\": \"CodeAnalyzer\",\n      \"objective\": \"...\"\n    }}\n  }}\n}}",

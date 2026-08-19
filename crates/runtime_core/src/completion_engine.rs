@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_match)]
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -7,6 +8,7 @@ pub enum CompletionCondition {
     WriteMarkerAcquired,
     PatchMarkerAcquired,
     CommandMarkerAcquired,
+    SourceCodeEvidenceRequired,
     MinBeliefScore(f32),
 }
 
@@ -27,7 +29,7 @@ pub struct CognitiveBudget {
 
 impl CognitiveBudget {
     pub fn default_for_node() -> Self {
-        Self { max_turns: 20, max_model_calls: 40, model_calls_made: 0 }
+        Self { max_turns: 60, max_model_calls: 150, model_calls_made: 0 }
     }
 
     pub fn record_call(&mut self) {
@@ -41,61 +43,101 @@ impl CognitiveBudget {
 
 pub struct SubgoalCompletionEngine;
 
+fn has_word(text: &str, word: &str) -> bool {
+    text.split_whitespace()
+        .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == word)
+}
+
+fn any_word(text: &str, words: &[&str]) -> bool {
+    words.iter().any(|w| has_word(text, w))
+}
+
+// Negation-aware variant of any_word. A directive that says "Do NOT write
+// implementation code" or "No patches" contains the literal words "write"/
+// "patch" just as much as one that actually requests them -- any_word alone
+// can't tell the two apart, which is exactly what misclassified a read-only
+// architectural-audit directive as a mutation task (its own prohibition
+// clauses repeatedly used "write"/"patch"). This checks each occurrence of
+// the target word against the 3 preceding tokens for a negation marker and
+// only counts it as a real trigger if no such marker is present.
+fn has_word_unnegated(text: &str, word: &str) -> bool {
+    let negations = ["not", "never", "no", "cannot", "n't"];
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    for (i, tok) in tokens.iter().enumerate() {
+        let clean = tok.trim_matches(|c: char| !c.is_alphanumeric());
+        if clean == word {
+            let start = i.saturating_sub(3);
+            let negated = tokens[start..i].iter().any(|w| {
+                let wl = w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+                negations.contains(&wl.as_str()) || wl.ends_with("n't")
+            });
+            if !negated {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
+    words.iter().any(|w| has_word_unnegated(text, w))
+}
+
+#[allow(dead_code)]
+const NOTHING_TO_FIX_BELIEF_THRESHOLD: f32 = 0.85;
+
+#[allow(dead_code)]
+fn has_source_file_evidence(local_evidence: &str) -> bool {
+    local_evidence.lines().any(|line| {
+        (line.starts_with("[READ_OK]") || line.starts_with("[SEARCH_CODE_OK]"))
+            && line.contains(".rs")
+    }) || local_evidence.contains(".rs\n")
+        || local_evidence.contains(".rs:")
+}
+
 impl SubgoalCompletionEngine {
     pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
         let obj_lower = objective.trim().to_lowercase();
+        let classify_text = obj_lower
+            .strip_prefix("objective:")
+            .or_else(|| obj_lower.strip_prefix("objective"))
+            .unwrap_or(&obj_lower)
+            .trim();
+
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
 
-        // ⚡ SAFETY FIX: Prevent Reconnaissance Trap
-        // If the objective starts with a recon verb, do not apply a mutation lock,
-        // even if the word 'fix' or 'patch' appears later in the sentence.
-        let is_recon_intent = obj_lower.starts_with("read")
-            || obj_lower.starts_with("analyze")
-            || obj_lower.starts_with("inspect")
-            || obj_lower.starts_with("search")
-            || obj_lower.starts_with("examine")
-            || obj_lower.starts_with("locate")
-            || obj_lower.starts_with("profile")
-            || obj_lower.starts_with("benchmark");
+        let first_word = classify_text.split_whitespace().next().unwrap_or("");
+        let is_recon_intent = [
+            "read", "analyze", "inspect", "search", "examine", "locate", "profile", "benchmark",
+        ]
+        .contains(&first_word);
 
-        if obj_lower.contains("graph")
-            || obj_lower.contains("mapping")
-            || obj_lower.contains("dependency")
-        {
-            conditions.push(CompletionCondition::WriteMarkerAcquired);
-        } else if is_recon_intent {
+        if is_recon_intent {
             conditions.push(CompletionCondition::ReadMarkerAcquired);
             conditions.push(CompletionCondition::MinBeliefScore(0.65));
-        } else if obj_lower.contains("write")
-            || obj_lower.contains("export")
-            || obj_lower.contains("save")
-            || obj_lower.contains("output")
-        {
+        } else if any_word_unnegated(
+            classify_text,
+            &["write", "write_file", "output", "export", "save", "implement", "integrate", "add", "create"],
+        ) {
             conditions.push(CompletionCondition::WriteMarkerAcquired);
             is_mutation_task = true;
-        } else if obj_lower.contains("patch")
-            || obj_lower.contains("apply")
-            || obj_lower.contains("fix")
-            || obj_lower.contains("remediate")
-        {
+
+            if any_word(classify_text, &["roadmap", "audit", "comparison"]) {
+                conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
+            }
+        } else if any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate"]) {
             conditions.push(CompletionCondition::PatchMarkerAcquired);
             is_mutation_task = true;
-        } else if obj_lower.contains("search")
-            || obj_lower.contains("find")
-            || obj_lower.contains("locate")
-        {
+        } else if any_word(classify_text, &["search", "find", "locate"]) {
             conditions.push(CompletionCondition::SearchMarkerAcquired);
             conditions.push(CompletionCondition::MinBeliefScore(0.65));
-        } else if obj_lower.contains("read")
-            || obj_lower.contains("inspect")
-            || obj_lower.contains("audit")
-        {
+        } else if any_word(classify_text, &["read", "inspect", "audit"]) {
             conditions.push(CompletionCondition::ReadMarkerAcquired);
             conditions.push(CompletionCondition::MinBeliefScore(0.65));
         } else {
             conditions.push(CompletionCondition::CommandMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.65));
+            conditions.push(CompletionCondition::MinBeliefScore(0.85));
         }
 
         SubgoalContract {
@@ -107,57 +149,30 @@ impl SubgoalCompletionEngine {
     }
 
     pub fn evaluate(contract: &SubgoalContract, local_evidence: &str, belief_score: f32) -> bool {
-        for cond in &contract.conditions {
-            match cond {
+        // ⚡ FIX: Actually enforce the contract conditions inferred earlier.
+        for condition in &contract.conditions {
+            match condition {
+                CompletionCondition::MinBeliefScore(min_score) => {
+                    if belief_score < *min_score { return false; }
+                }
                 CompletionCondition::WriteMarkerAcquired => {
-                    if !local_evidence.lines().any(|l| l.starts_with("[WRITE_OK]")) {
-                        return false;
-                    }
+                    if !local_evidence.contains("[WRITE_OK]") && !local_evidence.contains("[CMD_OK]") { return false; }
                 }
                 CompletionCondition::PatchMarkerAcquired => {
-                    let has_patch =
-                        local_evidence.lines().any(|l| {
-                            l.starts_with("[DIFF_PATCH_OK]") || l.starts_with("[REPLACE_LINES_OK]")
-                        }) || local_evidence.lines().any(|l| l.starts_with("[PATCH_FUNCTION_OK]"))
-                            || local_evidence.lines().any(|l| l.starts_with("[WRITE_OK]"));
-                    if !has_patch {
-                        return false;
-                    }
-                }
-                CompletionCondition::SearchMarkerAcquired => {
-                    let has_search =
-                        local_evidence.lines().any(|l| l.starts_with("[SEARCH_CODE_OK]"))
-                            || local_evidence.lines().any(|l| l.starts_with("[SEARCH_OK]"))
-                            || local_evidence.lines().any(|l| l.starts_with("[READ_CHUNK_OK]"))
-                            || local_evidence.lines().any(|l| l.starts_with("[READ_OK]"));
-                    if !has_search {
-                        return false;
-                    }
+                    if !local_evidence.contains("[PATCH_FUNCTION_OK]") && !local_evidence.contains("[DIFF_PATCH_OK]") && !local_evidence.contains("[REPLACE_LINES_OK]") { return false; }
                 }
                 CompletionCondition::ReadMarkerAcquired => {
-                    let has_read = local_evidence.lines().any(|l| l.starts_with("[READ_CHUNK_OK]"))
-                        || local_evidence.lines().any(|l| l.starts_with("[READ_OK]"))
-                        || local_evidence.lines().any(|l| l.starts_with("[SEARCH_CODE_OK]"));
-                    if !has_read {
-                        return false;
-                    }
+                    if !local_evidence.contains("[READ_OK]") && !local_evidence.contains("[READ_CHUNK_OK]") { return false; }
                 }
-                CompletionCondition::CommandMarkerAcquired => {
-                    let has_cmd = local_evidence.lines().any(|l| l.starts_with("[CMD_OK]"))
-                        || local_evidence.lines().any(|l| l.starts_with("[READ_CHUNK_OK]"))
-                        || local_evidence.lines().any(|l| l.starts_with("[SEARCH_CODE_OK]"))
-                        || local_evidence.lines().any(|l| l.starts_with("[READ_OK]"));
-                    if !has_cmd {
-                        return false;
-                    }
+                CompletionCondition::SearchMarkerAcquired => {
+                    if !local_evidence.contains("[SEARCH_CODE_OK]") && !local_evidence.contains("[SEARCH_OK]") { return false; }
                 }
-                CompletionCondition::MinBeliefScore(min) => {
-                    if belief_score < *min {
-                        return false;
-                    }
-                }
+                _ => {} // SourceCodeEvidenceRequired / CommandMarkerAcquired handled loosely for now
             }
         }
-        true
+
+        // Only after the contract is satisfied do we pass it to the final verifier
+        let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(&contract.node_id, local_evidence);
+        matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
     }
 }

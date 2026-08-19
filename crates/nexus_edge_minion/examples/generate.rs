@@ -28,8 +28,10 @@ fn main() {
     let raw_prompt = args.get(1).cloned().unwrap_or_else(|| "The capital of France is".to_string());
     let max_new_tokens: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8);
 
-    let weights_path = find_file(&["gemma-4-E2B-it.safetensors"])
-        .expect("Could not find gemma-4-E2B-it.safetensors in crate dir, parent, or workspace root.");
+    let weights_path = find_file(&["gemma-4-E2B-it.safetensors"]).expect(
+        "Could not find gemma-4-E2B-it.safetensors in crate dir, parent, or workspace root.",
+    );
+
     let tokenizer_path = find_file(&["tokenizer.json"])
         .expect("Could not find tokenizer.json in crate dir, parent, or workspace root.");
 
@@ -41,11 +43,12 @@ fn main() {
     let mut engine = InferenceEngine::new(&weights_path).expect("Failed to init InferenceEngine");
 
     // --- STRUCTURAL FIX: Apply Chat Template & Enforce BOS (2) ---
-    let formatted_prompt = format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n", raw_prompt);
+    let formatted_prompt =
+        format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n", raw_prompt);
     println!(">> Encoding prompt:\n{}", formatted_prompt);
-    
+
     let mut prompt_ids = tok.encode(&formatted_prompt, true).expect("encode failed");
-    
+
     // Gemma expects token 2 at index 0. Force it if the tokenizer omits it.
     if prompt_ids.is_empty() || prompt_ids[0] != 2 {
         prompt_ids.insert(0, 2);
@@ -67,20 +70,44 @@ fn main() {
 
     let mut generated_ids: Vec<u32> = Vec::new();
 
-    println!(">> Generating up to {} tokens (greedy argmax)...", max_new_tokens);
+    println!(
+        ">> Generating up to {} tokens (greedy
+
+argmax)...",
+        max_new_tokens
+    );
     print!(">> Output: ");
     std::io::stdout().flush().ok();
-
+    let mut step_num = 0usize;
     for _ in 0..max_new_tokens {
+        step_num += 1;
         let logits = engine.compute_logits(&hidden_state).expect("compute_logits failed");
-        let (next_id, _next_val) = logits
-            .iter()
-            .enumerate()
-            .fold((0usize, f32::NEG_INFINITY), |acc, (i, &v)| if v > acc.1 { (i, v) } else { acc });
+
+        let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let cache_len = engine.kv_cache_len0();
+        eprintln!(
+            "
+[diag] gen step {} | kv_cache_len(layer0)={:?} | top-5 logits:",
+            step_num, cache_len
+        );
+        for (rank, (tok_id, val)) in indexed.iter().take(5).enumerate() {
+            let piece = tok.decode(&[*tok_id as u32], false).unwrap_or_else(|_| "?".to_string());
+            eprintln!("    #{} token_id={} logit={:.4} piece={:?}", rank + 1, tok_id, val, piece);
+        }
+        let gap_1_2 = indexed[0].1 - indexed[1].1;
+        eprintln!("    gap(#1 - #2) = {:.4}", gap_1_2);
+
+        let (next_id, _next_val) = indexed[0];
         let next_id = next_id as u32;
 
         if EOS_IDS.contains(&next_id) {
-            println!("\n>> EOS token {} reached, stopping.", next_id);
+            println!(
+                "
+>> EOS token {} reached, stopping.",
+                next_id
+            );
             break;
         }
 

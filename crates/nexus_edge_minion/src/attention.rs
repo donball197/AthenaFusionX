@@ -1,19 +1,16 @@
 //! Self-attention projection + norm + RoPE + KV-cache pipeline for one layer.
 //!
-//! NOTE: this produces per-head Q (RoPE'd, ready to score) and pushes K/V for
-//! this position into the layer's StaticKVCache -- it does NOT compute
-//! attention scores (QK^T / softmax / *V). That's still the next roadmap
-//! milestone; the returned Q is what that step will consume.
+//! Produces per-head Q (RoPE'd) and pushes K/V into the StaticKVCache.
+//! Attention scores (QK^T / softmax / *V) + o_proj are computed in
+//! compute_attention_output.
 
 use crate::kv_cache::StaticKVCache;
 use crate::neon_math::matvec_bf16_to_f32;
 use crate::rope::{apply_rope_scalar, AttentionMode, RoPEConfig};
 use half::bf16;
 
-/// RMSNorm applied in place using Gemma's (1 + weight) convention -- Gemma's
-/// RMSNorm weights are zero-initialized and used as a delta from 1.0, unlike
-/// Llama-style RMSNorm which uses the raw weight. Getting this wrong is a
-/// well-documented silent-garbage bug across multiple independent Gemma ports.
+/// RMSNorm using Gemma's (1 + weight) convention.
+/// Gemma RMSNorm weights are zero-initialized and act as a delta from 1.0.
 pub fn rms_norm_in_place(x: &mut [f32], weight: &[f32]) {
     debug_assert_eq!(x.len(), weight.len());
     const EPS: f32 = 1e-6;
@@ -29,7 +26,7 @@ pub struct AttentionBlock {
     pub mode: AttentionMode,
     pub rope_config: RoPEConfig,
     pub num_heads: usize,
-    pub num_kv_heads: usize, // MQA: 1 for this checkpoint
+    pub num_kv_heads: usize, // MQA: 1
     pub hidden_size: usize,  // 1536
 }
 
@@ -46,15 +43,6 @@ impl AttentionBlock {
         }
     }
 
-    /// Projects the already-normalized hidden state through q_proj/k_proj/v_proj,
-    /// applies per-head q_norm/k_norm then RoPE to Q and K, and pushes this
-    /// position's K/V into the cache. Returns Q ([num_heads*head_dim]), RoPE'd
-    /// and ready for attention scoring once that exists.
-    ///
-    /// Weight shapes expected (real, confirmed from model.safetensors):
-    ///   q_proj: [num_heads*head_dim, hidden_size]
-    ///   k_proj, v_proj: [num_kv_heads*head_dim, hidden_size]
-    ///   q_norm, k_norm: [head_dim] (shared across heads)
     #[allow(clippy::too_many_arguments)]
     pub fn project_and_cache(
         &self,
@@ -78,8 +66,6 @@ impl AttentionBlock {
         assert_eq!(q_norm_w.len(), head_dim);
         assert_eq!(k_norm_w.len(), head_dim);
 
-        // Activations quantized to bf16 to match weight precision for the NEON
-        // matvec kernel -- deliberate bf16-throughout design choice.
         let x_bf16: Vec<bf16> = hidden_state_normed.iter().map(|&v| bf16::from_f32(v)).collect();
 
         let mut q = vec![0.0f32; q_out_dim];
@@ -90,8 +76,7 @@ impl AttentionBlock {
         matvec_bf16_to_f32(k_proj_w, &x_bf16, &mut k, kv_out_dim, self.hidden_size);
         matvec_bf16_to_f32(v_proj_w, &x_bf16, &mut v, kv_out_dim, self.hidden_size);
 
-        // MQA: single KV head (num_kv_heads == 1 for this checkpoint) -- norm
-        // and RoPE applied once. V bypasses norm and RoPE entirely.
+        // MQA: single KV head
         rms_norm_in_place(&mut k[..head_dim], k_norm_w);
         apply_rope_scalar(&mut k[..head_dim], position, &self.rope_config);
 
@@ -99,7 +84,7 @@ impl AttentionBlock {
         let v_bf16: Vec<bf16> = v.iter().map(|&x| bf16::from_f32(x)).collect();
         kv_cache.push(&k_bf16[..head_dim], &v_bf16[..head_dim]);
 
-        // Per-head Q: norm + RoPE applied independently to each of num_heads slices.
+        // Per-head Q
         for h in 0..self.num_heads {
             let start = h * head_dim;
             let end = start + head_dim;
@@ -109,11 +94,7 @@ impl AttentionBlock {
 
         q
     }
-    /// For KV-shared layers: projects Q only (q_proj + q_norm + RoPE). Does
-    /// NOT compute or push K/V -- this layer reuses an earlier layer's K/V
-    /// (the "KV source" layer of the same attention type, per
-    /// num_kv_shared_layers routing). Caller is responsible for pointing
-    /// attention scoring at the correct source layer's StaticKVCache.
+
     pub fn project_q_only(
         &self,
         hidden_state_normed: &[f32],
@@ -141,9 +122,7 @@ impl AttentionBlock {
 
         q
     }
-    /// Computes scaled dot-product attention (MQA) over the StaticKVCache for all Q heads,
-    /// applies softmax over sequence positions, and projects aggregated head outputs
-    /// back to hidden_size (1536) via o_proj using NEON matvec acceleration.
+
     pub fn compute_attention_output(
         &self,
         q: &[f32],
@@ -151,7 +130,7 @@ impl AttentionBlock {
         kv_cache: &StaticKVCache,
     ) -> Vec<f32> {
         let head_dim = self.rope_config.head_dim;
-        let q_out_dim = self.num_heads * head_dim; // 2048 (sliding) or 4096 (global)
+        let q_out_dim = self.num_heads * head_dim;
         let seq_len = kv_cache.len();
 
         assert_eq!(q.len(), q_out_dim);
@@ -164,7 +143,7 @@ impl AttentionBlock {
         let scale = 1.0f32 / (head_dim as f32).sqrt();
         let mut combined_heads = vec![0.0f32; q_out_dim];
 
-        // MQA: 8 Q heads attend to the same single K/V head in cache
+        // MQA: 8 Q heads attend to the same single K/V head
         for h in 0..self.num_heads {
             let q_start = h * head_dim;
             let q_h = &q[q_start..q_start + head_dim];
@@ -172,47 +151,44 @@ impl AttentionBlock {
             let mut scores = vec![0.0f32; seq_len];
             let mut max_score = f32::NEG_INFINITY;
 
-            // 1. Scaled dot product Q_h . K_pos
-            for pos in 0..seq_len {
+            // Scaled dot-product (NO attention softcapping for Gemma 4)
+            for (pos, score_slot) in scores.iter_mut().enumerate().take(seq_len) {
                 let k_bf16 = kv_cache.k_at(pos);
                 let mut dot = 0.0f32;
                 for i in 0..head_dim {
                     dot += q_h[i] * k_bf16[i].to_f32();
                 }
                 let score = dot * scale;
-                scores[pos] = score;
+                *score_slot = score;
                 if score > max_score {
                     max_score = score;
                 }
             }
 
-            // 2. Numerically stable Softmax
+            // Numerically stable softmax
             let mut exp_sum = 0.0f32;
-            for pos in 0..seq_len {
-                let exp_val = (scores[pos] - max_score).exp();
-                scores[pos] = exp_val;
+            for score in scores.iter_mut().take(seq_len) {
+                let exp_val = (*score - max_score).exp();
+                *score = exp_val;
                 exp_sum += exp_val;
             }
-
             let inv_exp_sum = if exp_sum > 0.0 { 1.0 / exp_sum } else { 0.0 };
-            for pos in 0..seq_len {
-                scores[pos] *= inv_exp_sum;
+            for score in scores.iter_mut().take(seq_len) {
+                *score *= inv_exp_sum;
             }
 
-            // 3. Weighted aggregation of V_pos
+            // Weighted sum of V
             let out_start = h * head_dim;
             let head_out = &mut combined_heads[out_start..out_start + head_dim];
-
-            for pos in 0..seq_len {
+            for (pos, &weight) in scores.iter().enumerate().take(seq_len) {
                 let v_bf16 = kv_cache.v_at(pos);
-                let weight = scores[pos];
                 for i in 0..head_dim {
                     head_out[i] += weight * v_bf16[i].to_f32();
                 }
             }
         }
 
-        // 4. Project combined head representations back to hidden_size (1536) via o_proj
+        // o_proj back to hidden_size
         let combined_bf16: Vec<bf16> = combined_heads.iter().map(|&x| bf16::from_f32(x)).collect();
         let mut attn_out = vec![0.0f32; self.hidden_size];
         matvec_bf16_to_f32(o_proj_w, &combined_bf16, &mut attn_out, self.hidden_size, q_out_dim);

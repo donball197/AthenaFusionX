@@ -4,7 +4,7 @@ use std::path::Path;
 #[test]
 fn test_local_engine_safetensors_smoke() {
     let weights_path = Path::new("gemma-4-E2B-it.safetensors");
-    
+
     // If the weights file isn't present yet, skip gracefully instead of failing CI/test suites
     if !weights_path.exists() {
         println!(">> [SKIP] gemma-4-E2B-it.safetensors not found in root. Skipping local weights smoke test.");
@@ -24,7 +24,7 @@ fn test_local_engine_safetensors_smoke() {
     let result = engine.step(42, 0, &mut hidden_state);
 
     assert!(result.is_ok(), "Token execution step failed.");
-    
+
     // Verify the hidden state was mutated by the layers and contains valid finite numbers
     let has_finite = hidden_state.iter().any(|&v| v.is_finite() && v != 0.0);
     assert!(has_finite, "Hidden state remained entirely zero or non-finite after forward step.");

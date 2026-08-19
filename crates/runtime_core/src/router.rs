@@ -55,7 +55,7 @@ impl ContextBudget {
 
 pub struct AgentProfile {
     pub class: DirectiveClass,
-    pub primary_model: &'static str,
+    pub primary_model: String,
     pub max_turns: u8,
     pub budget: ContextBudget,
     pub persona: String,
@@ -87,6 +87,7 @@ MANDATORY SCHEMA:
   { "type": "patch_function", "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." },
   { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." },
   { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
+  { "type": "run_tests", "test_target": "...", "reasoning": "..." },
   { "type": "read_file", "path": "...", "reasoning": "..." },
   { "type": "execute_command", "command": "...", "reasoning": "..." },
   { "type": "search_memory", "query": "...", "reasoning": "..." },
@@ -99,13 +100,19 @@ CRITICAL RULES:
 3. `diff_patch` requires `search` (the exact old string) and `replace` (the exact new string). DO NOT output unified diffs or use a `diff` field.
 4. When you have achieved the task objective, include the `halt` action in your JSON array.
 5. You MUST escape all newlines inside JSON strings as `\n` (e.g. "line1\nline2").
-6. CRITICAL HALT OVERRIDE: You are strictly forbidden from issuing a [HALT] command if your objective requires code modification (patching). Finding the target code via 'grep' or 'cat' is only reconnaissance. You MUST verify the presence of a successful [PATCH_FUNCTION_OK], [WRITE_OK], or [DIFF_PATCH_OK] in your physical evidence buffer before you are authorized to halt. Halting before patching is considered a critical mission failure."#;
+6. CRITICAL HALT OVERRIDE: You are strictly forbidden from issuing a [HALT] command if your objective requires code modification (patching). Finding the target code via 'grep' or 'cat' is only reconnaissance. You MUST verify the presence of a successful [PATCH_FUNCTION_OK], [WRITE_OK], or [DIFF_PATCH_OK] in your physical evidence buffer before you are authorized to halt. Halting before patching is considered a critical mission failure.
+7. STRICT SCHEMA COMPLIANCE: NEVER mix tool arguments. `write_file` takes `path` and `content`. `run_tests` takes `test_target`. DO NOT hallucinate or combine fields across tools."#;
 
         let (primary_model, budget) = match class {
             DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => {
-                ("gemma-4-31b-it", ContextBudget::doctor())
+                let model = std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
+                (model, ContextBudget::doctor())
             }
-            _ => ("gemini-3.1-flash-lite", ContextBudget::standard()),
+            _ => {
+                let model = std::env::var("NEXUS_LIGHT_MODEL")
+                    .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+                (model, ContextBudget::standard())
+            }
         };
 
         AgentProfile { class, primary_model, max_turns: 8, budget, persona: persona.to_string() }

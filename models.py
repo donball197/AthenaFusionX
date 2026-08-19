@@ -1,164 +1,153 @@
+#!/usr/bin/env python3
+
 import os
 import json
 import urllib.request
 import urllib.error
 import concurrent.futures
 
-# ANSI Colors
-CYAN, GREEN, YELLOW, PURPLE, RED, BLUE, RESET, BOLD = (
-    '\033[36m', '\033[32m', '\033[33m', '\033[35m', '\033[31m', '\033[34m', '\033[0m', '\033[1m'
-)
-NVIDIA_GREEN = '\033[92m'
+VERSION = "4.0.2"
+TIMEOUT_SECS = 8
+JSON_OUTPUT = ".nexus_manifest.json"
 
-TIMEOUT_SECS = 5
-
-def format_tokens(num):
-    if not isinstance(num, (int, float)): return "N/A"
-    if num >= 1_000_000:
-        return f"{num / 1_000_000:.1f}M"
-    elif num >= 1_000:
-        return f"{num / 1_000:.1f}K"
-    return str(num)
+RESET = "\033[0m"
+BOLD = "\033[1m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+PURPLE = "\033[35m"
+RED = "\033[31m"
+BLUE = "\033[34m"
+NVIDIA_GREEN = "\033[92m"
 
 def load_env():
-    if os.path.exists(".env"):
-        with open(".env") as f:
-            for line in f:
-                if line.strip() and not line.startswith("#"):
-                    key, _, value = line.partition("=")
-                    os.environ[key.strip()] = value.strip().strip("'\"")
+    if not os.path.exists(".env"): return
+    with open(".env", "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"): continue
+            key, sep, value = line.partition("=")
+            if sep and key.strip() not in os.environ:
+                os.environ[key.strip()] = value.strip().strip("'\"")
+
+def format_tokens(value):
+    if not isinstance(value, (int, float)) or value <= 0: return "Unknown"
+    if value >= 1_000_000: return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000: return f"{value / 1_000:.1f}K"
+    return str(int(value))
+
+def classify_model(name):
+    n = name.lower()
+    if "embed" in n: return "EMBEDDING"
+    if "safety" in n or "guard" in n: return "SAFETY"
+    if "vision" in n or "-vl" in n: return "VISION"
+    if "gemma" in n: return "GEMMA"
+    if "llama" in n: return "LLAMA"
+    if "mistral" in n: return "MISTRAL"
+    if "nemotron" in n: return "NEMOTRON"
+    if "flash" in n: return "FLASH"
+    if "pro" in n: return "PRO"
+    return "GENERAL"
+
+def color_for_category(category):
+    return {"GEMMA": PURPLE, "FLASH": BLUE, "PRO": YELLOW, "LLAMA": YELLOW, "MISTRAL": BLUE, "NEMOTRON": PURPLE}.get(category, NVIDIA_GREEN)
 
 def fetch_api(url, headers=None, parser_func=None, provider_name="API"):
     headers = headers or {}
     try:
-        req = urllib.request.Request(url, headers=headers)
+        req = urllib.request.Request(url, headers={"User-Agent": "AthenaFusionX/4.0", **headers})
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECS) as response:
-            data = json.loads(response.read().decode())
-            return parser_func(data)
-    except urllib.error.HTTPError as e:
-        print(f"{RED}[ERROR] {provider_name} returned HTTP {e.code}: {e.reason}{RESET}")
-    except urllib.error.URLError as e:
-        print(f"{RED}[ERROR] {provider_name} network fault: {e.reason}{RESET}")
+            raw = response.read().decode("utf-8")
+            return parser_func(json.loads(raw)) if raw else []
     except Exception as e:
-        print(f"{RED}[ERROR] {provider_name} unexpected failure: {e}{RESET}")
+        print(f"{RED}[ERROR] {provider_name} failure: {e}{RESET}")
     return []
 
 def parse_google(data):
     results = []
-    for m in data.get("models", []):
-        if "generateContent" in m.get("supportedGenerationMethods", []):
-            name = m.get("name", "").replace("models/", "")
-            cat = "GEMMA" if "gemma" in name else "FLASH" if "flash" in name else "PRO"
-            color = PURPLE if "gemma" in name else BLUE if "flash" in name else YELLOW
-            results.append({
-                "provider": "Google", "name": name,
-                "context": format_tokens(m.get("inputTokenLimit", 0)),
-                "category": cat, "color": color
-            })
-    return results
-
-def parse_openai(data):
-    results = []
-    for m in data.get("data", []):
-        name = m.get("id", "")
-        if "gpt" in name or "o1" in name or "o3" in name:
-            cat = "REASONING" if "o1" in name or "o3" in name else "GPT"
-            results.append({
-                "provider": "OpenAI", "name": name,
-                "context": "Dynamic", "category": cat, "color": CYAN
-            })
-    return results
-
-def parse_anthropic(data):
-    results = []
-    for m in data.get("data", []):
-        name = m.get("id", "")
-        cat = "OPUS" if "opus" in name else "SONNET" if "sonnet" in name else "HAIKU"
+    for model in data.get("models", []):
+        if "generateContent" not in model.get("supportedGenerationMethods", []): continue
+        name = model.get("name", "").replace("models/", "")
         results.append({
-            "provider": "Anthropic", "name": name,
-            "context": "Dynamic", "category": cat, "color": YELLOW
+            "provider": "Google", "name": name,
+            "context": f"{format_tokens(model.get('inputTokenLimit'))} in / {format_tokens(model.get('outputTokenLimit'))} out",
+            "category": classify_model(name)
         })
     return results
 
 def parse_nvidia(data):
     family_map = {
-        "llama": ("LLAMA", YELLOW),
-        "mistral": ("MISTRAL", BLUE),
-        "nemotron": ("NEMOTRON", PURPLE),
-        "mixtral": ("MISTRAL", BLUE),
-        "gemma": ("GEMMA", PURPLE)
+        "llama-3.1": "128K in / 4K out",
+        "llama-3.2": "128K in / 4K out",
+        "llama-3.3": "128K in / 4K out",
+        "llama": "8K in / 4K out",
+        "mistral-large": "128K in / 4K out",
+        "mistral": "32K in / 4K out",
+        "nemotron-4": "128K in / 4K out",
+        "nemotron": "4K in / 4K out",
+        "mixtral": "32K in / 4K out",
+        "gemma-2": "8K in / 4K out",
+        "gemma": "8K in / 4K out",
+        "deepseek": "128K in / 4K out",
+        "phi-3": "128K in / 4K out",
+        "granite": "128K in / 4K out",
+        "glm": "128K in / 4K out",
+        "yi": "32K in / 4K out",
+        "jamba": "256K in / 4K out",
+        "starcoder": "16K in / 4K out",
+        "palmyra": "32K in / 4K out",
+        "embed": "8K in / N/A"
     }
     results = []
-    for m in data.get("data", []):
-        name = m.get("id", "")
+    for model in data.get("data", []):
+        name = model.get("id", "")
         n_lower = name.lower()
-        cat, color = ("NVIDIA", NVIDIA_GREEN)
-        for key, (mapped_cat, mapped_color) in family_map.items():
+        ctx = "Unknown"
+        for key, mapped_ctx in family_map.items():
             if key in n_lower:
-                cat, color = mapped_cat, mapped_color
+                ctx = mapped_ctx
                 break
         results.append({
             "provider": "Nvidia", "name": name,
-            "context": "Dynamic", "category": cat, "color": color
+            "context": ctx, "category": classify_model(name)
         })
     return results
 
 def main():
     load_env()
-    print(f"{BOLD}{CYAN}>> INITIALIZING UNIFIED CORTEX MANIFEST [NEXUS v3.3 - Parallel]{RESET}")
-    print("-" * 85)
+    print(f"{BOLD}{CYAN}>> INITIALIZING ATHENAFUSIONX MODEL MANIFEST [NEXUS v{VERSION}]{RESET}")
+    print("-" * 110)
 
     tasks = []
-    
+
     if g_key := os.environ.get("GEMINI_API_KEY"):
-        print(f"{BLUE}>> Dispatching Google AI Studio probe...{RESET}")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={g_key}"
-        tasks.append((url, {}, parse_google, "Google"))
-    else:
-        print(f"{RED}>> Skipped Google (No API Key){RESET}")
+        google_url = "https://" + "generativelanguage.googleapis.com/v1beta/models?key=" + g_key
+        tasks.append((google_url, {}, parse_google, "Google"))
 
     if n_key := os.environ.get("NVIDIA_API_KEY"):
-        print(f"{NVIDIA_GREEN}>> Dispatching NVIDIA NIM probe...{RESET}")
-        url = "https://integrate.api.nvidia.com/v1/models"
-        tasks.append((url, {"Authorization": f"Bearer {n_key}"}, parse_nvidia, "NVIDIA"))
-    else:
-        print(f"{YELLOW}>> Skipped NVIDIA (No API Key){RESET}")
-
-    if o_key := os.environ.get("OPENAI_API_KEY"):
-        print(f"{CYAN}>> Dispatching OpenAI Platform probe...{RESET}")
-        url = "https://api.openai.com/v1/models"
-        tasks.append((url, {"Authorization": f"Bearer {o_key}"}, parse_openai, "OpenAI"))
-    else:
-        print(f"{YELLOW}>> Skipped OpenAI (No API Key){RESET}")
-
-    if a_key := os.environ.get("ANTHROPIC_API_KEY"):
-        print(f"{YELLOW}>> Dispatching Anthropic Console probe...{RESET}")
-        url = "https://api.anthropic.com/v1/models"
-        tasks.append((url, {"x-api-key": a_key, "anthropic-version": "2023-06-01"}, parse_anthropic, "Anthropic"))
-    else:
-        print(f"{YELLOW}>> Skipped Anthropic (No API Key){RESET}")
+        nvidia_url = "https://" + "integrate.api.nvidia.com/v1/models"
+        tasks.append((nvidia_url, {"Authorization": f"Bearer {n_key}"}, parse_nvidia, "NVIDIA"))
 
     all_models = []
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(fetch_api, url, headers, parser, name) 
-            for url, headers, parser, name in tasks
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            all_models.extend(future.result())
+    if tasks:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(fetch_api, u, h, p, n) for u, h, p, n in tasks]
+            for future in concurrent.futures.as_completed(futures):
+                try: all_models.extend(future.result())
+                except Exception as e: pass
 
-    print("\n" + "-" * 85)
-    print(f"{BOLD}{'PROVIDER':<12} | {'MODEL ID':<45} | {'CONTEXT':<8} | {'CATEGORY':<15}{RESET}")
-    print("-" * 85)
+    all_models.sort(key=lambda x: (x.get("provider", ""), x.get("name", "")))
 
-    for m in sorted(all_models, key=lambda x: (x['provider'], x['name'])):
-        print(f"{m['color']}{m['provider']:<12}{RESET} | {m['color']}{m['name']:<45}{RESET} | {m['context']:<8} | {m['category']:<15}")
+    print(f"{BOLD}{'PROVIDER':<12} | {'MODEL ID':<48} | {'TOKENS':<22} | {'CATEGORY':<14}{RESET}")
+    print("-" * 110)
 
-    print(f"\n{BOLD}{GREEN}✅ Unified manifest generated in parallel!{RESET}")
-    
-    with open(".nexus_manifest.json", "w") as f:
-        json.dump(all_models, f, indent=2)
+    for m in all_models:
+        cat = m.get("category", "GENERAL")
+        color = color_for_category(cat)
+        print(f"{color}{m.get('provider', ''):<12}{RESET} | {color}{m.get('name', ''):<48}{RESET} | {m.get('context', 'Unknown'):<22} | {cat:<14}")
+
+    with open(JSON_OUTPUT, "w") as f: json.dump(all_models, f, indent=2)
+    print(f"\n{BOLD}{GREEN}✅ Manifest generated successfully{RESET}")
 
 if __name__ == "__main__":
     main()

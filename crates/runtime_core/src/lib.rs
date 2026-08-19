@@ -78,3 +78,5 @@ pub mod executive_cortex;
 pub mod action_gate;
 pub mod action_intercept;
 pub mod completion_engine;
+pub mod tools;
+pub mod outcome_verifier;

@@ -84,6 +84,11 @@ pub fn apply_rope_scalar(vec: &mut [f32], position: usize, config: &RoPEConfig) 
 }
 
 #[cfg(target_arch = "aarch64")]
+/// # Safety
+///
+/// `vec` must be a valid, properly aligned slice of at least
+/// `config.head_dim` elements; `position` and `config` must describe a
+/// layout consistent with `vec`'s length.
 pub unsafe fn apply_rope_neon(vec: &mut [f32], position: usize, config: &RoPEConfig) {
     // Phase 1 initial state: delegate to scalar reference until NEON vector layout is verified
     apply_rope_scalar(vec, position, config);

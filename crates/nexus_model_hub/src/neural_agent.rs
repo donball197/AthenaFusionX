@@ -84,7 +84,8 @@ impl MicroAgent {
         context: ContextPacket,
     ) -> Result<(String, u128)> {
         let start = Instant::now();
-        let model = context.model_override.as_deref().unwrap_or("gemma-4-31b-it");
+        let default_model = std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
+    let model = context.model_override.as_deref().unwrap_or(&default_model);
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
             model,

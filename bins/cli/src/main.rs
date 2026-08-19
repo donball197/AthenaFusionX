@@ -105,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
             );
 
             // 1. Run the Impact Engine silently
+            println!("\x1b[35m>> [AST] Refreshing Symbol Graph to catch new files...\x1b[0m");
+            let _ = Command::new("cargo").args(["run", "--bin", "symbol_graph"]).output();
             println!("\x1b[35m>> [IMPACT_ENGINE] Calculating Blast Radius...\x1b[0m");
             let _ = Command::new("cargo")
                 .args(["run", "--bin", "impact_engine", "--", target_func])

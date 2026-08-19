@@ -31,7 +31,7 @@ impl Conductor {
         METRICS.api_calls.fetch_add(1, Ordering::Relaxed);
 
         let model = AgentFactory::get_model_for_turn(turn, errors);
-        let _ = wait_for_quota(model, ESTIMATED_TOKENS).await;
+        let _ = wait_for_quota(&model, ESTIMATED_TOKENS).await;
 
         let neural_ctx = ContextPacket {
             system_prompt: Some(profile.persona.clone()),
@@ -57,9 +57,9 @@ impl Conductor {
             {
                 METRICS.task_failures.fetch_add(1, Ordering::Relaxed);
 
-                let failover = AgentFactory::failover_model(model);
+                let failover = AgentFactory::failover_model(&model);
                 tracing::warn!("[CONDUCTOR] {} failed → failing over to {}", model, failover);
-                let _ = wait_for_quota(failover, ESTIMATED_TOKENS).await;
+                let _ = wait_for_quota(&failover, ESTIMATED_TOKENS).await;
 
                 let fail_ctx = ContextPacket {
                     system_prompt: Some(profile.persona.clone()),

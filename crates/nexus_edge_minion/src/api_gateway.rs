@@ -40,7 +40,7 @@ impl ApiGateway {
             || model_name.contains("gemma")
         {
             (
-                "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
+                "https://generativelanguage.googleapis.com/v1beta/chat/completions".to_string(),
                 env::var("NVIDIA_API_KEY").unwrap_or_default(),
             )
         } else {
@@ -116,5 +116,11 @@ impl ApiGateway {
         }
 
         Err(format!("All models in cascade failed. Last error: {:?}", last_error).into())
+    }
+}
+
+impl Default for ApiGateway {
+    fn default() -> Self {
+        Self::new()
     }
 }

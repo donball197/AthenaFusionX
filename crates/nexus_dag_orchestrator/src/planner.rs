@@ -16,7 +16,7 @@ pub struct DagPlanner;
 impl DagPlanner {
     fn resolve_provider() -> (String, String, String) {
         let model =
-            env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "gemini-3.5-flash".to_string());
+            env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
         if model.contains("gemini") {
             (
                 "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -27,7 +27,7 @@ impl DagPlanner {
         } else {
             // Defaults to NVIDIA / open-weights fallback
             (
-                "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
+                "https://generativelanguage.googleapis.com/v1beta/chat/completions".to_string(),
                 env::var("NVIDIA_API_KEY").unwrap_or_default(),
                 model,
             )

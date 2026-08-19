@@ -1,996 +1,836 @@
 [
   {
-    "provider": "Nvidia",
-    "name": "01-ai/yi-large",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "adept/fuyu-8b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ai21labs/jamba-1.5-large-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "aisingapore/sea-lion-7b-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "baai/bge-m3",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "bigcode/starcoder2-15b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "databricks/dbrx-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-coder-6.7b-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-v4-flash-0731",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/codegemma-1.1-7b",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/codegemma-7b",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/deplot",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/diffusiongemma-26b-a4b-it",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/gemma-2b",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/gemma-3-12b-it",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/gemma-3-4b-it",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/gemma-4-31b-it",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/recurrentgemma-2b",
-    "context": "Dynamic",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-3.0-3b-a800m-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-3.0-8b-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-34b-code-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-8b-code-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/codellama-70b",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.1-70b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.1-8b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.2-11b-vision-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.2-1b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.2-3b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.2-90b-vision-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.3-70b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-guard-4-12b",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama2-70b",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "microsoft/kosmos-2",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "microsoft/phi-3-vision-128k-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "microsoft/phi-3.5-moe-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "minimaxai/minimax-m3",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/codestral-22b-instruct-v0.1",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-7b-instruct-v0.3",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-large",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-large-2-instruct",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-nemotron",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mixtral-8x22b-v0.1",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "moonshotai/kimi-k2.6",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nv-mistralai/mistral-nemo-12b-instruct",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/ai-synthetic-video-detector",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/cosmos-reason2-8b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/embed-qa-4",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/ising-calibration-1.5-31b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemoguard-8b-content-safety",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemoguard-8b-topic-control",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-51b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-70b-instruct",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-nano-8b-v1",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.2-nv-embedqa-1b-v1",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.3-nemotron-super-49b-v1",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-nemotron-embed-1b-v2",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-nemotron-embed-vl-1b-v2",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama3-chatqa-1.5-70b",
-    "context": "Dynamic",
-    "category": "LLAMA",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemoretriever-parse",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-embed-1b",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-nano-30b-a3b",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-super-120b-a12b",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-ultra-550b-a55b",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3.5-content-safety",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-4-340b-instruct",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-4-340b-reward",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-mini-4b-instruct",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-nano-12b-v2-vl",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-nano-3-30b-a3b",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-parse",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/neva-22b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nv-embed-v1",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nv-embedcode-7b-v1",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nv-embedqa-e5-v5",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nv-embedqa-mistral-7b-v2",
-    "context": "Dynamic",
-    "category": "MISTRAL",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nvclip",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nvidia-nemotron-nano-9b-v2",
-    "context": "Dynamic",
-    "category": "NEMOTRON",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/riva-translate-4b-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/riva-translate-4b-instruct-v1.1",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/riva-translate-4b-instruct-v2",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/vila",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "openai/gpt-oss-120b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "openai/gpt-oss-20b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "poolside/laguna-xs-2.1",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "snowflake/arctic-embed-l",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "stepfun-ai/step-3.7-flash",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "thinkingmachines/inkling",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-creative-122b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-fin-70b-32k",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-med-70b",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-med-70b-32k",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "z-ai/glm-5.2",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "zyphra/zamba2-7b-instruct",
-    "context": "Dynamic",
-    "category": "NVIDIA",
-    "color": "\u001b[92m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-flash",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-pro",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.0-flash",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.0-flash-001",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.0-flash-lite-001",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.0-flash-lite",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-flash-preview-tts",
-    "context": "8.2K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-pro-preview-tts",
-    "context": "8.2K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemma-4-26b-a4b-it",
-    "context": "262.1K",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemma-4-31b-it",
-    "context": "262.1K",
-    "category": "GEMMA",
-    "color": "\u001b[35m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-flash-latest",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-flash-lite-latest",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-pro-latest",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-flash-lite",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-flash-image",
-    "context": "32.8K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3-pro-preview",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3-flash-preview",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-pro-preview",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-pro-preview-customtools",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-flash-lite-preview",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-flash-lite",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3-pro-image-preview",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3-pro-image",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "nano-banana-pro-preview",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-flash-image-preview",
-    "context": "65.5K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-flash-image",
-    "context": "65.5K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-flash-lite-image",
-    "context": "65.5K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.5-flash",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.5-flash-lite",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-omni-flash-preview",
-    "context": "131.1K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.6-flash",
-    "context": "1.0M",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "lyria-3-clip-preview",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "lyria-3-pro-preview",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-3.1-flash-tts-preview",
-    "context": "8.2K",
-    "category": "FLASH",
-    "color": "\u001b[34m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-robotics-er-1.5-preview",
-    "context": "1.0M",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-robotics-er-1.6-preview",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-robotics-er-2-preview",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
-    "provider": "Google",
-    "name": "gemini-2.5-computer-use-preview-10-2025",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
-  },
-  {
     "provider": "Google",
     "name": "antigravity-preview-05-2026",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
   },
   {
     "provider": "Google",
     "name": "deep-research-max-preview-04-2026",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
   },
   {
     "provider": "Google",
     "name": "deep-research-preview-04-2026",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
   },
   {
     "provider": "Google",
     "name": "deep-research-pro-preview-12-2025",
-    "context": "131.1K",
-    "category": "PRO",
-    "color": "\u001b[33m"
+    "context": "131.1K in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-computer-use-preview-10-2025",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash-image",
+    "context": "32.8K in / 32.8K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash-lite",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash-preview-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-pro",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-pro-preview-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3-flash-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3-pro-image",
+    "context": "131.1K in / 32.8K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3-pro-image-preview",
+    "context": "131.1K in / 32.8K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-image",
+    "context": "65.5K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-image-preview",
+    "context": "65.5K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-lite",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-lite-image",
+    "context": "65.5K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-lite-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-tts-preview",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-pro-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-pro-preview-customtools",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.5-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.5-flash-lite",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.6-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.7-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-flash-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-flash-lite-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-omni-flash-preview",
+    "context": "131.1K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-pro-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-robotics-er-1.6-preview",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-robotics-er-2-preview",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemma-4-26b-a4b-it",
+    "context": "262.1K in / 32.8K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Google",
+    "name": "gemma-4-31b-it",
+    "context": "262.1K in / 32.8K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Google",
+    "name": "lyria-3-clip-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "lyria-3-pro-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "nano-banana-pro-preview",
+    "context": "131.1K in / 32.8K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "01-ai/yi-large",
+    "context": "32K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "adept/fuyu-8b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "ai21labs/jamba-1.5-large-instruct",
+    "context": "256K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "aisingapore/sea-lion-7b-instruct",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "baai/bge-m3",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "bigcode/starcoder2-15b",
+    "context": "16K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "databricks/dbrx-instruct",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "deepseek-ai/deepseek-coder-6.7b-instruct",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "deepseek-ai/deepseek-v4-flash-0731",
+    "context": "128K in / 4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/codegemma-1.1-7b",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/codegemma-7b",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/deplot",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/diffusiongemma-26b-a4b-it",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/gemma-2b",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/gemma-3-12b-it",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/gemma-3-4b-it",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/gemma-4-31b-it",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "google/recurrentgemma-2b",
+    "context": "8K in / 4K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "ibm/granite-3.0-3b-a800m-instruct",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "ibm/granite-3.0-8b-instruct",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "ibm/granite-34b-code-instruct",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "ibm/granite-8b-code-instruct",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/codellama-70b",
+    "context": "8K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.1-70b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.1-8b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.2-11b-vision-instruct",
+    "context": "128K in / 4K out",
+    "category": "VISION"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.2-1b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.2-3b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.2-90b-vision-instruct",
+    "context": "128K in / 4K out",
+    "category": "VISION"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-3.3-70b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama-guard-4-12b",
+    "context": "8K in / 4K out",
+    "category": "SAFETY"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/llama2-70b",
+    "context": "8K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "meta/muse-glimmer-30b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "microsoft/kosmos-2",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "microsoft/phi-3-vision-128k-instruct",
+    "context": "128K in / 4K out",
+    "category": "VISION"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "microsoft/phi-3.5-moe-instruct",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "minimaxai/minimax-m3",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/codestral-22b-instruct-v0.1",
+    "context": "32K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/mistral-7b-instruct-v0.3",
+    "context": "32K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/mistral-large",
+    "context": "128K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/mistral-large-2-instruct",
+    "context": "128K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/mistral-nemotron",
+    "context": "32K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/mixtral-8x22b-v0.1",
+    "context": "32K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "moonshotai/kimi-k2.6",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nv-mistralai/mistral-nemo-12b-instruct",
+    "context": "32K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/ai-synthetic-video-detector",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/cosmos-reason2-8b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/embed-qa-4",
+    "context": "8K in / N/A",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/ising-calibration-1.5-31b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+    "context": "128K in / 4K out",
+    "category": "SAFETY"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemoguard-8b-topic-control",
+    "context": "128K in / 4K out",
+    "category": "SAFETY"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemotron-51b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemotron-70b-instruct",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemotron-nano-8b-v1",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+    "context": "128K in / 4K out",
+    "category": "VISION"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+    "context": "128K in / 4K out",
+    "category": "SAFETY"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+    "context": "128K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.2-nv-embedqa-1b-v1",
+    "context": "128K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "context": "128K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-nemotron-embed-1b-v2",
+    "context": "8K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama-nemotron-embed-vl-1b-v2",
+    "context": "8K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/llama3-chatqa-1.5-70b",
+    "context": "8K in / 4K out",
+    "category": "LLAMA"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+    "context": "32K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemoretriever-parse",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3-embed-1b",
+    "context": "4K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3-nano-30b-a3b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3-super-120b-a12b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3-ultra-550b-a55b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-content-safety",
+    "context": "4K in / 4K out",
+    "category": "SAFETY"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-4-340b-instruct",
+    "context": "128K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-4-340b-reward",
+    "context": "128K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-mini-4b-instruct",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-nano-12b-v2-vl",
+    "context": "4K in / 4K out",
+    "category": "VISION"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-nano-3-30b-a3b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-parse",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/neva-22b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nv-embed-v1",
+    "context": "8K in / N/A",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nv-embedcode-7b-v1",
+    "context": "8K in / N/A",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nv-embedqa-e5-v5",
+    "context": "8K in / N/A",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nv-embedqa-mistral-7b-v2",
+    "context": "32K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nvclip",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nvidia-nemotron-nano-9b-v2",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/riva-translate-4b-instruct",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/riva-translate-4b-instruct-v1.1",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/riva-translate-4b-instruct-v2",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/vila",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "openai/gpt-oss-120b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "openai/gpt-oss-20b",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "poolside/laguna-xs-2.1",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "snowflake/arctic-embed-l",
+    "context": "8K in / N/A",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "stepfun-ai/step-3.7-flash",
+    "context": "Unknown",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "thinkingmachines/inkling",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "writer/palmyra-creative-122b",
+    "context": "32K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "writer/palmyra-fin-70b-32k",
+    "context": "32K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "writer/palmyra-med-70b",
+    "context": "32K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "writer/palmyra-med-70b-32k",
+    "context": "32K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "z-ai/glm-5.2",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "zyphra/zamba2-7b-instruct",
+    "context": "Unknown",
+    "category": "GENERAL"
   }
 ]

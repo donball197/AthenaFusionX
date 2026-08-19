@@ -35,7 +35,7 @@ members = [
     "apps/wasm_tester",
     "drones/data_scraper",
     "apps/nexus_scrape"
-, "crates/nexus_dag_orchestrator"]
+, "drones/health_api"]
 resolver = "2"
 exclude = [
     "comparison_workspace"

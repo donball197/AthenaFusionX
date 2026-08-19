@@ -1,53 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ModelTier {
-    Light,
-    Heavy,
-    Sovereign,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SystemEvent {
-    Log(String),
-    StatusUpdate(String),
-    TaskCompleted,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentStatus {
-    Idle,
-    Working,
-    Faulted,
-    Completed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentTaskType {
-    General,
-    CodeAnalysis,
-    Mutation,
-    Audit,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentDirective {
-    pub id: String,
-    pub task_type: AgentTaskType,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubagentReturn {
-    pub success: bool,
-    pub status: String,
-    pub output: String,
-    pub confidence: f32,
-}
-
 fn default_confidence() -> f32 {
     0.8
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -59,6 +15,14 @@ pub enum AgentAction {
         reasoning: String,
         #[serde(default = "default_confidence")]
         confidence: f32,
+    },
+    #[serde(rename = "patch_file")]
+    PatchFile {
+        path: String,
+        target: String,
+        replacement: String,
+        #[serde(default)]
+        reasoning: String,
     },
     #[serde(rename = "read_function")]
     ReadFunction {
@@ -91,6 +55,7 @@ pub enum AgentAction {
     #[serde(rename = "write_file")]
     WriteFile {
         path: String,
+        #[serde(alias = "replacement", alias = "new_body")]
         content: String,
         #[serde(default)]
         reasoning: String,
@@ -102,6 +67,7 @@ pub enum AgentAction {
         path: String,
         start_line: usize,
         end_line: usize,
+        #[serde(alias = "content", alias = "new_body")]
         replacement: String,
         #[serde(default)]
         reasoning: String,
@@ -124,6 +90,7 @@ pub enum AgentAction {
     PatchFunction {
         path: String,
         function_name: String,
+        #[serde(alias = "replacement", alias = "content")]
         new_body: String,
         #[serde(default)]
         reasoning: String,
@@ -172,7 +139,10 @@ pub enum AgentAction {
         reasoning: String,
     },
     #[serde(rename = "git_rollback")]
-    GitRollback { reasoning: String },
+    GitRollback { 
+        #[serde(default)]
+        reasoning: String 
+    },
     #[serde(rename = "spawn_subagent")]
     SpawnSubagent {
         instruction: String,
@@ -190,4 +160,10 @@ pub enum AgentAction {
         #[serde(default)]
         reasoning: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReturn {
+    pub status: String,
+    pub output: String,
 }

@@ -129,7 +129,7 @@ pub fn get_light_models() -> Vec<String> {
 
 pub fn get_heavy_models() -> Vec<String> {
     vec![
-        "gemma-4-31b-it".to_string(),             // Best open reasoning (262K)
+        "nvidia/nemotron-3-ultra-550b-a55b".to_string(),             // Best open reasoning (262K)
         "gemini-3.1-pro-preview".to_string(),     // Frontier closed model
         "gemma-4-26b-a4b-it".to_string(),         // Efficient MoE fallback (262K)
     ]

@@ -8,3 +8,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 nexus_ide_backend = { path = "../../bins/ide_backend" }
+rayon = "1.8"
+wasmtime = "45.0.2"
+wasmtime-wasi = "45.0.2"
+
+[[bin]]
+name = "benchmark_runner"
+path = "src/main.rs"
+
+[[bin]]
+name = "wasm_bridge_host"
+path = "src/wasm_bridge_host.rs"

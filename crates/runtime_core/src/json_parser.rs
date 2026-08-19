@@ -60,6 +60,53 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     }
 
     // 3. Serializer & Transparent Fallback Log
+    
+    // ⚡ ROBUST Auto-normalize arbitrary tool schemas to Athena AgentAction array
+    let clean_text = if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&clean_text) {
+        let process_obj = |obj: &mut serde_json::Map<String, serde_json::Value>| {
+            // Map "tool" -> "type"
+            if let Some(tool_val) = obj.remove("tool") {
+                obj.insert("type".to_string(), tool_val);
+            }
+            // Flatten "args"
+            if let Some(args_val) = obj.remove("args") {
+                if let Some(args_obj) = args_val.as_object() {
+                    for (k, v) in args_obj {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            // Flatten "arguments" (alias)
+            if let Some(args_val) = obj.remove("arguments") {
+                if let Some(args_obj) = args_val.as_object() {
+                    for (k, v) in args_obj {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            // Map "bash_command" -> "command" (alias)
+            if let Some(cmd) = obj.remove("bash_command") {
+                obj.insert("command".to_string(), cmd);
+            }
+        };
+
+        if let Some(arr) = val.as_array_mut() {
+            for item in arr.iter_mut() {
+                if let Some(obj) = item.as_object_mut() {
+                    process_obj(obj);
+                }
+            }
+            val.to_string()
+        } else if let Some(obj) = val.as_object_mut() {
+            process_obj(obj);
+            serde_json::Value::Array(vec![val.clone()]).to_string()
+        } else {
+            clean_text
+        }
+    } else {
+        clean_text
+    };
+    
     match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
         Ok(actions) => Ok(actions),
         Err(e1) => {
