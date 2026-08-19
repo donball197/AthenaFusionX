@@ -23,7 +23,7 @@ impl ExecutionSandbox {
                 Capability::ReadSubstrate
             }
             "write_file" | "diff_patch" | "patch_function" | "replace_lines"
-            | "lazarus_snapshot" | "export_report" => Capability::WriteSubstrate,
+            | "lazarus_snapshot" | "export_report" | "synthesize_report" => Capability::WriteSubstrate,
             "execute_command" | "run_tests" | "git_rollback" => Capability::ExecuteSystemCall,
             "halt" => Capability::HaltCognition,
             _ => return Err(format!("SECURITY_FAULT: Unknown action taxonomy '{}'", action_type)),
@@ -136,5 +136,11 @@ pub const TOOL_CONTRACTS: &[ToolContract] = &[
         binary_path: "target/release/mutation_ranker",
         flags: &["--candidate", "--impact-report", "--health-report", "--output"],
         usage_pattern: "mutation_ranker --candidate <target> --impact-report /tmp/impact.json --health-report /tmp/audit.json --output /tmp/verdict.json",
+    },
+    ToolContract {
+        name: "synthesize_report",
+        binary_path: "internal::agent_action",
+        flags: &["output_path", "source_files"],
+        usage_pattern: "synthesize_report <output_path> <source_files> (Compiles and concatenates multiple source files into a final report)",
     },
 ];
