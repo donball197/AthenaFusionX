@@ -1,0 +1,60 @@
+name: Nexus Singularity Auto-Heal
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Grant Athena the permissions she needs to push code and leave comments
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  nexus-security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          # Check out the PR branch specifically so we can push fixes back to it
+          ref: ${{ github.head_ref }}
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build AthenaFusionX (Nexus AST Tool)
+        run: cargo build --release -p nexus_ast_tool
+
+      - name: Run Autonomous Security Audit & Auto-Heal
+        env:
+          # Pulls the API keys from your GitHub Repository Secrets
+          GEMINI_API_KEY: ${{ secrets.ATHENA_KEYS }}
+          NVIDIA_API_KEY: ${{ secrets.ATHENA_KEYS }}
+        run: |
+          ./target/release/nexus_ast_tool audit --path . --ai-triage --auto-heal --generate-report
+          
+      - name: Post Bug Bounty Report to PR
+        # Only run this step if she actually found bugs and generated a report
+        if: hashFiles('bounty_report.md') != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('bounty_report.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "🤖 **AthenaFusionX Security Audit Complete**\n\n" + report
+            });
+
+      - name: Commit Auto-Healed Patches
+        if: hashFiles('bounty_report.md') != ''
+        run: |
+          git config --global user.name "AthenaFusionX (Auto-Healer)"
+          git config --global user.email "athena@singularity.local"
+          git add -u
+          # Commit the healed code. The '|| echo' prevents failure if no files actually changed.
+          git commit -m "chore(security): 🛡️ Auto-healed vulnerabilities detected by Nexus Singularity" || echo "No changes to commit"
+          git push
