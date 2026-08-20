@@ -21,8 +21,10 @@ jobs:
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Remove Local Cargo Configs (Sccache Fix)
-        run: rm -rf .cargo/
+      - name: Nuke Sccache Configs
+        run: |
+          rm -rf .cargo/
+          rm -f ~/.cargo/config.toml ~/.cargo/config
 
       - name: Build AthenaFusionX (Nexus AST Tool)
         run: cargo build --release -p nexus_ast_tool
@@ -55,5 +57,5 @@ jobs:
           git config --global user.name "AthenaFusionX (Auto-Healer)"
           git config --global user.email "athena@singularity.local"
           git add -u
-          git commit -m "chore(security): 🛡️ Auto-healed vulnerabilities detected by Nexus Singularity" || echo "No changes to commit"
-          git push origin HEAD:${{ github.head_ref }}
+          git commit -m "chore(security): 🛡️ forcefully nuke all cargo configs to defeat sccache"
+          git push origin test-auto-heal
