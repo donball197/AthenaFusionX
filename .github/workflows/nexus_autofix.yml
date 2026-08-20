@@ -22,9 +22,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build AthenaFusionX (Nexus AST Tool)
-        env:
-          RUSTC_WRAPPER: ""
-        run: cargo build --release -p nexus_ast_tool
+        run: |
+          # Brutally enforce standard compilation by removing the local sccache config
+          rm -f .cargo/config.toml
+          cargo build --release -p nexus_ast_tool
 
       - name: Run Autonomous Security Audit & Auto-Heal
         env:
