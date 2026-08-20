@@ -21,11 +21,15 @@ jobs:
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo Registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+
       - name: Build AthenaFusionX (Nexus AST Tool)
-        run: |
-          # Brutally enforce standard compilation by removing the local sccache config
-          rm -f .cargo/config.toml
-          cargo build --release -p nexus_ast_tool
+        # Inline override forces Cargo to ignore local sccache configs
+        run: CARGO_BUILD_RUSTC_WRAPPER="" RUSTC_WRAPPER="" cargo build --release -p nexus_ast_tool
 
       - name: Run Autonomous Security Audit & Auto-Heal
         env:
