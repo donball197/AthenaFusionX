@@ -27,9 +27,11 @@ jobs:
           workspaces: |
             .
 
+      - name: Remove Local Cargo Configs (Sccache Fix)
+        run: rm -rf .cargo/
+
       - name: Build AthenaFusionX (Nexus AST Tool)
-        # Inline override forces Cargo to ignore local sccache configs
-        run: CARGO_BUILD_RUSTC_WRAPPER="" RUSTC_WRAPPER="" cargo build --release -p nexus_ast_tool
+        run: cargo build --release -p nexus_ast_tool
 
       - name: Run Autonomous Security Audit & Auto-Heal
         env:
