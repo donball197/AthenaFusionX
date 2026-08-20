@@ -21,12 +21,6 @@ jobs:
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo Registry
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-
       - name: Remove Local Cargo Configs (Sccache Fix)
         run: rm -rf .cargo/
 
@@ -37,8 +31,6 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.ATHENA_KEYS }}
           NVIDIA_API_KEY: ${{ secrets.ATHENA_KEYS }}
-          NEXUS_HEAVY_MODEL: "z-ai/glm-5.2"
-          NEXUS_LIGHT_MODEL: "z-ai/glm-5.2"
         run: |
           ./target/release/nexus_ast_tool audit --path . --ai-triage --auto-heal --generate-report
 
