@@ -17,7 +17,6 @@ members = [
     "bins/node",
     "bins/ide_backend",
     "apps/telemetry_node",
-    "target_dummy",
     "apps/logic_cell",
     "apps/symbol_graph",
     "apps/repository_planner",
