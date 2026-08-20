@@ -4,14 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = { workspace = true }
-clap = { version = "4.4", features = ["derive"] }
-syn = { version = "2", features = ["full", "visit-mut", "extra-traits"] }
-quote = "1"
+syn = { version = "2.0", features = ["full", "extra-traits", "visit", "visit-mut"] }
 prettyplease = "0.2"
+thiserror = "1.0"
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+walkdir = "2.4"
+
+# Modern Zero-Fragmentation ABI (0.23.x ecosystem)
 tree-sitter = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-python = "0.23"
-tree-sitter-typescript = "0.23"
 tree-sitter-javascript = "0.23"
-tree-sitter-zig = "*"
+tree-sitter-typescript = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-zig = "1.1"
+tree-sitter-svelte-ng = "1.0"
