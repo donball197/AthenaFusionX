@@ -44,8 +44,7 @@ impl CognitiveBudget {
 pub struct SubgoalCompletionEngine;
 
 fn has_word(text: &str, word: &str) -> bool {
-    text.split_whitespace()
-        .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == word)
+    text.split_whitespace().any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == word)
 }
 
 fn any_word(text: &str, words: &[&str]) -> bool {
@@ -107,18 +106,40 @@ impl SubgoalCompletionEngine {
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
 
-        let first_word = classify_text.split_whitespace().next().unwrap_or("");
-        let is_recon_intent = [
-            "read", "analyze", "inspect", "search", "examine", "locate", "profile", "benchmark",
-        ]
-        .contains(&first_word);
+        // ⚡ FIX: Removed first-word recon classification.
+        // We now prioritize Mutation/Write checks. If ANY unnegated mutation word exists,
+        // it is a mutation task, regardless of whether it starts with "read" or "analyze".
 
-        if is_recon_intent {
-            conditions.push(CompletionCondition::ReadMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.65));
-        } else if any_word_unnegated(
+        if any_word_unnegated(
             classify_text,
-            &["write", "write_file", "output", "export", "save", "implement", "integrate", "add", "create"],
+            &[
+                "write",
+                "writing",
+                "wrote",
+                "write_file",
+                "output",
+                "outputting",
+                "export",
+                "exporting",
+                "save",
+                "saving",
+                "implement",
+                "implementing",
+                "integrate",
+                "integrating",
+                "add",
+                "adding",
+                "create",
+                "creating",
+                "generate",
+                "generating",
+                "produce",
+                "producing",
+                "append",
+                "appending",
+                "build",
+                "building",
+            ],
         ) {
             conditions.push(CompletionCondition::WriteMarkerAcquired);
             is_mutation_task = true;
@@ -126,7 +147,28 @@ impl SubgoalCompletionEngine {
             if any_word(classify_text, &["roadmap", "audit", "comparison"]) {
                 conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
             }
-        } else if any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate"]) {
+        } else if any_word_unnegated(
+            classify_text,
+            &[
+                "patch",
+                "patching",
+                "patched",
+                "apply",
+                "applying",
+                "applied",
+                "fix",
+                "fixing",
+                "fixed",
+                "remediate",
+                "remediating",
+                "modify",
+                "modifying",
+                "edit",
+                "editing",
+                "change",
+                "changing",
+            ],
+        ) {
             conditions.push(CompletionCondition::PatchMarkerAcquired);
             is_mutation_task = true;
         } else if any_word(classify_text, &["search", "find", "locate"]) {
@@ -153,26 +195,44 @@ impl SubgoalCompletionEngine {
         for condition in &contract.conditions {
             match condition {
                 CompletionCondition::MinBeliefScore(min_score) => {
-                    if belief_score < *min_score { return false; }
+                    if belief_score < *min_score {
+                        return false;
+                    }
                 }
                 CompletionCondition::WriteMarkerAcquired => {
-                    if !local_evidence.contains("[WRITE_OK]") && !local_evidence.contains("[CMD_OK]") { return false; }
+                    if !local_evidence.contains("[WRITE_OK]") {
+                        return false;
+                    }
                 }
                 CompletionCondition::PatchMarkerAcquired => {
-                    if !local_evidence.contains("[PATCH_FUNCTION_OK]") && !local_evidence.contains("[DIFF_PATCH_OK]") && !local_evidence.contains("[REPLACE_LINES_OK]") { return false; }
+                    if !local_evidence.contains("[PATCH_FUNCTION_OK]")
+                        && !local_evidence.contains("[DIFF_PATCH_OK]")
+                        && !local_evidence.contains("[REPLACE_LINES_OK]")
+                    {
+                        return false;
+                    }
                 }
                 CompletionCondition::ReadMarkerAcquired => {
-                    if !local_evidence.contains("[READ_OK]") && !local_evidence.contains("[READ_CHUNK_OK]") { return false; }
+                    if !local_evidence.contains("[READ_OK]")
+                        && !local_evidence.contains("[READ_CHUNK_OK]")
+                    {
+                        return false;
+                    }
                 }
                 CompletionCondition::SearchMarkerAcquired => {
-                    if !local_evidence.contains("[SEARCH_CODE_OK]") && !local_evidence.contains("[SEARCH_OK]") { return false; }
+                    if !local_evidence.contains("[SEARCH_CODE_OK]")
+                        && !local_evidence.contains("[SEARCH_OK]")
+                    {
+                        return false;
+                    }
                 }
                 _ => {} // SourceCodeEvidenceRequired / CommandMarkerAcquired handled loosely for now
             }
         }
 
         // Only after the contract is satisfied do we pass it to the final verifier
-        let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(&contract.node_id, local_evidence);
+        let verifier_result =
+            crate::outcome_verifier::OutcomeVerifier::verify(&contract.node_id, local_evidence);
         matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
     }
 }

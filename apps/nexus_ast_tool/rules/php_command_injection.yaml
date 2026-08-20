@@ -1,0 +1,6 @@
+id: PHP_COMMAND_INJECTION
+language: php
+severity: Critical
+description: Dangerous execution of system commands using unsanitized user-supplied input via system(), exec(), passthru(), or shell_exec().
+tree_sitter_query: >
+  (function_call_expression function: (name) @func_name (#match? @func_name "^(system|exec|passthru|shell_exec)$")) @danger.command_injection

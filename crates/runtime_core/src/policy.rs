@@ -23,7 +23,9 @@ impl ExecutionSandbox {
                 Capability::ReadSubstrate
             }
             "write_file" | "diff_patch" | "patch_function" | "replace_lines"
-            | "lazarus_snapshot" | "export_report" | "synthesize_report" => Capability::WriteSubstrate,
+            | "lazarus_snapshot" | "export_report" | "synthesize_report" => {
+                Capability::WriteSubstrate
+            }
             "execute_command" | "run_tests" | "git_rollback" => Capability::ExecuteSystemCall,
             "halt" => Capability::HaltCognition,
             _ => return Err(format!("SECURITY_FAULT: Unknown action taxonomy '{}'", action_type)),

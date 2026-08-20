@@ -40,28 +40,38 @@ fn evaluate_completion(
     evidence_history: &str,
 ) -> CompletionState {
     // Task classification used to be re-derived here from raw mission/objective text
-        // via naive `.contains(...)` checks with no negation-awareness -- separately from
-        // session.contract, which is already built by SubgoalCompletionEngine::infer_contract()
-        // using negation-aware classification (any_word_unnegated). That duplication let a
-        // read-only synthesis directive get misclassified as a mutation task purely because
-        // the mission text said "synthesis"/"report"/"document" as a phase label, not as an
-        // instruction to write. Derive from session.contract instead -- the single source of
-        // truth for task classification everywhere else in the completion pipeline.
-        let is_mutation_task = session.contract.is_mutation_task;
-        let is_write_task = is_mutation_task
-            && session.contract.conditions.iter().any(|c| {
-                matches!(c, crate::completion_engine::CompletionCondition::WriteMarkerAcquired)
-            });
+    // via naive `.contains(...)` checks with no negation-awareness -- separately from
+    // session.contract, which is already built by SubgoalCompletionEngine::infer_contract()
+    // using negation-aware classification (any_word_unnegated). That duplication let a
+    // read-only synthesis directive get misclassified as a mutation task purely because
+    // the mission text said "synthesis"/"report"/"document" as a phase label, not as an
+    // instruction to write. Derive from session.contract instead -- the single source of
+    // truth for task classification everywhere else in the completion pipeline.
+    let is_mutation_task = session.contract.is_mutation_task;
+    let is_write_task = is_mutation_task
+        && session.contract.conditions.iter().any(|c| {
+            matches!(c, crate::completion_engine::CompletionCondition::WriteMarkerAcquired)
+        });
 
     let has_prior_evidence = if is_write_task {
-        session.local_evidence.lines().any(|l| l.starts_with("[WRITE_OK]") || l.starts_with("[CMD_OK]"))
+        session
+            .local_evidence
+            .lines()
+            .any(|l| l.starts_with("[WRITE_OK]") || l.starts_with("[CMD_OK]"))
     } else if is_mutation_task {
         session.local_evidence.lines().any(|l| {
-            l.starts_with("[DIFF_PATCH_OK]") || l.starts_with("[REPLACE_LINES_OK]") || l.starts_with("[PATCH_FUNCTION_OK]") || l.starts_with("[WRITE_OK]")
+            l.starts_with("[DIFF_PATCH_OK]")
+                || l.starts_with("[REPLACE_LINES_OK]")
+                || l.starts_with("[PATCH_FUNCTION_OK]")
+                || l.starts_with("[WRITE_OK]")
         })
     } else {
         session.local_evidence.lines().any(|l| {
-            l.starts_with("[READ_CHUNK_OK]") || l.starts_with("[SEARCH_CODE_OK]") || l.starts_with("[READ_OK]") || l.starts_with("[WRITE_OK]") || l.starts_with("[CMD_OK]")
+            l.starts_with("[READ_CHUNK_OK]")
+                || l.starts_with("[SEARCH_CODE_OK]")
+                || l.starts_with("[READ_OK]")
+                || l.starts_with("[WRITE_OK]")
+                || l.starts_with("[CMD_OK]")
         })
     };
 
@@ -71,26 +81,37 @@ fn evaluate_completion(
         true
     } else {
         let mission_lower = mission.to_lowercase();
-        let objective_part = mission_lower.lines().find(|line| line.starts_with("objective:")).unwrap_or(mission_lower.as_str());
-        let evidence_lower = format!("{} {}", evidence_history.to_lowercase(), session.local_evidence.to_lowercase());
-        let and_segments: Vec<&str> = objective_part.split(" and ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-        
+        let objective_part = mission_lower
+            .lines()
+            .find(|line| line.starts_with("objective:"))
+            .unwrap_or(mission_lower.as_str());
+        let evidence_lower = format!(
+            "{} {}",
+            evidence_history.to_lowercase(),
+            session.local_evidence.to_lowercase()
+        );
+        let and_segments: Vec<&str> =
+            objective_part.split(" and ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
         and_segments.iter().all(|segment| {
-            let or_parts: Vec<&str> = segment.split(" or ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let or_parts: Vec<&str> =
+                segment.split(" or ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
             if or_parts.len() <= 1 {
-                segment.split_whitespace().filter(|w| w.len() > 3).any(|w| evidence_lower.contains(w))
+                segment
+                    .split_whitespace()
+                    .filter(|w| w.len() > 3)
+                    .any(|w| evidence_lower.contains(w))
             } else {
-                or_parts.iter().any(|part| part.split_whitespace().filter(|w| w.len() > 3).any(|w| evidence_lower.contains(w)))
+                or_parts.iter().any(|part| {
+                    part.split_whitespace()
+                        .filter(|w| w.len() > 3)
+                        .any(|w| evidence_lower.contains(w))
+                })
             }
         })
     };
 
-    CompletionState {
-        is_write_task,
-        is_mutation_task,
-        has_prior_evidence,
-        compound_satisfied,
-    }
+    CompletionState { is_write_task, is_mutation_task, has_prior_evidence, compound_satisfied }
 }
 
 pub struct CorticalLoop {
@@ -163,7 +184,6 @@ impl CorticalLoop {
         }
     }
 
-
     fn compress_context(ctx: &str, max_chars: usize) -> String {
         if ctx.len() <= max_chars {
             return ctx.to_string();
@@ -171,11 +191,15 @@ impl CorticalLoop {
         let chunk_size = max_chars / 2;
         let start = &ctx[..chunk_size];
         let end = &ctx[ctx.len() - chunk_size..];
-        format!("{}...\n\n[... {} CHARACTERS COMPRESSED TO PREVENT CONTEXT OVERFLOW ...]\n\n{}", start, ctx.len() - max_chars, end)
+        format!(
+            "{}...\n\n[... {} CHARACTERS COMPRESSED TO PREVENT CONTEXT OVERFLOW ...]\n\n{}",
+            start,
+            ctx.len() - max_chars,
+            end
+        )
     }
 
     pub async fn ignite(&mut self, mission: &str) -> Result<CortexOutcome> {
-
         self.ignite_with_evidence(mission, None).await
     }
 
@@ -235,11 +259,15 @@ impl CorticalLoop {
                     current_belief, h_content
                 ));
 
-                let evidence_history = Self::compress_context(&session.collect_evidence(h_id), 64000);
+                let evidence_history =
+                    Self::compress_context(&session.collect_evidence(h_id), 64000);
 
                 // ⚡ COGNITIVE MOMENTUM GUARD (PERMANENT SCALING)
                 if session.budget.is_exhausted(turn) {
-                    if current_belief >= 0.55 && session.consecutive_mutation_vetoes < 3 && turn < 300 {
+                    if current_belief >= 0.55
+                        && session.consecutive_mutation_vetoes < 3
+                        && turn < 300
+                    {
                         self.log(format!("\x1b[1;35m>> [COGNITIVE MOMENTUM] Call limit reached, but Belief is high ({:.2}). Dynamically extending budget by +20 turns / +80 API calls.\x1b[0m", current_belief));
                         session.budget.max_turns += 20;
                         session.budget.max_model_calls += 80;
@@ -252,17 +280,21 @@ impl CorticalLoop {
                     }
                 }
 
-                
                 // ⚡ AUTONOMOUS COMPLETION GUARD (PERMANENT ARCHITECTURAL FIX)
-                let comp_state = evaluate_completion(&session, mission, current_belief, &evidence_history);
+                let comp_state =
+                    evaluate_completion(&session, mission, current_belief, &evidence_history);
 
                 // If the state is mathematically satisfied and belief is extremely high, force the node to halt.
-                if comp_state.has_prior_evidence && comp_state.compound_satisfied && current_belief >= 0.95 {
-                    self.log("\x1b[1;36m>> [CORTEX OMNI-GUARD] Contract mathematically satisfied. Stripping LLM authority and forcing deterministic node completion.\x1b[0m".to_string());
-                    return Ok(CortexOutcome::CompletionProposed {
-                        belief: current_belief,
-                        evidence: session.collect_evidence(h_id),
-                    });
+                if comp_state.has_prior_evidence
+                    && comp_state.compound_satisfied
+                    && current_belief >= 0.95
+                    && (comp_state.is_mutation_task || comp_state.is_write_task)
+                {
+                    self.log("\x1b[1;36m>> [CORTEX OMNI-GUARD] [OMNI-GUARD TELEMETRY] Mathematical contract is satisfied. Awaiting Agent to autonomously call 'halt'.\x1b[0m".to_string());
+                    //                     return Ok(CortexOutcome::CompletionProposed {
+                    //                         belief: current_belief,
+                    //                         evidence: session.collect_evidence(h_id),
+                    //                     });
                 }
 
                 self.log("\x1b[36m>> [STRATEGIST] Planning next maneuver...\x1b[0m".to_string());
@@ -284,30 +316,6 @@ impl CorticalLoop {
                     }
                 };
                 self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposed_action));
-
-                // ⚡ DETERMINISTIC HALT SHORT-CIRCUIT
-                let prop_lower = proposed_action.trim().to_lowercase();
-                if prop_lower == "halt" || prop_lower.starts_with("halt ") {
-                    if comp_state.has_prior_evidence && comp_state.compound_satisfied {
-                        self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Halt proposed following successful local evidence. Subtask complete.\x1b[0m".to_string());
-                        return Ok(CortexOutcome::CompletionProposed {
-                            belief: 1.0,
-                            evidence: session.collect_evidence(h_id),
-                        });
-                    } else if comp_state.has_prior_evidence && !comp_state.compound_satisfied {
-                        self.log("\x1b[1;33m>> [CORTEX] DETERMINISTIC GUARD SUPPRESSED: Halt proposed but evidence covers only part of a compound objective; continuing to explore.\x1b[0m".to_string());
-                    } else if (comp_state.is_mutation_task || comp_state.is_write_task) && !comp_state.has_prior_evidence {
-                        if current_belief > 0.90 {
-                            self.log("\x1b[1;33m>> [CORTEX GUARD OVERRIDE] High belief (>.90) halt proposed without mutation. Allowing Evaluator to assess validity.\x1b[0m".to_string());
-                        } else {
-                        self.log("\x1b[1;31m>> [CORTEX FAULT] Halt rejected: Objective requires patching/writing, but no mutation success marker found.\x1b[0m".to_string());
-                        let obs_id = session.graph.add_node(NodeKind::Observation, "[HALT_REJECTED] The directive requires modifying files. You proposed halt without successfully patching anything. You MUST use diff_patch, patch_function, or write_file.", 1.0, 50);
-                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.6);
-                        session.graph.propagate_beliefs();
-                        continue;
-                    }
-                    }
-                }
 
                 // --- ANTI-LOOP KINETIC GUARD (PATCHED) ---
                 let action_key = proposed_action.trim().to_string();
@@ -376,11 +384,14 @@ impl CorticalLoop {
                         // consecutive vetoes of a mutation-shaped proposal while the
                         // contract's mutation marker is still missing, force the
                         // proposal through instead of trusting the Critic indefinitely.
+                        let prop_lower = proposed_action.trim().to_lowercase();
                         let is_mutation_shaped_proposal = prop_lower.contains("write_file")
                             || prop_lower.contains("patch_function")
                             || prop_lower.contains("diff_patch")
                             || prop_lower.contains("replace_lines");
-                        let contract_still_unmet = (comp_state.is_mutation_task || comp_state.is_write_task) && !comp_state.has_prior_evidence;
+                        let contract_still_unmet = (comp_state.is_mutation_task
+                            || comp_state.is_write_task)
+                            && !comp_state.has_prior_evidence;
 
                         if critic.confidence_modifier <= -0.2
                             && is_mutation_shaped_proposal
@@ -469,7 +480,12 @@ impl CorticalLoop {
                                             1.0,
                                             50,
                                         );
-                                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.3);
+                                        session.graph.add_edge(
+                                            obs_id,
+                                            h_id,
+                                            EdgeRelation::Contradicts,
+                                            0.3,
+                                        );
                                         session.graph.propagate_beliefs();
                                     }
                                 }
@@ -519,7 +535,12 @@ impl CorticalLoop {
                                                 "[SYNTHESIS_LOCK_ACTIVE] Reconnaissance is structurally forbidden in this phase. You already have all evidence in context. You MUST use write_file to output the report.",
                                                 1.0, 99
                                             );
-                                            session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
+                                            session.graph.add_edge(
+                                                obs_id,
+                                                h_id,
+                                                EdgeRelation::Contradicts,
+                                                0.99,
+                                            );
                                             session.graph.propagate_beliefs();
                                             continue;
                                         }
@@ -552,7 +573,12 @@ impl CorticalLoop {
                                             _ => None,
                                         };
 
-                                        let is_halt_action_captured = matches!(action, AgentAction::Halt { .. }) || proposed_action.trim().to_lowercase().starts_with("halt");
+                                        let is_halt_action_captured =
+                                            matches!(action, AgentAction::Halt { .. })
+                                                || proposed_action
+                                                    .trim()
+                                                    .to_lowercase()
+                                                    .starts_with("halt");
                                         let motor_cmd = MotorCortex::translate(
                                             &intent,
                                             None,
@@ -632,15 +658,61 @@ impl CorticalLoop {
 
                                                 session.record_evidence(&evidence, &eval, h_id);
 
-                                                // TERMINAL HALT INTERCEPT
-                                                // If the action was 'halt' and the Evaluator didn't penalize it,
-                                                // force-exit the node to prevent infinite halt loops.
-                                                if is_halt_action_captured && eval.confidence_modifier >= 0.0 && current_belief > 0.85 {
-                                                    self.log("\x1b[1;36m>> [CORTEX TERMINAL] Valid halt executed and verified. Submitting evidence to ContractVerifier.\x1b[0m".to_string());
-                                                    return Ok(CortexOutcome::CompletionProposed {
-                                                        belief: current_belief.max(0.95),
-                                                        evidence: session.collect_evidence(h_id),
-                                                    });
+                                                // ⚡ THE SYNAPTIC BRIDGE (TERMINAL HALT INTERCEPT)
+                                                // When the mechanical layer receives a Halt, we engage the Prefrontal Cortex
+                                                // to semantically verify if the objective was actually accomplished.
+                                                if is_halt_action_captured {
+                                                    self.log("\x1b[1;36m>> [CORTEX] Halt detected. Engaging Semantic Verifier (Prefrontal Cortex)...\x1b[0m".to_string());
+                                                    session.budget.record_call();
+                                                    match EpistemicEngine::verify_outcome(
+                                                        &self.client,
+                                                        &self.api_key,
+                                                        mission,
+                                                        &proposed_action,
+                                                        &session.local_evidence,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(report) => {
+                                                            if report.goal_satisfied {
+                                                                self.log(format!("\x1b[1;32m>> [SEMANTIC VERIFIER] APPROVED: {}\x1b[0m", report.rationale));
+                                                                return Ok(CortexOutcome::CompletionProposed {
+                                                                    belief: current_belief.max(0.95),
+                                                                    evidence: session.collect_evidence(h_id),
+                                                                });
+                                                            } else {
+                                                                self.log(format!("\x1b[1;31m>> [SEMANTIC VERIFIER] REJECTED: {}\x1b[0m", report.rationale));
+                                                                let obs_id = session.graph.add_node(
+                                                                    NodeKind::Observation,
+                                                                    &format!("[HALT_REJECTED] The Semantic Verifier rejected your halt attempt. Rationale: {}. You MUST fix these deficiencies before halting.", report.rationale),
+                                                                    1.0, 50
+                                                                );
+                                                                session.graph.add_edge(
+                                                                    obs_id,
+                                                                    h_id,
+                                                                    EdgeRelation::Contradicts,
+                                                                    0.8,
+                                                                );
+                                                                session.graph.propagate_beliefs();
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            self.log(format!("\x1b[1;31m>> [CORTEX FAULT] Semantic Verifier failed: {}\x1b[0m", e));
+                                                            let obs_id = session.graph.add_node(
+                                                                NodeKind::Observation,
+                                                                &format!("[VERIFIER_FAULT] {}", e),
+                                                                1.0,
+                                                                50,
+                                                            );
+                                                            session.graph.add_edge(
+                                                                obs_id,
+                                                                h_id,
+                                                                EdgeRelation::Contradicts,
+                                                                0.5,
+                                                            );
+                                                            session.graph.propagate_beliefs();
+                                                        }
+                                                    }
                                                 }
 
                                                 // AUTO-REVERT: a mutation the Evaluator scored negative must
@@ -677,7 +749,7 @@ impl CorticalLoop {
                                                 {
                                                     self.log(format!("\x1b[1;32m>> [CORTEX] Strategy Belief updated to {:.2}\x1b[0m", updated_node.belief_score));
 
-                                                    // Deterministic early exits disabled. 
+                                                    // Deterministic early exits disabled.
                                                     // The LLM must explicitly issue a HALT action.
                                                     if comp_state.compound_satisfied {
                                                         self.log("\x1b[1;32m>> [CORTEX] Contract criteria met. Awaiting explicit Agent HALT.\x1b[0m".to_string());
@@ -735,6 +807,5 @@ impl CorticalLoop {
             }
             sleep(Duration::from_secs(2)).await;
         }
-
     }
 }

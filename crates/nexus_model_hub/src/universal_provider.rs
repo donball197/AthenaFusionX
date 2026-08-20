@@ -92,7 +92,9 @@ impl UniversalProvider {
             ProviderKind::OpenAiCompatible => {
                 let base_url = env::var("NVIDIA_API_GATEWAY")
                     .or_else(|_| env::var("NEXUS_OPENAI_GATEWAY"))
-                    .unwrap_or_else(|_| "https://generativelanguage.googleapis.com/v1beta".to_string());
+                    .unwrap_or_else(|_| {
+                        "https://generativelanguage.googleapis.com/v1beta".to_string()
+                    });
 
                 let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 

@@ -1,0 +1,11 @@
+id: "OS_COMMAND"
+language: "Python"
+severity: "Critical"
+description: "Direct concatenation of untrusted input into an OS command."
+tree_sitter_query: |
+  (call 
+    function: (identifier) @func_name 
+    (#match? @func_name "^(eval|exec)$")) @danger.code_execution
+  (call 
+    function: (attribute attribute: (identifier) @func_name) 
+    (#match? @func_name "^(system|popen|run)$")) @danger.os_command

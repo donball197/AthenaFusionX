@@ -22,7 +22,7 @@ impl PlannerAgent {
         let prompt = format!(
             "You are the Lead DAG Planner Agent for AthenaFusionX.\n\
              Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.\n\
-             CRITICAL RULE [GRANULARITY]: YOU MUST BREAK COMPLEX DIRECTIVES INTO AT LEAST 3 DISTINCT NODES. A single node 'task_1' is a FAILURE. If auditing or analyzing, create separate nodes for 'discovery', 'analysis', and 'reporting'. If modifying files, create one node per file.
+             CRITICAL RULE [GRANULARITY]: Create exactly as many nodes as necessary. If the directive is to write or generate a single cohesive document, DO NOT split it into multiple nodes; handle it in a single node to maintain context.
              CRITICAL RULE [JSON ESCAPING]: Do NOT use raw newlines inside JSON strings. Use \n.\n\
              CRITICAL RULE [ROUTER LOCATION]: The Executive Cortex router is located at 'crates/runtime_core/src/router.rs'. Always use 'crates/runtime_core/src/router.rs' in task objectives when referring to the router.\n\
              CRITICAL RULE [DEPENDENCY INFERENCE]: If one task reads, parses, or consumes a file or resource that another task generates, writes, or produces, the consuming task's 'deps' array MUST include the producing task's id. Never schedule a read of a path before the task that creates it.\n\

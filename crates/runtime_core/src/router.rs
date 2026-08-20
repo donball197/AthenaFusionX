@@ -105,7 +105,8 @@ CRITICAL RULES:
 
         let (primary_model, budget) = match class {
             DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => {
-                let model = std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
+                let model = std::env::var("NEXUS_HEAVY_MODEL")
+                    .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
                 (model, ContextBudget::doctor())
             }
             _ => {

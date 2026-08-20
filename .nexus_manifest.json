@@ -487,6 +487,12 @@
   },
   {
     "provider": "Nvidia",
+    "name": "moonshotai/kimi-k3",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
     "name": "nv-mistralai/mistral-nemo-12b-instruct",
     "context": "32K in / 4K out",
     "category": "MISTRAL"

@@ -45,7 +45,10 @@ pub fn spawn(
 
             let ctx = nexus_model_hub::neural_agent::ContextPacket {
                 system_prompt: Some("Output plain text only. One paragraph.".into()),
-                model_override: Some(std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".into())),
+                model_override: Some(
+                    std::env::var("NEXUS_HEAVY_MODEL")
+                        .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".into()),
+                ),
                 ..Default::default()
             };
 

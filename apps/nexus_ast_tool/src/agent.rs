@@ -1,83 +1,192 @@
-//! Autonomous Code Refactoring Micro-Agent
-//! Powered by the MutationStrategy trait and robust AST validation.
-
-use crate::mutation::{all_strategies, get_strategy, MutationError, MutationResult};
+use crate::client::ApiClient;
+use crate::mutation::get_strategy;
+use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 
-pub struct RefactorAgent {
-    source_path: std::path::PathBuf,
-}
+pub struct RefactorAgent;
 
 impl RefactorAgent {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            source_path: path.as_ref().to_path_buf(),
-        }
+    pub fn new() -> Self {
+        Self
     }
 
-    /// Executes a specific mutation strategy on a given symbol within the target file.
+    /// Extract a target symbol's source code lines or block roughly for context
+    pub fn extract_symbol_snippet(file_path: &Path, symbol: &str) -> Result<String> {
+        let content = fs::read_to_string(file_path)
+            .map_err(|e| anyhow!("Failed to read file {}: {e}", file_path.display()))?;
+
+        for line in content.lines() {
+            if line.contains(symbol) {
+                return Ok(content);
+            }
+        }
+        Ok(content)
+    }
+
     pub fn apply_refactoring(
         &self,
-        strategy_name: &str,
+        file_path: &Path,
         symbol: &str,
+        strategy_name: &str,
         payload: &str,
-    ) -> MutationResult<()> {
-        // 1. Load source code from disk
-        let source_code = fs::read_to_string(&self.source_path)
-            .map_err(|e| MutationError::Other(anyhow::anyhow!("Failed to read source file: {e}")))?;
+    ) -> Result<()> {
+        let source = fs::read_to_string(file_path)?;
+        let strategy = get_strategy(strategy_name)
+            .ok_or_else(|| anyhow!("Unknown mutation strategy: {}", strategy_name))?;
 
-        // 2. Retrieve the requested strategy
-        let strategy = get_strategy(strategy_name).ok_or_else(|| {
-            MutationError::InvalidPayload(format!("Strategy '{strategy_name}' not found"))
-        })?;
+        println!("==> [RefactorAgent] Validating payload for strategy '{}'...", strategy.name());
+
+        strategy
+            .validate_payload(payload)
+            .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy.name(), e))?;
+
+        println!("==> [RefactorAgent] Payload accepted by strategy '{}'.", strategy.name());
 
         println!(
-            "==> [Micro-Agent] Executing strategy '{}' on symbol '{}' for file: {:?}",
+            "==> [RefactorAgent] Applying strategy '{}' to symbol '{}'...",
             strategy.name(),
-            symbol,
-            self.source_path
+            symbol
         );
 
-        // 3. Apply the transformation
-        let mutated_code = strategy.apply(&source_code, symbol, payload)?;
+        let mutated = strategy.apply(&source, symbol, payload)?;
 
-        // 4. Validate output code integrity by attempting a dry-run syn parse
-        syn::parse_file(&mutated_code).map_err(|e| {
-            MutationError::InvalidResult(format!("Refactored code failed syntax validation: {e}"))
-        })?;
-
-        // 5. Safely write the validated code back to disk
-        fs::write(&self.source_path, mutated_code)
-            .map_err(|e| MutationError::Other(anyhow::anyhow!("Failed to write refactored file: {e}")))?;
-
-        println!("==> [Micro-Agent] Refactoring successfully applied and verified.");
+        fs::write(file_path, mutated)?;
+        println!("==> [RefactorAgent] Successfully updated {}", file_path.display());
         Ok(())
     }
 
-    /// Runs an autonomous optimization sweep using all available strategies.
-    pub fn autonomous_sweep(&self, symbol: &str, payload: &str) -> usize {
-        let strategies = all_strategies();
-        let mut successful_mutations = 0;
+    pub fn execute_instruction(
+        &self,
+        file_path: &Path,
+        symbol: &str,
+        instruction: &str,
+        strategy_name: &str,
+    ) -> Result<()> {
+        let strategy = if strategy_name.eq_ignore_ascii_case("auto") {
+            Self::classify_instruction(instruction)?
+        } else {
+            strategy_name.to_string()
+        };
 
-        for strategy in strategies {
-            let name = strategy.name();
-            // Skip pure parse fuzzers during standard refactoring sweeps
-            if name == "TreeSitterParse" {
-                continue;
+        get_strategy(&strategy)
+            .ok_or_else(|| anyhow!("Unauthorized mutation strategy: {}", strategy))?;
+
+        println!("==> [Mutation Policy] Authorized strategy: {}", strategy);
+
+        let snippet = Self::extract_symbol_snippet(file_path, symbol)?;
+
+        // The model generates only the payload. It does not choose the
+        // mutation primitive.
+        let generated_payload =
+            ApiClient::query_model(instruction, symbol, &snippet, &strategy)?;
+
+        println!("==> [ApiClient] Received refactoring payload from model.");
+
+        let strategy_impl = get_strategy(&strategy)
+            .ok_or_else(|| anyhow!("Unauthorized mutation strategy: {}", strategy))?;
+
+        // Validate before mutation. A model payload is never allowed to reach
+        // the mutation primitive without satisfying its strategy contract.
+        match strategy_impl.validate_payload(&generated_payload) {
+            Ok(()) => {
+                println!(
+                    "==> [Mutation Boundary] Initial payload accepted for '{}'.",
+                    strategy
+                );
+
+                self.apply_refactoring(file_path, symbol, &strategy, &generated_payload)
             }
 
-            match self.apply_refactoring(name, symbol, payload) {
-                Ok(_) => {
-                    successful_mutations += 1;
-                }
-                Err(e) => {
-                    // Micro-agents handle expected symbol misses gracefully during blind sweeps
-                    eprintln!("   [Micro-Agent Notice] Strategy {} skipped/failed: {}", name, e);
-                }
+            Err(validation_error) => {
+                println!(
+                    "==> [Mutation Boundary] Initial payload rejected for '{}': {}",
+                    strategy, validation_error
+                );
+
+                // Exactly ONE corrective retry. The strategy remains fixed;
+                // the model receives the validator's concrete failure.
+                println!(
+                    "==> [ApiClient] Requesting bounded corrective payload for '{}'.",
+                    strategy
+                );
+
+                let retry_payload = ApiClient::query_model_retry(
+                    instruction,
+                    symbol,
+                    &snippet,
+                    &strategy,
+                    &validation_error.to_string(),
+                    &generated_payload,
+                )?;
+
+                println!(
+                    "==> [ApiClient] Received corrective payload for '{}'.",
+                    strategy
+                );
+
+                strategy_impl
+                    .validate_payload(&retry_payload)
+                    .map_err(|retry_error| {
+                        anyhow!(
+                            "Model payload rejected after bounded retry for strategy '{}': {}",
+                            strategy,
+                            retry_error
+                        )
+                    })?;
+
+                println!(
+                    "==> [Mutation Boundary] Corrective payload accepted for '{}'.",
+                    strategy
+                );
+
+                self.apply_refactoring(file_path, symbol, &strategy, &retry_payload)
             }
         }
+    }
 
-        successful_mutations
+    /// Deterministic policy layer for natural-language refactoring requests.
+    ///
+    /// The model is deliberately NOT allowed to select the mutation strategy.
+    fn classify_instruction(instruction: &str) -> Result<String> {
+        let text = instruction.to_ascii_lowercase();
+
+        if text.contains("comment")
+            || text.contains("documentation")
+            || text.contains("document this")
+        {
+            return Ok("InsertComment".into());
+        }
+
+        if text.contains("rename") {
+            return Ok("RenameSymbol".into());
+        }
+
+        if text.contains("make public")
+            || text.contains("make it public")
+            || text.contains("export")
+        {
+            return Ok("MakePublic".into());
+        }
+
+        if text.contains("early return") || text.contains("return early") {
+            return Ok("InsertEarlyReturn".into());
+        }
+
+        if text.contains("replace function body") || text.contains("replace the function body") {
+            return Ok("ReplaceFunctionBody".into());
+        }
+
+        Err(anyhow!(
+            "No safe mutation strategy matches instruction '{}'.              Specify an explicit --strategy or use a supported instruction.",
+            instruction
+        ))
+    }
+}
+
+
+impl Default for RefactorAgent {
+    fn default() -> Self {
+        Self::new()
     }
 }

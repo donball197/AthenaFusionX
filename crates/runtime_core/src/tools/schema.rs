@@ -124,7 +124,18 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
                 "reasoning": { "type": "string" },
             }),
         ),
+        
         FunctionDeclaration::for_action(
+            "synthesize_report",
+            "Generates a massive, multi-section markdown report from a list of source files, bypassing JSON formatting limits.",
+            &["output_path", "source_files", "reasoning"],
+            json!({
+                "output_path": { "type": "string" },
+                "source_files": { "type": "array", "items": { "type": "string" } },
+                "reasoning": { "type": "string" },
+            }),
+        ),
+FunctionDeclaration::for_action(
             "halt",
             "Halt the current cognitive task when the mission is successfully completed.",
             &["reasoning"],
@@ -157,10 +168,9 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             reasoning: get_str("reasoning")?,
             confidence: 0.95,
         }),
-        "read_file" => Ok(AgentAction::ReadFile {
-            path: get_str("path")?,
-            reasoning: get_str("reasoning")?,
-        }),
+        "read_file" => {
+            Ok(AgentAction::ReadFile { path: get_str("path")?, reasoning: get_str("reasoning")? })
+        }
         "read_file_chunk" => Ok(AgentAction::ReadFileChunk {
             path: get_str("path")?,
             start_line: get_int("start_line")?,
@@ -198,15 +208,26 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             query: get_str("query")?,
             reasoning: get_str("reasoning")?,
         }),
-        "halt" => Ok(AgentAction::Halt {
-            reasoning: get_str("reasoning")?,
-        }),
+        "synthesize_report" => {
+            let empty_vec = vec![];
+            let arr = args.get("source_files").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
+            let source_files =
+                arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            Ok(AgentAction::SynthesizeReport {
+                output_path: get_str("output_path")?,
+                source_files,
+                reasoning: get_str("reasoning")?,
+            })
+        }
+        "halt" => Ok(AgentAction::Halt { reasoning: get_str("reasoning")? }),
         other => Err(format!("Unrecognized tool identifier received: {}", other)),
     }
 }
 
 /// Universal response inspector that extracts tool calls from either Gemini or OpenAI/NVIDIA NIM responses.
-pub fn extract_tool_call_from_response(response_json: &serde_json::Value) -> Result<AgentAction, String> {
+pub fn extract_tool_call_from_response(
+    response_json: &serde_json::Value,
+) -> Result<AgentAction, String> {
     // 1. Check Gemini format: candidates[0].content.parts[0].functionCall
     if let Some(fc) = response_json.pointer("/candidates/0/content/parts/0/functionCall") {
         let name = fc["name"].as_str().ok_or("Gemini tool call missing 'name'")?;
@@ -216,9 +237,13 @@ pub fn extract_tool_call_from_response(response_json: &serde_json::Value) -> Res
 
     // 2. Check OpenAI / NVIDIA NIM format: choices[0].message.tool_calls[0]
     if let Some(tc) = response_json.pointer("/choices/0/message/tool_calls/0") {
-        let name = tc.pointer("/function/name").and_then(|v| v.as_str()).ok_or("OpenAI tool call missing function name")?;
+        let name = tc
+            .pointer("/function/name")
+            .and_then(|v| v.as_str())
+            .ok_or("OpenAI tool call missing function name")?;
         let args_str = tc.pointer("/function/arguments").and_then(|v| v.as_str()).unwrap_or("{}");
-        let args: serde_json::Value = serde_json::from_str(args_str).map_err(|e| format!("Failed to parse tool arguments JSON string: {}", e))?;
+        let args: serde_json::Value = serde_json::from_str(args_str)
+            .map_err(|e| format!("Failed to parse tool arguments JSON string: {}", e))?;
         return parse_tool_call(name, &args);
     }
 

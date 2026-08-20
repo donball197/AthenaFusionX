@@ -52,8 +52,8 @@ pub fn get_light_models() -> Vec<String> {
 
     let gemini_key = env::var("GEMINI_API_KEY").unwrap_or_default();
     if !gemini_key.trim().is_empty() && now > GEMINI_DISABLED_UNTIL.load(Ordering::Relaxed) {
-        let light = env::var("NEXUS_LIGHT_MODEL")
-            .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+        let light =
+            env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
         if !healthy.contains(&light) {
             healthy.push(light);
         }

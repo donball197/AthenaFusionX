@@ -1,0 +1,8 @@
+id: "SQL_INJECTION"
+language: "PHP"
+severity: "High"
+description: "Potential SQL Injection via direct execution of database queries."
+tree_sitter_query: |
+  (function_call_expression 
+    function: (name) @func_name 
+    (#match? @func_name "^(mysqli_query|mysqli_multi_query)$")) @danger.sql_injection

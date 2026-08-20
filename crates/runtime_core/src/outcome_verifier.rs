@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::cognitive_events::TelemetryArtifact;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutcomeAssessment {
@@ -35,19 +35,23 @@ impl OutcomeVerifier {
             if telemetry_json.exit_code == 0 && telemetry_json.test_digest.is_some() {
                 return CompletionStatus::Approved;
             } else {
-                return CompletionStatus::Rejected(
-                    format!("Telemetry captured, but verification failed. Exit code: {}, Tests passed: {}", 
-                        telemetry_json.exit_code, telemetry_json.test_digest.is_some())
-                );
+                return CompletionStatus::Rejected(format!(
+                    "Telemetry captured, but verification failed. Exit code: {}, Tests passed: {}",
+                    telemetry_json.exit_code,
+                    telemetry_json.test_digest.is_some()
+                ));
             }
         }
 
         // Fallback for non-mutation writes
-        if local_evidence.contains("[WRITE_OK]") || local_evidence.contains("[DIFF_PATCH_OK]") || local_evidence.contains("[PATCH_FUNCTION_OK]") {
+        if local_evidence.contains("[WRITE_OK]")
+            || local_evidence.contains("[DIFF_PATCH_OK]")
+            || local_evidence.contains("[PATCH_FUNCTION_OK]")
+        {
             CompletionStatus::Approved
         } else {
             CompletionStatus::Rejected(
-                "Missing verified TelemetryArtifact side-channel or execution marker.".to_string()
+                "Missing verified TelemetryArtifact side-channel or execution marker.".to_string(),
             )
         }
     }

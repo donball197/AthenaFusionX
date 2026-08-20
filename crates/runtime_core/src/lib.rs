@@ -78,5 +78,11 @@ pub mod executive_cortex;
 pub mod action_gate;
 pub mod action_intercept;
 pub mod completion_engine;
-pub mod tools;
 pub mod outcome_verifier;
+pub mod tools;
+
+pub mod config;
+pub mod client;
+
+pub use config::NexusConfig;
+pub use client::ApiClient;

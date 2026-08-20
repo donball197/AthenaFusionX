@@ -85,7 +85,9 @@ fn test_rope_sliding_full_rotary() {
 }
 
 #[test]
-#[should_panic(expected = "FATAL: head_dim must be 256 (sliding) or 512 (global) per confirmed model spec")]
+#[should_panic(
+    expected = "FATAL: head_dim must be 256 (sliding) or 512 (global) per confirmed model spec"
+)]
 fn test_rope_invalid_config_panic() {
     let bad_config = RoPEConfig { head_dim: 128, rotary_dim: 64, theta: 1_000_000.0 };
     let mut vec = vec![1.0f32; 128];

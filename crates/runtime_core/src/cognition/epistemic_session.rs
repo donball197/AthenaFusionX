@@ -95,7 +95,10 @@ impl EpistemicSession {
     }
 
     pub fn is_subgoal_satisfied(&self, current_belief: f32) -> bool {
-        if current_belief < 0.85 { return false; } SubgoalCompletionEngine::evaluate(&self.contract, &self.local_evidence, current_belief)
+        if current_belief < 0.85 {
+            return false;
+        }
+        SubgoalCompletionEngine::evaluate(&self.contract, &self.local_evidence, current_belief)
     }
 
     pub fn collect_evidence(&self, h_id: Uuid) -> String {

@@ -1,0 +1,6 @@
+id: PYTHON_CODE_EXECUTION
+language: python
+severity: Critical
+description: Usage of dangerous built-in execution functions like eval() or exec() which allow arbitrary code execution.
+tree_sitter_query: >
+  (call function: (identifier) @func_name (#match? @func_name "^(eval|exec)$")) @danger.code_execution

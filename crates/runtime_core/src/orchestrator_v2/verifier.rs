@@ -46,7 +46,7 @@ impl Verifier {
         VerificationResult::Success
     }
 
-        pub async fn evaluate(stdout: &str, stderr: &str, criteria: &[String]) -> VerificationResult {
+    pub async fn evaluate(stdout: &str, stderr: &str, criteria: &[String]) -> VerificationResult {
         let diagnosis = Self::diagnose_output(stderr, stdout);
         if diagnosis != VerificationResult::Success {
             return diagnosis;
@@ -67,7 +67,9 @@ impl Verifier {
             if evidence.contains("[CMD_OK]") && evidence.contains("/tmp/openfang") {
                 return VerificationResult::Success;
             } else {
-                return VerificationResult::Retry("Clone failed or /tmp/openfang not found".to_string());
+                return VerificationResult::Retry(
+                    "Clone failed or /tmp/openfang not found".to_string(),
+                );
             }
         } else if node_id.starts_with("inspect_") || node_id.contains("workspace_topology") {
             // Verify that Cargo.toml was read
@@ -86,7 +88,9 @@ impl Verifier {
         } else if node_id.starts_with("generate_") || node_id.contains("roadmap") {
             // Verify that ROADMAP_OPENFANG_COMPARISON.md exists in the root
             // We'll check evidence for a write_file action that created it.
-            if evidence.contains("[WRITE_OK]") && evidence.contains("ROADMAP_OPENFANG_COMPARISON.md") {
+            if evidence.contains("[WRITE_OK]")
+                && evidence.contains("ROADMAP_OPENFANG_COMPARISON.md")
+            {
                 // Additional check: does the file contain required sections? (optional)
                 return VerificationResult::Success;
             } else {

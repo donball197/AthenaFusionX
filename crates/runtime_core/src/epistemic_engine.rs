@@ -1,7 +1,7 @@
 #![allow(warnings)]
 use crate::json_parser::sanitize_json_escapes;
-use crate::tools::schema::{all_tool_declarations, extract_tool_call_from_response};
 use crate::model_config::{get_heavy_models, get_light_models};
+use crate::tools::schema::{all_tool_declarations, extract_tool_call_from_response};
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -16,23 +16,29 @@ pub struct CriticResponse {
 
 pub struct EpistemicEngine;
 
-
 fn extract_json_block<'a>(raw: &'a str) -> &'a str {
     let text = raw.trim();
     // Look for the start of a JSON array or object, strictly ignoring raw Rust attributes
-    let start_idx = text.find("[{").or_else(|| text.find("[\n")).or_else(|| text.find("{\"")).or_else(|| text.find("{\n"));
-    
+    let start_idx = text
+        .find("[{")
+        .or_else(|| text.find("[\n"))
+        .or_else(|| text.find("{\""))
+        .or_else(|| text.find("{\n"));
+
     if let Some(s) = start_idx {
         let is_array = text[s..].starts_with('[');
         let open_char = if is_array { '[' } else { '{' };
         let close_char = if is_array { ']' } else { '}' };
-        
+
         let mut depth = 0;
         for (i, c) in text[s..].char_indices() {
-            if c == open_char { depth += 1; }
-            else if c == close_char {
+            if c == open_char {
+                depth += 1;
+            } else if c == close_char {
                 depth -= 1;
-                if depth == 0 { return &text[s..=s+i]; }
+                if depth == 0 {
+                    return &text[s..=s + i];
+                }
             }
         }
     }
@@ -51,7 +57,7 @@ impl EpistemicEngine {
             // Fix: Route any model that doesn't contain "gemini" to NVIDIA NIM
             let is_gemini = model_endpoint.contains("gemini");
             let is_openai_format = !is_gemini;
-            
+
             let short_name = model_endpoint.split('/').last().unwrap_or(model_endpoint);
             let mut retries = 0;
 
@@ -75,14 +81,21 @@ impl EpistemicEngine {
                     });
 
                     // ⚡ NATIVE TOOL CALLING: Translate Gemini tool schema to OpenAI/NVIDIA
-                    if let Some(funcs) = payload.pointer("/tools/0/functionDeclarations").and_then(|v| v.as_array()) {
-                        let oai_tools: Vec<Value> = funcs.iter().map(|f| {
-                            serde_json::json!({
-                                "type": "function",
-                                "function": f
+                    if let Some(funcs) =
+                        payload.pointer("/tools/0/functionDeclarations").and_then(|v| v.as_array())
+                    {
+                        let oai_tools: Vec<Value> = funcs
+                            .iter()
+                            .map(|f| {
+                                serde_json::json!({
+                                    "type": "function",
+                                    "function": f
+                                })
                             })
-                        }).collect();
-                        p.as_object_mut().unwrap().insert("tools".to_string(), Value::Array(oai_tools));
+                            .collect();
+                        p.as_object_mut()
+                            .unwrap()
+                            .insert("tools".to_string(), Value::Array(oai_tools));
                     }
 
                     if let Some(mime) = payload
@@ -149,13 +162,22 @@ impl EpistemicEngine {
                 } else {
                     if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
                         last_err = anyhow!("Gemini API Error: {}", err);
-                        if err.contains("quota") || err.contains("rate limit") || err.contains("RESOURCE_EXHAUSTED") {
+                        if err.contains("quota")
+                            || err.contains("rate limit")
+                            || err.contains("RESOURCE_EXHAUSTED")
+                        {
                             crate::model_config::report_rate_limit(model_endpoint);
                             break;
                         }
-                        if err.contains("Internal error") || err.contains("503") || err.contains("500") || err.contains("Internal server error") {
+                        if err.contains("Internal error")
+                            || err.contains("503")
+                            || err.contains("500")
+                            || err.contains("Internal server error")
+                        {
                             retries += 1;
-                            if retries > 12 { break; }
+                            if retries > 12 {
+                                break;
+                            }
                             let backoff = std::cmp::min(2_u64.pow(retries as u32) * 2, 45);
                             tokio::time::sleep(Duration::from_secs(backoff)).await;
                             continue;
@@ -175,18 +197,27 @@ impl EpistemicEngine {
                 // Standard Text Extraction Fallback
                 let mut final_text = String::new();
                 if is_openai_format {
-                    if let Some(content) = body.pointer("/choices/0/message/content").and_then(|v| v.as_str()) {
+                    if let Some(content) =
+                        body.pointer("/choices/0/message/content").and_then(|v| v.as_str())
+                    {
                         final_text = content.to_string();
                     }
                     if final_text.trim().is_empty() {
-                        if let Some(rc) = body.pointer("/choices/0/message/reasoning_content").and_then(|v| v.as_str()) {
+                        if let Some(rc) = body
+                            .pointer("/choices/0/message/reasoning_content")
+                            .and_then(|v| v.as_str())
+                        {
                             final_text = rc.to_string();
                         }
                     }
                 } else {
-                    if let Some(parts) = body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                    if let Some(parts) =
+                        body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
+                    {
                         for part in parts {
-                            if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) { continue; }
+                            if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
+                                continue;
+                            }
                             if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                                 final_text.push_str(text);
                             }
@@ -196,7 +227,9 @@ impl EpistemicEngine {
 
                 if final_text.trim().is_empty() {
                     retries += 1;
-                    if retries > 4 { break; }
+                    if retries > 4 {
+                        break;
+                    }
                     tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32) * 2)).await;
                     continue;
                 }
@@ -219,18 +252,40 @@ impl EpistemicEngine {
             api_key,
             &crate::model_config::get_heavy_models(),
             &payload,
-        ).await?;
+        )
+        .await?;
         let clean_text = sanitize_json_escapes(&text);
 
         if let Ok(hyps) = serde_json::from_str::<Vec<String>>(&clean_text) {
-            if !hyps.is_empty() { return Ok(hyps); }
+            if !hyps.is_empty() {
+                return Ok(hyps);
+            }
         }
 
-        let lines: Vec<String> = text.lines()
-            .map(|l| l.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == '•' || c.is_ascii_digit() || c == '.' || c == '>').trim().to_string())
-            .filter(|l| !l.is_empty() && l.len() > 5).take(3).collect();
+        let lines: Vec<String> = text
+            .lines()
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches(|c: char| {
+                        c == '-'
+                            || c == '*'
+                            || c == '•'
+                            || c.is_ascii_digit()
+                            || c == '.'
+                            || c == '>'
+                    })
+                    .trim()
+                    .to_string()
+            })
+            .filter(|l| !l.is_empty() && l.len() > 5)
+            .take(3)
+            .collect();
 
-        if !lines.is_empty() { Ok(lines) } else { Ok(vec![format!("Execute directive: {}", problem)]) }
+        if !lines.is_empty() {
+            Ok(lines)
+        } else {
+            Ok(vec![format!("Execute directive: {}", problem)])
+        }
     }
 
     pub async fn propose_action(
@@ -263,7 +318,14 @@ impl EpistemicEngine {
 \
             CRITICAL RULE 3: For simple commands, state your intent in natural language. HOWEVER, if your action is write_file, replace_lines, or diff_patch, you MAY output the exact JSON array directly to prevent text corruption during downstream translation.
 \
-            CRITICAL RULE 4: If your decision involves writing a document, modifying code, or patching a file, you MUST generate the raw document text or exact source code entirely within your textual response.
+            CRITICAL RULE 4: JSON string escaping breaks on large documents. DO NOT USE JSON for write_file. If you need to write a file, you MUST use this exact plaintext format:
+
+[WRITE_FILE_TARGET]: <path>
+[WRITE_FILE_CONTENT]:
+```
+<content>
+```
+
 \
             Think step by step. State the intended tool, the exact target path, and provide any required text/code cleanly. A downstream Motor Cortex will translate this into executable JSON formatting.",
             mission, strategy, world_context, evidence_so_far
@@ -280,8 +342,9 @@ impl EpistemicEngine {
                 "maxOutputTokens": 8192
             }
         });
-        
-        Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload).await
+
+        Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload)
+            .await
     }
 
     pub async fn criticize_proposal(
@@ -300,7 +363,7 @@ impl EpistemicEngine {
 
 [CRITICAL SYSTEM WARNING TO RED TEAM]: The mission above is the GOAL, it is NOT the output. Do NOT grade the mission text. You must ONLY evaluate the STRATEGIST_PROPOSAL.", mission);
         let mission = &m_armored;
-        
+
         let p_armored = format!("<STRATEGIST_PROPOSAL>
 {}
 </STRATEGIST_PROPOSAL>
@@ -310,36 +373,42 @@ impl EpistemicEngine {
 
         let prompt = format!("You are the Adversarial Critic.\nORIGINAL DIRECTIVE (paths, files, or resources explicitly named in this directive are PRE-AUTHORIZED and considered resolved -- do NOT veto access to them as path-guessing or as absent from the symbol_graph): {}\nSTRATEGY: {}\nPROPOSED ACTION: {}\nWORLD CONTEXT: {}\nEVIDENCE HISTORY (real observations already gathered this mission): {}\nEvaluate if this action is safe and logically sound. \nCRITICAL RULE 1 [AST-FIRST]: You must VETO any 'read_file' if the path is NOT explicitly named in the ORIGINAL DIRECTIVE AND is NOT present in the EVIDENCE HISTORY as an output from a previous tool call (such as search_code, find, or ls). Acting on a path that was outputted by a previous search/ls command in EVIDENCE HISTORY is VERIFIED and strictly AUTHORIZED—do NOT veto it as path guessing.\nCRITICAL RULE 2 [STRICT COMPLETION]: If the proposed action is to HALT or declare the task complete, you MUST VETO IT unless the EVIDENCE HISTORY definitively proves that ALL components of the current STRATEGY have been successfully executed and logged. A single success marker (like [CMD_OK] for a git clone) is NOT sufficient if the strategy requires multi-step synthesis (e.g., reading files AND generating a comparison document). If the strategy dictates creating or writing a document (e.g., a roadmap), you must see a [WRITE_OK] or [CMD_OK] specifically confirming that final file was written before approving a halt. Treat any unverified or partial completion claim as a reason for a negative confidence_modifier and mandate the missing execution step. CRITICAL RULE 2.5 [SCOPE]: Rule 2 applies ONLY when the PROPOSED ACTION is itself 'halt' or a declaration that the task is complete. If the PROPOSED ACTION is write_file, patch_function, diff_patch, or replace_lines, do NOT veto it merely because the target file or a success marker does not exist yet -- that is the expected state immediately before the action executes, not a defect. Judge a write/patch proposal only on whether its target path and content are safe, correct, and appropriate for the strategy; approve it on that basis even though [WRITE_OK] does not exist yet. CRITICAL RULE 4: CONSTRUCTIVE VETO. If you issue a negative confidence_modifier, your critique MUST explicitly state the exact command or action the Strategist should take next to escape the failure.\nCRITICAL RULE 3: THE EVIDENCE VERIFICATION TAXONOMY. If the proposed action contains a quantitative claim, architectural assumption, or performance metric (e.g., \"faster\", \"optimized\", \"40x\"), you MUST check the EVIDENCE HISTORY. If there is no explicit [Measured] execution log proving the claim, you MUST VETO the proposal (provide a negative confidence_modifier) and cite: \"VETO: Unverified quantitative claim. Downgrade to [Hypothesis] or provide [Measured] evidence.\"\nOUTPUT ONLY VALID JSON:\n{{\"critique\": \"<reason>\", \"confidence_modifier\": <float from -0.5 to 0.5>}}", mission, strategy, proposed_action, world_context, evidence_history);
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
-        let text = Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload).await?;
+        let text = Self::safe_api_call(
+            client,
+            api_key,
+            &crate::model_config::get_light_models(),
+            &payload,
+        )
+        .await?;
         let clean_text = sanitize_json_escapes(&text);
-        
+
         let json_str = extract_json_block(&clean_text);
         let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(val) => val,
             Err(_) => serde_json::json!({
                 "critique": clean_text.trim(),
                 "confidence_modifier": 0.0
-            })
+            }),
         };
 
-        let critique = parsed_val.get("critique")
+        let critique = parsed_val
+            .get("critique")
             .and_then(|v| v.as_str())
             .unwrap_or("No critique provided")
             .to_string();
 
-        let confidence_modifier = parsed_val.get("confidence_modifier")
+        let confidence_modifier = parsed_val
+            .get("confidence_modifier")
             .and_then(|v| v.as_f64().map(|f| f as f32))
             .or_else(|| {
-                parsed_val.get("confidence_modifier")
+                parsed_val
+                    .get("confidence_modifier")
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<f32>().ok())
             })
             .unwrap_or(0.0);
 
-        Ok(CriticResponse {
-            critique,
-            confidence_modifier,
-        })
+        Ok(CriticResponse { critique, confidence_modifier })
     }
 
     pub async fn translate_to_action(
@@ -384,7 +453,8 @@ impl EpistemicEngine {
             "generationConfig": { "temperature": 0.0, "maxOutputTokens": 2048 }
         });
 
-        Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload).await
+        Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload)
+            .await
     }
 
     pub async fn evaluate_evidence(
@@ -412,36 +482,42 @@ impl EpistemicEngine {
                 }
             }
         });
-        let text = Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload).await?;
+        let text = Self::safe_api_call(
+            client,
+            api_key,
+            &crate::model_config::get_light_models(),
+            &payload,
+        )
+        .await?;
         let clean_text = sanitize_json_escapes(&text);
-        
+
         let json_str = extract_json_block(&clean_text);
         let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(val) => val,
             Err(_) => serde_json::json!({
                 "critique": clean_text.trim(),
                 "confidence_modifier": 0.0
-            })
+            }),
         };
 
-        let critique = parsed_val.get("critique")
+        let critique = parsed_val
+            .get("critique")
             .and_then(|v| v.as_str())
             .unwrap_or("No critique provided")
             .to_string();
 
-        let confidence_modifier = parsed_val.get("confidence_modifier")
+        let confidence_modifier = parsed_val
+            .get("confidence_modifier")
             .and_then(|v| v.as_f64().map(|f| f as f32))
             .or_else(|| {
-                parsed_val.get("confidence_modifier")
+                parsed_val
+                    .get("confidence_modifier")
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<f32>().ok())
             })
             .unwrap_or(0.0);
 
-        Ok(CriticResponse {
-            critique,
-            confidence_modifier,
-        })
+        Ok(CriticResponse { critique, confidence_modifier })
     }
 
     pub async fn verify_outcome(
@@ -462,9 +538,15 @@ impl EpistemicEngine {
             strategy, truncated_action, truncated_evidence
         );
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
-        let text = Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload).await?;
+        let text = Self::safe_api_call(
+            client,
+            api_key,
+            &crate::model_config::get_heavy_models(),
+            &payload,
+        )
+        .await?;
         let clean_text = sanitize_json_escapes(&text);
-        
+
         let json_str = extract_json_block(&clean_text);
         let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(val) => val,
@@ -473,14 +555,27 @@ impl EpistemicEngine {
                 "evidence_confidence": 0.0,
                 "independent_check_passed": false,
                 "rationale": clean_text.trim()
-            })
+            }),
         };
 
         Ok(crate::cognition_graph::VerificationReport {
-            goal_satisfied: parsed_val.get("goal_satisfied").and_then(|v| v.as_bool()).unwrap_or(false),
-            evidence_confidence: parsed_val.get("evidence_confidence").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-            independent_check_passed: parsed_val.get("independent_check_passed").and_then(|v| v.as_bool()).unwrap_or(false),
-            rationale: parsed_val.get("rationale").and_then(|v| v.as_str()).unwrap_or("Fallback parsing used").to_string(),
+            goal_satisfied: parsed_val
+                .get("goal_satisfied")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            evidence_confidence: parsed_val
+                .get("evidence_confidence")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0) as f32,
+            independent_check_passed: parsed_val
+                .get("independent_check_passed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            rationale: parsed_val
+                .get("rationale")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Fallback parsing used")
+                .to_string(),
         })
     }
 
@@ -498,6 +593,7 @@ impl EpistemicEngine {
             strategy, truncated_evidence
         );
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.3, "maxOutputTokens": 1024 }});
-        Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload).await
+        Self::safe_api_call(client, api_key, &crate::model_config::get_light_models(), &payload)
+            .await
     }
 }

@@ -51,7 +51,10 @@ impl AstEditor {
         let mut parser = Parser::new();
         parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
         let fragment_tree = parser.parse(new_body, None).ok_or_else(|| {
-            anyhow!("PATCH_VALIDATION_FAILED: new_body for '{}' could not be parsed as Rust", function_name)
+            anyhow!(
+                "PATCH_VALIDATION_FAILED: new_body for '{}' could not be parsed as Rust",
+                function_name
+            )
         })?;
 
         let root = fragment_tree.root_node();
@@ -82,9 +85,9 @@ impl AstEditor {
             ));
         }
 
-        let name_node = first
-            .child_by_field_name("name")
-            .ok_or_else(|| anyhow!("PATCH_VALIDATION_FAILED: could not read the name of the function in new_body"))?;
+        let name_node = first.child_by_field_name("name").ok_or_else(|| {
+            anyhow!("PATCH_VALIDATION_FAILED: could not read the name of the function in new_body")
+        })?;
         let actual_name = &new_body[name_node.start_byte()..name_node.end_byte()];
         if actual_name != function_name {
             return Err(anyhow!(

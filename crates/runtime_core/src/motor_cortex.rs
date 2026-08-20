@@ -11,16 +11,13 @@ pub enum MotorAction {
     ReadFile { path: String },
     ReadFileChunk { path: String, start_line: usize, max_lines: usize },
     SearchCode { path: String, query: String },
-    PatchFile {
-        path: String,
-        target: String,
-        replacement: String,
-    },
+    PatchFile { path: String, target: String, replacement: String },
     SearchMemory { query: String },
     ReplaceLines { path: String, start_line: usize, end_line: usize, replacement: String },
     RunTests { test_target: String },
     DiffPatch { path: String, search: String, replace: String },
     PatchFunction { path: String, function_name: String, new_body: String },
+    SynthesizeReport { output_path: String, source_files: Vec<String> },
     Halt { reasoning: String },
 }
 
@@ -56,7 +53,9 @@ impl MotorCortex {
             }
             AgentAction::SearchCode { path, query, .. } => MotorAction::SearchCode { path, query },
             AgentAction::SearchMemory { query, .. } => MotorAction::SearchMemory { query },
-            AgentAction::PatchFile { path, target, replacement, .. } => MotorAction::PatchFile { path, target, replacement },
+            AgentAction::PatchFile { path, target, replacement, .. } => {
+                MotorAction::PatchFile { path, target, replacement }
+            }
             AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
                 MotorAction::ReplaceLines { path, start_line, end_line, replacement }
             }
@@ -66,6 +65,9 @@ impl MotorCortex {
             }
             AgentAction::PatchFunction { path, function_name, new_body, .. } => {
                 MotorAction::PatchFunction { path, function_name, new_body }
+            }
+            AgentAction::SynthesizeReport { output_path, source_files, .. } => {
+                MotorAction::SynthesizeReport { output_path, source_files }
             }
             AgentAction::Halt { reasoning } => MotorAction::Halt { reasoning },
             _ => MotorAction::Halt { reasoning: "Fallback halt for unmapped action".to_string() },

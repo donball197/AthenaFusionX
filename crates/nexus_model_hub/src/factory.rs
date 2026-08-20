@@ -5,7 +5,8 @@ pub fn get_flash_lite_model() -> String {
 }
 
 pub fn get_heavy_model() -> String {
-    env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string())
+    env::var("NEXUS_HEAVY_MODEL")
+        .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string())
 }
 
 pub struct AgentFactory;

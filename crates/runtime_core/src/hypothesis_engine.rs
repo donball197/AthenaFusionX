@@ -55,7 +55,8 @@ impl HypothesisEngine {
         let active_model = std::env::var("NEXUS_PLANNER_MODEL")
             .or_else(|_| std::env::var("NEXUS_HEAVY_MODEL"))
             .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
-        let url = format!("{}/v1beta/models/{}:generateContent?key={}", base_url, active_model, api_key);
+        let url =
+            format!("{}/v1beta/models/{}:generateContent?key={}", base_url, active_model, api_key);
 
         let res = client.post(&url).json(&payload).send().await?;
         let body: serde_json::Value = res.json().await?;

@@ -4,7 +4,6 @@ fn default_confidence() -> f32 {
     0.8
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentAction {
@@ -139,9 +138,9 @@ pub enum AgentAction {
         reasoning: String,
     },
     #[serde(rename = "git_rollback")]
-    GitRollback { 
+    GitRollback {
         #[serde(default)]
-        reasoning: String 
+        reasoning: String,
     },
     #[serde(rename = "spawn_subagent")]
     SpawnSubagent {
@@ -152,6 +151,14 @@ pub enum AgentAction {
     #[serde(rename = "delegate_task")]
     DelegateTask {
         instruction: String,
+        #[serde(default)]
+        reasoning: String,
+    },
+
+    #[serde(rename = "synthesize_report")]
+    SynthesizeReport {
+        output_path: String,
+        source_files: Vec<String>,
         #[serde(default)]
         reasoning: String,
     },

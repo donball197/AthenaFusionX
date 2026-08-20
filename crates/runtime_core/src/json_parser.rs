@@ -28,17 +28,90 @@ pub fn sanitize_json_escapes(json_str: &str) -> String {
 
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let text = response.trim();
-    if text.is_empty() || text == "[]" { return Ok(vec![]); }
+    if text.is_empty() || text == "[]" {
+        return Ok(vec![]);
+    }
+
+    // ⚡ NUCLEAR ARTIFACT INTERCEPT: Bypass JSON entirely for large file writes
+    if text.contains("[WRITE_FILE_TARGET]:") && text.contains("[WRITE_FILE_CONTENT]:") {
+        if let Some(target_start) = text.find("[WRITE_FILE_TARGET]:") {
+            let path_start = target_start + 20;
+            if let Some(path_end) = text[path_start..].find('\n') {
+                let path = text[path_start..path_start + path_end].trim().to_string();
+                if let Some(content_start) = text.find("[WRITE_FILE_CONTENT]:") {
+                    if let Some(fence_start) = text[content_start..].find("```") {
+                        let actual_start = content_start + fence_start + 3;
+                        let mut final_start = actual_start;
+                        if let Some(newline) = text[actual_start..].find('\n') {
+                            if newline < 15 {
+                                final_start = actual_start + newline + 1;
+                            }
+                        }
+                        if let Some(fence_end) = text[final_start..].find("```") {
+                            let content =
+                                text[final_start..final_start + fence_end].trim().to_string();
+                            tracing::info!(
+                                ">> [CORTEX INTERCEPT] Plucked raw fenced artifact for {}",
+                                path
+                            );
+                            return Ok(vec![crate::agent_protocol::AgentAction::WriteFile {
+                                path,
+                                content,
+                                reasoning: "Intercepted via raw text block".to_string(),
+                                confidence: 1.0,
+                            }]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ⚡ NUCLEAR ARTIFACT INTERCEPT: Bypass JSON entirely for large file writes
+    if text.contains("[WRITE_FILE_TARGET]:") && text.contains("[WRITE_FILE_CONTENT]:") {
+        if let Some(target_start) = text.find("[WRITE_FILE_TARGET]:") {
+            let path_start = target_start + 20;
+            if let Some(path_end) = text[path_start..].find('\n') {
+                let path = text[path_start..path_start + path_end].trim().to_string();
+                if let Some(content_start) = text.find("[WRITE_FILE_CONTENT]:") {
+                    if let Some(fence_start) = text[content_start..].find("```") {
+                        let actual_start = content_start + fence_start + 3;
+                        // Skip optional language tag like ```markdown
+                        let mut final_start = actual_start;
+                        if let Some(newline) = text[actual_start..].find('\n') {
+                            if newline < 15 {
+                                final_start = actual_start + newline + 1;
+                            }
+                        }
+                        if let Some(fence_end) = text[final_start..].find("```") {
+                            let content =
+                                text[final_start..final_start + fence_end].trim().to_string();
+                            tracing::info!(
+                                ">> [CORTEX INTERCEPT] Plucked raw fenced artifact for {}",
+                                path
+                            );
+                            return Ok(vec![AgentAction::WriteFile {
+                                path,
+                                content,
+                                reasoning: "Intercepted via raw text block".to_string(),
+                                confidence: 1.0,
+                            }]);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // 1. Aggressively carve out code blocks
     let mut extracted = text;
     if let Some(start) = text.find("```json") {
         if let Some(end) = text[start + 7..].find("```") {
-            extracted = &text[start + 7 .. start + 7 + end];
+            extracted = &text[start + 7..start + 7 + end];
         }
     } else if let Some(start) = text.find("```") {
         if let Some(end) = text[start + 3..].find("```") {
-            extracted = &text[start + 3 .. start + 3 + end];
+            extracted = &text[start + 3..start + 3 + end];
         }
     }
 
@@ -49,18 +122,22 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         &extracted[s..=e]
     } else if let (Some(s), Some(e)) = (extracted.find('{'), extracted.rfind('}')) {
         &extracted[s..=e]
-    } else { return Err(anyhow::anyhow!("No JSON boundaries found in model output.")); };
+    } else {
+        return Err(anyhow::anyhow!("No JSON boundaries found in model output."));
+    };
 
     let clean_text = sanitize_json_escapes(json_str);
 
     // ANTI-DEGENERACY GATE
     if clean_text.contains("00000000000000000000") || clean_text.len() > 25_000 {
-        tracing::error!("[CORTEX PARSE ABORT] Token Resonance / Runaway block. Returning safe halt.");
+        tracing::error!(
+            "[CORTEX PARSE ABORT] Token Resonance / Runaway block. Returning safe halt."
+        );
         return Ok(vec![]);
     }
 
     // 3. Serializer & Transparent Fallback Log
-    
+
     // ⚡ ROBUST Auto-normalize arbitrary tool schemas to Athena AgentAction array
     let clean_text = if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&clean_text) {
         let process_obj = |obj: &mut serde_json::Map<String, serde_json::Value>| {
@@ -106,21 +183,19 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     } else {
         clean_text
     };
-    
+
     match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
         Ok(actions) => Ok(actions),
-        Err(e1) => {
-            match serde_json::from_str::<AgentAction>(&clean_text) {
-                Ok(single) => Ok(vec![single]),
-                Err(e2) => {
-                    let snippet = if clean_text.len() > 400 { &clean_text[..400] } else { &clean_text };
-                    tracing::warn!(
+        Err(e1) => match serde_json::from_str::<AgentAction>(&clean_text) {
+            Ok(single) => Ok(vec![single]),
+            Err(e2) => {
+                let snippet = if clean_text.len() > 400 { &clean_text[..400] } else { &clean_text };
+                tracing::warn!(
                         "[JSON PARSER] Serialization Failure!\nArray Err: {}\nSingle Err: {}\n--- OFFENDING SNIPPET ---\n{}\n-------------------------", 
                         e1, e2, snippet
                     );
-                    Err(anyhow::anyhow!("JSON serialization failed. Invalid format."))
-                }
+                Err(anyhow::anyhow!("JSON serialization failed. Invalid format."))
             }
-        }
+        },
     }
 }

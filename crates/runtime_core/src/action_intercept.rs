@@ -119,8 +119,7 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         || lower.contains("use the `read_file`")
         || lower.contains("use the read_file")
     {
-        if let Some(path) =
-            labeled_value(text, &["Target Path:", "target path:", "Path:", "path:"])
+        if let Some(path) = labeled_value(text, &["Target Path:", "target path:", "Path:", "path:"])
         {
             if looks_like_path(&path) {
                 return Some(AgentAction::ReadFile {
@@ -173,13 +172,9 @@ fn labeled_value(text: &str, markers: &[&str]) -> Option<String> {
     for marker in markers {
         for line in text.lines() {
             let trimmed = line.trim();
-            if trimmed.len() >= marker.len()
-                && trimmed[..marker.len()].eq_ignore_ascii_case(marker)
+            if trimmed.len() >= marker.len() && trimmed[..marker.len()].eq_ignore_ascii_case(marker)
             {
-                let rest = trimmed[marker.len()..]
-                    .trim()
-                    .trim_matches('`')
-                    .trim_matches('"');
+                let rest = trimmed[marker.len()..].trim().trim_matches('`').trim_matches('"');
                 if !rest.is_empty() {
                     return Some(rest.to_string());
                 }
@@ -269,6 +264,8 @@ mod tests {
     #[test]
     fn bare_git_clone_without_tool_label_is_not_intercepted() {
         // Must not match loose substrings — only labeled Tool/Command form.
-        assert!(intercept_fallback_action("git clone --depth 1 https://example.com/repo.git").is_none());
+        assert!(
+            intercept_fallback_action("git clone --depth 1 https://example.com/repo.git").is_none()
+        );
     }
 }

@@ -28,9 +28,11 @@ impl GraphOfThoughts {
         });
 
         // ⚡ MODEL CASCADE: Try Heavy Reasoning first, fallback to Fast/Stable
-        let heavy = std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
-    let light = std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
-    let models = [heavy, light];
+        let heavy = std::env::var("NEXUS_HEAVY_MODEL")
+            .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
+        let light = std::env::var("NEXUS_LIGHT_MODEL")
+            .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+        let models = [heavy, light];
 
         for model in models {
             let url = format!(

@@ -1,0 +1,7 @@
+id: SQL_INJECTION
+language: php
+severity: High
+description: Unsafe execution of database queries via mysqli_query or mysqli_multi_query without parameterized prepared statements.
+tree_sitter_query: >
+  (function_call_expression function: (name) @func_name (#match? @func_name "^(mysqli_query|mysqli_multi_query)$")) @danger.sql_injection
+  (member_call_expression name: (name) @func_name (#match? @func_name "^(query|multi_query)$")) @danger.sql_injection

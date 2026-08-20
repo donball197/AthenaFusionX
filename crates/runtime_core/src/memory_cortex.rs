@@ -22,7 +22,7 @@ impl MemoryCortex {
         value: &str,
         embedding: Option<Vec<f32>>,
     ) -> Result<()> {
-        self.palace.store_memory(category, key, value, embedding).await?;
+        self.palace.store_memory(category, key, value, "Internal", embedding).await?;
         Ok(())
     }
 
@@ -37,7 +37,9 @@ impl MemoryCortex {
     }
 
     pub async fn remember(&self, memory: CognitiveMemory) -> anyhow::Result<()> {
-        self.palace.store_memory("cognitive", &memory.key, &memory.content, None).await?;
+        self.palace
+            .store_memory("cognitive", &memory.key, &memory.content, "Internal", None)
+            .await?;
         Ok(())
     }
 

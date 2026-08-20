@@ -1,9 +1,9 @@
 use nexus_search::VectorVault;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, FromRow, Row, SqlitePool, Executor};
+use sqlx::{sqlite::SqlitePoolOptions, Executor, FromRow, Row, SqlitePool};
 use std::path::Path;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentMemory {
@@ -11,6 +11,7 @@ pub struct AgentMemory {
     pub origin: String,
     pub directive: String,
     pub result: String,
+    pub taint_label: String, // <-- LATTICE TAINT ADDED
     pub timestamp: String,
 }
 
@@ -37,10 +38,8 @@ impl MemoryPalace {
             .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
             .pragma("cache_size", "-16000");
 
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(connect_options)
-            .await?;
+        let pool =
+            SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?;
 
         let vault = Arc::new(Mutex::new(VectorVault::new(768, 4)));
 
@@ -52,9 +51,10 @@ impl MemoryPalace {
     }
 
     async fn hydrate_vault(&self) -> Result<(), sqlx::Error> {
-        let rows = sqlx::query("SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL")
+                .fetch_all(&self.pool)
+                .await?;
 
         let count = rows.len();
         if count > 0 {
@@ -85,10 +85,17 @@ impl MemoryPalace {
                     directive TEXT NOT NULL,
                     result TEXT NOT NULL,
                     embedding TEXT,
+                    taint_label TEXT NOT NULL DEFAULT 'Untrusted',
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 );",
             )
             .await?;
+
+        // ⚡ SAFE SCHEMA MIGRATION: Upgrades existing DBs dynamically
+        self.pool
+            .execute("ALTER TABLE neural_context ADD COLUMN taint_label TEXT NOT NULL DEFAULT 'Untrusted';")
+            .await
+            .ok();
 
         self.pool
             .execute(
@@ -151,18 +158,20 @@ impl MemoryPalace {
         origin: &str,
         directive: &str,
         result: &str,
+        taint_label: &str, // <-- LATTICE TAINT ADDED
         embedding: Option<Vec<f32>>,
     ) -> Result<(), sqlx::Error> {
         let emb_str = embedding.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
         let mut tx = self.pool.begin().await?;
 
         let res = sqlx::query(
-            "INSERT INTO neural_context (origin, directive, result, embedding) VALUES (?, ?, ?, ?)",
+            "INSERT INTO neural_context (origin, directive, result, embedding, taint_label) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(origin)
         .bind(directive)
         .bind(result)
         .bind(emb_str)
+        .bind(taint_label)
         .execute(&mut *tx)
         .await?;
         let row_id = res.last_insert_rowid();
@@ -193,7 +202,7 @@ impl MemoryPalace {
     }
 
     pub async fn fetch_all(&self) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY id DESC LIMIT 50")
+        let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp FROM neural_context ORDER BY id DESC LIMIT 50")
             .fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -202,13 +211,14 @@ impl MemoryPalace {
                 origin: row.get("origin"),
                 directive: row.get("directive"),
                 result: row.get("result"),
+                taint_label: row.get("taint_label"),
                 timestamp: row.get("timestamp"),
             })
             .collect())
     }
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT n.id, n.origin, n.directive, n.result, n.timestamp FROM neural_context n JOIN memory_search m ON n.id = m.rowid WHERE memory_search MATCH ? ORDER BY rank LIMIT 10")
+        let rows = sqlx::query("SELECT n.id, n.origin, n.directive, n.result, n.taint_label, n.timestamp FROM neural_context n JOIN memory_search m ON n.id = m.rowid WHERE memory_search MATCH ? ORDER BY rank LIMIT 10")
             .bind(query).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -217,6 +227,7 @@ impl MemoryPalace {
                 origin: row.get("origin"),
                 directive: row.get("directive"),
                 result: row.get("result"),
+                taint_label: row.get("taint_label"),
                 timestamp: row.get("timestamp"),
             })
             .collect())
@@ -244,7 +255,7 @@ impl MemoryPalace {
         let mut memories = Vec::new();
         for id in matched_ids {
             let row = sqlx::query(
-                "SELECT id, origin, directive, result, timestamp FROM neural_context WHERE id = ?",
+                "SELECT id, origin, directive, result, taint_label, timestamp FROM neural_context WHERE id = ?",
             )
             .bind(id as i64)
             .fetch_optional(&self.pool)
@@ -256,6 +267,7 @@ impl MemoryPalace {
                     origin: r.get("origin"),
                     directive: r.get("directive"),
                     result: r.get("result"),
+                    taint_label: r.get("taint_label"),
                     timestamp: r.get("timestamp"),
                 });
             }
@@ -275,7 +287,7 @@ impl MemoryPalace {
     }
 
     pub async fn fetch_random_strands(&self, limit: i64) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, origin, directive, result, timestamp FROM neural_context ORDER BY RANDOM() LIMIT ?")
+        let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp FROM neural_context ORDER BY RANDOM() LIMIT ?")
             .bind(limit).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -284,6 +296,7 @@ impl MemoryPalace {
                 origin: row.get("origin"),
                 directive: row.get("directive"),
                 result: row.get("result"),
+                taint_label: row.get("taint_label"),
                 timestamp: row.get("timestamp"),
             })
             .collect())
