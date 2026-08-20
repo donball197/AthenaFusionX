@@ -106,17 +106,14 @@ pub struct PolyglotScanner;
 
 impl PolyglotScanner {
     pub fn load_rules<P: AsRef<Path>>(rules_dir: P) -> Vec<SecurityRule> {
+        // WalkDir recurses subdirectories (php/, python/, etc). read_dir did not,
+        // which silently dropped every rule not sitting at the top level.
         let mut rules = Vec::new();
-        let entries = match std::fs::read_dir(rules_dir) {
-            Ok(entries) => entries,
-            Err(_) => return rules,
-        };
-
-        for entry in entries.flatten() {
+        for entry in WalkDir::new(rules_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 if ext == "yaml" || ext == "yml" {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(content) = std::fs::read_to_string(path) {
                         match serde_yaml::from_str::<SecurityRule>(&content) {
                             Ok(rule) => rules.push(rule),
                             Err(e) => eprintln!("==> [Warning] Failed to parse YAML rule file {}: {}", path.display(), e),
@@ -209,7 +206,7 @@ impl PolyglotScanner {
                 let start_line = range.start_point.row;
                 let end_line = range.end_point.row;
                 
-                let context_start = if start_line > 7 { start_line - 7 } else { 0 };
+                let context_start = start_line.saturating_sub(7);
                 let snippet = if start_line < source_lines.len() {
                     source_lines[context_start..=end_line].join("\n")
                 } else { String::new() };
