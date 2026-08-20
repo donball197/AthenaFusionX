@@ -70,3 +70,4 @@ target/
 *.so
 repository_analysis/symbol_graph.json
 *.safetensors
+.cargo/config.toml
