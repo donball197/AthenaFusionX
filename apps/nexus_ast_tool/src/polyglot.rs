@@ -72,6 +72,20 @@ impl SupportedLanguage {
             Self::PHP => "(function_definition name: (name) @name)",
         }
     }
+
+    /// In-memory syntax gate: true iff the source parses to an error-free tree.
+    /// Fail-closed for every language (unlike external linters, which may be
+    /// absent). Used by auto-heal BEFORE any disk write.
+    pub fn parses_cleanly(&self, source: &str) -> bool {
+        let mut parser = Parser::new();
+        if parser.set_language(&self.tree_sitter_language()).is_err() {
+            return false;
+        }
+        match parser.parse(source, None) {
+            Some(tree) => !tree.root_node().has_error(),
+            None => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,15 +110,19 @@ pub struct PolyglotSymbol {
 pub struct SecurityFinding {
     pub language: SupportedLanguage,
     pub pattern_name: String,
+    /// Authoritative severity from the rule definition (not the LLM).
+    pub severity: String,
     pub path: PathBuf,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub source_snippet: String,
-    /// Exact text of start_line..=end_line only, no surrounding context.
-    /// Must be used as the auto-heal LLM's replacement target instead of
-    /// source_snippet, because PolyglotSplicer::splice only ever cuts out
-    /// start_line..end_line -- if the model is shown a wider snippet than
-    /// that, it writes a wider replacement than splice can correctly insert.
+    // --- Sink identity (authoritative: use for verification and splice anchoring) ---
+    pub sink_start_line: usize, // 1-based, inclusive
+    pub sink_end_line: usize,   // 1-based, inclusive
+    pub sink_text: String,      // exact source text of the @danger capture
+    // --- Context window (display / triage only) ---
+    pub start_line: usize, // window start (sink - 20)
+    pub end_line: usize,   // window end   (sink + 3)
+    pub source_snippet: String, // wide window, for the triage LLM
+    /// NARROW snippet: exactly the sink lines. This is the auto-heal
+    /// replacement target — the model must never see the wide window.
     pub patch_snippet: String,
 }
 
@@ -112,8 +130,7 @@ pub struct PolyglotScanner;
 
 impl PolyglotScanner {
     pub fn load_rules<P: AsRef<Path>>(rules_dir: P) -> Vec<SecurityRule> {
-        // WalkDir recurses subdirectories (php/, python/, etc). read_dir did not,
-        // which silently dropped every rule not sitting at the top level.
+        // WalkDir recurses subdirectories (php/, python/, etc).
         let mut rules = Vec::new();
         for entry in WalkDir::new(rules_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -151,7 +168,7 @@ impl PolyglotScanner {
         let ts_lang = lang.tree_sitter_language();
         parser.set_language(&ts_lang).map_err(|e| anyhow!("Failed setting parser language: {e}"))?;
         let tree = parser.parse(source, None).ok_or_else(|| anyhow!("Tree-sitter parse failure"))?;
-        let query = Query::new(&ts_lang, lang.symbol_query()).map_err(|e| anyhow!("Failed to compile query: {e}"))?;
+        let query = Query::new(&ts_lang, lang.symbol_query()).map_err(|e| anyhow!("Failed to compile query: {}", e))?;
         let mut cursor = QueryCursor::new();
         let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
@@ -173,85 +190,116 @@ impl PolyglotScanner {
     pub fn scan_security_vulnerabilities<P: AsRef<Path>>(root: P, rules: &[SecurityRule]) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
 
+        // Compile each rule's query ONCE, and fail loudly: a rule with a
+        // broken query used to be silently skipped in every file.
+        let mut compiled: Vec<(usize, Query)> = Vec::new();
+        for (idx, rule) in rules.iter().enumerate() {
+            let Some(lang) = SupportedLanguage::from_string(&rule.language) else { continue };
+            match Query::new(&lang.tree_sitter_language(), &rule.tree_sitter_query) {
+                Ok(q) => compiled.push((idx, q)),
+                Err(e) => eprintln!(
+                    "==> [Rules Engine] Rule '{}' has an INVALID query and will not run: {}",
+                    rule.id, e
+                ),
+            }
+        }
+
         for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
-            if let Some(file_lang) = SupportedLanguage::from_path(path) {
-                if let Ok(content) = fs::read_to_string(path) {
-                    for rule in rules {
-                        if SupportedLanguage::from_string(&rule.language) == Some(file_lang) {
-                            if let Ok(mut discovered) = Self::parse_security(path, &content, file_lang, &rule.tree_sitter_query, &rule.id) {
-                                findings.append(&mut discovered);
-                            }
-                        }
-                    }
+            let Some(file_lang) = SupportedLanguage::from_path(path) else { continue };
+            let Ok(content) = fs::read_to_string(path) else { continue };
+
+            for (idx, query) in &compiled {
+                let rule = &rules[*idx];
+                if SupportedLanguage::from_string(&rule.language) != Some(file_lang) { continue; }
+                match Self::parse_security_with(path, &content, file_lang, query, rule) {
+                    Ok(mut discovered) => findings.append(&mut discovered),
+                    Err(e) => eprintln!("==> [Scanner] Rule '{}' failed on {}: {}", rule.id, path.display(), e),
                 }
             }
         }
 
-        // Two rule files can declare the same rule id, which silently doubles
-        // every finding and every AI-triage call. Collapse exact
-        // (path, line, rule id) duplicates as a safety net.
+        // One vulnerability (query construction + execution calls) yields
+        // several @danger captures whose 24-line windows overlap — that is
+        // ONE finding. Two-sided overlap test; symmetric predicate so
+        // dedup_by's argument order is irrelevant.
         findings.sort_by(|a, b| {
-            (a.path.as_path(), a.start_line, a.pattern_name.as_str())
-                .cmp(&(b.path.as_path(), b.start_line, b.pattern_name.as_str()))
+            (a.path.as_path(), a.pattern_name.as_str(), a.start_line)
+                .cmp(&(b.path.as_path(), b.pattern_name.as_str(), b.start_line))
         });
         findings.dedup_by(|a, b| {
-            a.path == b.path && a.start_line == b.start_line && a.pattern_name == b.pattern_name
+            a.path == b.path
+                && a.pattern_name == b.pattern_name
+                && a.start_line <= b.end_line
+                && b.start_line <= a.end_line
         });
-
         findings
     }
 
-    fn parse_security(path: &Path, source: &str, lang: SupportedLanguage, query_str: &str, rule_id: &str) -> Result<Vec<SecurityFinding>> {
-        let mut parser = Parser::new();
-        let ts_lang = lang.tree_sitter_language();
-        parser.set_language(&ts_lang)?;
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow!("Tree-sitter parse failure for {:?}", path))?;
+    /// Scan an in-memory source string with all rules matching the file's
+    /// language. Used by auto-heal to verify a patch BEFORE writing to disk.
+    pub fn scan_source(path: &Path, source: &str, rules: &[SecurityRule]) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        let Some(file_lang) = SupportedLanguage::from_path(path) else { return findings };
+        for rule in rules {
+            if SupportedLanguage::from_string(&rule.language) != Some(file_lang) { continue; }
+            let Ok(query) = Query::new(&file_lang.tree_sitter_language(), &rule.tree_sitter_query) else { continue };
+            if let Ok(mut discovered) = Self::parse_security_with(path, source, file_lang, &query, rule) {
+                findings.append(&mut discovered);
+            }
+        }
+        findings
+    }
 
-        let query = Query::new(&ts_lang, query_str).map_err(|e| anyhow!("Failed to compile security query for {:?}: {}", lang, e))?;
+    fn parse_security_with(
+        path: &Path,
+        source: &str,
+        lang: SupportedLanguage,
+        query: &Query,
+        rule: &SecurityRule,
+    ) -> Result<Vec<SecurityFinding>> {
+        let mut parser = Parser::new();
+        parser.set_language(&lang.tree_sitter_language())?;
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow!("Tree-sitter parse failure for {:?}", path))?;
+
         let mut cursor = QueryCursor::new();
-        let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+        let matches = cursor.matches(query, tree.root_node(), source.as_bytes());
+        let source_lines: Vec<&str> = source.lines().collect();
+        let last_idx = source_lines.len().saturating_sub(1);
 
         let mut results = Vec::new();
-        let source_lines: Vec<&str> = source.lines().collect();
-
         for m in matches {
             for capture in m.captures {
                 let capture_name = query.capture_names()[capture.index as usize];
                 if !capture_name.starts_with("danger") { continue; }
 
-                let range = capture.node.range();
-                let start_line = range.start_point.row;
-                let end_line = range.end_point.row;
-                
-                let context_start = start_line.saturating_sub(20);
-                let context_end = (end_line + 3).min(source_lines.len().saturating_sub(1));
-                let snippet = if start_line < source_lines.len() {
-                    source_lines[context_start..=context_end].join("\n")
-                } else { String::new() };
+                let node = capture.node;
+                let range = node.range();
+                let sink_start = range.start_point.row; // 0-based, inclusive
+                let sink_end = range.end_point.row;
+                if sink_start > last_idx { continue; }
 
-                // Narrow, exact-line-range snippet used ONLY as the auto-heal
-                // replacement target. Must match PolyglotSplicer::splice's
-                // start_line..end_line range exactly, or the LLM writes a patch
-                // sized to the wide `snippet` above while splice only cuts out
-                // this narrow range -- guaranteeing duplicated context and a
-                // syntax-check failure on every auto-heal attempt.
-                let _patch_target = if end_line < source_lines.len() {
-                    source_lines[start_line..=end_line].join("\n")
-                } else { String::new() };
+                let sink_text = node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
+                let context_start = sink_start.saturating_sub(20);
+                let context_end = (sink_end + 3).min(last_idx);
 
                 results.push(SecurityFinding {
                     language: lang,
-                    pattern_name: rule_id.to_string(), 
+                    pattern_name: rule.id.to_string(),
+                    severity: rule.severity.clone(),
                     path: path.to_path_buf(),
+                    sink_start_line: sink_start + 1,
+                    sink_end_line: sink_end + 1,
+                    sink_text,
                     start_line: context_start + 1,
                     end_line: context_end + 1,
-                    source_snippet: snippet.clone(),
-                    patch_snippet: snippet,
+                    source_snippet: source_lines[context_start..=context_end].join("\n"),
+                    patch_snippet: source_lines[sink_start..=sink_end.min(last_idx)].join("\n"),
                 });
             }
         }
-        results.dedup_by(|a, b| a.start_line == b.start_line && a.pattern_name == b.pattern_name);
         Ok(results)
     }
 }
