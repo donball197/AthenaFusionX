@@ -30,8 +30,7 @@ members = [
     "drones/health_api",
     "crates/evolution_engine",
     "crates/nexus_dag_orchestrator",
-    "crates/terminal_core",
-]
+    "crates/terminal_core", ]
 resolver = "2"
 exclude = [
     "comparison_workspace"
