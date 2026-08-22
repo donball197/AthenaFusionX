@@ -235,9 +235,9 @@ impl RoboticExecutor {
                     let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
                     let mem = _memory;
                     if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await {
-                        let _ = mem.store_memory("ReadFile", &path, &content, Some(emb)).await;
+                        let _ = mem.store_memory("ReadFile", &path, &content, "Observed", Some(emb)).await;
                     } else {
-                        let _ = mem.store_memory("ReadFile", &path, &content, None).await;
+                        let _ = mem.store_memory("ReadFile", &path, &content, "Observed", None).await;
                     }
 
                     let total_lines = content.lines().count();

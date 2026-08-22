@@ -195,6 +195,25 @@ fn scan_json_value(
     edges: &mut Vec<(String, String)>,
     target_out: &mut Option<String>,
 ) {
+    // Handle symbol inventory schema (file_path -> nodes)
+    if let serde_json::Value::Object(map) = val {
+        if let Some(serde_json::Value::Array(nodes)) = map.get("nodes") {
+            let mut symbols = Vec::new();
+            for node in nodes {
+                if let Some(name) = node.get("name").and_then(|n| n.as_str()) {
+                    symbols.push(name.to_string());
+                }
+            }
+            // Connect all symbols within the same file as mutual edges
+            for i in 0..symbols.len() {
+                for j in (i + 1)..symbols.len() {
+                    edges.push((symbols[i].clone(), symbols[j].clone()));
+                    edges.push((symbols[j].clone(), symbols[i].clone()));
+                }
+            }
+        }
+    }
+
     match val {
         serde_json::Value::Object(map) => {
             if target_out.is_none() {

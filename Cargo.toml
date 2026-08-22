@@ -6,10 +6,6 @@ members = [
     "apps/code_auditor",
     "crates/runtime_core",
     "crates/executive_cortex",
-    "crates/identity",
-    "crates/memory_graph",
-    "crates/protocol",
-    "crates/mesh",
     "crates/nexus_substrate",
     "crates/nexus_model_hub",
     "crates/nexus_search",
@@ -31,7 +27,10 @@ members = [
     "apps/wasm_tester",
     "drones/data_scraper",
     "apps/nexus_scrape",
-    "drones/health_api"
+    "drones/health_api",
+    "crates/evolution_engine",
+    "crates/nexus_dag_orchestrator",
+    "crates/terminal_core",
 ]
 resolver = "2"
 exclude = [
@@ -64,8 +63,6 @@ tower-http             = { version = "0.5", features = ["cors", "fs", "trace"] }
 tracing                = "0.1"
 tracing-subscriber     = { version = "0.3", features = ["env-filter", "json"] }
 uuid                   = { version = "1.8", features = ["serde", "v4"] }
-wasmtime               = "45.0.2"
-wasmtime-wasi          = "45.0.2"
 
 [profile.dev]
 opt-level = 1

@@ -30,6 +30,7 @@ nexus_substrate = { path = "../nexus_substrate" }
 nexus_model_hub = { path = "../nexus_model_hub" }
 thiserror = "2.0.19"
 walkdir = "2.5.0"
+nexus_ast_tool = { version = "0.1.0", path = "../../apps/nexus_ast_tool" }
 
 [lints]
 workspace = true

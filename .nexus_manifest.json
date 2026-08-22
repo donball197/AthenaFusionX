@@ -829,12 +829,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "z-ai/glm-5.2",
-    "context": "128K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "zyphra/zamba2-7b-instruct",
     "context": "Unknown",
     "category": "GENERAL"

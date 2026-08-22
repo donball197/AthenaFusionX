@@ -20,9 +20,10 @@ impl MemoryCortex {
         category: &str,
         key: &str,
         value: &str,
+        taint_label: &str,
         embedding: Option<Vec<f32>>,
     ) -> Result<()> {
-        self.palace.store_memory(category, key, value, "Internal", embedding).await?;
+        self.palace.store_memory(category, key, value, taint_label, embedding).await?;
         Ok(())
     }
 
@@ -113,7 +114,7 @@ impl MemoryCortex {
         event: crate::belief_feedback::BeliefUpdateEvent,
     ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(&event)?;
-        self.store_memory("belief_update", &event.belief_id.to_string(), &payload, None).await?;
+        self.store_memory("belief_update", &event.belief_id.to_string(), &payload, "Internal", None).await?;
         Ok(())
     }
 
@@ -122,7 +123,7 @@ impl MemoryCortex {
         decision: crate::belief_policy::BeliefDecision,
     ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(&decision)?;
-        self.store_memory("belief_decision", &decision.belief_id.to_string(), &payload, None)
+        self.store_memory("belief_decision", &decision.belief_id.to_string(), &payload, "Internal", None)
             .await?;
         Ok(())
     }
@@ -132,7 +133,7 @@ impl MemoryCortex {
         decision: crate::goal_adaptation::GoalAdaptationDecision,
     ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(&decision)?;
-        self.store_memory("goal_adaptation", &decision.goal_id.to_string(), &payload, None).await?;
+        self.store_memory("goal_adaptation", &decision.goal_id.to_string(), &payload, "Internal", None).await?;
         Ok(())
     }
 
@@ -156,7 +157,7 @@ impl MemoryCortex {
         memory: crate::memory_semantic::SemanticMemory,
     ) -> anyhow::Result<()> {
         let content = serde_json::to_string(&memory)?;
-        self.store_memory("semantic", &memory.lesson, &content, None).await?;
+        self.store_memory("semantic", &memory.lesson, &content, "Internal", None).await?;
         Ok(())
     }
 

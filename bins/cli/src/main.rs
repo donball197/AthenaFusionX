@@ -106,10 +106,11 @@ async fn main() -> anyhow::Result<()> {
 
             // 1. Run the Impact Engine silently
             println!("\x1b[35m>> [AST] Refreshing Symbol Graph to catch new files...\x1b[0m");
+            let _ = Command::new("cargo").args(["run", "--bin", "repository_planner"]).output();
             let _ = Command::new("cargo").args(["run", "--bin", "symbol_graph"]).output();
             println!("\x1b[35m>> [IMPACT_ENGINE] Calculating Blast Radius...\x1b[0m");
             let _ = Command::new("cargo")
-                .args(["run", "--bin", "impact_engine", "--", target_func])
+                .args(["run", "--bin", "impact_analyzer", "--", "--target", target_func, "--symbol-graph", "repository_analysis/symbol_graph.json", "--symbol-graph", "repository_analysis/symbol_graph.json", "--output", "repository_analysis/impact/latest_report.json"])
                 .output();
 
             let mut blast_radius_info = String::new();
@@ -117,11 +118,11 @@ async fn main() -> anyhow::Result<()> {
                 std::fs::read_to_string("repository_analysis/impact/latest_report.json")
             {
                 if let Ok(impact) = serde_json::from_str::<serde_json::Value>(&impact_data) {
-                    if let Some(nodes) = impact["affected_nodes"].as_array() {
+                    if let Some(nodes) = impact["critical_blast_radius"].as_array() {
                         let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
                         blast_radius_info = format!(
                             "WARNING: This mutation has a blast radius of {}. You must preserve contracts with affected nodes: {}.",
-                            impact["blast_radius"],
+                            impact["blast_radius_score"],
                             names.join(", ")
                         );
                         println!("\x1b[31m>> [IMPACT_ENGINE] {} \x1b[0m", blast_radius_info);

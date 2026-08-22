@@ -63,6 +63,7 @@ fn verify_syntax(lang_str: &str, path: &std::path::Path) -> bool {
 /// coarse keyword check, not a real semantic diff -- it catches the two
 /// observed failure modes (no-op patch, and a patch that silently corrupts an
 /// opening tag like `<?php` -> `<?>`) without needing a real PHP AST.
+#[allow(dead_code)]
 fn looks_like_real_fix(pattern_name: &str, original_snippet: &str, patch: &str) -> bool {
     if patch.trim() == original_snippet.trim() {
         return false; // no-op: nothing was actually changed
@@ -127,7 +128,29 @@ fn main() -> Result<()> {
             println!("==> [Security Auditor] WARNING: Discovered {} potential vulnerabilities.", findings.len());
             
             let mut report_md = String::from("# 🛡️ Nexus Singularity Bug Bounty Report\n\n");
-            let mut exploitable_count = 0;
+
+            // These counters represent distinct security states.
+            //
+            // actionable_count:
+            //     AI explicitly classified the finding EXPLOITABLE.
+            //
+            // fixed_count:
+            //     An EXPLOITABLE finding was patched and passed BOTH
+            //     syntax validation and post-patch AST verification.
+            //
+            // failed_fix_count:
+            //     An EXPLOITABLE finding was not successfully remediated.
+            //
+            // safe_count:
+            //     AI explicitly classified the finding SAFE.
+            //
+            // unknown_count:
+            //     Security state could not be established without assumptions.
+            let mut actionable_count = 0;
+            let mut fixed_count = 0;
+            let mut failed_fix_count = 0;
+            let mut safe_count = 0;
+            let mut unknown_count = 0;
 
             if ai_triage {
                 println!("\n==> [AI Triage] Initializing LLM to filter false positives...");
@@ -141,8 +164,22 @@ fn main() -> Result<()> {
 
                     match nexus_ast_tool::client::ApiClient::triage_vulnerability(&finding.pattern_name, &finding.source_snippet) {
                         Ok((is_exploitable, severity, reason)) => {
-                            if is_exploitable {
-                                exploitable_count += 1;
+                            let classification =
+                                match is_exploitable.trim().to_uppercase().as_str() {
+                                    "EXPLOITABLE" => "EXPLOITABLE",
+                                    "SAFE" => "SAFE",
+                                    "UNKNOWN" => "UNKNOWN",
+                                    other => {
+                                        println!(
+                                            "        [⚠️ TRIAGE POLICY] Invalid model state '{}'; forcing UNKNOWN.",
+                                            other
+                                        );
+                                        "UNKNOWN"
+                                    }
+                                };
+
+                            if classification == "EXPLOITABLE" {
+                                actionable_count += 1;
                                 println!("        [🔴 EXPLOITABLE] Severity: {}", severity);
                                 println!("        [🧠 AI Reasoning] {}", reason);
 
@@ -154,54 +191,248 @@ fn main() -> Result<()> {
                                 report_md.push_str(&format!("### Vulnerable Code\n```{}\n{}\n```\n\n", lang_str.to_lowercase(), finding.source_snippet));
 
                                 if auto_heal {
-                                    println!("        [🛠️ Auto-Heal] Generating secure patch...");
-                                    match nexus_ast_tool::client::ApiClient::generate_security_patch(&finding.pattern_name, &finding.source_snippet, &lang_str) {
-                                        Ok(patch) => {
-                                            if let Ok(file_source) = fs::read_to_string(&finding.path) {
-                                                if let Ok(new_source) = nexus_ast_tool::mutation::PolyglotSplicer::splice(&file_source, finding.start_line, finding.end_line, &patch) {
-                                                    let _ = fs::write(&finding.path, &new_source);
-
-                                                    // Verify-then-revert, same pattern Supervisor::self_optimize
-                                                    // already uses for Rust via `cargo check`. Splicing text into
-                                                    // a file is not proof it's valid — check it before keeping it.
-                                                    let syntax_ok = verify_syntax(&lang_str, &finding.path);
-                                                    let fix_ok = looks_like_real_fix(&finding.pattern_name, &finding.source_snippet, &patch);
-
-                                                    if syntax_ok && fix_ok {
-                                                        println!("        [✅ Patch Spliced] Verified and injected secure code into AST.");
-                                                        report_md.push_str("### Recommended Patch (Auto-Healed)\n");
-                                                        report_md.push_str(&format!("```{}\n{}\n```\n\n", lang_str.to_lowercase(), patch));
-                                                    } else {
-                                                        let reason = if !syntax_ok {
-                                                            "syntax check failed"
-                                                        } else {
-                                                            "patch is a no-op or missing the expected fix (e.g. no prepare/bind_param)"
-                                                        };
-                                                        println!("        [❌ Patch Rejected] {}. Reverting.", reason);
-                                                        let _ = fs::write(&finding.path, &file_source);
-                                                        report_md.push_str(&format!(
-                                                            "### Recommended Patch (auto-heal attempted, REJECTED: {}, reverted)\n```{}\n{}\n```\n\n",
-                                                            reason, lang_str.to_lowercase(), patch
-                                                        ));
+                                println!("        [🛠️ Auto-Heal] Generating secure patch...");
+                                match nexus_ast_tool::client::ApiClient::generate_security_patch(&finding.pattern_name, &finding.source_snippet, &lang_str) {
+                                    Ok((search_block, replace_block)) => {
+                                        if let Ok(file_source) = std::fs::read_to_string(&finding.path) {
+                                            let fuzzy_match = |src: &str, target: &str| -> Option<String> {
+                                                let target_norm = target.split_whitespace().collect::<Vec<_>>().join(" ");
+                                                let src_lines: Vec<&str> = src.lines().collect();
+                                                let tgt_lines_count = target.lines().count().max(1);
+                                                
+                                                // Slide a window over the source lines (allowing for +/- 3 lines of wrapping differences)
+                                                for window_size in tgt_lines_count.saturating_sub(3)..=(tgt_lines_count + 3) {
+                                                    if window_size == 0 || window_size > src_lines.len() { continue; }
+                                                    for i in 0..=(src_lines.len() - window_size) {
+                                                        let window = src_lines[i..i+window_size].join("
+");
+                                                        let window_norm = window.split_whitespace().collect::<Vec<_>>().join(" ");
+                                                        if window_norm == target_norm {
+                                                            return Some(window);
+                                                        }
                                                     }
                                                 }
+                                                None
+                                            };
+
+                                            let mut matched_exact = false;
+                                            let mut new_source_mut = file_source.clone();
+
+                                            if file_source.contains(&search_block) {
+                                                new_source_mut = file_source.replace(&search_block, &replace_block);
+                                                matched_exact = true;
+                                            } else if let Some(matched_window) = fuzzy_match(&file_source, &search_block) {
+                                                // Whitespace drift detected! Using the semantic window match.
+                                                new_source_mut = file_source.replace(&matched_window, &replace_block);
+                                                matched_exact = true;
                                             }
-                                        },
-                                        Err(e) => println!("        [❌ Patch Gen Error] {}", e),
-                                    }
+
+                                            if !matched_exact {
+                                                // The SEARCH block was captured from a pre-patch snapshot of an
+                                                // overlapping context window. If a nearby finding in this same
+                                                // file was already patched first (findings are processed in
+                                                // descending line order), that earlier edit can invalidate this
+                                                // finding's SEARCH text even though the underlying site is
+                                                // already fixed. Re-check before counting it as a real failure.
+                                                let already_resolved = {
+                                                    let post_findings = PolyglotScanner::scan_security_vulnerabilities(&finding.path, &rules);
+                                                    !post_findings.iter().any(|f| {
+                                                        f.pattern_name == finding.pattern_name
+                                                            && f.start_line <= finding.end_line
+                                                            && f.end_line >= finding.start_line
+                                                    })
+                                                };
+
+                                                if already_resolved {
+                                                    println!("        [ℹ️ Already Resolved] Site no longer matches -- likely fixed by a nearby patch earlier this run.");
+                                                    report_md.push_str(
+                                                        "### Recommended Patch (auto-heal skipped: site already resolved by an earlier patch in this run)\n\n",
+                                                    );
+                                                } else {
+                                                    failed_fix_count += 1;
+
+                                                    println!("        [❌ Patch Rejected] SEARCH block not found exactly in file. Reverting.");
+                                                    report_md.push_str(&format!(
+                                                        "### Recommended Patch (auto-heal attempted, REJECTED: SEARCH block mismatch, reverted)\n```{}\n{}\n```\n\n",
+                                                        lang_str.to_lowercase(), replace_block
+                                                    ));
+                                                }
+                                            } else {
+                                                let new_source = new_source_mut;
+                                                let _ = std::fs::write(&finding.path, &new_source);
+
+                                                let syntax_ok = verify_syntax(&lang_str, &finding.path);
+                                                let mut ast_ok = false;
+
+                                                if syntax_ok {
+                                                    let post_findings = PolyglotScanner::scan_security_vulnerabilities(&finding.path, &rules);
+                                                    // Only treat the patch as failed if THIS site still matches --
+                                                    // not if some other, unrelated finding elsewhere in the file
+                                                    // (e.g. a deliberately unpatched UNKNOWN-classified site)
+                                                    // happens to share the same pattern_name.
+                                                    ast_ok = !post_findings.iter().any(|f| {
+                                                        f.pattern_name == finding.pattern_name
+                                                            && f.start_line <= finding.end_line
+                                                            && f.end_line >= finding.start_line
+                                                    });
+                                                }
+
+                                                // SECURITY BOUNDARY:
+                                                //
+                                                // A patch is VERIFIED only when BOTH
+                                                // authoritative checks pass:
+                                                //
+                                                //   1. syntax validation succeeds
+                                                //   2. post-patch AST/security rescan no longer
+                                                //      reports the original vulnerability
+                                                //
+                                                // No keyword heuristic may bypass the AST check.
+                                                if syntax_ok && ast_ok {
+                                                    fixed_count += 1;
+
+                                                    println!(
+                                                        "        [✅ Patch Verified] Syntax OK and AST Rescan confirms vulnerability eliminated."
+                                                    );
+                                                    report_md.push_str(
+                                                        "### Recommended Patch (Auto-Healed)\n"
+                                                    );
+                                                    report_md.push_str(&format!(
+                                                        "```{}\n{}\n```\n\n",
+                                                        lang_str.to_lowercase(),
+                                                        replace_block
+                                                    ));
+                                                } else {
+                                                    failed_fix_count += 1;
+
+                                                    let reject_reason = if !syntax_ok {
+                                                        "Syntax check failed"
+                                                    } else {
+                                                        "AST Rescan detected vulnerability still present"
+                                                    };
+
+                                                    println!(
+                                                        "        [❌ Patch Rejected] {}. Reverting.",
+                                                        reject_reason
+                                                    );
+
+                                                    std::fs::write(&finding.path, &file_source)?;
+
+                                                    report_md.push_str(&format!(
+                                                        "### Recommended Patch (auto-heal attempted, REJECTED: {}, reverted)\n```{}\n{}\n```\n\n",
+                                                        reject_reason,
+                                                        lang_str.to_lowercase(),
+                                                        replace_block
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        failed_fix_count += 1;
+                                        println!("        [❌ Patch Gen Error] {}", e);
+                                    },
                                 }
-                                report_md.push_str("---\n\n");
+                            }
+                            report_md.push_str("---\n\n");
+                            } else if classification == "SAFE" {
+                                safe_count += 1;
+
+                                println!(
+                                    "        [🟢 SAFE] Explicitly classified safe."
+                                );
+                                println!(
+                                    "        [🧠 AI Reasoning] {}",
+                                    reason
+                                );
                             } else {
-                                println!("        [🟢 FALSE POSITIVE] Safe.\n        [🧠 AI Reasoning] {}", reason);
+                                unknown_count += 1;
+
+                                println!(
+                                    "        [🟡 UNKNOWN] Security state cannot be established without assumptions."
+                                );
+                                println!(
+                                    "        [🧠 AI Reasoning] {}",
+                                    reason
+                                );
                             }
                         },
                         Err(e) => println!("        [⚠️ API Error] {}", e),
                     }
                 }
 
-                if generate_report && exploitable_count > 0 {
-                    let _ = fs::write("bounty_report.md", &report_md);
-                    println!("\n==> [Report Generator] 📄 Successfully generated 'bounty_report.md' with {} actionable bugs!", exploitable_count);
+                if generate_report {
+                    report_md.push_str("\n# Final Audit Summary\n\n");
+
+                    report_md.push_str(&format!(
+                        "- **Actionable findings:** {}\n",
+                        actionable_count
+                    ));
+                    report_md.push_str(&format!(
+                        "- **Verified fixed:** {}\n",
+                        fixed_count
+                    ));
+                    report_md.push_str(&format!(
+                        "- **Remediation failed:** {}\n",
+                        failed_fix_count
+                    ));
+                    report_md.push_str(&format!(
+                        "- **Explicitly safe:** {}\n",
+                        safe_count
+                    ));
+                    report_md.push_str(&format!(
+                        "- **Unknown:** {}\n\n",
+                        unknown_count
+                    ));
+
+                    let remediation_clean =
+                        actionable_count == fixed_count
+                        && failed_fix_count == 0;
+
+                    if remediation_clean {
+                        report_md.push_str(
+                            "## Remediation Integrity\n\n                             **PASS** — Every actionable finding was VERIFIED_FIXED.\n\n"
+                        );
+                    } else {
+                        report_md.push_str(
+                            "## Remediation Integrity\n\n                             **FAIL** — One or more actionable findings were not VERIFIED_FIXED.\n\n"
+                        );
+                    }
+
+                    fs::write("bounty_report.md", &report_md)?;
+
+                    println!(
+                        "\n==> [Report Generator] 📄 bounty_report.md generated."
+                    );
+                    println!(
+                        "    Actionable findings : {}",
+                        actionable_count
+                    );
+                    println!(
+                        "    Verified fixed      : {}",
+                        fixed_count
+                    );
+                    println!(
+                        "    Remediation failed  : {}",
+                        failed_fix_count
+                    );
+                    println!(
+                        "    Explicitly safe     : {}",
+                        safe_count
+                    );
+                    println!(
+                        "    Unknown             : {}",
+                        unknown_count
+                    );
+
+                    if remediation_clean {
+                        println!(
+                            "    [✅ REMEDIATION INTEGRITY] PASS"
+                        );
+                    } else {
+                        println!(
+                            "    [❌ REMEDIATION INTEGRITY] FAIL"
+                        );
+                    }
                 }
             }
         }

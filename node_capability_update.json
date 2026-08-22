@@ -1,1 +1,0 @@
-{"node": "ARM64", "capability_profile": "constrained", "confidence_level": 0.3, "reasoning": "Memory constraints identified during large model execution; resource-aware routing now mandatory."}

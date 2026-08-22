@@ -327,7 +327,7 @@ impl EpistemicEngine {
 ```
 
 \
-            Think step by step. State the intended tool, the exact target path, and provide any required text/code cleanly. A downstream Motor Cortex will translate this into executable JSON formatting.",
+            \n            CRITICAL RULE 5: [ATHENA OMNISCIENCE] You are aware of several external compiled sub-agents (WORKSPACE TOOL CONTRACTS like impact_analyzer, benchmark_runner, mutation_ranker). To use them, you MUST use the `execute_command` native tool, passing the binary path and arguments as the `command` string (e.g., `target/release/impact_analyzer --target my_func`).\n\n            Think step by step. State the intended tool, the exact target path, and provide any required text/code cleanly. A downstream Motor Cortex will translate this into executable JSON formatting.",
             mission, strategy, world_context, evidence_so_far
         );
 

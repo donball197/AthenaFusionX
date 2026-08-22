@@ -233,7 +233,8 @@ fn main() {
     }
 
     let json_data = serde_json::to_string_pretty(&mutation_map).expect("Failed to serialize");
-    fs::write("mutation_map.json", json_data).expect("Failed to write map");
+    let _ = std::fs::create_dir_all("repository_analysis");
+    fs::write("repository_analysis/mutation_map.json", json_data).expect("Failed to write map");
 
     println!(">> POLYGLOT AST ANALYSIS COMPLETE:");
     println!("   - Backend Nodes (Rust/Python): {}", rust_nodes + python_nodes);

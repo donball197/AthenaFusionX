@@ -40,7 +40,7 @@ impl ApiClient {
             .ok_or_else(|| anyhow::anyhow!("Missing </payload>"))?;
         Ok(text[start..end]
             .replace("```rust\n", "")
-            .replace("```", "")
+            .replace("```python", "").replace("```php", "").replace("```\n", "").replace("```", "")
             .trim()
             .to_string())
     }
@@ -180,29 +180,24 @@ impl ApiClient {
             .map_err(|e| anyhow!("HTTP req failed: {e}"))?;
         let text = Self::extract_text(response, is_gemini)?;
 
-        let start = text
-            .find("<payload>")
-            .ok_or_else(|| anyhow!("Missing <payload>"))?
-            + 9;
-        let end = text
-            .rfind("</payload>")
-            .ok_or_else(|| anyhow!("Missing </payload>"))?;
+        let start = text.find("<payload>").map(|i| i + 9).unwrap_or_else(|| text.find("{").unwrap_or(0));
+        let end = text.rfind("</payload>").unwrap_or_else(|| text.rfind("}").map(|i| i + 1).unwrap_or(text.len()));
 
         Ok(text[start..end]
             .replace("```json\n", "")
-            .replace("```", "")
+            .replace("```python", "").replace("```php", "").replace("```\n", "").replace("```", "")
             .trim()
             .to_string())
     }
 
-    pub fn triage_vulnerability(finding_type: &str, code_snippet: &str) -> Result<(bool, String, String)> {
+    pub fn triage_vulnerability(finding_type: &str, code_snippet: &str) -> Result<(String, String, String)> {
         Self::with_retry(|| Self::triage_vulnerability_attempt(finding_type, code_snippet), 3)
     }
 
     fn triage_vulnerability_attempt(
         finding_type: &str,
         code_snippet: &str,
-    ) -> Result<(bool, String, String)> {
+    ) -> Result<(String, String, String)> {
         thread::sleep(Duration::from_millis(2000));
 
         let model = Self::resolve_model()?;
@@ -226,7 +221,19 @@ impl ApiClient {
 
         let prompt = format!(
             "You are an elite Security Triage AI.\nAnalyze this code for a '{}' vulnerability.\nSource:\n```\n{}\n```\n\
-             Return ONLY a JSON object wrapped in <payload></payload> tags like this:\n{{\"is_exploitable\": true, \"severity\": \"High\", \"reason\": \"...\"}}",
+             CRITICAL DIRECTIVES:\n\
+             1. If definitely vulnerable and untrusted data reaches the sink, return \"EXPLOITABLE\".\n\
+             2. If definitely mitigated (e.g. prepared statement, integer cast), return \"SAFE\".\n\
+             3. If you must make ANY ASSUMPTION about external data validation, session trust, provenance, or sanitization, return \"UNKNOWN\".
+\
+             4. \"SAFE\" is permitted ONLY when the supplied source proves the sink is mitigated without assumptions.
+\
+             5. The state MUST be exactly one of: \"EXPLOITABLE\", \"SAFE\", \"UNKNOWN\".
+\
+             6. Never return \"FALSE POSITIVE\", \"TRUE\", \"FALSE\", or any other state.
+\
+             Return ONLY a JSON object wrapped in <payload></payload> tags like this:
+{{\"state\": \"EXPLOITABLE\", \"severity\": \"High\", \"reason\": \"...\"}}",
             finding_type, code_snippet
         );
 
@@ -250,24 +257,26 @@ impl ApiClient {
             .map_err(|e| anyhow!("HTTP req failed: {e}"))?;
         let text = Self::extract_text(response, is_gemini)?;
 
-        let start = text
-            .find("<payload>")
-            .ok_or_else(|| anyhow!("Missing <payload>"))?
-            + 9;
-        let end = text
-            .rfind("</payload>")
-            .ok_or_else(|| anyhow!("Missing </payload>"))?;
+        let start = text.find("<payload>").map(|i| i + 9).unwrap_or_else(|| text.find("{").unwrap_or(0));
+        let end = text.rfind("</payload>").unwrap_or_else(|| text.rfind("}").map(|i| i + 1).unwrap_or(text.len()));
         let json_str = text[start..end]
             .replace("```json\n", "")
-            .replace("```", "")
+            .replace("```python", "").replace("```php", "").replace("```\n", "").replace("```", "")
             .trim()
             .to_string();
         let sanitized = Self::sanitize_json(&json_str);
 
         let parsed: serde_json::Value =
             serde_json::from_str(&sanitized).map_err(|e| anyhow!("JSON Parse Error: {}", e))?;
+        let state = match parsed["state"].as_str().unwrap_or("UNKNOWN") {
+            "EXPLOITABLE" => "EXPLOITABLE",
+            "SAFE" => "SAFE",
+            "UNKNOWN" => "UNKNOWN",
+            _ => "UNKNOWN",
+        };
+
         Ok((
-            parsed["is_exploitable"].as_bool().unwrap_or(false),
+            state.to_string(),
             parsed["severity"].as_str().unwrap_or("Unknown").to_string(),
             parsed["reason"].as_str().unwrap_or("None").to_string(),
         ))
@@ -277,7 +286,7 @@ impl ApiClient {
         finding_type: &str,
         code_snippet: &str,
         lang: &str,
-    ) -> Result<String> {
+    ) -> Result<(String, String)> {
         Self::with_retry(
             || Self::generate_security_patch_attempt(finding_type, code_snippet, lang),
             3,
@@ -288,17 +297,17 @@ impl ApiClient {
         finding_type: &str,
         code_snippet: &str,
         lang: &str,
-    ) -> Result<String> {
-        thread::sleep(Duration::from_millis(2000));
+    ) -> Result<(String, String)> {
+        std::thread::sleep(std::time::Duration::from_millis(2000));
 
         let model = Self::resolve_model()?;
         let model_lower = model.to_lowercase();
         let is_gemini = model_lower.contains("gemini") || model_lower.contains("gemma");
 
         let api_key = if is_gemini {
-            env::var("GEMINI_API_KEY").map_err(|_| anyhow!("GEMINI_API_KEY required"))?
+            std::env::var("GEMINI_API_KEY").map_err(|_| anyhow::anyhow!("GEMINI_API_KEY required"))?
         } else {
-            env::var("NVIDIA_API_KEY").map_err(|_| anyhow!("NVIDIA_API_KEY required"))?
+            std::env::var("NVIDIA_API_KEY").map_err(|_| anyhow::anyhow!("NVIDIA_API_KEY required"))?
         };
 
         let endpoint = if is_gemini {
@@ -311,16 +320,26 @@ impl ApiClient {
         };
 
         let prompt = format!(
-            "You are an elite Security Auto-Healer AI.\nFix this '{}' vulnerability in this {} code:\n```\n{}\n```\n\
-             CRITICAL: Provide the exact, secure replacement code. Keep the exact same indentation.\n\
-             Do NOT include markdown fences. Wrap your code EXACTLY in <payload> and </payload> tags.",
+            "You are an elite Security Auto-Healer AI.\n\
+             Fix this '{}' vulnerability in this {} code:\n\
+             ```\n\
+             {}\n\
+             ```\n\
+             CRITICAL: You must use a SEARCH/REPLACE block. Identify the EXACT vulnerable lines to remove (including exact indentation) and provide the secure replacement.\n\
+             Output EXACTLY in this format:\n\
+             <<<<<<< SEARCH\n\
+             [exact code to remove]\n\
+             =======\n\
+             [secure replacement code]\n\
+             >>>>>>> REPLACE\n\
+             Do NOT wrap the output in markdown fences or XML tags. Ensure the SEARCH block matches the file exactly.",
             finding_type, lang, code_snippet
         );
 
         let body = if is_gemini {
-            json!({ "contents": [{ "parts": [{ "text": prompt }] }] })
+            serde_json::json!({ "contents": [{ "parts": [{ "text": prompt }] }] })
         } else {
-            json!({
+            serde_json::json!({
                 "model": model,
                 "messages": [{ "role": "user", "content": prompt }],
                 "temperature": 0.1
@@ -332,24 +351,17 @@ impl ApiClient {
             req = req.set("Authorization", &format!("Bearer {}", api_key));
         }
 
-        let response = req
-            .send_json(body)
-            .map_err(|e| anyhow!("HTTP req failed: {e}"))?;
+        let response = req.send_json(body).map_err(|e| anyhow::anyhow!("HTTP req failed: {e}"))?;
         let text = Self::extract_text(response, is_gemini)?;
 
-        let start = text
-            .find("<payload>")
-            .ok_or_else(|| anyhow!("Missing <payload>"))?
-            + 9;
-        let end = text
-            .rfind("</payload>")
-            .ok_or_else(|| anyhow!("Missing </payload>"))?;
-        Ok(text[start..end]
-            .replace("```python\n", "")
-            .replace("```php\n", "")
-            .replace("```", "")
-            .trim_end()
-            .to_string())
+        let search_start = text.find("<<<<<<< SEARCH").ok_or_else(|| anyhow::anyhow!("Missing <<<<<<< SEARCH in payload"))?;
+        let delim = text.find("=======").ok_or_else(|| anyhow::anyhow!("Missing ======= in payload"))?;
+        let replace_end = text.find(">>>>>>> REPLACE").ok_or_else(|| anyhow::anyhow!("Missing >>>>>>> REPLACE in payload"))?;
+
+        let search_block = text[search_start + 14..delim].trim_matches('\n').to_string();
+        let replace_block = text[delim + 7..replace_end].trim_matches('\n').to_string();
+
+        Ok((search_block, replace_block))
     }
 
     fn resolve_model() -> Result<String> {
@@ -406,11 +418,11 @@ impl ApiClient {
 
         let endpoint = if is_gemini {
             format!(
-                "[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){}:generateContent?key={}",
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                 model, api_key
             )
         } else {
-            "[https://integrate.api.nvidia.com/v1/chat/completions](https://integrate.api.nvidia.com/v1/chat/completions)".to_string()
+            "https://integrate.api.nvidia.com/v1/chat/completions".to_string()
         };
 
         let strategy_contract = match strategy {
@@ -492,19 +504,14 @@ impl ApiClient {
             .map_err(|e| anyhow!("HTTP request failed: {e}"))?;
         let text = Self::extract_text(response, is_gemini)?;
 
-        let start = text
-            .find("<payload>")
-            .ok_or_else(|| anyhow!("Model response missing <payload> tag"))?
-            + 9;
-        let end = text
-            .rfind("</payload>")
-            .ok_or_else(|| anyhow!("Missing </payload> tag"))?;
+        let start = text.find("<payload>").map(|i| i + 9).unwrap_or(0);
+        let end = text.rfind("</payload>").unwrap_or(text.len());
 
         let payload = text[start..end]
             .replace("```rust\n", "")
             .replace("```rust", "")
             .replace("```\n", "")
-            .replace("```", "")
+            .replace("```python", "").replace("```php", "").replace("```\n", "").replace("```", "")
             .trim()
             .to_string();
 

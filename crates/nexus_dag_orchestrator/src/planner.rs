@@ -27,7 +27,7 @@ impl DagPlanner {
         } else {
             // Defaults to NVIDIA / open-weights fallback
             (
-                "https://generativelanguage.googleapis.com/v1beta/chat/completions".to_string(),
+                "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
                 env::var("NVIDIA_API_KEY").unwrap_or_default(),
                 model,
             )

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BeliefAction {
     Continue,
     Adapt,
@@ -11,57 +11,32 @@ pub enum BeliefAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BeliefDecision {
-    pub id: Uuid,
-
     pub belief_id: Uuid,
-
     pub confidence: f32,
-
     pub action: BeliefAction,
-
     pub reason: String,
-
-    pub timestamp: i64,
 }
 
 pub struct BeliefDecisionPolicy;
 
 impl BeliefDecisionPolicy {
+    /// STUB: placeholder thresholds only — not the real belief-policy engine.
     pub fn evaluate(belief_id: Uuid, confidence: f32) -> BeliefDecision {
         let (action, reason) = if confidence >= 0.75 {
-            (BeliefAction::Continue, "Confidence sufficient to continue objective".to_string())
-        } else if confidence >= 0.45 {
-            (
-                BeliefAction::Adapt,
-                "Confidence degraded, strategy adjustment recommended".to_string(),
-            )
-        } else if confidence >= 0.20 {
-            (BeliefAction::Suspend, "Confidence too low, suspend objective".to_string())
+            (BeliefAction::Continue, "stub: confidence above continue threshold")
+        } else if confidence >= 0.5 {
+            (BeliefAction::Adapt, "stub: confidence in adapt band")
+        } else if confidence >= 0.25 {
+            (BeliefAction::Suspend, "stub: confidence in suspend band")
         } else {
-            (BeliefAction::Abandon, "Evidence no longer supports objective".to_string())
+            (BeliefAction::Abandon, "stub: confidence below abandon threshold")
         };
 
-        Self::decision(belief_id, confidence, action, reason)
-    }
-
-    fn decision(
-        belief_id: Uuid,
-        confidence: f32,
-        action: BeliefAction,
-        reason: String,
-    ) -> BeliefDecision {
         BeliefDecision {
-            id: Uuid::new_v4(),
-
             belief_id,
-
             confidence,
-
             action,
-
-            reason,
-
-            timestamp: chrono::Utc::now().timestamp(),
+            reason: reason.to_string(),
         }
     }
 }

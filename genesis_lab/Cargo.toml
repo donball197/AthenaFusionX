@@ -1,5 +1,3 @@
-[workspace]
-
 [package]
 name = "genesis_lab"
 version = "0.1.0"

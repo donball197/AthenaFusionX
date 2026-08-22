@@ -62,7 +62,7 @@ impl SupportedLanguage {
     pub fn symbol_query(&self) -> &'static str {
         match self {
             Self::Rust => "(function_item name: (identifier) @name)",
-            Self::Zig => "(FnProto (IDENTIFIER) @name)",
+            Self::Zig => "(FunctionDecl name: (identifier) @name)",
             Self::Python => "(function_definition name: (identifier) @name)",
             Self::JavaScript => "(function_declaration name: (identifier) @name)",
             Self::TypeScript => "(function_declaration name: (identifier) @name)",
@@ -100,6 +100,12 @@ pub struct SecurityFinding {
     pub start_line: usize,
     pub end_line: usize,
     pub source_snippet: String,
+    /// Exact text of start_line..=end_line only, no surrounding context.
+    /// Must be used as the auto-heal LLM's replacement target instead of
+    /// source_snippet, because PolyglotSplicer::splice only ever cuts out
+    /// start_line..end_line -- if the model is shown a wider snippet than
+    /// that, it writes a wider replacement than splice can correctly insert.
+    pub patch_snippet: String,
 }
 
 pub struct PolyglotScanner;
@@ -181,6 +187,18 @@ impl PolyglotScanner {
                 }
             }
         }
+
+        // Two rule files can declare the same rule id, which silently doubles
+        // every finding and every AI-triage call. Collapse exact
+        // (path, line, rule id) duplicates as a safety net.
+        findings.sort_by(|a, b| {
+            (a.path.as_path(), a.start_line, a.pattern_name.as_str())
+                .cmp(&(b.path.as_path(), b.start_line, b.pattern_name.as_str()))
+        });
+        findings.dedup_by(|a, b| {
+            a.path == b.path && a.start_line == b.start_line && a.pattern_name == b.pattern_name
+        });
+
         findings
     }
 
@@ -206,18 +224,30 @@ impl PolyglotScanner {
                 let start_line = range.start_point.row;
                 let end_line = range.end_point.row;
                 
-                let context_start = start_line.saturating_sub(7);
+                let context_start = start_line.saturating_sub(20);
+                let context_end = (end_line + 3).min(source_lines.len().saturating_sub(1));
                 let snippet = if start_line < source_lines.len() {
-                    source_lines[context_start..=end_line].join("\n")
+                    source_lines[context_start..=context_end].join("\n")
+                } else { String::new() };
+
+                // Narrow, exact-line-range snippet used ONLY as the auto-heal
+                // replacement target. Must match PolyglotSplicer::splice's
+                // start_line..end_line range exactly, or the LLM writes a patch
+                // sized to the wide `snippet` above while splice only cuts out
+                // this narrow range -- guaranteeing duplicated context and a
+                // syntax-check failure on every auto-heal attempt.
+                let _patch_target = if end_line < source_lines.len() {
+                    source_lines[start_line..=end_line].join("\n")
                 } else { String::new() };
 
                 results.push(SecurityFinding {
                     language: lang,
                     pattern_name: rule_id.to_string(), 
                     path: path.to_path_buf(),
-                    start_line: start_line + 1,
-                    end_line: end_line + 1,
-                    source_snippet: snippet,
+                    start_line: context_start + 1,
+                    end_line: context_end + 1,
+                    source_snippet: snippet.clone(),
+                    patch_snippet: snippet,
                 });
             }
         }

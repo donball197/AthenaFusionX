@@ -1,0 +1,65 @@
+[
+  {
+    "file_path": "app.py",
+    "line_number": 15,
+    "severity": "high",
+    "category": "Security",
+    "title": "SQL Injection Vulnerability",
+    "description": "User input is directly concatenated into SQL queries, allowing attackers to inject malicious SQL code.",
+    "suggestion": "Use parameterized queries or ORM to handle user input safely."
+  },
+  {
+    "file_path": "config.py",
+    "line_number": 5,
+    "severity": "high",
+    "category": "Security",
+    "title": "Hardcoded Sensitive Information",
+    "description": "API key is hardcoded in the configuration file, which can be exposed if the code is leaked.",
+    "suggestion": "Use environment variables or a secure secrets management system to store sensitive information."
+  },
+  {
+    "file_path": "utils.py",
+    "line_number": 30,
+    "severity": "critical",
+    "category": "Security",
+    "title": "Dangerous Deserialization",
+    "description": "Using pickle to deserialize user-controlled input can lead to remote code execution.",
+    "suggestion": "Avoid deserializing untrusted data. Use safer serialization formats like JSON and validate input thoroughly."
+  },
+  {
+    "file_path": "app.py",
+    "line_number": 60,
+    "severity": "medium",
+    "category": "Security",
+    "title": "Sensitive Information Leakage",
+    "description": "Error messages display detailed exception information to users, which can aid attackers in exploiting the application.",
+    "suggestion": "Log exceptions securely and return generic error messages to users."
+  },
+  {
+    "file_path": "models.py",
+    "line_number": 20,
+    "severity": "high",
+    "category": "Security",
+    "title": "Insecure Password Hashing",
+    "description": "Using MD5 for password hashing is insecure due to its vulnerability to collision attacks and fast computation.",
+    "suggestion": "Use a strong password hashing algorithm like bcrypt, Argon2, or PBKDF2."
+  },
+  {
+    "file_path": "app.py",
+    "line_number": 50,
+    "severity": "medium",
+    "category": "Performance",
+    "title": "Inefficient Data Processing",
+    "description": "Processing a large dataset with nested loops leads to O(n^2) time complexity, causing slow performance.",
+    "suggestion": "Optimize the algorithm by using hash maps or other data structures to reduce complexity."
+  },
+  {
+    "file_path": "utils.py",
+    "line_number": 42,
+    "severity": "medium",
+    "category": "Security",
+    "title": "Potential Path Traversal Vulnerability",
+    "description": "The function reads files based on user-provided paths without proper validation, which could allow attackers to access arbitrary files on the system.",
+    "suggestion": "Validate and sanitize file paths before opening them, restricting access to allowed directories."
+  }
+]

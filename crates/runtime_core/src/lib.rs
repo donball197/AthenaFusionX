@@ -1,8 +1,5 @@
 pub mod agent_protocol;
-pub mod agent_runtime;
-pub mod agents;
 pub mod arbiter_agent;
-pub mod ast_editor;
 pub mod cli_utils;
 pub mod cluster;
 pub mod cognition;
@@ -48,9 +45,6 @@ pub mod intent_contract;
 pub mod motor_cortex;
 
 pub mod cognitive_events;
-
-pub mod belief_engine;
-pub mod belief_update;
 pub mod causal_recall;
 pub mod evidence;
 pub mod memory_consolidation;
@@ -59,20 +53,7 @@ pub mod memory_recall;
 pub mod memory_semantic;
 pub mod memory_types;
 pub mod reflection_engine;
-
-pub mod belief_feedback;
-
-pub mod belief_policy;
-
 pub mod goal_adaptation;
-
-pub mod belief_audit;
-pub mod belief_causality;
-pub mod belief_delta;
-pub mod belief_prediction;
-pub mod belief_transition;
-pub mod belief_validation;
-
 pub mod executive_cortex;
 
 pub mod action_gate;
@@ -80,9 +61,17 @@ pub mod action_intercept;
 pub mod completion_engine;
 pub mod outcome_verifier;
 pub mod tools;
+pub mod belief_policy;
+pub mod belief_update;
+pub mod belief_transition;
+pub mod belief_causality;
+pub mod belief_validation;
+pub mod belief_feedback;
+pub mod ast_editor;
 
 pub mod config;
 pub mod client;
 
 pub use config::NexusConfig;
 pub use client::ApiClient;
+pub mod contract_status;

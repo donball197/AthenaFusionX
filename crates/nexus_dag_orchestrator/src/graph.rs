@@ -64,6 +64,12 @@ impl DagManager {
     }
 }
 
+impl Default for DagManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

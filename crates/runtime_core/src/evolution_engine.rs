@@ -54,7 +54,7 @@ impl EvolutionEngine {
 
             // Store in Memory Palace
             let mem = memory;
-            mem.store_memory("EvolutionEngine", objective, &insight, embedding).await?;
+            mem.store_memory("EvolutionEngine", objective, &insight, "Internal", embedding).await?;
 
             tracing::info!("\x1b[1;36m>> [EVOLUTION] Genetic material successfully committed to VectorVault.\x1b[0m");
         } else {

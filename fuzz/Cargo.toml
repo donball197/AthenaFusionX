@@ -12,7 +12,6 @@ libfuzzer-sys = "0.4"
 
 [dependencies.nexus_ast_tool]
 path = "../apps/nexus_ast_tool"
-[workspace]
 [[bin]]
 name = "fuzz_target_1"
 path = "fuzz_targets/fuzz_target_1.rs"
