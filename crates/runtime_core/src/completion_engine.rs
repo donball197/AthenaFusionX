@@ -86,37 +86,36 @@ impl SubgoalCompletionEngine {
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
 
-        let first_word = classify_text.split_whitespace().next().unwrap_or("");
-        let is_recon_intent = [
-            "read", "analyze", "inspect", "search", "examine", "locate", "profile", "benchmark",
-        ]
-        .contains(&first_word);
+        let has_patch = any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate", "mutate"]);
+        let has_write = any_word_unnegated(classify_text, &["write", "export", "save", "implement", "integrate", "add", "create"]);
 
-        if is_recon_intent {
-            conditions.push(CompletionCondition::ReadMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.65));
-        } else if any_word_unnegated(
-            classify_text,
-            &["write", "export", "save", "implement", "integrate", "add", "create"],
-        ) {
-            conditions.push(CompletionCondition::WriteMarkerAcquired);
+        if has_patch || has_write {
             is_mutation_task = true;
-
+            if has_patch {
+                conditions.push(CompletionCondition::PatchMarkerAcquired);
+            } else {
+                conditions.push(CompletionCondition::WriteMarkerAcquired);
+            }
             if any_word(classify_text, &["roadmap", "audit", "comparison"]) {
                 conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
             }
-        } else if any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate"]) {
-            conditions.push(CompletionCondition::PatchMarkerAcquired);
-            is_mutation_task = true;
-        } else if any_word(classify_text, &["search", "find", "locate"]) {
-            conditions.push(CompletionCondition::SearchMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.65));
-        } else if any_word(classify_text, &["read", "inspect", "audit"]) {
-            conditions.push(CompletionCondition::ReadMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.65));
         } else {
-            conditions.push(CompletionCondition::CommandMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.85));
+            let first_word = classify_text.split_whitespace().next().unwrap_or("");
+            let is_recon_intent = [
+                "read", "analyze", "inspect", "search", "examine", "locate", "profile", "benchmark", "audit"
+            ].contains(&first_word);
+
+            if is_recon_intent || any_word(classify_text, &["read", "inspect", "audit", "search", "find", "locate"]) {
+                if any_word(classify_text, &["search", "find", "locate"]) {
+                    conditions.push(CompletionCondition::SearchMarkerAcquired);
+                } else {
+                    conditions.push(CompletionCondition::ReadMarkerAcquired);
+                }
+                conditions.push(CompletionCondition::MinBeliefScore(0.65));
+            } else {
+                conditions.push(CompletionCondition::CommandMarkerAcquired);
+                conditions.push(CompletionCondition::MinBeliefScore(0.85));
+            }
         }
 
         SubgoalContract {

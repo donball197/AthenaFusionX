@@ -117,7 +117,7 @@ impl CorticalLoop {
     ) -> Result<CortexOutcome> {
         self.log("\x1b[1;36m>> [CORTEX] Igniting Epistemic Reasoning Session\x1b[0m".to_string());
 
-        let mut context_chunks = (*self.world_model).semantic_query(mission).await;
+        let mut context_chunks = self.world_model.semantic_query(mission).await;
         context_chunks.push(Self::resolve_workspace_paths().await);
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
@@ -133,7 +133,18 @@ impl CorticalLoop {
         let hypotheses = EpistemicEngine::generate_hypotheses(&self.client, &self.api_key, mission, &world_context).await?;
 
         for h in hypotheses {
-            session.graph.add_node(NodeKind::Hypothesis, &h, 0.5, 100);
+            let hid = session.graph.add_node(NodeKind::Hypothesis, &h, 0.5, 100);
+            // FIX: apply_event's HypothesisCreated arm was the only path that
+            // ever set best_hypothesis_id from None -> Some, but that event
+            // was never dispatched here (add_node was called directly on the
+            // graph). best_hypothesis_id stayed None for the whole run, and
+            // handle_evaluate's `.unwrap_or_default()` silently fell back to
+            // the nil UUID -- every belief-graph edge for the entire session
+            // targeted a node that never existed, so propagate_beliefs()
+            // silently no-op'd on every turn. Seed it explicitly here.
+            if session.best_hypothesis_id.is_none() {
+                session.best_hypothesis_id = Some(hid);
+            }
             self.log(format!("\x1b[90m  -> Strategy: {}\x1b[0m", h));
         }
 
@@ -188,6 +199,13 @@ impl CorticalLoop {
         let h_id = best_node.id;
         let h_content = best_node.content.clone();
         let current_belief = best_node.belief_score;
+        // FIX: without this, handle_critic/handle_evaluate always read
+        // session.best_hypothesis_id (a session-level field set once and
+        // rarely updated) instead of whichever hypothesis was actually
+        // selected and explored THIS turn -- so only one hypothesis in the
+        // whole session could ever accumulate evidence, no matter which
+        // strategy the Strategist was actually proposing against.
+        session.best_hypothesis_id = Some(h_id);
 
         self.log(format!("\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}", current_belief, h_content));
 
@@ -206,7 +224,7 @@ impl CorticalLoop {
                 self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposal));
                 let prop_lower = proposal.trim().to_lowercase();
                 if prop_lower == "halt" || prop_lower.starts_with("halt ") {
-                    if status == ContractStatus::Satisfied || status == ContractStatus::PartialEvidence {
+                    if status == ContractStatus::Satisfied {
                         self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Halt proposed following successful local evidence. Subtask complete.\x1b[0m".to_string());
                         return Ok(CortexState::Complete { belief: 1.0, evidence: session.collect_evidence(h_id) });
                     } else if (is_mutation_task || is_write_task) && status == ContractStatus::NoEvidence {
@@ -233,28 +251,23 @@ impl CorticalLoop {
     }
 
     async fn handle_critic(&mut self, session: &mut EpistemicSession, mission: &str, world_context: &str, proposal: String, belief: f32, is_mutation_task: bool, is_write_task: bool) -> Result<CortexState> {
+        // ⚡ RESTORED ESCAPE HATCH
+        let status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, belief, mission);
+        if status == ContractStatus::Satisfied {
+            self.log("\x1b[1;36m>> [SUBGOAL_COMPLETE] Evidence is sufficient. Forcing completion.\x1b[0m".to_string());
+            return Ok(CortexState::Complete { belief, evidence: session.collect_evidence(session.best_hypothesis_id.unwrap_or_default()) });
+        }
+        
+        let h_content = if let Some(h_id) = session.best_hypothesis_id {
+            session.graph.nodes.get(&h_id).map(|n| n.content.clone()).unwrap_or_default()
+        } else {
+            String::new()
+        };
         self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
         
-        let action_key = proposal.trim().to_string();
-        if session.is_action_attempted(&action_key) {
-            let status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, belief, mission);
-            if status == ContractStatus::Satisfied || status == ContractStatus::PartialEvidence {
-                self.log("\x1b[1;36m>> [SUBGOAL_COMPLETE] Loop detected but evidence is sufficient. Halting.\x1b[0m".to_string());
-                return Ok(CortexState::Complete { belief, evidence: session.collect_evidence(session.best_hypothesis_id.unwrap_or_default()) });
-            } else {
-                self.log(format!("\x1b[1;31m>> [ENTERPRISE CORTEX] Anti-Loop Guard Triggered: Action [{}] already attempted.\x1b[0m", action_key));
-                let obs_id = session.graph.add_node(NodeKind::Observation, "[CRITICAL VETO] You are repeating a failed action! YOU MUST MUTATE YOUR STRATEGY, USE A DIFFERENT TOOL, OR HALT.", 1.0, 95);
-                if let Some(h_id) = session.best_hypothesis_id {
-                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
-                    session.graph.propagate_beliefs();
-                }
-                return Ok(CortexState::Strategize);
-            }
-        }
-        session.record_action_attempt(&action_key);
 
         session.budget.record_call();
-        match EpistemicEngine::criticize_proposal(&self.client, &self.api_key, mission, &proposal, world_context, &session.local_evidence, &session.local_evidence).await {
+        match EpistemicEngine::criticize_proposal(&self.client, &self.api_key, mission, &h_content, &proposal, world_context, &session.local_evidence).await {
             Err(e) => {
                 self.log(format!("\x1b[31m>> [CORTEX FATAL] Red Team critic parser panicked: {}\x1b[0m", e));
                 if let Some(h_id) = session.best_hypothesis_id {
@@ -268,7 +281,8 @@ impl CorticalLoop {
                 self.log(format!("\x1b[31m>> [CRITIC] Verdict:\x1b[0m {} (Modifier: {:.2})", critic.critique, critic.confidence_modifier));
 
                 let is_mutation_shaped_proposal = proposal.contains("write_file") || proposal.contains("patch_function") || proposal.contains("diff_patch") || proposal.contains("replace_lines");
-                let contract_still_unmet = (is_mutation_task || is_write_task) && !session.local_evidence.lines().any(|l| l.starts_with("[WRITE_OK]") || l.starts_with("[PATCH_FUNCTION_OK]") || l.starts_with("[REPLACE_LINES_OK]") || l.starts_with("[DIFF_PATCH_OK]"));
+                let contract_still_unmet =
+                    (is_mutation_task || is_write_task) && !crate::evidence_markers::has_mutation_marker(&session.local_evidence);
 
                 if critic.confidence_modifier <= -0.2 && is_mutation_shaped_proposal && contract_still_unmet {
                     session.consecutive_mutation_vetoes += 1;
@@ -338,6 +352,38 @@ impl CorticalLoop {
             }
             Ok(CortexState::Strategize)
         } else {
+            // ⚡ SEMANTIC ANTI-LOOP GUARD + DYNAMIC TOOLCHAIN INJECTION
+            for action in &actions {
+                let action_key = match action {
+                    AgentAction::ReadFile { path, .. } => format!("read_file:{}", path),
+                    AgentAction::ReadFileChunk { path, start_line, .. } => format!("read_file_chunk:{}:{}", path, start_line),
+                    AgentAction::SearchCode { path, query, .. } => format!("search_code:{}:{}", path, query),
+                    AgentAction::SearchMemory { query, .. } => format!("search_memory:{}", query),
+                    AgentAction::ExecuteCommand { command, .. } => format!("execute_command:{}", command),
+                    AgentAction::WriteFile { path, .. } => format!("write_file:{}", path),
+                    AgentAction::DiffPatch { path, .. } => format!("diff_patch:{}", path),
+                    AgentAction::PatchFunction { path, function_name, .. } => format!("patch_function:{}:{}", path, function_name),
+                    AgentAction::ReplaceLines { path, start_line, end_line, .. } => format!("replace_lines:{}:{}:{}", path, start_line, end_line),
+                    _ => format!("{:?}", action),
+                };
+                
+                // ⚡ CONSECUTIVE RECON LIMIT
+                // Allow reading/searching the same target up to 2 times.
+                // On the 3rd attempt, hard-block and force a pivot.
+                let attempt_count = session.action_attempt_count(&action_key).unwrap_or(0);
+                if attempt_count >= 2 {
+                    self.log(format!("\x1b[1;31m>> [ANTI-LOOP] Action [{}] attempted {} times. FORCING STRATEGY PIVOT.\x1b[0m", action_key, attempt_count));
+                    let tool_names = crate::policy::TOOL_CONTRACTS.iter().map(|t| t.name).collect::<Vec<_>>().join(", ");
+                    let veto_msg = format!("[CRITICAL VETO] LOOP DETECTED! You have repeatedly proposed the exact same action. You are forbidden from proposing this action again. YOU MUST PIVOT YOUR STRATEGY by using a DIFFERENT tool. Available tools: [{}].", tool_names);
+                    if let Some(h_id) = session.best_hypothesis_id {
+                        let obs_id = session.graph.add_node(NodeKind::Observation, &veto_msg, 1.0, 95);
+                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
+                        session.graph.propagate_beliefs();
+                    }
+                    return Ok(CortexState::Strategize);
+                }
+                session.record_action_attempt(&action_key);
+            }
             Ok(CortexState::Execute { actions, proposal, belief })
         }
     }

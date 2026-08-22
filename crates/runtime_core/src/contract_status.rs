@@ -1,3 +1,4 @@
+use crate::evidence_markers::{has_mutation_marker, has_recon_marker};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContractStatus {
@@ -17,25 +18,14 @@ impl ContractEvaluator {
         current_belief: f32,
         mission: &str,
     ) -> ContractStatus {
-        let has_mutation_marker = local_evidence.lines().any(|l| {
-            l.starts_with("[WRITE_OK]") || 
-            l.starts_with("[PATCH_FUNCTION_OK]") || 
-            l.starts_with("[REPLACE_LINES_OK]") ||
-            l.starts_with("[DIFF_PATCH_OK]")
-        });
+        let has_mutation = has_mutation_marker(local_evidence);
+        let has_recon = has_recon_marker(local_evidence);
 
-        let has_recon_marker = local_evidence.lines().any(|l| {
-            l.starts_with("[READ_CHUNK_OK]") || 
-            l.starts_with("[SEARCH_CODE_OK]") || 
-            l.starts_with("[READ_OK]") || 
-            l.starts_with("[CMD_OK]")
-        });
-
-        if (is_mutation_task || is_write_task) && !has_mutation_marker {
-            return if has_recon_marker { 
-                ContractStatus::PartialEvidence 
-            } else { 
-                ContractStatus::NoEvidence 
+        if (is_mutation_task || is_write_task) && !has_mutation {
+            return if has_recon {
+                ContractStatus::PartialEvidence
+            } else {
+                ContractStatus::NoEvidence
             };
         }
 
@@ -46,7 +36,7 @@ impl ContractEvaluator {
             return ContractStatus::PartialEvidence;
         }
 
-        if has_mutation_marker || has_recon_marker {
+        if has_mutation || has_recon {
             return if current_belief >= 0.95 {
                 ContractStatus::Satisfied
             } else {
@@ -63,9 +53,9 @@ impl ContractEvaluator {
             .lines()
             .find(|line| line.starts_with("objective:"))
             .unwrap_or(mission_lower.as_str());
-            
+
         let evidence_lower = evidence.to_lowercase();
-        
+
         let and_segments: Vec<&str> = objective_part
             .split(" and ")
             .map(|s| s.trim())
@@ -84,7 +74,8 @@ impl ContractEvaluator {
                 .collect();
 
             if or_parts.len() <= 1 {
-                segment.split_whitespace()
+                segment
+                    .split_whitespace()
                     .filter(|w| w.len() > 3)
                     .any(|w| evidence_lower.contains(w))
             } else {

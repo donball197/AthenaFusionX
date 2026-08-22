@@ -18,5 +18,7 @@ You MUST use these exact keys. Do not invent field names.
 - "execute_command"{ "type": "execute_command", "command": "...", "reasoning": "..." }
 - "halt"           { "type": "halt", "reasoning": "..." }
 
+CRITICAL ANTI-HALLUCINATION RULE: If you output conversational text like "Tool: read_file", the parser will fail and you will be penalized. DO NOT output conversational text. Output ONLY the raw JSON array.
+
 Now execute the directive. Output ONLY the JSON array."#.to_string()
 }

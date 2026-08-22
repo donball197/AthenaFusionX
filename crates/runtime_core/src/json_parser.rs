@@ -67,42 +67,6 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         }
     }
 
-    // ⚡ NUCLEAR ARTIFACT INTERCEPT: Bypass JSON entirely for large file writes
-    if text.contains("[WRITE_FILE_TARGET]:") && text.contains("[WRITE_FILE_CONTENT]:") {
-        if let Some(target_start) = text.find("[WRITE_FILE_TARGET]:") {
-            let path_start = target_start + 20;
-            if let Some(path_end) = text[path_start..].find('\n') {
-                let path = text[path_start..path_start + path_end].trim().to_string();
-                if let Some(content_start) = text.find("[WRITE_FILE_CONTENT]:") {
-                    if let Some(fence_start) = text[content_start..].find("```") {
-                        let actual_start = content_start + fence_start + 3;
-                        // Skip optional language tag like ```markdown
-                        let mut final_start = actual_start;
-                        if let Some(newline) = text[actual_start..].find('\n') {
-                            if newline < 15 {
-                                final_start = actual_start + newline + 1;
-                            }
-                        }
-                        if let Some(fence_end) = text[final_start..].find("```") {
-                            let content =
-                                text[final_start..final_start + fence_end].trim().to_string();
-                            tracing::info!(
-                                ">> [CORTEX INTERCEPT] Plucked raw fenced artifact for {}",
-                                path
-                            );
-                            return Ok(vec![AgentAction::WriteFile {
-                                path,
-                                content,
-                                reasoning: "Intercepted via raw text block".to_string(),
-                                confidence: 1.0,
-                            }]);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // 1. Aggressively carve out code blocks
     let mut extracted = text;
     if let Some(start) = text.find("```json") {

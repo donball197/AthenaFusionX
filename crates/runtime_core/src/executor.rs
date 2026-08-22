@@ -89,17 +89,6 @@ pub fn sanitize(path: &str) -> Result<PathBuf> {
             }
         }
 
-        // NOTE: deliberately no longer falling back to the bare `crates/`
-        // directory here. A genuinely missing file (e.g. a new file the
-        // agent hasn't written yet) used to silently resolve to that
-        // directory instead of a clear not-found error -- WriteFile's
-        // caller then tried to write file content INTO the crates/
-        // directory itself, producing a confusing "Is a directory (os
-        // error 21)" instead of a message that says the path is new.
-        // Confirmed live: this exact fallback caused every write_file
-        // attempt at a new top-level file to fail this way. Return a
-        // clear not-found error instead; WriteFile has its own path
-        // resolution for new files and does not call sanitize() at all.
         return Err(anyhow!(
             "PATH_NOT_FOUND: {} does not exist in the workspace (tried {}, crate-relative, and filename search)",
             path,
@@ -110,7 +99,6 @@ pub fn sanitize(path: &str) -> Result<PathBuf> {
     let canonical =
         canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
 
-    // THE PHASE 2 FIX: Strict bounds checking against the workspace root
     if !canonical.starts_with(&workspace_root) {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
     }
@@ -143,306 +131,295 @@ impl RoboticExecutor {
     async fn execute_single_action(
         &mut self,
         action: MotorAction,
-        _memory: Arc<MemoryCortex>,
+        memory: Arc<MemoryCortex>,
         _vmo_state: Arc<Mutex<VmoState>>,
         _dist: Arc<DistributedScheduler>,
     ) -> Result<String> {
-        let result: Result<String> = async {
-            match action {
-                MotorAction::ExecuteCommand { command } => {
-                    let cache_key = crate::memory_cortex::ActionCache::generate_key(&command, "v7_workspace_ast");
-                    {
-                        let cache = self.action_cache.lock().await;
-                        if let Some(cached) = cache.get(&cache_key) {
-                            return Ok(format!("[CACHE_HIT] (Cached execution)\n{}", cached.output));
-                        }
-                    }
-
-                    let out = crate::podman::PodmanShield::execute(&command)?;
-                    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-                    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-
-                    let mut stdout_trunc = stdout;
-                    let mut stderr_trunc = stderr;
-                    if stdout_trunc.len() > 8000 {
-                        stdout_trunc.truncate(8000);
-                        stdout_trunc.push_str("\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]");
-                    }
-                    if stderr_trunc.len() > 1500 {
-                        let offset = stderr_trunc.len() - 1500;
-                        stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", &stderr_trunc[offset..]);
-                    }
-
-                    let mut res = format!("[CMD_OK] Status: {}\n", out.status);
-                    if !stdout_trunc.trim().is_empty() { res.push_str(&format!("STDOUT:\n{}\n", stdout_trunc)); }
-                    if !stderr_trunc.trim().is_empty() { res.push_str(&format!("STDERR:\n{}\n", stderr_trunc)); }
-                    if stdout_trunc.trim().is_empty() && stderr_trunc.trim().is_empty() { res.push_str("(Command produced no output)\n"); }
-
-                    {
-                        let mut cache = self.action_cache.lock().await;
-                        cache.insert(cache_key, res.clone(), out.status.code().unwrap_or(0));
-                    }
-
-                    Ok(res)
-                }
-                MotorAction::WriteFile { path, content } => {
-                    let raw_path = Path::new(&path);
-
-                    let workspace_root = std::env::current_dir()
-                        .and_then(std::fs::canonicalize)
-                        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
-
-                    // An absolute path used to be blanket-rejected here, which blocked
-                    // even legitimate targets like <workspace_root>/some_file.md -- the
-                    // real security guarantee is the bounds check below, not whether the
-                    // path happened to be written as absolute or relative. Resolve either
-                    // form the same way sanitize() does for ReadFile: join relative paths
-                    // onto the workspace root, take absolute paths as given, then
-                    // canonicalize (falling back to the canonicalized parent when the
-                    // target file doesn't exist yet, which is the common case for a new
-                    // write) and check the RESULT against the workspace root. This still
-                    // blocks /etc/shadow (its canonicalized parent is /etc, not under the
-                    // workspace root) and still blocks ../ escapes (canonicalize resolves
-                    // them), while allowing an absolute path that's actually inside the
-                    // workspace, same as an equivalent relative one would be.
-                    let target = if raw_path.is_absolute() {
-                        raw_path.to_path_buf()
-                    } else {
-                        workspace_root.join(raw_path)
-                    };
-
-                    let safe_path = canonicalize_or_parent(&target)
-                        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
-
-                    if !safe_path.starts_with(&workspace_root) {
-                        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
-                    }
-
-                    if let Ok(existing) = tokio::fs::read_to_string(&safe_path).await {
-                        if existing == content {
-                            return Ok(format!("[WRITE_NOOP] {} -- content identical to existing file", path));
-                        }
-                    }
-                    if let Some(parent) = safe_path.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
-                    tokio::fs::write(&safe_path, content).await?;
-                    Ok(format!("[WRITE_OK] {}", path))
-                }
-                MotorAction::ReadFile { path } => {
-                    let safe_path = sanitize(&path)?;
-                    let content = tokio::fs::read_to_string(&safe_path).await?;
-                    let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
-                    let mem = _memory;
-                    if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await {
-                        let _ = mem.store_memory("ReadFile", &path, &content, "Observed", Some(emb)).await;
-                    } else {
-                        let _ = mem.store_memory("ReadFile", &path, &content, "Observed", None).await;
-                    }
-
-                    let total_lines = content.lines().count();
-                    let return_content = if content.len() > 16000 {
-                        format!("{}...
-
-[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: {}. USE THE `read_file_chunk` TOOL BY SPECIFYING `start_line` AND `max_lines` TO READ BEYOND THIS POINT.]", &content[..16000], total_lines)
-                    } else {
-                        content.clone()
-                    };
-
-                    Ok(format!("[READ_OK] {}\nCONTENT PREVIEW:\n{}", path, return_content))
-                }
-                MotorAction::ReadFileChunk { path, start_line, max_lines } => {
-                    let safe_path = sanitize(&path)?;
-                    let content = tokio::fs::read_to_string(&safe_path).await?;
-                    let lines: Vec<&str> = content.lines().collect();
-                    let total_lines = lines.len();
-
-                    if start_line >= total_lines {
-                        return Ok(format!("[READ_CHUNK_EOF] Reached end of file {}. Total lines: {}", path, total_lines));
-                    }
-
-                    let end_line = std::cmp::min(start_line + max_lines, total_lines);
-                    let chunk = lines[start_line..end_line].join("\n");
-
-                    Ok(format!(
-                        "[READ_CHUNK_OK] File: {} | Lines {}-{} of {}\nCONTENT:\n{}",
-                        path, start_line, end_line, total_lines, chunk
-                    ))
-                }
-                MotorAction::SearchCode { path, query } => {
-                    let safe_path = sanitize(&path).unwrap_or_else(|_| PathBuf::from("crates"));
-                    let p_str = safe_path.to_str().unwrap_or(&path);
-
-                    let cmd = format!(
-                        "(rg -n -C 2 -i '{}' {} || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' {}) 2>/dev/null || true",
-                        query, p_str, query, p_str
-                    );
-                    let out = crate::podman::PodmanShield::execute(&cmd)?;
-                    let mut stdout = String::from_utf8_lossy(&out.stdout).to_string();
-
-                    if stdout.trim().is_empty() && (p_str.contains("executive_cortex") || query.contains("router")) {
-                        let fallback_cmd = format!(
-                            "(rg -n -C 2 -i '{}' crates/runtime_core/src/ || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' crates/runtime_core/src/) 2>/dev/null || true",
-                            query, query
-                        );
-                        if let Ok(fb_out) = crate::podman::PodmanShield::execute(&fallback_cmd) {
-                            let fb_stdout = String::from_utf8_lossy(&fb_out.stdout);
-                            if !fb_stdout.trim().is_empty() {
-                                stdout = format!("[FALLBACK MATCHES FROM crates/runtime_core/src/]:\n{}", fb_stdout);
-                            }
-                        }
-                    }
-
-                    let trunc = if stdout.len() > 8000 {
-                        format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", &stdout[..8000])
-                    } else {
-                        stdout
-                    };
-
-                    if trunc.trim().is_empty() {
-                        Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.", path, query))
-                    } else {
-                        Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}", path, query, trunc))
+        match action {
+            MotorAction::ExecuteCommand { command } => {
+                let cache_key = crate::memory_cortex::ActionCache::generate_key(&command, "v7_workspace_ast");
+                {
+                    let cache = self.action_cache.lock().await;
+                    if let Some(cached) = cache.get(&cache_key) {
+                        return Ok(format!("[CACHE_HIT] (Cached execution)\n{}", cached.output));
                     }
                 }
-                MotorAction::ReplaceLines { path, start_line, end_line, replacement } => {
-                    let safe_path = sanitize(&path)?;
-                    let content = tokio::fs::read_to_string(&safe_path).await?;
-                    let lines: Vec<&str> = content.split('\n').collect();
-                    let start_idx = start_line.saturating_sub(1);
-                    let end_idx = end_line.saturating_sub(1);
 
-                    if start_idx > lines.len() || start_idx > end_idx {
-                        return Err(anyhow::anyhow!("Invalid line range for replacement"));
-                    }
-                    let end_idx_actual = std::cmp::min(end_idx, lines.len().saturating_sub(1));
+                let out = crate::podman::PodmanShield::execute(&command)?;
+                let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
-                    let before = lines[..start_idx].to_vec();
-                    let after = if end_idx_actual + 1 < lines.len() { lines[end_idx_actual + 1..].to_vec() } else { vec![] };
-
-                    let mut new_lines = before;
-                    new_lines.push(replacement.as_str());
-                    new_lines.extend(after);
-
-                    tokio::fs::write(&safe_path, new_lines.join("\n")).await?;
-                    Ok(format!("[REPLACE_LINES_OK] Replaced lines {}-{} in {}", start_line, end_line, path))
+                let mut stdout_trunc = stdout;
+                let mut stderr_trunc = stderr;
+                if stdout_trunc.len() > 8000 {
+                    stdout_trunc.truncate(8000);
+                    stdout_trunc.push_str("\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]");
                 }
-                MotorAction::RunTests { test_target } => {
-                    let cmd = if test_target.is_empty() || test_target == "." {
-                        "cargo test --workspace --color never 2>&1".to_string()
-                    } else {
-                        format!("cargo test {} --color never 2>&1", test_target)
-                    };
-
-                    let out = crate::podman::PodmanShield::execute(&cmd).unwrap_or_else(|e| {
-                        std::process::Output {
-                            status: std::os::unix::process::ExitStatusExt::from_raw(1),
-                            stdout: Vec::new(),
-                            stderr: format!("TEST HARNESS FAILED: {}", e).into_bytes(),
-                        }
-                    });
-
-                    let output_str = String::from_utf8_lossy(&out.stdout);
-                    let err_str = String::from_utf8_lossy(&out.stderr);
-                    let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
-
-                    let trunc = if combined.len() > 6000 {
-                        format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len()-6000..])
-                    } else {
-                        combined
-                    };
-
-                    if out.status.success() {
-                        Ok(format!("[TEST_OK] Tests passed for target '{}':\n{}", test_target, trunc))
-                    } else {
-                        Ok(format!("[TEST_FAILED] Tests failed for target '{}':\n{}", test_target, trunc))
-                    }
+                if stderr_trunc.len() > 1500 {
+                    let offset = stderr_trunc.len() - 1500;
+                    stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", &stderr_trunc[offset..]);
                 }
-                MotorAction::DiffPatch { path, search, replace } => {
-                    let safe_path = sanitize(&path)?;
-                    let original = tokio::fs::read_to_string(&safe_path).await?;
-                    let patched = crate::diff::DiffEngine::apply(&original, &search, &replace)?;
-                    tokio::fs::write(&safe_path, patched).await?;
-                    Ok(format!("[DIFF_PATCH_OK] Applied changes to {}", path))
-                }
-                MotorAction::PatchFunction { path, function_name, new_body } => {
-                    let safe_path = sanitize(&path)?;
-                    let patched = crate::ast_editor::AstEditor::update_function(safe_path.to_str().unwrap_or(&path), &function_name, &new_body)?;
-                    tokio::fs::write(&safe_path, patched).await?;
-                    Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
-                }
-                MotorAction::SearchMemory { query } => {
-                    let mem = _memory;
-                    let mut results_text = String::new();
 
-                    if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await {
-                        if let Ok(results) = mem.semantic_search(&emb).await {
-                            for r in results {
-                                let snippet = if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
-                                results_text.push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
-                            }
-                        }
-                    }
+                let mut res = format!("[CMD_OK] Status: {}\n", out.status);
+                if !stdout_trunc.trim().is_empty() { 
+                    res.push_str("STDOUT:\n");
+                    res.push_str(&stdout_trunc);
+                    res.push('\n');
+                }
+                if !stderr_trunc.trim().is_empty() { 
+                    res.push_str("STDERR:\n");
+                    res.push_str(&stderr_trunc);
+                    res.push('\n');
+                }
+                if stdout_trunc.trim().is_empty() && stderr_trunc.trim().is_empty() { 
+                    res.push_str("(Command produced no output)\n"); 
+                }
 
-                    if results_text.is_empty() {
-                        Ok(format!("[SEARCH_OK] Native FastEmbed vector recall queried for: '{}'. VectorVault active.", query))
-                    } else {
-                        Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
-                    }
+                {
+                    let mut cache = self.action_cache.lock().await;
+                    cache.insert(cache_key, res.clone(), out.status.code().unwrap_or(0));
                 }
-                                MotorAction::PatchFile { path, target, replacement } => {
-                    let safe_path = sanitize(&path)?;
-                    let file_content = tokio::fs::read_to_string(&safe_path).await
-                        .map_err(|e| anyhow!("Failed to read file: {}", e))?;
-                    if !file_content.contains(&target) {
-                        return Err(anyhow!("Target string not found in file: {}", target));
-                    }
-                    let new_content = file_content.replace(&target, &replacement);
-                    tokio::fs::write(&safe_path, new_content).await
-                        .map_err(|e| anyhow!("Failed to write file: {}", e))?;
-                    Ok(format!("Successfully patched file: {}", path))
-                },
-                MotorAction::SynthesizeReport { output_path, source_files } => {
-                    let mut combined_context = String::new();
-                    for file in source_files {
-                        if let Ok(safe_p) = sanitize(&file) {
-                            if let Ok(content) = tokio::fs::read_to_string(&safe_p).await {
-                                combined_context.push_str(&format!("\n--- FILE: {} ---\n{}\n", file, content));
-                            }
-                        }
-                    }
-                    
-                    let prompt = format!("You are a Synthesis Subagent. Analyze the following source code files and output a comprehensive architectural markdown report. DO NOT output JSON. Output raw markdown only.\n\nFILES:\n{}", combined_context);
-                    
-                    let payload = serde_json::json!({
-                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                        "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
-                    });
-                    
-                    let heavy_models = crate::model_config::get_heavy_models();
-                    let client = reqwest::Client::new();
-                    
-                    match crate::epistemic_engine::EpistemicEngine::safe_api_call(&client, &self.api_key, &heavy_models, &payload).await {
-                        Ok(markdown) => {
-                            let raw_path = Path::new(&output_path);
-                            if raw_path.is_absolute() { return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED")); }
-                            let ws = std::env::current_dir().unwrap().canonicalize().unwrap();
-                            let safe_path = ws.join(raw_path);
-                            if !safe_path.starts_with(&ws) { return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED")); }
-                            
-                            if let Some(parent) = safe_path.parent() {
-                                let _ = tokio::fs::create_dir_all(parent).await;
-                            }
-                            tokio::fs::write(&safe_path, markdown).await?;
-                            Ok(format!("[WRITE_OK] Successfully synthesized and wrote report to {}", output_path))
-                        }
-                        Err(e) => Err(anyhow::anyhow!("Synthesis Failed: {}", e))
-                    }
-                }
-                MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
+
+                Ok(res)
             }
-        }.await;
+            MotorAction::WriteFile { path, content } => {
+                let raw_path = Path::new(&path);
 
-        result
+                let workspace_root = std::env::current_dir()
+                    .and_then(std::fs::canonicalize)
+                    .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+
+                let target = if raw_path.is_absolute() {
+                    raw_path.to_path_buf()
+                } else {
+                    workspace_root.join(raw_path)
+                };
+
+                let safe_path = canonicalize_or_parent(&target)
+                    .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+
+                if !safe_path.starts_with(&workspace_root) {
+                    return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
+                }
+
+                if let Ok(existing) = tokio::fs::read_to_string(&safe_path).await {
+                    if existing == content {
+                        return Ok(format!("[WRITE_NOOP] {} -- content identical to existing file", path));
+                    }
+                }
+                if let Some(parent) = safe_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                tokio::fs::write(&safe_path, content).await?;
+                Ok(format!("[WRITE_OK] {}", path))
+            }
+            MotorAction::ReadFile { path } => {
+                let safe_path = sanitize(&path)?;
+                let content = tokio::fs::read_to_string(&safe_path).await?;
+                let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
+                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await {
+                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", Some(emb)).await;
+                } else {
+                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
+                }
+
+                let total_lines = content.lines().count();
+                let return_content = if content.len() > 16000 {
+                    format!("{}...\n\n[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: {}. USE THE `read_file_chunk` TOOL BY SPECIFYING `start_line` AND `max_lines` TO READ BEYOND THIS POINT.]", &content[..16000], total_lines)
+                } else {
+                    content.clone()
+                };
+
+                Ok(format!("[READ_OK] {}\nCONTENT PREVIEW:\n{}", path, return_content))
+            }
+            MotorAction::ReadFileChunk { path, start_line, max_lines } => {
+                let safe_path = sanitize(&path)?;
+                let content = tokio::fs::read_to_string(&safe_path).await?;
+                let lines: Vec<&str> = content.lines().collect();
+                let total_lines = lines.len();
+
+                if start_line >= total_lines {
+                    return Ok(format!("[READ_CHUNK_EOF] Reached end of file {}. Total lines: {}", path, total_lines));
+                }
+
+                let end_line = std::cmp::min(start_line + max_lines, total_lines);
+                let chunk = lines[start_line..end_line].join("\n");
+
+                Ok(format!(
+                    "[READ_CHUNK_OK] File: {} | Lines {}-{} of {}\nCONTENT:\n{}",
+                    path, start_line, end_line, total_lines, chunk
+                ))
+            }
+            MotorAction::SearchCode { path, query } => {
+                let safe_path = sanitize(&path).unwrap_or_else(|_| PathBuf::from("crates"));
+                let p_str = safe_path.to_str().unwrap_or(&path);
+
+                let cmd = format!(
+                    "(rg -n -C 2 -i '{}' {} || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' {}) 2>/dev/null || true",
+                    query, p_str, query, p_str
+                );
+                let out = crate::podman::PodmanShield::execute(&cmd)?;
+                let mut stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+                if stdout.trim().is_empty() && (p_str.contains("executive_cortex") || query.contains("router")) {
+                    let fallback_cmd = format!(
+                        "(rg -n -C 2 -i '{}' crates/runtime_core/src/ || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' crates/runtime_core/src/) 2>/dev/null || true",
+                        query, query
+                    );
+                    if let Ok(fb_out) = crate::podman::PodmanShield::execute(&fallback_cmd) {
+                        let fb_stdout = String::from_utf8_lossy(&fb_out.stdout);
+                        if !fb_stdout.trim().is_empty() {
+                            stdout = format!("[FALLBACK MATCHES FROM crates/runtime_core/src/]:\n{}", fb_stdout);
+                        }
+                    }
+                }
+
+                let trunc = if stdout.len() > 8000 {
+                    format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", &stdout[..8000])
+                } else {
+                    stdout
+                };
+
+                if trunc.trim().is_empty() {
+                    Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.", path, query))
+                } else {
+                    Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}", path, query, trunc))
+                }
+            }
+            MotorAction::ReplaceLines { path, start_line, end_line, replacement } => {
+                let safe_path = sanitize(&path)?;
+                let content = tokio::fs::read_to_string(&safe_path).await?;
+                let lines: Vec<&str> = content.split('\n').collect();
+                let start_idx = start_line.saturating_sub(1);
+                let end_idx = end_line.saturating_sub(1);
+
+                if start_idx > lines.len() || start_idx > end_idx {
+                    return Err(anyhow::anyhow!("Invalid line range for replacement"));
+                }
+                let end_idx_actual = std::cmp::min(end_idx, lines.len().saturating_sub(1));
+
+                let before = lines[..start_idx].to_vec();
+                let after = if end_idx_actual + 1 < lines.len() { lines[end_idx_actual + 1..].to_vec() } else { vec![] };
+
+                let mut new_lines = before;
+                new_lines.push(replacement.as_str());
+                new_lines.extend(after);
+
+                tokio::fs::write(&safe_path, new_lines.join("\n")).await?;
+                Ok(format!("[REPLACE_LINES_OK] Replaced lines {}-{} in {}", start_line, end_line, path))
+            }
+            MotorAction::RunTests { test_target } => {
+                let cmd = if test_target.is_empty() || test_target == "." {
+                    "cargo test --workspace --color never 2>&1".to_string()
+                } else {
+                    format!("cargo test {} --color never 2>&1", test_target)
+                };
+
+                let out = crate::podman::PodmanShield::execute(&cmd).unwrap_or_else(|e| {
+                    std::process::Output {
+                        status: std::os::unix::process::ExitStatusExt::from_raw(1),
+                        stdout: Vec::new(),
+                        stderr: format!("TEST HARNESS FAILED: {}", e).into_bytes(),
+                    }
+                });
+
+                let output_str = String::from_utf8_lossy(&out.stdout);
+                let err_str = String::from_utf8_lossy(&out.stderr);
+                let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
+
+                let trunc = if combined.len() > 6000 {
+                    format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len()-6000..])
+                } else {
+                    combined
+                };
+
+                if out.status.success() {
+                    Ok(format!("[TEST_OK] Tests passed for target '{}':\n{}", test_target, trunc))
+                } else {
+                    Ok(format!("[TEST_FAILED] Tests failed for target '{}':\n{}", test_target, trunc))
+                }
+            }
+            MotorAction::DiffPatch { path, search, replace } => {
+                let safe_path = sanitize(&path)?;
+                let original = tokio::fs::read_to_string(&safe_path).await?;
+                let patched = crate::diff::DiffEngine::apply(&original, &search, &replace)?;
+                tokio::fs::write(&safe_path, patched).await?;
+                Ok(format!("[DIFF_PATCH_OK] Applied changes to {}", path))
+            }
+            MotorAction::PatchFunction { path, function_name, new_body } => {
+                let safe_path = sanitize(&path)?;
+                let patched = crate::ast_editor::AstEditor::update_function(safe_path.to_str().unwrap_or(&path), &function_name, &new_body)?;
+                tokio::fs::write(&safe_path, patched).await?;
+                Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
+            }
+            MotorAction::SearchMemory { query } => {
+                let mut results_text = String::new();
+
+                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await {
+                    if let Ok(results) = memory.semantic_search(&emb).await {
+                        for r in results {
+                            let snippet = if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
+                            results_text.push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
+                        }
+                    }
+                }
+
+                if results_text.is_empty() {
+                    Ok(format!("[SEARCH_OK] Native FastEmbed vector recall queried for: '{}'. VectorVault active.", query))
+                } else {
+                    Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
+                }
+            }
+            MotorAction::PatchFile { path, target, replacement } => {
+                let safe_path = sanitize(&path)?;
+                let file_content = tokio::fs::read_to_string(&safe_path).await
+                    .map_err(|e| anyhow!("Failed to read file: {}", e))?;
+                if !file_content.contains(&target) {
+                    return Err(anyhow!("Target string not found in file: {}", target));
+                }
+                let new_content = file_content.replace(&target, &replacement);
+                tokio::fs::write(&safe_path, new_content).await
+                    .map_err(|e| anyhow!("Failed to write file: {}", e))?;
+                Ok(format!("Successfully patched file: {}", path))
+            }
+            MotorAction::SynthesizeReport { output_path, source_files } => {
+                let mut combined_context = String::new();
+                for file in source_files {
+                    if let Ok(safe_p) = sanitize(&file) {
+                        if let Ok(content) = tokio::fs::read_to_string(&safe_p).await {
+                            combined_context.push_str(&format!("\n--- FILE: {} ---\n{}\n", file, content));
+                        }
+                    }
+                }
+                
+                let prompt = format!("You are a Synthesis Subagent. Analyze the following source code files and output a comprehensive architectural markdown report. DO NOT output JSON. Output raw markdown only.\n\nFILES:\n{}", combined_context);
+                
+                let payload = serde_json::json!({
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
+                });
+                
+                let heavy_models = crate::model_config::get_heavy_models();
+                let client = reqwest::Client::new();
+                
+                match crate::epistemic_engine::EpistemicEngine::safe_api_call(&client, &self.api_key, &heavy_models, &payload).await {
+                    Ok(markdown) => {
+                        let raw_path = Path::new(&output_path);
+                        if raw_path.is_absolute() { return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED")); }
+                        let ws = std::env::current_dir().unwrap().canonicalize().unwrap();
+                        let safe_path = ws.join(raw_path);
+                        if !safe_path.starts_with(&ws) { return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED")); }
+                        
+                        if let Some(parent) = safe_path.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        tokio::fs::write(&safe_path, markdown).await?;
+                        Ok(format!("[WRITE_OK] Successfully synthesized and wrote report to {}", output_path))
+                    }
+                    Err(e) => Err(anyhow::anyhow!("Synthesis Failed: {}", e))
+                }
+            }
+            MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
+        }
     }
 }

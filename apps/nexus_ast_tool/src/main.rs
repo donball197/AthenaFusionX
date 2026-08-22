@@ -117,6 +117,42 @@ fn resolve_anchor(source: &str, finding: &SecurityFinding) -> Option<(usize, usi
     }
 }
 
+/// Extract the query argument from a call like `mysqli_query($con, $q)`,
+/// `mysqli_multi_query($con, $q)`, or `$con->query($q)`. Uses bracket-depth
+/// matching from the call marker (not sink_text's outer parens, which may
+/// belong to a wrapping `if (...)`). Returns None (refuse to guess) unless
+/// the LAST argument is a single bare `$variable`.
+fn extract_query_var(sink_text: &str) -> Option<String> {
+    let markers = ["mysqli_query(", "mysqli_multi_query(", "->query(", "->multi_query("];
+    let start = markers.iter().find_map(|m| sink_text.find(m).map(|i| i + m.len()))?;
+    let bytes = sink_text.as_bytes();
+    let mut depth = 1i32;
+    let mut end = None;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(start + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let args = &sink_text[start..end?];
+    let last = args.rsplit(',').next()?.trim();
+    if last.starts_with('$')
+        && last.len() > 1
+        && last[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        Some(last.to_string())
+    } else {
+        None
+    }
+}
+
 fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
@@ -170,6 +206,8 @@ fn main() -> Result<()> {
             let mut unknown_count = 0;
             let mut triage_error_count = 0;
             let mut unknown_entries: Vec<String> = Vec::new();
+            let mut taint_deferred_count = 0;
+            let mut taint_entries: Vec<String> = Vec::new();
 
             if ai_triage {
                 println!("\n==> [AI Triage] Initializing LLM to filter false positives...");
@@ -230,6 +268,38 @@ fn main() -> Result<()> {
                                             continue;
                                         }
                                     };
+
+                                    // (1.5) TAINT GATE: refuse to auto-heal if the query
+                                    // variable was built via string concatenation elsewhere
+                                    // (multi-site taint) rather than at the sink itself. A
+                                    // single-site splice here would only rewrite the execution
+                                    // call, leaving the actual injection untouched -- the
+                                    // confirmed false "Verified" failure mode from this
+                                    // session's live testing (login2.php et al).
+                                    if let Some(var_name) = extract_query_var(&finding.sink_text) {
+                                        if let Some((c_start, c_end, _)) = nexus_ast_tool::polyglot::find_concat_assignment(
+                                            &file_source,
+                                            &finding.language.tree_sitter_language(),
+                                            &var_name,
+                                            finding.sink_start_line,
+                                        ) {
+                                            taint_deferred_count += 1;
+                                            println!(
+                                                "        [\u{26a0}\u{fe0f} Multi-Site Taint] {} is built via concatenation at line {}-{}, not at the sink. Cannot safely auto-patch in one splice -- needs manual review.",
+                                                var_name, c_start, c_end
+                                            );
+                                            report_md.push_str(&format!(
+                                                "### Patch (DEFERRED: multi-site taint -- `{}` built via concatenation at lines {}-{}, not patched)\n\n---\n\n",
+                                                var_name, c_start, c_end
+                                            ));
+                                            taint_entries.push(format!(
+                                                "- `{}` sink lines {}-{} ({}): query variable `{}` built via concatenation at lines {}-{}; auto-heal deferred, requires manual multi-site fix",
+                                                file_path_str, finding.sink_start_line, finding.sink_end_line,
+                                                finding.pattern_name, var_name, c_start, c_end
+                                            ));
+                                            continue;
+                                        }
+                                    }
 
                                     // (2) SEARCH-as-assertion: skip sites already fixed by
                                     // an earlier patch in this run, BEFORE spending an LLM call.
@@ -393,6 +463,7 @@ fn main() -> Result<()> {
                     report_md.push_str(&format!("- **Already resolved (earlier patch in this run):** {}\n", already_resolved_count));
                     report_md.push_str(&format!("- **Explicitly safe:** {}\n", safe_count));
                     report_md.push_str(&format!("- **Unknown (needs manual review):** {}\n", unknown_count));
+                    report_md.push_str(&format!("- **Deferred (multi-site taint, not patched):** {}\n", taint_deferred_count));
                     report_md.push_str(&format!("- **Triage errors (API):** {}\n\n", triage_error_count));
 
                     if triage_error_count > 0 {
@@ -410,10 +481,20 @@ fn main() -> Result<()> {
                         report_md.push('\n');
                     }
 
+                    if !taint_entries.is_empty() {
+                        report_md.push_str("## Deferred: Multi-Site Taint (auto-heal not attempted)\n\n");
+                        for entry in &taint_entries {
+                            report_md.push_str(entry);
+                            report_md.push('\n');
+                        }
+                        report_md.push('\n');
+                    }
+
                     // Integrity: every actionable finding must be verified fixed
                     // OR resolved by an earlier patch in this run, zero failures.
                     let remediation_clean = failed_fix_count == 0
-                        && actionable_count == fixed_count + already_resolved_count;
+                        && taint_deferred_count == 0
+                        && actionable_count == fixed_count + already_resolved_count + taint_deferred_count;
 
                     if remediation_clean {
                         report_md.push_str("## Remediation Integrity\n\n**PASS** — Every actionable finding was verified fixed or resolved.\n\n");

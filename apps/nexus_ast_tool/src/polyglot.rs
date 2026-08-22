@@ -126,6 +126,60 @@ pub struct SecurityFinding {
     pub patch_snippet: String,
 }
 
+/// Finds the nearest assignment strictly before `before_line` that builds
+/// `var_name` via string concatenation (`$var = "..." . $x . "...";`).
+/// This is a lightweight taint-source lookup, not full dataflow analysis:
+/// it doesn't cross scopes/functions, and only recognizes the single
+/// `$var = <concat>;` shape -- not `.=` compound concatenation or
+/// multi-step rebuilds. Good enough to GATE auto-heal (refuse to patch
+/// when the real taint source is elsewhere); not a substitute for real
+/// taint tracking.
+pub fn find_concat_assignment(
+    source: &str,
+    ts_lang: &Language,
+    var_name: &str,
+    before_line: usize, // 1-based; nearest assignment strictly before this line
+) -> Option<(usize, usize, String)> {
+    let mut parser = Parser::new();
+    parser.set_language(ts_lang).ok()?;
+    let tree = parser.parse(source, None)?;
+    let query = Query::new(
+        ts_lang,
+        "(assignment_expression left: (variable_name) @var right: (binary_expression) @concat) @assign",
+    )
+    .ok()?;
+    let mut cursor = QueryCursor::new();
+    let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    let mut best: Option<(usize, usize, usize, String)> = None; // (start_row, end_row, dist, text)
+    for m in matches {
+        let mut var_text = None;
+        let mut assign_node = None;
+        for capture in m.captures {
+            match query.capture_names()[capture.index as usize] {
+                "var" => var_text = capture.node.utf8_text(source.as_bytes()).ok(),
+                "assign" => assign_node = Some(capture.node),
+                _ => {}
+            }
+        }
+        if var_text != Some(var_name) {
+            continue;
+        }
+        let Some(node) = assign_node else { continue };
+        let end_row = node.end_position().row; // 0-based
+        if end_row + 1 >= before_line {
+            continue; // not strictly before the call site
+        }
+        let dist = before_line - (end_row + 1);
+        if best.as_ref().map(|(_, _, d, _)| dist < *d).unwrap_or(true) {
+            let start_row = node.start_position().row;
+            let Some(text) = node.utf8_text(source.as_bytes()).ok() else { continue };
+            best = Some((start_row, end_row, dist, text.to_string()));
+        }
+    }
+    best.map(|(s, e, _, t)| (s + 1, e + 1, t)) // back to 1-based
+}
+
 pub struct PolyglotScanner;
 
 impl PolyglotScanner {

@@ -2,7 +2,7 @@ use crate::cognition_graph::{CognitiveGraph, EdgeRelation, NodeKind};
 use crate::cognitive_events::CognitiveEvent;
 use crate::completion_engine::{CognitiveBudget, SubgoalCompletionEngine, SubgoalContract};
 use crate::epistemic_engine::CriticResponse;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -13,7 +13,7 @@ pub struct EpistemicSession {
     pub budget: CognitiveBudget,
     pub graph: CognitiveGraph,
     pub local_evidence: String,
-    pub executed_actions: HashSet<String>,
+    pub executed_actions: HashMap<String, u32>,
     pub max_observed_belief: f32,
     pub best_hypothesis_id: Option<Uuid>,
     pub consecutive_mutation_vetoes: u32,
@@ -28,7 +28,7 @@ impl EpistemicSession {
             budget: CognitiveBudget::default_for_node(),
             graph: CognitiveGraph::new(),
             local_evidence: String::new(),
-            executed_actions: HashSet::new(),
+            executed_actions: HashMap::new(),
             max_observed_belief: 0.0,
             best_hypothesis_id: None,
             consecutive_mutation_vetoes: 0,
@@ -77,11 +77,16 @@ impl EpistemicSession {
     }
 
     pub fn record_action_attempt(&mut self, action_key: &str) {
-        self.executed_actions.insert(action_key.to_string());
+        let count = self.executed_actions.entry(action_key.to_string()).or_insert(0);
+        *count += 1;
+    }
+
+    pub fn action_attempt_count(&self, action_key: &str) -> Option<u32> {
+        self.executed_actions.get(action_key).copied()
     }
 
     pub fn is_action_attempted(&self, action_key: &str) -> bool {
-        self.executed_actions.contains(action_key)
+        self.action_attempt_count(action_key).map(|c| c > 0).unwrap_or(false)
     }
 
     pub fn record_evidence(&mut self, evidence: &str, eval: &CriticResponse, h_id: Uuid) {

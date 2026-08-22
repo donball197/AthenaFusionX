@@ -101,7 +101,9 @@ CRITICAL RULES:
 4. When you have achieved the task objective, include the `halt` action in your JSON array.
 5. You MUST escape all newlines inside JSON strings as `\n` (e.g. "line1\nline2").
 6. CRITICAL HALT OVERRIDE: You are strictly forbidden from issuing a [HALT] command if your objective requires code modification (patching). Finding the target code via 'grep' or 'cat' is only reconnaissance. You MUST verify the presence of a successful [PATCH_FUNCTION_OK], [WRITE_OK], or [DIFF_PATCH_OK] in your physical evidence buffer before you are authorized to halt. Halting before patching is considered a critical mission failure.
-7. STRICT SCHEMA COMPLIANCE: NEVER mix tool arguments. `write_file` takes `path` and `content`. `run_tests` takes `test_target`. DO NOT hallucinate or combine fields across tools."#;
+7. STRICT SCHEMA COMPLIANCE: NEVER mix tool arguments. `write_file` takes `path` and `content`. `run_tests` takes `test_target`. DO NOT hallucinate or combine fields across tools.
+8. ATHENA OMNISCIENCE: You are fully aware of your compiled workspace sub-agents (impact_analyzer, etc.). Use them by issuing an `execute_command` with their binary path.
+9. ANTI-LOOP DIRECTIVE: If you have already read or searched a file and discovered a vulnerability, DO NOT search or read it again. You MUST immediately use `diff_patch` or `patch_function` to fix the vulnerability."#;
 
         let (primary_model, budget) = match class {
             DirectiveClass::RepoDoctor | DirectiveClass::SecurityAudit => {
