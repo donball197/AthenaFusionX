@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactSpec {
+    pub path: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CompletionCondition {
     ReadMarkerAcquired,
@@ -17,6 +24,8 @@ pub struct SubgoalContract {
     pub objective: String,
     pub conditions: Vec<CompletionCondition>,
     pub is_mutation_task: bool,
+    #[serde(default)]
+    pub required_artifact_paths: Vec<ArtifactSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,17 +114,31 @@ impl SubgoalCompletionEngine {
                 "read", "analyze", "inspect", "search", "examine", "locate", "profile", "benchmark", "audit"
             ].contains(&first_word);
 
-            if is_recon_intent || any_word(classify_text, &["read", "inspect", "audit", "search", "find", "locate"]) {
-                if any_word(classify_text, &["search", "find", "locate"]) {
+            let has_read_intent = any_word_unnegated(classify_text, &["read", "examine", "inspect", "analyze", "investigate", "contrast", "compare", "evaluate"]);
+            let has_search_intent = any_word_unnegated(classify_text, &["search", "find", "locate"]);
+
+            if is_recon_intent || has_read_intent || has_search_intent {
+                if has_read_intent && has_search_intent {
+                    // Compound tasks (investigate, analyze, contrast, evaluate) require BOTH search AND read evidence
                     conditions.push(CompletionCondition::SearchMarkerAcquired);
+                    conditions.push(CompletionCondition::ReadMarkerAcquired);
+                    conditions.push(CompletionCondition::MinBeliefScore(0.80));
+                } else if has_search_intent {
+                    conditions.push(CompletionCondition::SearchMarkerAcquired);
+                    conditions.push(CompletionCondition::MinBeliefScore(0.65));
                 } else {
                     conditions.push(CompletionCondition::ReadMarkerAcquired);
+                    conditions.push(CompletionCondition::MinBeliefScore(0.65));
                 }
-                conditions.push(CompletionCondition::MinBeliefScore(0.65));
             } else {
                 conditions.push(CompletionCondition::CommandMarkerAcquired);
                 conditions.push(CompletionCondition::MinBeliefScore(0.85));
             }
+        }
+
+        let arts = extract_required_artifact_paths(objective);
+        if !arts.is_empty() && !conditions.iter().any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired | CompletionCondition::WriteMarkerAcquired)) {
+            conditions.push(CompletionCondition::WriteMarkerAcquired);
         }
 
         SubgoalContract {
@@ -123,6 +146,7 @@ impl SubgoalCompletionEngine {
             objective: objective.to_string(),
             conditions,
             is_mutation_task,
+            required_artifact_paths: arts,
         }
     }
 
@@ -141,4 +165,27 @@ impl SubgoalCompletionEngine {
         );
         matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
     }
+}
+
+fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
+    let mut out: Vec<ArtifactSpec> = Vec::new();
+    let exts = ["md", "json", "rs", "toml", "yaml", "yml", "txt", "py"];
+    let mut rest = objective;
+    while let Some(s) = rest.find('`') {
+        let after = &rest[s + 1..];
+        if let Some(e) = after.find('`') {
+            let cand = &after[..e];
+            if (cand.contains('/') || cand.starts_with('.'))
+                && exts.iter().any(|x| cand.ends_with(&format!(".{}", x)))
+                && !out.iter().any(|a: &ArtifactSpec| a.path == cand)
+            {
+                out.push(ArtifactSpec {
+                    path: cand.to_string(),
+                    reason: "backtick".into(),
+                });
+            }
+            rest = &after[e + 1..];
+        } else { break; }
+    }
+    out
 }

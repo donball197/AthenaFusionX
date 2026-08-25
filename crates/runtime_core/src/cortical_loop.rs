@@ -3,6 +3,8 @@
 use anyhow::Result;
 use reqwest::Client;
 use std::sync::Arc;
+use std::fs;
+use std::io::Write;
 use tokio::sync::{broadcast, Mutex};
 
 use crate::action_gate::ActionGate;
@@ -19,6 +21,7 @@ use crate::motor_cortex::MotorCortex;
 use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
+use crate::anti_loop::{score_search_relevance, should_raise_belief};
 
 #[derive(Debug)]
 pub enum CortexOutcome {
@@ -57,7 +60,7 @@ impl CorticalLoop {
         tx: broadcast::Sender<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder().timeout(std::time::Duration::from_secs(180)).build().unwrap_or_default(),
             api_key,
             world_model,
             memory,
@@ -73,6 +76,16 @@ impl CorticalLoop {
             serde_json::json!({"type": "NEURAL_STREAM", "payload": format!("{}\n", msg)})
                 .to_string(),
         );
+    }
+
+    /// Dumps the raw LLM input/output for post-mortem debugging.
+    fn dump_debug(&self, turn: u32, phase: &str, payload: &str) {
+        let dir = ".nexus_debug";
+        let _ = fs::create_dir_all(dir);
+        let filepath = format!("{}/turn_{}_{}.txt", dir, turn, phase);
+        if let Ok(mut file) = fs::File::create(&filepath) {
+            let _ = file.write_all(payload.as_bytes());
+        }
     }
 
     async fn resolve_workspace_paths() -> String {
@@ -148,12 +161,13 @@ impl CorticalLoop {
             self.log(format!("\x1b[90m  -> Strategy: {}\x1b[0m", h));
         }
 
-        let is_mutation_task = session.contract.is_mutation_task;
+        let is_mutation_task = session.contract.is_mutation_task || mission.to_lowercase().contains("synthesize_report") || mission.to_lowercase().contains(".md");
         let is_write_task = is_mutation_task
-            && (session.contract.objective.to_lowercase().contains("write")
-                || session.contract.objective.to_lowercase().contains("export")
-                || session.contract.objective.to_lowercase().contains(".md")
-                || session.contract.objective.to_lowercase().contains(".json"));
+            || session.contract.objective.to_lowercase().contains("write")
+            || session.contract.objective.to_lowercase().contains("export")
+            || session.contract.objective.to_lowercase().contains(".md")
+            || session.contract.objective.to_lowercase().contains(".json")
+            || mission.to_lowercase().contains("synthesize_report");
 
         let mut state = CortexState::Strategize;
         let mut turn = 0;
@@ -179,8 +193,8 @@ impl CorticalLoop {
             }
 
             state = match state {
-                CortexState::Strategize => self.handle_strategize(&mut session, mission, &world_context, is_mutation_task, is_write_task).await?,
-                CortexState::Critique { proposal, belief } => self.handle_critic(&mut session, mission, &world_context, proposal, belief, is_mutation_task, is_write_task).await?,
+                CortexState::Strategize => self.handle_strategize(turn, &mut session, mission, &world_context, is_mutation_task, is_write_task).await?,
+                CortexState::Critique { proposal, belief } => self.handle_critic(turn, &mut session, mission, &world_context, proposal, belief, is_mutation_task, is_write_task).await?,
                 CortexState::Translate { proposal, belief } => self.handle_translate(&mut session, proposal, belief).await?,
                 CortexState::Execute { actions, proposal, belief } => self.handle_execute(&mut session, actions, proposal, belief).await?,
                 CortexState::Evaluate { evidence, proposal, belief, is_halt_action, mutation_path } => self.handle_evaluate(&mut session, mission, evidence, proposal, belief, is_mutation_task, is_write_task, is_halt_action, mutation_path).await?,
@@ -190,7 +204,7 @@ impl CorticalLoop {
         }
     }
 
-    async fn handle_strategize(&mut self, session: &mut EpistemicSession, mission: &str, world_context: &str, is_mutation_task: bool, is_write_task: bool) -> Result<CortexState> {
+    async fn handle_strategize(&mut self, turn: u32, session: &mut EpistemicSession, mission: &str, world_context: &str, is_mutation_task: bool, is_write_task: bool) -> Result<CortexState> {
         let best_node = match session.graph.select_best_hypothesis().cloned() {
             Some(node) => node,
             None => return Ok(CortexState::Fail { belief: 0.0, evidence: "No viable hypotheses left.".to_string() })
@@ -211,7 +225,7 @@ impl CorticalLoop {
 
         let status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, current_belief, mission);
 
-        if status == ContractStatus::Satisfied {
+        if session.is_subgoal_satisfied(current_belief) {
             self.log("\x1b[1;36m>> [CORTEX OMNI-GUARD] Contract mathematically satisfied. Stripping LLM authority and forcing deterministic node completion.\x1b[0m".to_string());
             return Ok(CortexState::Complete { belief: current_belief, evidence: session.collect_evidence(h_id) });
         }
@@ -221,10 +235,11 @@ impl CorticalLoop {
         
         match EpistemicEngine::propose_action(&self.client, &self.api_key, mission, &h_content, world_context, &evidence_history).await {
             Ok(proposal) => {
+                self.dump_debug(turn, "strategist_output", &proposal);
                 self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposal));
                 let prop_lower = proposal.trim().to_lowercase();
                 if prop_lower == "halt" || prop_lower.starts_with("halt ") {
-                    if status == ContractStatus::Satisfied {
+                    if session.is_subgoal_satisfied(current_belief) {
                         self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Halt proposed following successful local evidence. Subtask complete.\x1b[0m".to_string());
                         return Ok(CortexState::Complete { belief: 1.0, evidence: session.collect_evidence(h_id) });
                     } else if (is_mutation_task || is_write_task) && status == ContractStatus::NoEvidence {
@@ -250,10 +265,10 @@ impl CorticalLoop {
         }
     }
 
-    async fn handle_critic(&mut self, session: &mut EpistemicSession, mission: &str, world_context: &str, proposal: String, belief: f32, is_mutation_task: bool, is_write_task: bool) -> Result<CortexState> {
+    async fn handle_critic(&mut self, turn: u32, session: &mut EpistemicSession, mission: &str, world_context: &str, proposal: String, belief: f32, is_mutation_task: bool, is_write_task: bool) -> Result<CortexState> {
         // ⚡ RESTORED ESCAPE HATCH
         let status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, belief, mission);
-        if status == ContractStatus::Satisfied {
+        if session.is_subgoal_satisfied(belief) {
             self.log("\x1b[1;36m>> [SUBGOAL_COMPLETE] Evidence is sufficient. Forcing completion.\x1b[0m".to_string());
             return Ok(CortexState::Complete { belief, evidence: session.collect_evidence(session.best_hypothesis_id.unwrap_or_default()) });
         }
@@ -278,6 +293,7 @@ impl CorticalLoop {
                 Ok(CortexState::Strategize)
             }
             Ok(mut critic) => {
+                self.dump_debug(turn, "critic_output", &format!("{:?}", critic));
                 self.log(format!("\x1b[31m>> [CRITIC] Verdict:\x1b[0m {} (Modifier: {:.2})", critic.critique, critic.confidence_modifier));
 
                 let is_mutation_shaped_proposal = proposal.contains("write_file") || proposal.contains("patch_function") || proposal.contains("diff_patch") || proposal.contains("replace_lines");
@@ -359,7 +375,12 @@ impl CorticalLoop {
                     AgentAction::ReadFileChunk { path, start_line, .. } => format!("read_file_chunk:{}:{}", path, start_line),
                     AgentAction::SearchCode { path, query, .. } => format!("search_code:{}:{}", path, query),
                     AgentAction::SearchMemory { query, .. } => format!("search_memory:{}", query),
-                    AgentAction::ExecuteCommand { command, .. } => format!("execute_command:{}", command),
+                    AgentAction::ExecuteCommand { command, .. } => {
+                        // Key on the full command text so distinct invocations of the same base
+                        // tool (e.g. `find` against different paths/patterns) are tracked
+                        // separately and only truly repeated commands trip the loop guard.
+                        format!("execute_command:{}", command.trim())
+                    },
                     AgentAction::WriteFile { path, .. } => format!("write_file:{}", path),
                     AgentAction::DiffPatch { path, .. } => format!("diff_patch:{}", path),
                     AgentAction::PatchFunction { path, function_name, .. } => format!("patch_function:{}:{}", path, function_name),
@@ -370,8 +391,8 @@ impl CorticalLoop {
                 // ⚡ CONSECUTIVE RECON LIMIT
                 // Allow reading/searching the same target up to 2 times.
                 // On the 3rd attempt, hard-block and force a pivot.
-                let attempt_count = session.action_attempt_count(&action_key).unwrap_or(0);
-                if attempt_count >= 2 {
+                let attempt_count = session.global_action_attempt_count(&action_key);
+                if attempt_count >= 3 {
                     self.log(format!("\x1b[1;31m>> [ANTI-LOOP] Action [{}] attempted {} times. FORCING STRATEGY PIVOT.\x1b[0m", action_key, attempt_count));
                     let tool_names = crate::policy::TOOL_CONTRACTS.iter().map(|t| t.name).collect::<Vec<_>>().join(", ");
                     let veto_msg = format!("[CRITICAL VETO] LOOP DETECTED! You have repeatedly proposed the exact same action. You are forbidden from proposing this action again. YOU MUST PIVOT YOUR STRATEGY by using a DIFFERENT tool. Available tools: [{}].", tool_names);
@@ -382,7 +403,7 @@ impl CorticalLoop {
                     }
                     return Ok(CortexState::Strategize);
                 }
-                session.record_action_attempt(&action_key);
+                session.record_global_action_attempt(&action_key);
             }
             Ok(CortexState::Execute { actions, proposal, belief })
         }
@@ -595,6 +616,31 @@ impl CorticalLoop {
                 Ok(CortexState::Strategize)
             }
             Ok(eval) => {
+                // Relevance gate: don't let LICENSE / Cargo.lock noise raise belief
+                let is_search_like = proposal.to_ascii_lowercase().contains("search_code")
+                    || proposal.to_ascii_lowercase().contains("search_memory");
+                if is_search_like {
+                    let query_hint = proposal.chars().take(80).collect::<String>();
+                    let rel = score_search_relevance(&query_hint, &evidence);
+                    if !should_raise_belief(rel, 0.45) {
+                        self.log(format!(
+                            "\x1b[33m>> [RELEVANCE] Search score {:.2} < 0.45 — suppressing positive belief update (likely noise).\x1b[0m",
+                            rel
+                        ));
+                        let mut eval = eval;
+                        if eval.confidence_modifier > 0.0 {
+                            eval.confidence_modifier = 0.0;
+                        }
+                        session.record_evidence(&evidence, &eval, h_id);
+                        if let Some(updated_node) = session.graph.nodes.get(&h_id) {
+                            self.log(format!(
+                                "\x1b[1;32m>> [CORTEX] Strategy Belief updated to {:.2}\x1b[0m",
+                                updated_node.belief_score
+                            ));
+                        }
+                        return Ok(CortexState::Strategize);
+                    }
+                }
                 self.log(format!("\x1b[33m>> [EVALUATION]\x1b[0m {} (Modifier: {:.2})", eval.critique, eval.confidence_modifier));
                 session.record_evidence(&evidence, &eval, h_id);
 

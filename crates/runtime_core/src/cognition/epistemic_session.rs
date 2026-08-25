@@ -2,10 +2,11 @@ use crate::cognition_graph::{CognitiveGraph, EdgeRelation, NodeKind};
 use crate::cognitive_events::CognitiveEvent;
 use crate::completion_engine::{CognitiveBudget, SubgoalCompletionEngine, SubgoalContract};
 use crate::epistemic_engine::CriticResponse;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EpistemicSession {
     pub session_id: Uuid,
     pub mission: String,
@@ -14,6 +15,8 @@ pub struct EpistemicSession {
     pub graph: CognitiveGraph,
     pub local_evidence: String,
     pub executed_actions: HashMap<String, u32>,
+    #[serde(skip)]
+    pub global_action_attempts: HashMap<String, u32>,
     pub max_observed_belief: f32,
     pub best_hypothesis_id: Option<Uuid>,
     pub consecutive_mutation_vetoes: u32,
@@ -29,6 +32,7 @@ impl EpistemicSession {
             graph: CognitiveGraph::new(),
             local_evidence: String::new(),
             executed_actions: HashMap::new(),
+            global_action_attempts: HashMap::new(),
             max_observed_belief: 0.0,
             best_hypothesis_id: None,
             consecutive_mutation_vetoes: 0,
@@ -123,5 +127,13 @@ impl EpistemicSession {
         } else {
             history
         }
+    }
+
+    pub fn record_global_action_attempt(&mut self, action_key: &str) {
+        *self.global_action_attempts.entry(action_key.to_string()).or_insert(0) += 1;
+    }
+
+    pub fn global_action_attempt_count(&self, action_key: &str) -> u32 {
+        self.global_action_attempts.get(action_key).copied().unwrap_or(0)
     }
 }
