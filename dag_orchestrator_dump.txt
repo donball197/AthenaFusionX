@@ -1,0 +1,527 @@
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/executor.rs
+=========================================
+use crate::graph::{DagManager, TaskStatus};
+use std::env;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+pub struct DagExecutor {
+    pub manager: DagManager,
+}
+
+impl DagExecutor {
+    pub fn new(manager: DagManager) -> Self {
+        Self { manager }
+    }
+
+    fn get_minion_binary_path() -> PathBuf {
+        let mut path =
+            env::current_exe().unwrap_or_else(|_| PathBuf::from("target/debug/nexus_minion"));
+        path.pop();
+
+        let bin_path = path.join("nexus_minion");
+        if bin_path.exists() {
+            bin_path
+        } else {
+            PathBuf::from("target/debug/nexus_minion")
+        }
+    }
+
+    pub fn run_step(&mut self) -> Result<usize, String> {
+        let ready_tasks = self.manager.get_ready_tasks();
+        let mut executed_count = 0;
+
+        if ready_tasks.is_empty() {
+            return Ok(0);
+        }
+
+        let bin_path = Self::get_minion_binary_path();
+
+        for task_id in ready_tasks {
+            let (tier, description) = {
+                let node = self.manager.nodes.get_mut(&task_id).unwrap();
+                node.status = TaskStatus::InProgress;
+                (node.required_tier.clone(), node.description.clone())
+            };
+
+            println!("\n==================================================");
+            println!(
+                "[Orchestrator] Dispatching Task: [{}] (Tier: {})",
+                task_id,
+                tier.to_uppercase()
+            );
+            println!("Objective: {}", description);
+            println!("==================================================");
+
+            // Spawn the minion with live stdout inheritance so ReAct sandbox logs stream in real-time
+            let status = Command::new(&bin_path)
+                .arg("--tier")
+                .arg(&tier)
+                .arg(&description)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
+
+            match status {
+                Ok(exit_status) if exit_status.success() => {
+                    println!("\n[Orchestrator] Task [{}] Completed Successfully.", task_id);
+                    self.manager.complete_task(&task_id);
+                    executed_count += 1;
+                }
+                Ok(exit_status) => {
+                    eprintln!(
+                        "\n[Orchestrator] Task [{}] FAILED with code: {}",
+                        task_id, exit_status
+                    );
+                    if let Some(node) = self.manager.nodes.get_mut(&task_id) {
+                        node.status = TaskStatus::Failed;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\n[Orchestrator] FATAL: Failed to execute minion daemon: {}", e);
+                    if let Some(node) = self.manager.nodes.get_mut(&task_id) {
+                        node.status = TaskStatus::Failed;
+                    }
+                }
+            }
+        }
+
+        Ok(executed_count)
+    }
+}
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/graph.rs
+=========================================
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskNode {
+    pub id: String,
+    pub description: String,
+    pub required_tier: String, // "light" or "heavy"
+    pub dependencies: Vec<String>,
+    pub status: TaskStatus,
+}
+
+pub struct DagManager {
+    pub nodes: HashMap<String, TaskNode>,
+}
+
+impl DagManager {
+    pub fn new() -> Self {
+        Self { nodes: HashMap::new() }
+    }
+
+    /// Adds a new task to the execution graph.
+    pub fn add_task(&mut self, node: TaskNode) {
+        self.nodes.insert(node.id.clone(), node);
+    }
+
+    /// Returns a list of Task IDs that have all dependencies met and are ready to run.
+    pub fn get_ready_tasks(&self) -> Vec<String> {
+        let mut ready = Vec::new();
+
+        for (id, node) in &self.nodes {
+            if node.status != TaskStatus::Pending {
+                continue;
+            }
+
+            let dependencies_met = node.dependencies.iter().all(|dep_id| {
+                if let Some(dep_node) = self.nodes.get(dep_id) {
+                    dep_node.status == TaskStatus::Completed
+                } else {
+                    false // Dependency doesn't exist
+                }
+            });
+
+            if dependencies_met {
+                ready.push(id.clone());
+            }
+        }
+
+        ready
+    }
+
+    /// Marks a task as completed, which may unlock downstream dependencies.
+    pub fn complete_task(&mut self, id: &str) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.status = TaskStatus::Completed;
+        }
+    }
+}
+
+impl Default for DagManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dag_dependency_resolution() {
+        let mut dag = DagManager::new();
+
+        // Task A & B: No dependencies
+        dag.add_task(TaskNode {
+            id: "task_a".to_string(),
+            description: "Setup Database".to_string(),
+            required_tier: "light".to_string(),
+            dependencies: vec![],
+            status: TaskStatus::Pending,
+        });
+
+        dag.add_task(TaskNode {
+            id: "task_b".to_string(),
+            description: "Initialize Repo".to_string(),
+            required_tier: "light".to_string(),
+            dependencies: vec![],
+            status: TaskStatus::Pending,
+        });
+
+        // Task C: Depends on A and B
+        dag.add_task(TaskNode {
+            id: "task_c".to_string(),
+            description: "Build API endpoints".to_string(),
+            required_tier: "heavy".to_string(),
+            dependencies: vec!["task_a".to_string(), "task_b".to_string()],
+            status: TaskStatus::Pending,
+        });
+
+        // Task D: Depends on C
+        dag.add_task(TaskNode {
+            id: "task_d".to_string(),
+            description: "Run Integration Tests".to_string(),
+            required_tier: "heavy".to_string(),
+            dependencies: vec!["task_c".to_string()],
+            status: TaskStatus::Pending,
+        });
+
+        // 1. Initially, only A and B should be ready
+        let mut ready = dag.get_ready_tasks();
+        ready.sort(); // Sort for predictable assertion
+        assert_eq!(ready, vec!["task_a", "task_b"]);
+
+        // 2. Complete Task A; C should still wait on B
+        dag.complete_task("task_a");
+        let ready = dag.get_ready_tasks();
+        assert_eq!(ready, vec!["task_b"]);
+
+        // 3. Complete Task B; C should now unlock
+        dag.complete_task("task_b");
+        let ready = dag.get_ready_tasks();
+        assert_eq!(ready, vec!["task_c"]);
+
+        // 4. Complete Task C; D should now unlock
+        dag.complete_task("task_c");
+        let ready = dag.get_ready_tasks();
+        assert_eq!(ready, vec!["task_d"]);
+    }
+}
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/lib.rs
+=========================================
+//! Nexus DAG Orchestrator (AthenaFusionX)
+//! Manages Directed Acyclic Graph execution for micro-agent tasking.
+
+pub mod executor;
+pub mod graph;
+pub mod planner;
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/main.rs
+=========================================
+use anyhow::Result;
+use regex::Regex;
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+
+// Import the existing heavy machinery from runtime_core
+use nexus_runtime_core::cortical_loop::{CorticalLoop, CortexOutcome};
+use nexus_runtime_core::memory_cortex::MemoryCortex;
+use nexus_runtime_core::shared_state::VmoState;
+use nexus_runtime_core::distributed_scheduler::DistributedScheduler;
+use nexus_runtime_core::world_model::WorldModel;
+use nexus_substrate::memory::MemoryPalace;
+use nexus_runtime_core::cluster::ClusterMesh;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    println!("==> [DAG Orchestrator] Booting Option A (Single-Hydration Native Bind)...");
+    
+    let report_path = "bounty_report.md";
+    if !Path::new(report_path).exists() {
+        println!("[!] No bounty_report.md found.");
+        return Ok(());
+    }
+
+    let report_content = fs::read_to_string(report_path)?;
+    let deferred_section_marker = "## Deferred: Multi-Site Taint";
+    let Some(start_idx) = report_content.find(deferred_section_marker) else {
+        println!("==> [DAG Orchestrator] System is clean.");
+        return Ok(());
+    };
+
+    let re = Regex::new(r"- `([^`]+)` sink lines (\d+)-(\d+) \([^)]+\): query variable `?([^` ]+)`? built via concatenation at lines (\d+)-(\d+)")?;
+    let mut compiled_missions = Vec::new();
+
+    for cap in re.captures_iter(&report_content[start_idx..]) {
+        let file_path = &cap[1];
+        let sink_end = &cap[3];
+        let var_name = &cap[4];
+        let assign_start = &cap[5];
+
+        let mission = format!(
+            "OBJECTIVE: Remediate a Multi-Site SQL Injection in `{file_path}`.\n\
+            EXECUTION PLAN:\n\
+            1. Use `read_file_chunk` on `{file_path}` starting slightly before line {assign_start} and ending after line {sink_end} to capture the full data flow.\n\
+            2. Analyze how `{var_name}` is constructed.\n\
+            3. Use `diff_patch` to rewrite the assignment to use a parameterized query template (e.g., `?` placeholders).\n\
+            4. Use `diff_patch` to rewrite the execution sink to bind the parameters securely via prepared statements.\n\
+            5. Declare `halt` when the file is successfully patched."
+        );
+        compiled_missions.push((file_path.to_string(), mission));
+    }
+
+    println!("==> [DAG Orchestrator] Compiled {} high-context DAG Missions.\n", compiled_missions.len());
+
+    let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    let (tx, mut rx) = broadcast::channel::<String>(1024);
+    
+    // OPTION A: Single Hydration! 
+    // We boot the Vector DB and Memory systems ONCE, then loop through missions.
+    // This prevents I/O thrashing and memory exhaustion on the Chromebook/Motorola ARM64 targets.
+    println!("==> [DAG Orchestrator] Hydrating TaskContext once for sequential execution...");
+    let world_model = Arc::new(WorldModel::new());
+    let palace = Arc::new(MemoryPalace::new("nexus_memory.db").await.expect("Failed to init SQLite"));
+    let memory = Arc::new(MemoryCortex::new(palace)); 
+    let vmo_state = Arc::new(Mutex::new(VmoState::default()));
+    let mesh = Arc::new(ClusterMesh::new());
+    let dist = Arc::new(DistributedScheduler::new(mesh));
+
+    // Spawn a background task to drain and print the Cortex broadcast logs
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            // Filter out raw JSON payloads if you prefer cleaner console output
+            if !msg.contains("\"NEURAL_STREAM\"") {
+                println!("{}", msg);
+            }
+        }
+    });
+
+    for (i, (target, mission)) in compiled_missions.iter().enumerate() {
+        println!("\n\x1b[1;35m==================================================\x1b[0m");
+        println!("\x1b[1;36m=== EXECUTING MISSION {} / {} : {} ===\x1b[0m", i + 1, compiled_missions.len(), target);
+        println!("\x1b[1;35m==================================================\x1b[0m\n");
+
+        let mut loop_cortex = CorticalLoop::new(
+            api_key.clone(),
+            world_model.clone(),
+            memory.clone(),
+            vmo_state.clone(),
+            dist.clone(),
+            tx.clone(),
+        );
+
+        match loop_cortex.ignite(mission).await {
+            Ok(CortexOutcome::CompletionProposed { belief, .. }) => {
+                println!("\x1b[1;32m[MISSION SUCCESS] Remediation confirmed. Belief: {:.2}\x1b[0m", belief);
+            }
+            Ok(CortexOutcome::TurnsExhausted { best_belief, .. }) => {
+                println!("\x1b[1;31m[MISSION INCOMPLETE] Exhausted turns. Best Belief: {:.2}\x1b[0m", best_belief);
+            }
+            Err(e) => {
+                println!("\x1b[1;31m[MISSION FRACTURE] Cortical Loop failed: {}\x1b[0m", e);
+            }
+        }
+    }
+
+    println!("\n==> [DAG Orchestrator] All Remediation Missions Completed.");
+    Ok(())
+}
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/planner.rs
+=========================================
+use serde::Deserialize;
+use serde_json::json;
+use std::env;
+use std::error::Error;
+
+#[derive(Debug, Deserialize)]
+pub struct PlannedTask {
+    pub id: String,
+    pub description: String,
+    pub required_tier: String,
+    pub dependencies: Vec<String>,
+}
+
+pub struct DagPlanner;
+
+impl DagPlanner {
+    fn resolve_provider() -> (String, String, String) {
+        let model =
+            env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string());
+        if model.contains("gemini") {
+            (
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                    .to_string(),
+                env::var("GEMINI_API_KEY").unwrap_or_default(),
+                model,
+            )
+        } else {
+            // Defaults to NVIDIA / open-weights fallback
+            (
+                "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
+                env::var("NVIDIA_API_KEY").unwrap_or_default(),
+                model,
+            )
+        }
+    }
+
+    pub fn generate_dag(objective: &str) -> Result<Vec<PlannedTask>, Box<dyn Error>> {
+        let (endpoint, api_key, model) = Self::resolve_provider();
+
+        if api_key.is_empty() {
+            return Err("Planner API key is missing from .env".into());
+        }
+
+        let system_prompt = "You are the Nexus Executive Cortex. Break the user's objective into a Directed Acyclic Graph (DAG) of discrete micro-agent tasks. Output ONLY a raw JSON array of objects. Do not include markdown formatting, backticks, or conversational text. Schema: [{\"id\": \"task_1\", \"description\": \"Action required...\", \"required_tier\": \"light\" or \"heavy\", \"dependencies\": [\"array_of_task_ids_this_waits_on\"]}]";
+
+        let payload = json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": format!("Objective: {}", objective) }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 2048
+        });
+
+        let response = ureq::post(&endpoint)
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_json(payload)?;
+
+        let response_json: serde_json::Value = response.into_json()?;
+        let mut text =
+            response_json["choices"][0]["message"]["content"].as_str().unwrap_or("[]").to_string();
+
+        // Sanitize LLM formatting drift
+        text = text.replace("```json", "").replace("```", "").trim().to_string();
+
+        let tasks: Vec<PlannedTask> = serde_json::from_str(&text)?;
+        Ok(tasks)
+    }
+}
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/bin/nexus_orchestrator.rs
+=========================================
+use dotenvy::dotenv;
+use nexus_dag_orchestrator::executor::DagExecutor;
+use nexus_dag_orchestrator::graph::{DagManager, TaskNode, TaskStatus};
+use nexus_dag_orchestrator::planner::DagPlanner;
+use std::env;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    dotenv().ok();
+    let args: Vec<String> = env::args().collect();
+
+    // Accept objective from CLI or use a default test objective
+    let objective = if args.len() > 1 {
+        args[1..].join(" ")
+    } else {
+        "Audit the local file system structure, then analyze it for security flaws.".to_string()
+    };
+
+    println!("==================================================");
+    println!(" AthenaFusionX: Executive Cortex & DAG Orchestrator");
+    println!(" Target: ARM64 Shared DNA");
+    println!(" Objective: {}", objective);
+    println!("==================================================");
+
+    println!("[*] Executive Cortex: Generating DAG blueprint...");
+
+    let planned_tasks = match DagPlanner::generate_dag(&objective) {
+        Ok(tasks) => tasks,
+        Err(e) => {
+            eprintln!("[-] FATAL: Planner failed to generate DAG: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!("[+] Blueprint Acquired: {} tasks dynamically mapped.", planned_tasks.len());
+
+    let mut manager = DagManager::new();
+    for pt in planned_tasks {
+        println!(
+            "  -> Node: [{}] Tier: [{}] Deps: {:?}",
+            pt.id,
+            pt.required_tier.to_uppercase(),
+            pt.dependencies
+        );
+        manager.add_task(TaskNode {
+            id: pt.id,
+            description: pt.description,
+            required_tier: pt.required_tier,
+            dependencies: pt.dependencies,
+            status: TaskStatus::Pending,
+        });
+    }
+
+    let mut executor = DagExecutor::new(manager);
+    let mut loop_count = 1;
+
+    println!("\n[*] Executing Directed Acyclic Graph...\n");
+
+    loop {
+        let all_complete =
+            executor.manager.nodes.values().all(|n| n.status == TaskStatus::Completed);
+        if all_complete {
+            println!("\n[+] DAG Execution Complete. All nodes synchronized.");
+            break;
+        }
+
+        let failed = executor.manager.nodes.values().any(|n| n.status == TaskStatus::Failed);
+        if failed {
+            eprintln!("\n[-] DAG Execution Halted. One or more tasks failed.");
+            break;
+        }
+
+        println!("--- [Tick {}] Evaluating DAG State ---", loop_count);
+        match executor.run_step() {
+            Ok(executed) => {
+                if executed == 0 && loop_count == 1 {
+                    println!("  -> No tasks ready. (Graph error or circular dependency)");
+                    break;
+                }
+            }
+            Err(e) => {
+                eprintln!("[-] Executor Error: {}", e);
+                break;
+            }
+        }
+
+        loop_count += 1;
+        thread::sleep(Duration::from_secs(2)); // Pause for API rate limits and stdout clarity
+    }
+}
+
