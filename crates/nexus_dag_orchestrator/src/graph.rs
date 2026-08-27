@@ -15,6 +15,7 @@ pub struct TaskNode {
     pub required_tier: String, // "light" or "heavy"
     pub dependencies: Vec<String>,
     pub status: TaskStatus,
+    pub result_evidence: String, // NEW: Stores the output context of the task
 }
 
 pub struct DagManager {
@@ -56,10 +57,11 @@ impl DagManager {
         ready
     }
 
-    /// Marks a task as completed, which may unlock downstream dependencies.
-    pub fn complete_task(&mut self, id: &str) {
+    /// Marks a task as completed and stores its output for downstream nodes.
+    pub fn complete_task(&mut self, id: &str, output: String) {
         if let Some(node) = self.nodes.get_mut(id) {
             node.status = TaskStatus::Completed;
+            node.result_evidence = output;
         }
     }
 }
@@ -78,13 +80,13 @@ mod tests {
     fn test_dag_dependency_resolution() {
         let mut dag = DagManager::new();
 
-        // Task A & B: No dependencies
         dag.add_task(TaskNode {
             id: "task_a".to_string(),
             description: "Setup Database".to_string(),
             required_tier: "light".to_string(),
             dependencies: vec![],
             status: TaskStatus::Pending,
+            result_evidence: String::new(),
         });
 
         dag.add_task(TaskNode {
@@ -93,43 +95,40 @@ mod tests {
             required_tier: "light".to_string(),
             dependencies: vec![],
             status: TaskStatus::Pending,
+            result_evidence: String::new(),
         });
 
-        // Task C: Depends on A and B
         dag.add_task(TaskNode {
             id: "task_c".to_string(),
             description: "Build API endpoints".to_string(),
             required_tier: "heavy".to_string(),
             dependencies: vec!["task_a".to_string(), "task_b".to_string()],
             status: TaskStatus::Pending,
+            result_evidence: String::new(),
         });
 
-        // Task D: Depends on C
         dag.add_task(TaskNode {
             id: "task_d".to_string(),
             description: "Run Integration Tests".to_string(),
             required_tier: "heavy".to_string(),
             dependencies: vec!["task_c".to_string()],
             status: TaskStatus::Pending,
+            result_evidence: String::new(),
         });
 
-        // 1. Initially, only A and B should be ready
         let mut ready = dag.get_ready_tasks();
-        ready.sort(); // Sort for predictable assertion
+        ready.sort();
         assert_eq!(ready, vec!["task_a", "task_b"]);
 
-        // 2. Complete Task A; C should still wait on B
-        dag.complete_task("task_a");
+        dag.complete_task("task_a", "Ok".into());
         let ready = dag.get_ready_tasks();
         assert_eq!(ready, vec!["task_b"]);
 
-        // 3. Complete Task B; C should now unlock
-        dag.complete_task("task_b");
+        dag.complete_task("task_b", "Ok".into());
         let ready = dag.get_ready_tasks();
         assert_eq!(ready, vec!["task_c"]);
 
-        // 4. Complete Task C; D should now unlock
-        dag.complete_task("task_c");
+        dag.complete_task("task_c", "Ok".into());
         let ready = dag.get_ready_tasks();
         assert_eq!(ready, vec!["task_d"]);
     }

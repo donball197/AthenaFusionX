@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/cognition","query":"red_team|critique|adversarial|prompt_injection","reasoning":"Search for Red Team critique loop patterns in the cognition module to extract concrete implementable ideas for Warp."}]

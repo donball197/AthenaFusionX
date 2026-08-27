@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"find apps/warp -type f -name \"*.rs\" | head -50","reasoning":"Find Warp's Rust source files to understand its AI architecture","confidence":0.95}]

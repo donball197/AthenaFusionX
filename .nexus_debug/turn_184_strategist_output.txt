@@ -1,0 +1,1 @@
+[{"type":"search_memory","query":"AthenaFusionX Red Team critique loop ActionGate sandboxing DAG orchestration patterns","reasoning":"Query memory for historical context on AthenaFusionX's Red Team critique loops, ActionGate sandboxing, and DAG orchestration patterns to ground the strategic synthesis."}]

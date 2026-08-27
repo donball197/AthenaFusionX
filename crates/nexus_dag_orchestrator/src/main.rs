@@ -4,7 +4,7 @@ use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
     println!("==> [DAG Orchestrator] Initializing Semantic Remediation Pipeline...");
-    
+
     let report_path = "bounty_report.md";
     if !Path::new(report_path).exists() {
         println!("[!] No bounty_report.md found. Run nexus_ast_tool first.");
@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let report_content = fs::read_to_string(report_path)?;
-    
+
     // Extract the Deferred block
     let deferred_section_marker = "## Deferred: Multi-Site Taint";
     let Some(start_idx) = report_content.find(deferred_section_marker) else {
@@ -21,9 +21,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     let deferred_block = &report_content[start_idx..];
-    
+
     // Regex to parse our exact output from polyglot.rs
-    let re = Regex::new(r"- `([^`]+)` sink lines (\d+)-(\d+) \([^)]+\): query variable `?([^` ]+)`? built via concatenation at lines (\d+)-(\d+)")?;
+    let re = Regex::new(
+        r"- `([^`]+)` sink lines (\d+)-(\d+) \([^)]+\): query variable `?([^` ]+)`? built via concatenation at lines (\d+)-(\d+)",
+    )?;
 
     let mut compiled_missions = Vec::new();
 
@@ -51,7 +53,10 @@ fn main() -> anyhow::Result<()> {
         compiled_missions.push((file_path.to_string(), mission));
     }
 
-    println!("==> [DAG Orchestrator] Compiled {} high-context DAG Missions.\n", compiled_missions.len());
+    println!(
+        "==> [DAG Orchestrator] Compiled {} high-context DAG Missions.\n",
+        compiled_missions.len()
+    );
 
     for (i, (target, mission)) in compiled_missions.iter().enumerate() {
         println!("\x1b[1;36m=== MISSION {} : {} ===\x1b[0m", i + 1, target);
@@ -59,6 +64,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     println!("==> [DAG Orchestrator] Ready to pipe into runtime_core::task_manager::send_task().");
-    
+
     Ok(())
 }

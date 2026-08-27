@@ -137,7 +137,8 @@ impl RoboticExecutor {
     ) -> Result<String> {
         match action {
             MotorAction::ExecuteCommand { command } => {
-                let cache_key = crate::memory_cortex::ActionCache::generate_key(&command, "v7_workspace_ast");
+                let cache_key =
+                    crate::memory_cortex::ActionCache::generate_key(&command, "v7_workspace_ast");
                 {
                     let cache = self.action_cache.lock().await;
                     if let Some(cached) = cache.get(&cache_key) {
@@ -157,22 +158,23 @@ impl RoboticExecutor {
                 }
                 if stderr_trunc.len() > 1500 {
                     let offset = stderr_trunc.len() - 1500;
-                    stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", &stderr_trunc[offset..]);
+                    stderr_trunc =
+                        format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", &stderr_trunc[offset..]);
                 }
 
                 let mut res = format!("[CMD_OK] Status: {}\n", out.status);
-                if !stdout_trunc.trim().is_empty() { 
+                if !stdout_trunc.trim().is_empty() {
                     res.push_str("STDOUT:\n");
                     res.push_str(&stdout_trunc);
                     res.push('\n');
                 }
-                if !stderr_trunc.trim().is_empty() { 
+                if !stderr_trunc.trim().is_empty() {
                     res.push_str("STDERR:\n");
                     res.push_str(&stderr_trunc);
                     res.push('\n');
                 }
-                if stdout_trunc.trim().is_empty() && stderr_trunc.trim().is_empty() { 
-                    res.push_str("(Command produced no output)\n"); 
+                if stdout_trunc.trim().is_empty() && stderr_trunc.trim().is_empty() {
+                    res.push_str("(Command produced no output)\n");
                 }
 
                 {
@@ -185,9 +187,10 @@ impl RoboticExecutor {
             MotorAction::WriteFile { path, content } => {
                 let raw_path = Path::new(&path);
 
-                let workspace_root = std::env::current_dir()
-                    .and_then(std::fs::canonicalize)
-                    .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+                let workspace_root =
+                    std::env::current_dir().and_then(std::fs::canonicalize).map_err(|e| {
+                        anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e)
+                    })?;
 
                 let target = if raw_path.is_absolute() {
                     raw_path.to_path_buf()
@@ -199,12 +202,18 @@ impl RoboticExecutor {
                     .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
 
                 if !safe_path.starts_with(&workspace_root) {
-                    return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
+                    return Err(anyhow!(
+                        "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
+                        path
+                    ));
                 }
 
                 if let Ok(existing) = tokio::fs::read_to_string(&safe_path).await {
                     if existing == content {
-                        return Ok(format!("[WRITE_NOOP] {} -- content identical to existing file", path));
+                        return Ok(format!(
+                            "[WRITE_NOOP] {} -- content identical to existing file",
+                            path
+                        ));
                     }
                 }
                 if let Some(parent) = safe_path.parent() {
@@ -217,10 +226,15 @@ impl RoboticExecutor {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
                 let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
-                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await {
-                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", Some(emb)).await;
+                if let Ok(emb) =
+                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await
+                {
+                    let _ = memory
+                        .store_memory("ReadFile", &path, &content, "Observed", Some(emb))
+                        .await;
                 } else {
-                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
+                    let _ =
+                        memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
                 }
 
                 let total_lines = content.lines().count();
@@ -239,7 +253,10 @@ impl RoboticExecutor {
                 let total_lines = lines.len();
 
                 if start_line >= total_lines {
-                    return Ok(format!("[READ_CHUNK_EOF] Reached end of file {}. Total lines: {}", path, total_lines));
+                    return Ok(format!(
+                        "[READ_CHUNK_EOF] Reached end of file {}. Total lines: {}",
+                        path, total_lines
+                    ));
                 }
 
                 let end_line = std::cmp::min(start_line + max_lines, total_lines);
@@ -261,7 +278,9 @@ impl RoboticExecutor {
                 let out = crate::podman::PodmanShield::execute(&cmd)?;
                 let mut stdout = String::from_utf8_lossy(&out.stdout).to_string();
 
-                if stdout.trim().is_empty() && (p_str.contains("executive_cortex") || query.contains("router")) {
+                if stdout.trim().is_empty()
+                    && (p_str.contains("executive_cortex") || query.contains("router"))
+                {
                     let fallback_cmd = format!(
                         "(rg -n -C 2 -i '{}' crates/runtime_core/src/ || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' crates/runtime_core/src/) 2>/dev/null || true",
                         query, query
@@ -269,7 +288,10 @@ impl RoboticExecutor {
                     if let Ok(fb_out) = crate::podman::PodmanShield::execute(&fallback_cmd) {
                         let fb_stdout = String::from_utf8_lossy(&fb_out.stdout);
                         if !fb_stdout.trim().is_empty() {
-                            stdout = format!("[FALLBACK MATCHES FROM crates/runtime_core/src/]:\n{}", fb_stdout);
+                            stdout = format!(
+                                "[FALLBACK MATCHES FROM crates/runtime_core/src/]:\n{}",
+                                fb_stdout
+                            );
                         }
                     }
                 }
@@ -283,7 +305,10 @@ impl RoboticExecutor {
                 if trunc.trim().is_empty() {
                     Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.", path, query))
                 } else {
-                    Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}", path, query, trunc))
+                    Ok(format!(
+                        "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}",
+                        path, query, trunc
+                    ))
                 }
             }
             MotorAction::ReplaceLines { path, start_line, end_line, replacement } => {
@@ -299,14 +324,21 @@ impl RoboticExecutor {
                 let end_idx_actual = std::cmp::min(end_idx, lines.len().saturating_sub(1));
 
                 let before = lines[..start_idx].to_vec();
-                let after = if end_idx_actual + 1 < lines.len() { lines[end_idx_actual + 1..].to_vec() } else { vec![] };
+                let after = if end_idx_actual + 1 < lines.len() {
+                    lines[end_idx_actual + 1..].to_vec()
+                } else {
+                    vec![]
+                };
 
                 let mut new_lines = before;
                 new_lines.push(replacement.as_str());
                 new_lines.extend(after);
 
                 tokio::fs::write(&safe_path, new_lines.join("\n")).await?;
-                Ok(format!("[REPLACE_LINES_OK] Replaced lines {}-{} in {}", start_line, end_line, path))
+                Ok(format!(
+                    "[REPLACE_LINES_OK] Replaced lines {}-{} in {}",
+                    start_line, end_line, path
+                ))
             }
             MotorAction::RunTests { test_target } => {
                 let cmd = if test_target.is_empty() || test_target == "." {
@@ -328,7 +360,7 @@ impl RoboticExecutor {
                 let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
 
                 let trunc = if combined.len() > 6000 {
-                    format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len()-6000..])
+                    format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len() - 6000..])
                 } else {
                     combined
                 };
@@ -336,7 +368,10 @@ impl RoboticExecutor {
                 if out.status.success() {
                     Ok(format!("[TEST_OK] Tests passed for target '{}':\n{}", test_target, trunc))
                 } else {
-                    Ok(format!("[TEST_FAILED] Tests failed for target '{}':\n{}", test_target, trunc))
+                    Ok(format!(
+                        "[TEST_FAILED] Tests failed for target '{}':\n{}",
+                        test_target, trunc
+                    ))
                 }
             }
             MotorAction::DiffPatch { path, search, replace } => {
@@ -348,18 +383,28 @@ impl RoboticExecutor {
             }
             MotorAction::PatchFunction { path, function_name, new_body } => {
                 let safe_path = sanitize(&path)?;
-                let patched = crate::ast_editor::AstEditor::update_function(safe_path.to_str().unwrap_or(&path), &function_name, &new_body)?;
+                let patched = crate::ast_editor::AstEditor::update_function(
+                    safe_path.to_str().unwrap_or(&path),
+                    &function_name,
+                    &new_body,
+                )?;
                 tokio::fs::write(&safe_path, patched).await?;
                 Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
             }
             MotorAction::SearchMemory { query } => {
                 let mut results_text = String::new();
 
-                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await {
+                if let Ok(emb) =
+                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await
+                {
                     if let Ok(results) = memory.semantic_search(&emb).await {
                         for r in results {
-                            let snippet = if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
-                            results_text.push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
+                            let snippet =
+                                if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
+                            results_text.push_str(&format!(
+                                "Source: {}\nData: {}...\n---\n",
+                                r.directive, snippet
+                            ));
                         }
                     }
                 }
@@ -372,13 +417,15 @@ impl RoboticExecutor {
             }
             MotorAction::PatchFile { path, target, replacement } => {
                 let safe_path = sanitize(&path)?;
-                let file_content = tokio::fs::read_to_string(&safe_path).await
+                let file_content = tokio::fs::read_to_string(&safe_path)
+                    .await
                     .map_err(|e| anyhow!("Failed to read file: {}", e))?;
                 if !file_content.contains(&target) {
                     return Err(anyhow!("Target string not found in file: {}", target));
                 }
                 let new_content = file_content.replace(&target, &replacement);
-                tokio::fs::write(&safe_path, new_content).await
+                tokio::fs::write(&safe_path, new_content)
+                    .await
                     .map_err(|e| anyhow!("Failed to write file: {}", e))?;
                 Ok(format!("Successfully patched file: {}", path))
             }
@@ -387,36 +434,51 @@ impl RoboticExecutor {
                 for file in source_files {
                     if let Ok(safe_p) = sanitize(&file) {
                         if let Ok(content) = tokio::fs::read_to_string(&safe_p).await {
-                            combined_context.push_str(&format!("\n--- FILE: {} ---\n{}\n", file, content));
+                            combined_context
+                                .push_str(&format!("\n--- FILE: {} ---\n{}\n", file, content));
                         }
                     }
                 }
-                
+
                 let prompt = format!("You are a Synthesis Subagent. Analyze the following source code files and output a comprehensive architectural markdown report. DO NOT output JSON. Output raw markdown only.\n\nFILES:\n{}", combined_context);
-                
+
                 let payload = serde_json::json!({
                     "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                     "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
                 });
-                
+
                 let heavy_models = crate::model_config::get_heavy_models();
                 let client = reqwest::Client::new();
-                
-                match crate::epistemic_engine::EpistemicEngine::safe_api_call(&client, &self.api_key, &heavy_models, &payload).await {
+
+                match crate::epistemic_engine::EpistemicEngine::safe_api_call(
+                    &client,
+                    &self.api_key,
+                    &heavy_models,
+                    &payload,
+                )
+                .await
+                {
                     Ok(markdown) => {
                         let raw_path = Path::new(&output_path);
-                        if raw_path.is_absolute() { return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED")); }
+                        if raw_path.is_absolute() {
+                            return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED"));
+                        }
                         let ws = std::env::current_dir().unwrap().canonicalize().unwrap();
                         let safe_path = ws.join(raw_path);
-                        if !safe_path.starts_with(&ws) { return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED")); }
-                        
+                        if !safe_path.starts_with(&ws) {
+                            return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED"));
+                        }
+
                         if let Some(parent) = safe_path.parent() {
                             let _ = tokio::fs::create_dir_all(parent).await;
                         }
                         tokio::fs::write(&safe_path, markdown).await?;
-                        Ok(format!("[WRITE_OK] Successfully synthesized and wrote report to {}", output_path))
+                        Ok(format!(
+                            "[WRITE_OK] Successfully synthesized and wrote report to {}",
+                            output_path
+                        ))
                     }
-                    Err(e) => Err(anyhow::anyhow!("Synthesis Failed: {}", e))
+                    Err(e) => Err(anyhow::anyhow!("Synthesis Failed: {}", e)),
                 }
             }
             MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),

@@ -6,18 +6,17 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new() -> Self {
-        Self {
-            config: NexusConfig::from_env(),
-        }
+        Self { config: NexusConfig::from_env() }
     }
 
     /// Iterates automatically through the environment cascade configuration
-    pub async fn dispatch_with_cascade(&self, prompt: &str, use_heavy: bool) -> Result<String, String> {
-        let models = if use_heavy {
-            &self.config.heavy_cascade
-        } else {
-            &self.config.light_cascade
-        };
+    pub async fn dispatch_with_cascade(
+        &self,
+        prompt: &str,
+        use_heavy: bool,
+    ) -> Result<String, String> {
+        let models =
+            if use_heavy { &self.config.heavy_cascade } else { &self.config.light_cascade };
 
         if models.is_empty() {
             return Err("No models found in the active cascade configuration.".to_string());
@@ -27,7 +26,7 @@ impl ApiClient {
 
         for model in models {
             println!("==> [ApiClient] Dispatching request to model: {}", model);
-            
+
             match self.send_to_endpoint(model, prompt).await {
                 Ok(response) => return Ok(response),
                 Err(e) => {

@@ -6,7 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Parser, Debug)]
-#[command(name = "nexus_ast_tool", version = "0.1.0", about = "Nexus Singularity Polyglot AST Engine")]
+#[command(
+    name = "nexus_ast_tool",
+    version = "0.1.0",
+    about = "Nexus Singularity Polyglot AST Engine"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -49,9 +53,6 @@ enum Commands {
 }
 
 /// Secondary syntax check via external linters, run against a TEMP sibling
-/// file so the real target is never touched before verification passes.
-/// None       => no linter available (tree-sitter gate remains primary);
-/// Some(false) => the linter rejected the patched source.
 fn external_lint(lang_str: &str, source: &str, orig_path: &Path) -> Option<bool> {
     let (program, mut args, ext): (&str, Vec<&str>, &str) = match lang_str {
         "PHP" => ("php", vec!["-l"], "php"),
@@ -73,15 +74,11 @@ fn external_lint(lang_str: &str, source: &str, orig_path: &Path) -> Option<bool>
     let _ = fs::remove_file(&tmp_path);
     match output {
         Ok(o) => Some(o.status.success()),
-        Err(_) => None, // linter binary not installed; tree-sitter gate remains
+        Err(_) => None,
     }
 }
 
 /// Resolve the splice anchor (0-based inclusive line indices).
-///
-/// Primary: the recorded sink lines must still hold the exact snippet.
-/// Fallback: locate the snippet by text, disambiguated by proximity to the
-/// recorded sink line; ties are REJECTED rather than guessed.
 fn resolve_anchor(source: &str, finding: &SecurityFinding) -> Option<(usize, usize)> {
     let lines: Vec<&str> = source.lines().collect();
     let stored_start = finding.sink_start_line.saturating_sub(1);
@@ -106,22 +103,15 @@ fn resolve_anchor(source: &str, finding: &SecurityFinding) -> Option<(usize, usi
         }
     }
     let min_dist = candidates.iter().map(|(d, _)| *d).min()?;
-    let best: Vec<usize> = candidates
-        .iter()
-        .filter(|(d, _)| *d == min_dist)
-        .map(|(_, i)| *i)
-        .collect();
+    let best: Vec<usize> =
+        candidates.iter().filter(|(d, _)| *d == min_dist).map(|(_, i)| *i).collect();
     match best.as_slice() {
         [only] => Some((*only, *only + snippet_lines - 1)),
-        _ => None, // zero matches or ambiguous — refuse to guess
+        _ => None,
     }
 }
 
-/// Extract the query argument from a call like `mysqli_query($con, $q)`,
-/// `mysqli_multi_query($con, $q)`, or `$con->query($q)`. Uses bracket-depth
-/// matching from the call marker (not sink_text's outer parens, which may
-/// belong to a wrapping `if (...)`). Returns None (refuse to guess) unless
-/// the LAST argument is a single bare `$variable`.
+/// Extract the query argument from a call like `mysqli_query($con, $q)`
 fn extract_query_var(sink_text: &str) -> Option<String> {
     let markers = ["mysqli_query(", "mysqli_multi_query(", "->query(", "->multi_query("];
     let start = markers.iter().find_map(|m| sink_text.find(m).map(|i| i + m.len()))?;
@@ -165,7 +155,6 @@ fn main() -> Result<()> {
         Commands::Audit { path, repo, ai_triage, auto_heal, generate_report } => {
             let mut scan_path = path.clone();
 
-            // --- 1. REMOTE GIT INGESTION ---
             if let Some(repo_url) = repo {
                 scan_path = PathBuf::from("./nexus_audit_target");
                 if scan_path.exists() {
@@ -180,12 +169,18 @@ fn main() -> Result<()> {
                 }
             }
 
-            println!("==> [Security Auditor] Commencing AST vulnerability scan on: {}", scan_path.display());
+            println!(
+                "==> [Security Auditor] Commencing AST vulnerability scan on: {}",
+                scan_path.display()
+            );
 
-            // --- 2. DYNAMIC RULES ENGINE ---
             let rules_dir = PathBuf::from("apps/nexus_ast_tool/rules");
             let rules = PolyglotScanner::load_rules(&rules_dir);
-            println!("==> [Rules Engine] Loaded {} dynamic security rules from {:?}", rules.len(), rules_dir);
+            println!(
+                "==> [Rules Engine] Loaded {} dynamic security rules from {:?}",
+                rules.len(),
+                rules_dir
+            );
 
             let mut findings = PolyglotScanner::scan_security_vulnerabilities(&scan_path, &rules);
 
@@ -193,11 +188,13 @@ fn main() -> Result<()> {
                 println!("==> [Security Auditor] No obvious dangerous sinks found. Codebase looks clean!");
                 return Ok(());
             }
-            println!("==> [Security Auditor] WARNING: Discovered {} potential vulnerabilities.", findings.len());
+            println!(
+                "==> [Security Auditor] WARNING: Discovered {} potential vulnerabilities.",
+                findings.len()
+            );
 
             let mut report_md = String::from("# 🛡️ Nexus Singularity Bug Bounty Report\n\n");
 
-            // Every actionable finding ends in exactly one of these buckets:
             let mut actionable_count = 0;
             let mut fixed_count = 0;
             let mut failed_fix_count = 0;
@@ -205,26 +202,28 @@ fn main() -> Result<()> {
             let mut safe_count = 0;
             let mut unknown_count = 0;
             let mut triage_error_count = 0;
+            let taint_deferred_count = 0;
             let mut unknown_entries: Vec<String> = Vec::new();
-            let mut taint_deferred_count = 0;
-            let mut taint_entries: Vec<String> = Vec::new();
+            let taint_entries: Vec<String> = Vec::new();
 
             if ai_triage {
                 println!("\n==> [AI Triage] Initializing LLM to filter false positives...");
-                // Descending sink order within each file: patches made at higher
-                // lines never shift the stored anchors of lower findings.
                 findings.sort_by(|a, b| {
                     a.path.cmp(&b.path).then(b.sink_start_line.cmp(&a.sink_start_line))
                 });
 
                 for finding in findings {
-                    println!("\n    [?] Evaluating {} at line {}...",
-                        finding.pattern_name.to_uppercase(), finding.sink_start_line);
+                    println!(
+                        "\n    [?] Evaluating {} at line {}...",
+                        finding.pattern_name.to_uppercase(),
+                        finding.sink_start_line
+                    );
                     let file_path_str = finding.path.display().to_string();
                     let lang_str = format!("{:?}", finding.language);
 
                     match nexus_ast_tool::client::ApiClient::triage_vulnerability(
-                        &finding.pattern_name, &finding.source_snippet,
+                        &finding.pattern_name,
+                        &finding.source_snippet,
                     ) {
                         Ok((state_raw, llm_severity, reason)) => {
                             let classification = match state_raw.trim().to_uppercase().as_str() {
@@ -240,90 +239,115 @@ fn main() -> Result<()> {
 
                             if classification == "EXPLOITABLE" {
                                 actionable_count += 1;
-                                println!("        [🔴 EXPLOITABLE] Rule severity: {} (model said: {})", finding.severity, llm_severity);
+                                println!(
+                                    "        [🔴 EXPLOITABLE] Rule severity: {} (model said: {})",
+                                    finding.severity, llm_severity
+                                );
                                 println!("        [🧠 AI Reasoning] {}", reason);
 
-                                report_md.push_str(&format!("## 🚨 Vulnerability: {}\n", finding.pattern_name.to_uppercase()));
-                                report_md.push_str(&format!("- **Severity:** {}\n", finding.severity));
-                                report_md.push_str(&format!("- **File:** `{}` (Sink lines {}-{})\n\n",
-                                    file_path_str, finding.sink_start_line, finding.sink_end_line));
+                                report_md.push_str(&format!(
+                                    "## 🚨 Vulnerability: {}\n",
+                                    finding.pattern_name.to_uppercase()
+                                ));
+                                report_md
+                                    .push_str(&format!("- **Severity:** {}\n", finding.severity));
+                                report_md.push_str(&format!(
+                                    "- **File:** `{}` (Sink lines {}-{})\n\n",
+                                    file_path_str, finding.sink_start_line, finding.sink_end_line
+                                ));
                                 report_md.push_str(&format!("### Description\n{}\n\n", reason));
-                                report_md.push_str(&format!("### Vulnerable Code\n```{}\n{}\n```\n\n",
-                                    lang_str.to_lowercase(), finding.patch_snippet));
+                                report_md.push_str(&format!(
+                                    "### Vulnerable Code\n```{}\n{}\n```\n\n",
+                                    lang_str.to_lowercase(),
+                                    finding.patch_snippet
+                                ));
 
                                 if auto_heal {
                                     println!("        [🛠️ Auto-Heal] Generating secure anchor-based patch...");
-                                    // NOTE: every path below ends in `continue` with its
-                                    // own report entry, preserving the invariant
-                                    // actionable == fixed + failed + already_resolved.
 
-                                    // (1) Fail-closed read.
                                     let file_source = match fs::read_to_string(&finding.path) {
                                         Ok(src) => src,
                                         Err(e) => {
                                             println!("        [❌ Patch Error] Fail-closed read failure: {}", e);
                                             failed_fix_count += 1;
                                             report_md.push_str(&format!(
-                                                "### Patch (FAILED: I/O read error: {})\n\n---\n\n", e));
+                                                "### Patch (FAILED: I/O read error: {})\n\n---\n\n",
+                                                e
+                                            ));
                                             continue;
                                         }
                                     };
 
-                                    // (1.5) TAINT GATE: refuse to auto-heal if the query
-                                    // variable was built via string concatenation elsewhere
-                                    // (multi-site taint) rather than at the sink itself. A
-                                    // single-site splice here would only rewrite the execution
-                                    // call, leaving the actual injection untouched -- the
-                                    // confirmed false "Verified" failure mode from this
-                                    // session's live testing (login2.php et al).
-                                    if let Some(var_name) = extract_query_var(&finding.sink_text) {
-                                        if let Some((c_start, c_end, _)) = nexus_ast_tool::polyglot::find_concat_assignment(
+                                    let lines: Vec<&str> = file_source.lines().collect();
+
+                                    let mut effective_snippet = finding.patch_snippet.clone();
+                                    let effective_start: usize;
+                                    let effective_end: usize;
+
+                                    let taint = extract_query_var(&finding.sink_text).and_then(|var_name| {
+                                        nexus_ast_tool::polyglot::find_concat_assignment(
                                             &file_source,
                                             &finding.language.tree_sitter_language(),
                                             &var_name,
                                             finding.sink_start_line,
-                                        ) {
-                                            taint_deferred_count += 1;
-                                            println!(
-                                                "        [\u{26a0}\u{fe0f} Multi-Site Taint] {} is built via concatenation at line {}-{}, not at the sink. Cannot safely auto-patch in one splice -- needs manual review.",
-                                                var_name, c_start, c_end
+                                        )
+                                        .map(|(c_start, c_end, _)| (var_name, c_start, c_end))
+                                    });
+
+                                    if let Some((ref var_name, c_start, c_end)) = taint {
+                                        println!(
+                                            "        [🔗 Multi-Site Taint] {} built via concatenation at lines {}-{}. Expanding patch scope to cover taint source + sink.",
+                                            var_name, c_start, c_end
+                                        );
+                                        let start = c_start.saturating_sub(1);
+                                        let mut end = finding.sink_end_line.saturating_sub(1);
+                                        
+                                        // Extend end to cover the full if/else block if the sink is an if statement
+                                        let sink_line = lines[end].trim();
+                                        if sink_line.starts_with("if") || sink_line.starts_with("} else") || sink_line.starts_with("}else") {
+                                            let mut depth = 0;
+                                            let mut found_open = false;
+                                            for (i, line) in lines.iter().enumerate().skip(end) {
+                                                for ch in line.chars() {
+                                                    if ch == '{' { depth += 1; found_open = true; }
+                                                    if ch == '}' { depth -= 1; }
+                                                }
+                                                if found_open && depth <= 0 {
+                                                    end = i;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        end = end.min(lines.len().saturating_sub(1));
+                                        effective_snippet = lines[start..=end].join("\n");
+                                        effective_start = start;
+                                        effective_end = end;
+                                    } else {
+                                        if !file_source.contains(&finding.sink_text) {
+                                            println!("        [ℹ️ Already Resolved] Sink text no longer present. Skipping.");
+                                            already_resolved_count += 1;
+                                            report_md.push_str(
+                                                "### Patch (skipped: site already resolved by an earlier patch in this run)\n\n---\n\n",
                                             );
-                                            report_md.push_str(&format!(
-                                                "### Patch (DEFERRED: multi-site taint -- `{}` built via concatenation at lines {}-{}, not patched)\n\n---\n\n",
-                                                var_name, c_start, c_end
-                                            ));
-                                            taint_entries.push(format!(
-                                                "- `{}` sink lines {}-{} ({}): query variable `{}` built via concatenation at lines {}-{}; auto-heal deferred, requires manual multi-site fix",
-                                                file_path_str, finding.sink_start_line, finding.sink_end_line,
-                                                finding.pattern_name, var_name, c_start, c_end
-                                            ));
                                             continue;
                                         }
+
+                                        let Some((start_idx, end_idx)) = resolve_anchor(&file_source, &finding) else {
+                                            println!("        [❌ Patch Rejected] Anchor drift: recorded sink lines no longer match the file.");
+                                            failed_fix_count += 1;
+                                            report_md.push_str(
+                                                "### Patch (REJECTED: anchor drift - recorded sink lines no longer match the file)\n\n---\n\n",
+                                            );
+                                            continue;
+                                        };
+                                        effective_start = start_idx;
+                                        effective_end = end_idx;
                                     }
 
-                                    // (2) SEARCH-as-assertion: skip sites already fixed by
-                                    // an earlier patch in this run, BEFORE spending an LLM call.
-                                    if !file_source.contains(&finding.sink_text) {
-                                        println!("        [ℹ️ Already Resolved] Sink text no longer present. Skipping.");
-                                        already_resolved_count += 1;
-                                        report_md.push_str(
-                                            "### Patch (skipped: site already resolved by an earlier patch in this run)\n\n---\n\n");
-                                        continue;
-                                    }
-
-                                    // (3) Anchor resolution: stored lines must still hold
-                                    // the exact sink span; otherwise relocate or refuse.
-                                    let Some((start_idx, end_idx)) = resolve_anchor(&file_source, &finding) else {
-                                        println!("        [❌ Patch Rejected] Anchor drift: recorded sink lines no longer match the file.");
-                                        failed_fix_count += 1;
-                                        report_md.push_str(
-                                            "### Patch (REJECTED: anchor drift - recorded sink lines no longer match the file)\n\n---\n\n");
-                                        continue;
-                                    };
-
-                                    // (4) Model payload: replacement ONLY, no SEARCH block.
+                                    
                                     let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
-                                        &finding.pattern_name, &finding.patch_snippet, &lang_str,
+                                        &finding.pattern_name, &effective_snippet, &lang_str,
                                     ) {
                                         Ok(r) => r,
                                         Err(e) => {
@@ -337,13 +361,13 @@ fn main() -> Result<()> {
                                     if replacement.trim().is_empty() {
                                         println!("        [❌ Patch Rejected] Model returned an empty replacement.");
                                         failed_fix_count += 1;
-                                        report_md.push_str("### Patch (REJECTED: empty replacement)\n\n---\n\n");
+                                        report_md.push_str(
+                                            "### Patch (REJECTED: empty replacement)\n\n---\n\n",
+                                        );
                                         continue;
                                     }
                                     let cleaned_patch = replacement.trim().to_string();
 
-                                    // (5) Splice IN MEMORY, preserving the file's line endings.
-                                    let lines: Vec<&str> = file_source.lines().collect();
                                     let crlf = file_source.matches("\r\n").count() * 2
                                         > file_source.matches('\n').count();
                                     let sep = if crlf { "\r\n" } else { "\n" };
@@ -353,23 +377,21 @@ fn main() -> Result<()> {
                                         cleaned_patch.clone()
                                     };
 
-                                    let mut new_source = String::with_capacity(file_source.len() + patch_text.len());
-                                    new_source.push_str(&lines[..start_idx].join(sep));
-                                    if start_idx > 0 {
+                                    let mut new_source =
+                                        String::with_capacity(file_source.len() + patch_text.len());
+                                    new_source.push_str(&lines[..effective_start].join(sep));
+                                    if effective_start > 0 {
                                         new_source.push_str(sep);
                                     }
                                     new_source.push_str(&patch_text);
-                                    if end_idx + 1 < lines.len() {
+                                    if effective_end + 1 < lines.len() {
                                         new_source.push_str(sep);
-                                        new_source.push_str(&lines[end_idx + 1..].join(sep));
+                                        new_source.push_str(&lines[effective_end + 1..].join(sep));
                                     }
                                     if file_source.ends_with('\n') && !new_source.ends_with('\n') {
                                         new_source.push_str(sep);
                                     }
 
-                                    // (6) GATE 1 — syntax. Primary: in-memory tree-sitter
-                                    // parse (fail-closed, all languages). Secondary:
-                                    // external linter on a temp sibling file.
                                     let ts_ok = finding.language.parses_cleanly(&new_source);
                                     let lint = if ts_ok {
                                         external_lint(&lang_str, &new_source, &finding.path)
@@ -381,13 +403,14 @@ fn main() -> Result<()> {
                                     }
                                     let syntax_ok = ts_ok && lint.unwrap_or(true);
 
-                                    // (7) GATE 3 — strict sink elimination: no same-rule
-                                    // capture inside the replacement span (±2 drift).
                                     let ast_ok = if syntax_ok {
-                                        let new_start = start_idx + 1;
-                                        let new_end = new_start + patch_text.lines().count().saturating_sub(1);
+                                        let new_start = effective_start + 1;
+                                        let new_end = new_start
+                                            + patch_text.lines().count().saturating_sub(1);
                                         let residuals = PolyglotScanner::scan_source(
-                                            &finding.path, &new_source, &rules,
+                                            &finding.path,
+                                            &new_source,
+                                            &rules,
                                         );
                                         !residuals.iter().any(|f| {
                                             f.pattern_name == finding.pattern_name
@@ -399,8 +422,6 @@ fn main() -> Result<()> {
                                     };
 
                                     if syntax_ok && ast_ok {
-                                        // The ONLY disk write happens after all gates pass.
-                                        // There is no write-then-revert path to fail.
                                         if let Err(e) = fs::write(&finding.path, &new_source) {
                                             println!("        [❌ Patch Error] Failed to write verified patch: {}", e);
                                             failed_fix_count += 1;
@@ -410,9 +431,14 @@ fn main() -> Result<()> {
                                         }
                                         fixed_count += 1;
                                         println!("        [✅ Patch Verified] Syntax OK and strict AST rescan confirms the sink is eliminated.");
-                                        report_md.push_str("### Recommended Patch (Auto-Healed, Verified)\n");
-                                        report_md.push_str(&format!("```{}\n{}\n```\n\n---\n\n",
-                                            lang_str.to_lowercase(), cleaned_patch));
+                                        report_md.push_str(
+                                            "### Recommended Patch (Auto-Healed, Verified)\n",
+                                        );
+                                        report_md.push_str(&format!(
+                                            "```{}\n{}\n```\n\n---\n\n",
+                                            lang_str.to_lowercase(),
+                                            cleaned_patch
+                                        ));
                                         continue;
                                     }
 
@@ -424,14 +450,16 @@ fn main() -> Result<()> {
                                         "AST rescan still detects the sink (escape-only patch?)"
                                     };
                                     failed_fix_count += 1;
-                                    println!("        [❌ Patch Rejected] {}. Nothing was written.", reject_reason);
+                                    println!(
+                                        "        [❌ Patch Rejected] {}. Nothing was written.",
+                                        reject_reason
+                                    );
                                     report_md.push_str(&format!(
                                         "### Recommended Patch (REJECTED: {} - never written)\n```{}\n{}\n```\n\n---\n\n",
                                         reject_reason, lang_str.to_lowercase(), cleaned_patch));
                                     continue;
                                 }
 
-                                // No auto-heal requested: close this report section.
                                 report_md.push_str("---\n\n");
                             } else if classification == "SAFE" {
                                 safe_count += 1;
@@ -443,8 +471,11 @@ fn main() -> Result<()> {
                                 println!("        [🧠 AI Reasoning] {}", reason);
                                 unknown_entries.push(format!(
                                     "- `{}` sink lines {}-{} ({}): {}",
-                                    file_path_str, finding.sink_start_line, finding.sink_end_line,
-                                    finding.pattern_name, reason
+                                    file_path_str,
+                                    finding.sink_start_line,
+                                    finding.sink_end_line,
+                                    finding.pattern_name,
+                                    reason
                                 ));
                             }
                         }
@@ -457,14 +488,28 @@ fn main() -> Result<()> {
 
                 if generate_report {
                     report_md.push_str("\n# Final Audit Summary\n\n");
-                    report_md.push_str(&format!("- **Actionable findings:** {}\n", actionable_count));
+                    report_md
+                        .push_str(&format!("- **Actionable findings:** {}\n", actionable_count));
                     report_md.push_str(&format!("- **Verified fixed:** {}\n", fixed_count));
-                    report_md.push_str(&format!("- **Remediation failed:** {}\n", failed_fix_count));
-                    report_md.push_str(&format!("- **Already resolved (earlier patch in this run):** {}\n", already_resolved_count));
+                    report_md
+                        .push_str(&format!("- **Remediation failed:** {}\n", failed_fix_count));
+                    report_md.push_str(&format!(
+                        "- **Already resolved (earlier patch in this run):** {}\n",
+                        already_resolved_count
+                    ));
                     report_md.push_str(&format!("- **Explicitly safe:** {}\n", safe_count));
-                    report_md.push_str(&format!("- **Unknown (needs manual review):** {}\n", unknown_count));
-                    report_md.push_str(&format!("- **Deferred (multi-site taint, not patched):** {}\n", taint_deferred_count));
-                    report_md.push_str(&format!("- **Triage errors (API):** {}\n\n", triage_error_count));
+                    report_md.push_str(&format!(
+                        "- **Unknown (needs manual review):** {}\n",
+                        unknown_count
+                    ));
+                    report_md.push_str(&format!(
+                        "- **Deferred (multi-site taint, not patched):** {}\n",
+                        taint_deferred_count
+                    ));
+                    report_md.push_str(&format!(
+                        "- **Triage errors (API):** {}\n\n",
+                        triage_error_count
+                    ));
 
                     if triage_error_count > 0 {
                         report_md.push_str(&format!(
@@ -482,7 +527,9 @@ fn main() -> Result<()> {
                     }
 
                     if !taint_entries.is_empty() {
-                        report_md.push_str("## Deferred: Multi-Site Taint (auto-heal not attempted)\n\n");
+                        report_md.push_str(
+                            "## Deferred: Multi-Site Taint (auto-heal not attempted)\n\n",
+                        );
                         for entry in &taint_entries {
                             report_md.push_str(entry);
                             report_md.push('\n');
@@ -490,11 +537,10 @@ fn main() -> Result<()> {
                         report_md.push('\n');
                     }
 
-                    // Integrity: every actionable finding must be verified fixed
-                    // OR resolved by an earlier patch in this run, zero failures.
                     let remediation_clean = failed_fix_count == 0
                         && taint_deferred_count == 0
-                        && actionable_count == fixed_count + already_resolved_count + taint_deferred_count;
+                        && actionable_count
+                            == fixed_count + already_resolved_count + taint_deferred_count;
 
                     if remediation_clean {
                         report_md.push_str("## Remediation Integrity\n\n**PASS** — Every actionable finding was verified fixed or resolved.\n\n");
@@ -522,10 +568,13 @@ fn main() -> Result<()> {
         }
         Commands::Refactor { file, symbol, strategy, payload, instruction } => {
             let agent = nexus_ast_tool::agent::RefactorAgent::new();
+
             if let Some(inst) = instruction {
-                let _ = agent.execute_instruction(&file, &symbol, &inst, &strategy);
+                agent.execute_instruction(&file, &symbol, &inst, &strategy)?;
             } else if !payload.is_empty() {
-                let _ = agent.apply_refactoring(&file, &symbol, &strategy, &payload);
+                agent.apply_refactoring(&file, &symbol, &strategy, &payload)?;
+            } else {
+                return Err(anyhow::anyhow!("Refactor requires either --instruction or --payload"));
             }
         }
         Commands::Optimize { path } => {

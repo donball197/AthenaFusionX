@@ -27,6 +27,7 @@ impl ApiGateway {
     }
 
     /// Dynamically resolves the correct endpoint and API key based on the model string.
+    // DEPRECATED: use runtime_core::provider::resolve_provider
     fn resolve_provider(&self, model_name: &str) -> (String, String) {
         if model_name.contains("gemini") {
             (

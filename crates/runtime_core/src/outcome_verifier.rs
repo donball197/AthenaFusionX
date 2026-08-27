@@ -54,37 +54,32 @@ impl OutcomeVerifier {
         for cond in conditions {
             let met = match cond {
                 CompletionCondition::ReadMarkerAcquired => {
-                    local_evidence.contains("[READ_OK]") 
-                    || local_evidence.contains("[READ_CHUNK_OK]")
+                    local_evidence.contains("[READ_OK]")
+                        || local_evidence.contains("[READ_CHUNK_OK]")
                 }
                 CompletionCondition::SearchMarkerAcquired => {
                     local_evidence.contains("[SEARCH_CODE_OK]")
                 }
-                CompletionCondition::WriteMarkerAcquired => {
-                    local_evidence.contains("[WRITE_OK]")
-                }
+                CompletionCondition::WriteMarkerAcquired => local_evidence.contains("[WRITE_OK]"),
                 CompletionCondition::PatchMarkerAcquired => {
-                    local_evidence.contains("[PATCH_FUNCTION_OK]") 
-                    || local_evidence.contains("[DIFF_PATCH_OK]")
-                    || local_evidence.contains("[REPLACE_LINES_OK]")
+                    local_evidence.contains("[PATCH_FUNCTION_OK]")
+                        || local_evidence.contains("[DIFF_PATCH_OK]")
+                        || local_evidence.contains("[REPLACE_LINES_OK]")
                 }
-                CompletionCondition::CommandMarkerAcquired => {
-                    local_evidence.contains("[CMD_OK]")
-                }
+                CompletionCondition::CommandMarkerAcquired => local_evidence.contains("[CMD_OK]"),
                 CompletionCondition::SourceCodeEvidenceRequired => {
-                    local_evidence.lines().any(|l| 
-                        (l.starts_with("[READ_OK]") || l.starts_with("[SEARCH_CODE_OK]")) 
-                        && l.contains(".rs")
-                    )
+                    local_evidence.lines().any(|l| {
+                        (l.starts_with("[READ_OK]") || l.starts_with("[SEARCH_CODE_OK]"))
+                            && l.contains(".rs")
+                    })
                 }
-                CompletionCondition::MinBeliefScore(min_score) => {
-                    belief_score >= *min_score
-                }
+                CompletionCondition::MinBeliefScore(min_score) => belief_score >= *min_score,
             };
 
             if !met {
                 return CompletionStatus::Rejected(format!(
-                    "Contract condition {:?} not met in evidence.", cond
+                    "Contract condition {:?} not met in evidence.",
+                    cond
                 ));
             }
         }
@@ -98,7 +93,8 @@ impl OutcomeVerifier {
                 return CompletionStatus::Approved;
             } else {
                 return CompletionStatus::Rejected(
-                    "Missing verified TelemetryArtifact side-channel or execution marker.".to_string(),
+                    "Missing verified TelemetryArtifact side-channel or execution marker."
+                        .to_string(),
                 );
             }
         }
@@ -111,5 +107,5 @@ impl OutcomeVerifier {
 fn extract_telemetry(_local_evidence: &str) -> Option<TelemetryArtifact> {
     // Assumed to exist in the original file or cognitive_events
     // If missing, returns None and skips telemetry check
-    None 
+    None
 }

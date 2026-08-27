@@ -43,8 +43,7 @@ pub struct CodeAnalysisAgent {
 
 impl CodeAnalysisAgent {
     pub fn new(
-        #[allow(dead_code)]
-    orchestrator: Arc<Orchestrator>,
+        #[allow(dead_code)] orchestrator: Arc<Orchestrator>,
         client: Client,
         api_key: String,
         repo_path: PathBuf,
@@ -84,11 +83,15 @@ You MUST synthesize your final findings strictly as a JSON array of objects.",
             let path = entry.path();
             if path.is_file() {
                 let path_str = path.to_string_lossy();
-                if path_str.contains("/.git/") || path_str.contains("/target/") || path_str.contains("__pycache__") {
+                if path_str.contains("/.git/")
+                    || path_str.contains("/target/")
+                    || path_str.contains("__pycache__")
+                {
                     continue;
                 }
                 if let Ok(file_content) = std::fs::read_to_string(path) {
-                    repo_contents.push_str(&format!("\n--- FILE: {} ---\n{}\n", path_str, file_content));
+                    repo_contents
+                        .push_str(&format!("\n--- FILE: {} ---\n{}\n", path_str, file_content));
                 }
             }
         }
@@ -118,10 +121,13 @@ Do NOT wrap the final JSON array in markdown formatting like ```json.",
         );
 
         // Direct API Dispatch (Bypassing orchestrator tool-loop friction for Code Auditor)
-        let endpoint = if self.model_name.starts_with("nvidia/") || self.model_name.starts_with("deepseek-ai/") {
+        let endpoint = if self.model_name.starts_with("nvidia/")
+            || self.model_name.starts_with("deepseek-ai/")
+        {
             "https://integrate.api.nvidia.com/v1/chat/completions"
         } else {
-            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" // or standard Gemini endpoint
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            // or standard Gemini endpoint
         };
 
         let body = serde_json::json!({
@@ -134,7 +140,9 @@ Do NOT wrap the final JSON array in markdown formatting like ```json.",
             "max_tokens": 4096
         });
 
-        let res = self.client.post(endpoint)
+        let res = self
+            .client
+            .post(endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -150,12 +158,14 @@ Do NOT wrap the final JSON array in markdown formatting like ```json.",
         }
 
         // Parse OpenAI/NVIDIA compatible chat completion response
-        let v: serde_json::Value = serde_json::from_str(&resp_text)
-            .context("Failed to parse chat completion JSON")?;
+        let v: serde_json::Value =
+            serde_json::from_str(&resp_text).context("Failed to parse chat completion JSON")?;
 
         let raw_response = v["choices"][0]["message"]["content"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Response missing choices[0].message.content: {}", resp_text))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Response missing choices[0].message.content: {}", resp_text)
+            })?
             .to_string();
 
         // Extract and sanitize the JSON (in case the model disobeys formatting rules)

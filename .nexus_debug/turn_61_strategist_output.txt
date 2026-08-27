@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"crates/runtime_core/src/cortical_loop.rs","reasoning":"Read Athena's CorticalLoop to understand its AI-to-system architecture for the comparison."}]

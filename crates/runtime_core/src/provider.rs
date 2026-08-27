@@ -1,3 +1,4 @@
+#![allow(clippy::doc_overindented_list_items)]
 //! Unified LLM provider resolution + cascade construction.
 //!
 //! SINGLE SOURCE OF TRUTH for:
@@ -42,15 +43,15 @@ pub fn trip_circuit(model_name: &str) {
         tracing::warn!("[CIRCUIT] Gemini rate-limited; bypassing for {}s", CIRCUIT_COOLDOWN_SECS);
     } else if lower.contains("nvidia") || lower.contains("nemotron") || lower.contains("deepseek") {
         NVIDIA_DISABLED_UNTIL.store(until, Ordering::Relaxed);
-        tracing::warn!("[CIRCUIT] NVIDIA/NIM rate-limited; bypassing for {}s", CIRCUIT_COOLDOWN_SECS);
+        tracing::warn!(
+            "[CIRCUIT] NVIDIA/NIM rate-limited; bypassing for {}s",
+            CIRCUIT_COOLDOWN_SECS
+        );
     }
 }
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
 fn provider_healthy(kind: &str) -> bool {
@@ -103,9 +104,8 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
 
     // Configured Nexus / custom OpenAI-compatible gateway
     ProviderResolved {
-        endpoint: env::var("NEXUS_API_ENDPOINT").unwrap_or_else(|_| {
-            "https://api.example.com/v1/chat/completions".to_string()
-        }),
+        endpoint: env::var("NEXUS_API_ENDPOINT")
+            .unwrap_or_else(|_| "https://api.example.com/v1/chat/completions".to_string()),
         api_key: env::var("NEXUS_AUTH_KEY").unwrap_or_default(),
         auth: AuthStyle::Bearer,
         provider_name: "nexus",
@@ -139,7 +139,10 @@ pub fn get_light_models() -> Vec<String> {
         let lower = m.to_ascii_lowercase();
         if lower.contains("gemini") {
             provider_healthy("gemini")
-        } else if lower.contains("nvidia") || lower.contains("nemotron") || lower.contains("deepseek") {
+        } else if lower.contains("nvidia")
+            || lower.contains("nemotron")
+            || lower.contains("deepseek")
+        {
             provider_healthy("nvidia")
         } else {
             true
@@ -177,7 +180,10 @@ pub fn get_heavy_models() -> Vec<String> {
         let lower = m.to_ascii_lowercase();
         if lower.contains("gemini") {
             provider_healthy("gemini")
-        } else if lower.contains("nvidia") || lower.contains("nemotron") || lower.contains("deepseek") {
+        } else if lower.contains("nvidia")
+            || lower.contains("nemotron")
+            || lower.contains("deepseek")
+        {
             provider_healthy("nvidia")
         } else {
             true

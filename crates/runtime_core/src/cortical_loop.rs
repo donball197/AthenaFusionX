@@ -60,7 +60,7 @@ impl CorticalLoop {
         tx: broadcast::Sender<String>,
     ) -> Self {
         Self {
-            client: Client::builder().timeout(std::time::Duration::from_secs(180)).build().unwrap_or_default(),
+            client: Client::new(),
             api_key,
             world_model,
             memory,
@@ -147,14 +147,6 @@ impl CorticalLoop {
 
         for h in hypotheses {
             let hid = session.graph.add_node(NodeKind::Hypothesis, &h, 0.5, 100);
-            // FIX: apply_event's HypothesisCreated arm was the only path that
-            // ever set best_hypothesis_id from None -> Some, but that event
-            // was never dispatched here (add_node was called directly on the
-            // graph). best_hypothesis_id stayed None for the whole run, and
-            // handle_evaluate's `.unwrap_or_default()` silently fell back to
-            // the nil UUID -- every belief-graph edge for the entire session
-            // targeted a node that never existed, so propagate_beliefs()
-            // silently no-op'd on every turn. Seed it explicitly here.
             if session.best_hypothesis_id.is_none() {
                 session.best_hypothesis_id = Some(hid);
             }
@@ -213,19 +205,13 @@ impl CorticalLoop {
         let h_id = best_node.id;
         let h_content = best_node.content.clone();
         let current_belief = best_node.belief_score;
-        // FIX: without this, handle_critic/handle_evaluate always read
-        // session.best_hypothesis_id (a session-level field set once and
-        // rarely updated) instead of whichever hypothesis was actually
-        // selected and explored THIS turn -- so only one hypothesis in the
-        // whole session could ever accumulate evidence, no matter which
-        // strategy the Strategist was actually proposing against.
         session.best_hypothesis_id = Some(h_id);
 
         self.log(format!("\x1b[32m>> [CORTEX] Exploring Top Strategy (Belief: {:.2}):\x1b[0m {}", current_belief, h_content));
 
         let status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, current_belief, mission);
 
-        if session.is_subgoal_satisfied(current_belief) {
+        if status == ContractStatus::Satisfied {
             self.log("\x1b[1;36m>> [CORTEX OMNI-GUARD] Contract mathematically satisfied. Stripping LLM authority and forcing deterministic node completion.\x1b[0m".to_string());
             return Ok(CortexState::Complete { belief: current_belief, evidence: session.collect_evidence(h_id) });
         }
@@ -235,11 +221,33 @@ impl CorticalLoop {
         
         match EpistemicEngine::propose_action(&self.client, &self.api_key, mission, &h_content, world_context, &evidence_history).await {
             Ok(proposal) => {
+                // ⚡ ANTI-RESONANCE / MODE COLLAPSE GUARD
+                let is_degenerate = proposal.matches("#doc").count() > 5 
+                    || proposal.matches("} {").count() > 10 
+                    || proposal.matches("} | {").count() > 3
+                    || proposal.matches("by step {").count() > 3
+                    || proposal.contains("0000000000000000") 
+                    || proposal.len() > 15000;
+
+                if is_degenerate {
+                    self.dump_debug(turn, "strategist_resonance", &proposal);
+                    self.log("\x1b[1;31m>> [CORTEX FAULT] Token resonance / mode collapse detected in Strategist output. Intercepting and forcing pivot.\x1b[0m".to_string());
+                    let obs_id = session.graph.add_node(
+                        NodeKind::Observation, 
+                        "[LLM_RESONANCE_FAULT] Your previous output suffered from token resonance (hallucinated garbage). You MUST output ONLY valid JSON or a valid labeled tool call.", 
+                        1.0, 
+                        80
+                    );
+                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.80);
+                    session.graph.propagate_beliefs();
+                    return Ok(CortexState::Strategize);
+                }
+
                 self.dump_debug(turn, "strategist_output", &proposal);
                 self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", proposal));
                 let prop_lower = proposal.trim().to_lowercase();
                 if prop_lower == "halt" || prop_lower.starts_with("halt ") {
-                    if session.is_subgoal_satisfied(current_belief) {
+                    if status == ContractStatus::Satisfied {
                         self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Halt proposed following successful local evidence. Subtask complete.\x1b[0m".to_string());
                         return Ok(CortexState::Complete { belief: 1.0, evidence: session.collect_evidence(h_id) });
                     } else if (is_mutation_task || is_write_task) && status == ContractStatus::NoEvidence {
@@ -266,9 +274,8 @@ impl CorticalLoop {
     }
 
     async fn handle_critic(&mut self, turn: u32, session: &mut EpistemicSession, mission: &str, world_context: &str, proposal: String, belief: f32, is_mutation_task: bool, is_write_task: bool) -> Result<CortexState> {
-        // ⚡ RESTORED ESCAPE HATCH
-        let status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, belief, mission);
-        if session.is_subgoal_satisfied(belief) {
+        let _status = ContractEvaluator::evaluate(is_mutation_task, is_write_task, &session.local_evidence, belief, mission);
+        if _status == ContractStatus::Satisfied {
             self.log("\x1b[1;36m>> [SUBGOAL_COMPLETE] Evidence is sufficient. Forcing completion.\x1b[0m".to_string());
             return Ok(CortexState::Complete { belief, evidence: session.collect_evidence(session.best_hypothesis_id.unwrap_or_default()) });
         }
@@ -368,7 +375,6 @@ impl CorticalLoop {
             }
             Ok(CortexState::Strategize)
         } else {
-            // ⚡ SEMANTIC ANTI-LOOP GUARD + DYNAMIC TOOLCHAIN INJECTION
             for action in &actions {
                 let action_key = match action {
                     AgentAction::ReadFile { path, .. } => format!("read_file:{}", path),
@@ -376,9 +382,6 @@ impl CorticalLoop {
                     AgentAction::SearchCode { path, query, .. } => format!("search_code:{}:{}", path, query),
                     AgentAction::SearchMemory { query, .. } => format!("search_memory:{}", query),
                     AgentAction::ExecuteCommand { command, .. } => {
-                        // Key on the full command text so distinct invocations of the same base
-                        // tool (e.g. `find` against different paths/patterns) are tracked
-                        // separately and only truly repeated commands trip the loop guard.
                         format!("execute_command:{}", command.trim())
                     },
                     AgentAction::WriteFile { path, .. } => format!("write_file:{}", path),
@@ -388,9 +391,6 @@ impl CorticalLoop {
                     _ => format!("{:?}", action),
                 };
                 
-                // ⚡ CONSECUTIVE RECON LIMIT
-                // Allow reading/searching the same target up to 2 times.
-                // On the 3rd attempt, hard-block and force a pivot.
                 let attempt_count = session.global_action_attempt_count(&action_key);
                 if attempt_count >= 3 {
                     self.log(format!("\x1b[1;31m>> [ANTI-LOOP] Action [{}] attempted {} times. FORCING STRATEGY PIVOT.\x1b[0m", action_key, attempt_count));
@@ -480,116 +480,58 @@ impl CorticalLoop {
             return Ok(CortexState::Strategize);
         }
 
-        // ⚡ COMPILER AS A CRITIC + DETERMINISTIC AUTO-HEALER
         if rust_files_mutated {
             self.log("\x1b[36m>> [COMPILER CRITIC] Running cargo check to validate Rust mutation...\x1b[0m".to_string());
             
-            let mut attempts = 0;
-            loop {
-                attempts += 1;
-                if attempts > 3 {
-                    self.log("\x1b[1;31m>> [COMPILER CRITIC] Max auto-heal attempts reached. Reverting.\x1b[0m".to_string());
-                    let compile_fail_evidence = "[COMPILE_FAIL] Auto-healer attempted 3 fixes but errors persist.".to_string();
+            let compile_output = tokio::process::Command::new("cargo")
+                .arg("check")
+                .output()
+                .await;
+
+            match compile_output {
+                Ok(output) if output.status.success() => {
+                    latest_evidence.push_str("\n[COMPILE_OK] Workspace compiles successfully.");
+                    self.log("\x1b[32m>> [COMPILER CRITIC] Compile OK. Proceeding to LLM Evaluator.\x1b[0m".to_string());
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let err_preview = stderr.lines().take(20).collect::<Vec<_>>().join("\n");
+                    
+                    self.log("\x1b[1;31m>> [COMPILER CRITIC] Compile FAILED. Reverting mutations and bypassing LLM Evaluator.\x1b[0m".to_string());
+                    
+                    let compile_fail_evidence = format!("[COMPILE_FAIL] Your patch caused a compilation error:\n{}", err_preview);
+                    
                     for path in &mutation_paths {
+                        self.log(format!("\x1b[1;31m>> [CORTEX SAFETY] Reverting {} via git checkout.\x1b[0m", path));
                         let _ = crate::podman::PodmanShield::execute(&format!("git checkout -- {}", path));
                     }
+
                     session.local_evidence.truncate(evidence_checkpoint);
+                    let stripped_this_turn = latest_evidence
+                        .replace("[WRITE_OK]", "[MUTATION_REVERTED]")
+                        .replace("[DIFF_PATCH_OK]", "[MUTATION_REVERTED]")
+                        .replace("[PATCH_FUNCTION_OK]", "[MUTATION_REVERTED]")
+                        .replace("[REPLACE_LINES_OK]", "[MUTATION_REVERTED]");
+                    
+                    session.local_evidence.push_str(&stripped_this_turn);
                     session.local_evidence.push_str(&compile_fail_evidence);
                     session.local_evidence.push('\n');
+                    
                     if let Some(h_id) = session.best_hypothesis_id {
-                        let obs_id = session.graph.add_node(NodeKind::Observation, "[CRITICAL VETO] Persistent compilation errors after 3 auto-heal attempts.", 1.0, 90);
+                        let obs_id = session.graph.add_node(
+                            NodeKind::Observation, 
+                            "[CRITICAL VETO] Your patch caused a compilation error. Files reverted. Try again with valid syntax.", 
+                            1.0, 
+                            90 
+                        );
                         session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
                         session.graph.propagate_beliefs();
                     }
+                    
                     return Ok(CortexState::Strategize);
                 }
-
-                let compile_output = tokio::process::Command::new("cargo")
-                    .arg("check")
-                    .arg("--message-format=json")
-                    .output()
-                    .await;
-
-                match compile_output {
-                    Ok(output) if output.status.success() => {
-                        latest_evidence.push_str("\n[COMPILE_OK] Workspace compiles successfully.");
-                        self.log("\x1b[32m>> [COMPILER CRITIC] Compile OK. Proceeding to LLM Evaluator.\x1b[0m".to_string());
-                        break; // Exit loop, proceed to Evaluate
-                    }
-                    Ok(output) => {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let mut applied_heals = 0;
-                        
-                        // Parse cargo JSON output line by line
-                        for line in stdout.lines() {
-                            if let Some(diag) = nexus_ast_tool::engine::parse_compiler_line(line) {
-                                if let Some(action) = nexus_ast_tool::engine::determine_policy(&diag) {
-                                    let file_path = std::path::PathBuf::from(&action.file);
-                                    if file_path.exists() {
-                                        if let Ok(source) = std::fs::read_to_string(&file_path) {
-                                            if let Some(strategy) = nexus_ast_tool::mutation::get_strategy(&action.strategy) {
-                                                match strategy.apply(&source, &action.symbol, &action.payload) {
-                                                    Ok(new_source) => {
-                                                        let _ = std::fs::write(&file_path, new_source);
-                                                        applied_heals += 1;
-                                                        self.log(format!("\x1b[1;36m>> [AUTO-HEAL] Applied {} to {}\x1b[0m", action.strategy, action.file));
-                                                    }
-                                                    Err(e) => self.log(format!("\x1b[33m>> [AUTO-HEAL FAIL] {}: {}\x1b[0m", action.strategy, e))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if applied_heals > 0 {
-                            latest_evidence.push_str(&format!("\n[AUTO_HEAL] Applied {} deterministic fixes. Re-checking...", applied_heals));
-                            session.local_evidence.push_str(&latest_evidence);
-                            continue; // Re-run cargo check
-                        }
-
-                        // No healable errors found, standard failure path
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        let err_preview = stderr.lines().take(15).collect::<Vec<_>>().join("\n");
-                        
-                        self.log("\x1b[1;31m>> [COMPILER CRITIC] Compile FAILED. Reverting mutations and bypassing LLM Evaluator.\x1b[0m".to_string());
-                        
-                        let compile_fail_evidence = format!("[COMPILE_FAIL] Your patch caused a compilation error:\n{}", err_preview);
-                        
-                        for path in &mutation_paths {
-                            self.log(format!("\x1b[1;31m>> [CORTEX SAFETY] Reverting {} via git checkout.\x1b[0m", path));
-                            let _ = crate::podman::PodmanShield::execute(&format!("git checkout -- {}", path));
-                        }
-
-                        session.local_evidence.truncate(evidence_checkpoint);
-                        let stripped_this_turn = latest_evidence
-                            .replace("[WRITE_OK]", "[MUTATION_REVERTED]")
-                            .replace("[DIFF_PATCH_OK]", "[MUTATION_REVERTED]")
-                            .replace("[PATCH_FUNCTION_OK]", "[MUTATION_REVERTED]")
-                            .replace("[REPLACE_LINES_OK]", "[MUTATION_REVERTED]");
-                        
-                        session.local_evidence.push_str(&stripped_this_turn);
-                        session.local_evidence.push_str(&compile_fail_evidence);
-                        session.local_evidence.push('\n');
-                        
-                        if let Some(h_id) = session.best_hypothesis_id {
-                            let obs_id = session.graph.add_node(
-                                NodeKind::Observation, 
-                                "[CRITICAL VETO] Your patch caused a compilation error. Files reverted. Try again with valid syntax.", 
-                                1.0, 
-                                90 
-                            );
-                            session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
-                            session.graph.propagate_beliefs();
-                        }
-                        
-                        return Ok(CortexState::Strategize);
-                    }
-                    Err(e) => {
-                        self.log(format!("\x1b[33m>> [COMPILER CRITIC] Failed to run cargo check: {}. Proceeding with LLM Evaluator.\x1b[0m", e));
-                        break;
-                    }
+                Err(e) => {
+                    self.log(format!("\x1b[33m>> [COMPILER CRITIC] Failed to run cargo check: {}. Proceeding with LLM Evaluator.\x1b[0m", e));
                 }
             }
         }
@@ -616,7 +558,6 @@ impl CorticalLoop {
                 Ok(CortexState::Strategize)
             }
             Ok(eval) => {
-                // Relevance gate: don't let LICENSE / Cargo.lock noise raise belief
                 let is_search_like = proposal.to_ascii_lowercase().contains("search_code")
                     || proposal.to_ascii_lowercase().contains("search_memory");
                 if is_search_like {

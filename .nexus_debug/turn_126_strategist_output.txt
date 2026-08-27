@@ -1,0 +1,1 @@
+[{"type":"read_file_chunk","path":"apps/warp/crates/warp_terminal/src/shell/mod.rs","start_line":200,"max_lines":200,"reasoning":"Understand Warp's shell bootstrap and DCS hook mechanics"}]

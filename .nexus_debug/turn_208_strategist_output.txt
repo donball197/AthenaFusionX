@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"/home/donball197/AthenaFusionX/crates/nexus_dag_orchestrator/src/executor.rs","reasoning":"Examine the DAG executor to understand how tasks are executed and whether rollback/lineage tracking exists, to ground the Warp-adoption idea."}]

@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"crates/runtime_core/src/action_gate.rs","reasoning":"Read the full ActionGate module to understand Athena's action authorization/safety layer."}]

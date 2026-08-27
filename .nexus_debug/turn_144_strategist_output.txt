@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"ls -la /home/donball197/AthenaFusionX/apps/warp 2>/dev/null && echo \"---RUNTIME---\" && ls -la /home/donball197/AthenaFusionX/crates/runtime_core/src 2>/dev/null","reasoning":"List the contents of both target directories to understand structure.","confidence":0.95}]

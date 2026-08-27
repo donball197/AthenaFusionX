@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"ls /home/donball197/AthenaFusionX/","reasoning":"The target path /home/donball197/AthenaFusionX/apps/warp does not exist. I need to discover the actual directory structure to locate the warp application.","confidence":0.95}]

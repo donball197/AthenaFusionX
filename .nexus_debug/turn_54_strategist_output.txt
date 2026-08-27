@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"/home/donball197/AthenaFusionX/apps/warp","query":"computer_use","reasoning":"Find Warp's computer_use crate implementation for shell hooking and terminal state tracking"}]

@@ -110,7 +110,20 @@ async fn main() -> anyhow::Result<()> {
             let _ = Command::new("cargo").args(["run", "--bin", "symbol_graph"]).output();
             println!("\x1b[35m>> [IMPACT_ENGINE] Calculating Blast Radius...\x1b[0m");
             let _ = Command::new("cargo")
-                .args(["run", "--bin", "impact_analyzer", "--", "--target", target_func, "--symbol-graph", "repository_analysis/symbol_graph.json", "--symbol-graph", "repository_analysis/symbol_graph.json", "--output", "repository_analysis/impact/latest_report.json"])
+                .args([
+                    "run",
+                    "--bin",
+                    "impact_analyzer",
+                    "--",
+                    "--target",
+                    target_func,
+                    "--symbol-graph",
+                    "repository_analysis/symbol_graph.json",
+                    "--symbol-graph",
+                    "repository_analysis/symbol_graph.json",
+                    "--output",
+                    "repository_analysis/impact/latest_report.json",
+                ])
                 .output();
 
             let mut blast_radius_info = String::new();

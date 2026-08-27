@@ -41,7 +41,7 @@ impl DagPlanner {
             return Err("Planner API key is missing from .env".into());
         }
 
-        let system_prompt = "You are the Nexus Executive Cortex. Break the user's objective into a Directed Acyclic Graph (DAG) of discrete micro-agent tasks. Output ONLY a raw JSON array of objects. Do not include markdown formatting, backticks, or conversational text. Schema: [{\"id\": \"task_1\", \"description\": \"Action required...\", \"required_tier\": \"light\" or \"heavy\", \"dependencies\": [\"array_of_task_ids_this_waits_on\"]}]";
+        let system_prompt = "You are the Nexus Executive Cortex. Break the user's objective into a Directed Acyclic Graph (DAG) of discrete micro-agent tasks. Output ONLY a raw JSON array of objects. Do not include markdown formatting, backticks, or conversational text. Schema: [{\"id\": \"task_1\", \"description\": \"Action required...\", \"required_tier\": \"light\" or \"heavy\", \"dependencies\": [\"array_of_task_ids_this_waits_on\"]}]\n\nCRITICAL RULE 1: You MUST preserve ALL specific file paths, output formats, and tool names requested by the user in your task descriptions! If the user asks to write to a specific .md or .json file, the final task description MUST explicitly state to write that exact file.";
 
         let payload = json!({
             "model": model,
@@ -59,8 +59,13 @@ impl DagPlanner {
             .send_json(payload)?;
 
         let response_json: serde_json::Value = response.into_json()?;
-        let mut text =
-            response_json["choices"][0]["message"]["content"].as_str().unwrap_or("[]").to_string();
+        let mut text = match response_json["choices"][0]["message"]["content"].as_str() {
+            Some(t) if !t.trim().is_empty() => t.to_string(),
+            _ => {
+                eprintln!("[planner] empty/missing content — treating as failure");
+                return Err("planner: missing choices[0].message.content".into());
+            }
+        };
 
         // Sanitize LLM formatting drift
         text = text.replace("```json", "").replace("```", "").trim().to_string();

@@ -1,0 +1,1 @@
+[{"type":"read_file_chunk","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/epistemic_engine.rs","start_line":560,"max_lines":80,"reasoning":"Read the adversarial critic grounding preamble to extract concrete Red Team critique loop patterns"}]

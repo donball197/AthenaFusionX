@@ -53,13 +53,14 @@ impl ApiClient {
         let body = if ep.is_gemini {
             json!({
                 "contents": [{ "parts": [{ "text": prompt }] }],
-                "generationConfig": { "temperature": temperature }
+                "generationConfig": { "temperature": temperature, "maxOutputTokens": 8192 }
             })
         } else {
             json!({
                 "model": ep.model,
                 "messages": [{ "role": "user", "content": prompt }],
-                "temperature": temperature
+                "temperature": temperature,
+                "max_tokens": 8192
             })
         };
 
@@ -108,8 +109,8 @@ impl ApiClient {
         while let Some(c) = chars.next() {
             if c == '\\' {
                 match chars.peek() {
-                    Some('"') | Some('\\') | Some('/') | Some('n') | Some('t')
-                    | Some('r') | Some('b') | Some('f') | Some('u') => out.push(c),
+                    Some('"') | Some('\\') | Some('/') | Some('n') | Some('t') | Some('r')
+                    | Some('b') | Some('f') | Some('u') => out.push(c),
                     _ => {
                         out.push('\\');
                         out.push('\\');
@@ -139,20 +140,32 @@ impl ApiClient {
             .find("<payload>")
             .ok_or_else(|| anyhow!("Missing <payload> in model output"))?
             + "<payload>".len();
-        let end = text
-            .rfind("</payload>")
-            .ok_or_else(|| anyhow!("Missing </payload> in model output"))?;
+        
+        // Fallback: if the model truncates and misses the closing tag, 
+        // take everything from <payload> to the end of the text.
+        let end = text.rfind("</payload>").unwrap_or(text.len());
+        
         if end < start {
             return Err(anyhow!("Malformed <payload> block"));
         }
+        
         Ok(Self::strip_code_fences(&text[start..end]))
     }
 
-    pub fn triage_vulnerability(finding_type: &str, code_snippet: &str) -> Result<(String, String, String)> {
-        Self::with_retry_transient(|| Self::triage_vulnerability_attempt(finding_type, code_snippet), 3)
+    pub fn triage_vulnerability(
+        finding_type: &str,
+        code_snippet: &str,
+    ) -> Result<(String, String, String)> {
+        Self::with_retry_transient(
+            || Self::triage_vulnerability_attempt(finding_type, code_snippet),
+            3,
+        )
     }
 
-    fn triage_vulnerability_attempt(finding_type: &str, code_snippet: &str) -> Result<(String, String, String)> {
+    fn triage_vulnerability_attempt(
+        finding_type: &str,
+        code_snippet: &str,
+    ) -> Result<(String, String, String)> {
         thread::sleep(Duration::from_millis(2000));
         let prompt = format!(
             "You are an elite Security Triage AI.\n\
@@ -171,9 +184,12 @@ impl ApiClient {
         );
 
         let text = Self::call(&prompt, 0.1)?;
-        let start = text.find("<payload>").map(|i| i + "<payload>".len())
+        let start = text
+            .find("<payload>")
+            .map(|i| i + "<payload>".len())
             .unwrap_or_else(|| text.find('{').unwrap_or(0));
-        let end = text.rfind("</payload>")
+        let end = text
+            .rfind("</payload>")
             .unwrap_or_else(|| text.rfind('}').map(|i| i + 1).unwrap_or(text.len()))
             .max(start);
         let json_str = Self::strip_code_fences(&text[start..end]);
@@ -195,14 +211,22 @@ impl ApiClient {
         ))
     }
 
-    pub fn generate_security_patch(finding_type: &str, code_snippet: &str, lang: &str) -> Result<String> {
+    pub fn generate_security_patch(
+        finding_type: &str,
+        code_snippet: &str,
+        lang: &str,
+    ) -> Result<String> {
         Self::with_retry_transient(
             || Self::generate_security_patch_attempt(finding_type, code_snippet, lang),
             3,
         )
     }
 
-    fn generate_security_patch_attempt(finding_type: &str, code_snippet: &str, lang: &str) -> Result<String> {
+    fn generate_security_patch_attempt(
+        finding_type: &str,
+        code_snippet: &str,
+        lang: &str,
+    ) -> Result<String> {
         thread::sleep(Duration::from_millis(2000));
         let prompt = format!(
             "You are an elite Security Auto-Healer.\n\
@@ -211,18 +235,20 @@ impl ApiClient {
              ```\n\
              {}\n\
              ```\n\
-             Return ONLY the replacement code, wrapped EXACTLY in <payload></payload> tags.\n\
-             No markdown fences, no explanations.\n\
-             Constraints:\n\
-             1. For SQL injection: use prepared statements / parameterized queries. Do NOT merely escape strings - escaping-only patches are rejected.\n\
-             2. In PHP, mysqli_stmt_bind_param takes arguments BY REFERENCE: every bound argument must be a plain variable. Hoist expressions like md5($x) into a variable first.\n\
-             3. The vulnerable statement(s) must be REMOVED, not kept beside the fix.\n\
-             4. Match the snippet's indentation.",
+             Return ONLY the replacement code, wrapped EXACTLY in <payload></payload> tags. No explanations.\n\n\
+             VIBE CODING RULES:\n\
+             1. Replace the entire concatenation and execution pattern with a parameterized prepared statement (e.g., `$stmt = $con->prepare(...)`, `bind_param`, `execute()`).\n\
+             2. Match the exact indentation of the provided snippet.\n\
+             3. CRITICAL AST BOUNDARY: If the provided snippet ends with an opening brace `{{`, your replacement MUST ALSO end with an opening brace `{{` to keep the file's syntax balanced.\n\
+             4. Do not output `<?php` or `?>` tags unless they were in the original snippet.",
             finding_type, lang, code_snippet
         );
 
         let text = Self::call(&prompt, 0.1)?;
-        Self::extract_payload(&text)
+        match Self::extract_payload(&text) {
+            Ok(p) => Ok(p),
+            Err(_) => Ok(Self::strip_code_fences(&text)), // Fallback to raw text if tags are missing
+        }
     }
 
     pub fn generate_optimization(symbol: &str, code_snippet: &str) -> Result<String> {
@@ -234,7 +260,12 @@ impl ApiClient {
         Self::extract_payload(&text)
     }
 
-    pub fn query_model(instruction: &str, symbol: &str, code_snippet: &str, strategy: &str) -> Result<String> {
+    pub fn query_model(
+        instruction: &str,
+        symbol: &str,
+        code_snippet: &str,
+        strategy: &str,
+    ) -> Result<String> {
         Self::query_model_internal(instruction, symbol, code_snippet, strategy, None)
     }
 
@@ -356,9 +387,23 @@ impl ApiClient {
                     }
                 }
             }
+            let finish_reason = json["candidates"][0]["finishReason"].as_str().unwrap_or("").to_string();
+            if !finish_reason.is_empty() && finish_reason != "STOP" {
+                return Err(anyhow::anyhow!(
+                    "ast_tool: Gemini response did not finish normally (finishReason: {}). Partial text len={}",
+                    finish_reason, full_text.len()
+                ));
+            }
             Ok(full_text)
         } else {
-            Ok(json["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
+            {
+                let t = json["choices"][0]["message"]["content"].as_str().unwrap_or("").trim();
+                if t.is_empty() {
+                    Err(anyhow::anyhow!("ast_tool: empty model content"))
+                } else {
+                    Ok(t.to_string())
+                }
+            }
         }
     }
 }

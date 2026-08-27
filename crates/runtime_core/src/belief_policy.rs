@@ -32,11 +32,6 @@ impl BeliefDecisionPolicy {
             (BeliefAction::Abandon, "stub: confidence below abandon threshold")
         };
 
-        BeliefDecision {
-            belief_id,
-            confidence,
-            action,
-            reason: reason.to_string(),
-        }
+        BeliefDecision { belief_id, confidence, action, reason: reason.to_string() }
     }
 }

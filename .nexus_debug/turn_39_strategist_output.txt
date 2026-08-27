@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"ls -la /home/donball197/AthenaFusionX/apps/ && echo \"---CRATES---\" && ls -la /home/donball197/AthenaFusionX/crates/","reasoning":"Explore the apps and crates directories to understand the project structure for both Nexus Singularity and any Warp Terminal related code.","confidence":0.95}]

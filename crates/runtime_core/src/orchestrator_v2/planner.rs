@@ -20,17 +20,27 @@ impl PlannerAgent {
         directive: &str,
     ) -> Result<TaskGraph> {
         let prompt = format!(
-            "You are the Lead DAG Planner Agent for AthenaFusionX.\n\
-             Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.\n\
-             CRITICAL RULE [GRANULARITY]: Create exactly as many nodes as necessary. If the directive is to write or generate a single cohesive document, DO NOT split it into multiple nodes; handle it in a single node to maintain context.
-             CRITICAL RULE [JSON ESCAPING]: Do NOT use raw newlines inside JSON strings. Use \n.\n\
-             CRITICAL RULE [ROUTER LOCATION]: The Executive Cortex router is located at 'crates/runtime_core/src/router.rs'. Always use 'crates/runtime_core/src/router.rs' in task objectives when referring to the router.\n\
-             CRITICAL RULE [DEPENDENCY INFERENCE]: If one task reads, parses, or consumes a file or resource that another task generates, writes, or produces, the consuming task's 'deps' array MUST include the producing task's id. Never schedule a read of a path before the task that creates it.\n\
-             CRITICAL RULE [TERMINAL STEPS]: A directive step that is purely a control-flow or meta instruction (e.g. \"halt\", \"stop\", \"done\", \"finish execution\", \"end mission\") is NOT real work and MUST NOT become its own node. Omit it from the graph entirely -- mission completion is handled automatically once all real work nodes finish.\n\
-             CRITICAL RULE [CONDITIONAL REMEDIATION]: Do not create a separate downstream node whose entire purpose is to \"fix\", \"remediate\", or \"correct\" something that a prior diagnostic node has not yet confirmed exists. When a directive says something like \"check X, then fix any issues found\" or \"run tests and correct all errors\", scope that as a SINGLE node (e.g. \"check X and fix any issues found\") rather than splitting diagnosis and remediation into two nodes -- the outcome depends on what the diagnostic step actually discovers, and a separate node presupposes there is necessarily something to fix.\n\
-             DIRECTIVE: {}\n\
-             OUTPUT ONLY VALID JSON with this exact structure:\n\
-             {{\n  \"nodes\": {{\n    \"task_1\": {{\n      \"id\": \"task_1\",\n      \"deps\": [],\n      \"required_agent\": \"CodeAnalyzer\",\n      \"objective\": \"...\"\n    }}\n  }}\n}}",
+            r#"You are the Lead DAG Planner Agent for AthenaFusionX.
+Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.
+CRITICAL RULE [GRANULARITY]: Create exactly as many nodes as necessary. If the directive is to write or generate a single cohesive document, DO NOT split it into multiple nodes; handle it in a single node to maintain context.
+CRITICAL RULE [JSON ESCAPING]: Do NOT use raw newlines inside JSON strings. Use \n.
+CRITICAL RULE [ROUTER LOCATION]: The Executive Cortex router is located at 'crates/runtime_core/src/router.rs'. Always use 'crates/runtime_core/src/router.rs' in task objectives when referring to the router.
+CRITICAL RULE [DEPENDENCY INFERENCE]: If one task reads, parses, or consumes a file or resource that another task generates, writes, or produces, the consuming task's 'deps' array MUST include the producing task's id. Never schedule a read of a path before the task that creates it.
+CRITICAL RULE [TERMINAL STEPS]: A directive step that is purely a control-flow or meta instruction with no tool call and no file output (e.g. "halt", "stop", "done", "finish execution", "end mission") is NOT real work and MUST NOT become its own node. Omit it from the graph entirely -- mission completion is handled automatically once all real work nodes finish.
+CRITICAL RULE [WRITE STEPS ARE NEVER TERMINAL]: Any instruction to write, export, generate, or synthesize a file or report (e.g. "use synthesize_report", "write to X.md", "output a document to Y") IS real work and MUST become its own node with the exact output file path stated in its objective, even when the directive immediately follows it with a halt instruction. Never omit a write/output step.
+CRITICAL RULE [CONDITIONAL REMEDIATION]: Do not create a separate downstream node whose entire purpose is to "fix", "remediate", or "correct" something that a prior diagnostic node has not yet confirmed exists. When a directive says something like "check X, then fix any issues found" or "run tests and correct all errors", scope that as a SINGLE node (e.g. "check X and fix any issues found") rather than splitting diagnosis and remediation into two nodes -- the outcome depends on what the diagnostic step actually discovers, and a separate node presupposes there is necessarily something to fix.
+DIRECTIVE: {}
+OUTPUT ONLY VALID JSON with this exact structure:
+{{
+  "nodes": {{
+    "task_1": {{
+      "id": "task_1",
+      "deps": [],
+      "required_agent": "CodeAnalyzer",
+      "objective": "..."
+    }}
+  }}
+}}"#,
             directive
         );
 
@@ -42,7 +52,7 @@ impl PlannerAgent {
         let text_res = crate::epistemic_engine::EpistemicEngine::safe_api_call(
             client,
             api_key,
-            &crate::model_config::get_heavy_models(),
+            &crate::model_config::get_planner_models(),
             &payload,
         )
         .await;
@@ -81,7 +91,6 @@ impl PlannerAgent {
         if let Ok(nodes_arr) = serde_json::from_str::<Vec<serde_json::Value>>(&clean) {
             let mut map = HashMap::new();
             for (idx, item) in nodes_arr.into_iter().enumerate() {
-                // FIX: Item #13 Unwrap Masking Error patched with proper tracing fallback
                 let id = item
                     .get("id")
                     .and_then(|v| v.as_str())
@@ -157,6 +166,10 @@ impl PlannerAgent {
             .iter()
             .filter(|(_, node)| {
                 let obj = node.objective.trim().to_lowercase();
+                // ⚡ FIX: Don't strip nodes that include a file path (a write step)
+                if obj.contains(".md") || obj.contains(".json") || obj.contains(".rs") {
+                    return false;
+                }
                 obj == "halt"
                     || obj == "halt."
                     || obj == "halt execution"

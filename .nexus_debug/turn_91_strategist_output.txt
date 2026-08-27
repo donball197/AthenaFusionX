@@ -1,0 +1,1 @@
+[{"type":"read_file_chunk","path":"apps/warp/crates/computer_use/src/lib.rs","start_line":400,"max_lines":200,"reasoning":"Read the Action enum and Options in Warp's computer_use to understand the action vocabulary."}]

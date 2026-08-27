@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"apps/warp/crates/warp_terminal","query":"shell integration","reasoning":"Find how Warp hooks the shell and reads terminal state"}]

@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"find crates/runtime_core/src -name \"*.rs\" | xargs grep -l \"CorticalLoop\\|RoboticExecutor\\|ActionGate\"","reasoning":"Get exact file paths for the three target modules to analyze.","confidence":0.95}]

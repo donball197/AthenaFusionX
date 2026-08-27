@@ -18,6 +18,23 @@ impl ContractEvaluator {
         current_belief: f32,
         mission: &str,
     ) -> ContractStatus {
+        // PATCH 1c: Artifact write gate — if the directive requires specific
+        // output files (e.g. "synthesize_report ... to apps/foo.md"), and they
+        // have not yet been physically written, force Strategize instead of
+        // Satisfied. Without this, belief inflates from recon alone and the
+        // agent never writes the deliverable.
+        let mission_contract =
+            crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", mission);
+        let missing: Vec<&str> = mission_contract
+            .required_artifact_paths
+            .iter()
+            .map(|a| a.path.as_str())
+            .filter(|p| !crate::evidence_markers::has_artifact_write(local_evidence, p))
+            .collect();
+        if !missing.is_empty() {
+            return ContractStatus::NoEvidence;
+        }
+
         let has_mutation = has_mutation_marker(local_evidence);
         let has_recon = has_recon_marker(local_evidence);
 
@@ -56,22 +73,16 @@ impl ContractEvaluator {
 
         let evidence_lower = evidence.to_lowercase();
 
-        let and_segments: Vec<&str> = objective_part
-            .split(" and ")
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let and_segments: Vec<&str> =
+            objective_part.split(" and ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
         if and_segments.is_empty() {
             return false;
         }
 
         and_segments.iter().all(|segment| {
-            let or_parts: Vec<&str> = segment
-                .split(" or ")
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let or_parts: Vec<&str> =
+                segment.split(" or ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
             if or_parts.len() <= 1 {
                 segment

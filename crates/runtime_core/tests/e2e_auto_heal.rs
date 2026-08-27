@@ -23,15 +23,20 @@ fn test_php_sqli_auto_heal() {
     let original = std::fs::read_to_string(&target_file).unwrap();
 
     let success = run_ast_tool(&[
-        "audit", "--path", fixture_dir.to_str().unwrap(),
-        "--ai-triage", "--auto-heal", "--generate-report",
+        "audit",
+        "--path",
+        fixture_dir.to_str().unwrap(),
+        "--ai-triage",
+        "--auto-heal",
+        "--generate-report",
     ]);
     assert!(success, "nexus_ast_tool audit failed");
 
     let patched = std::fs::read_to_string(&target_file).unwrap_or_default();
     assert!(
         patched.contains("mysqli_prepare") || patched.contains("mysqli_stmt_bind_param"),
-        "File was not patched with prepared statements. Content:\n{}", patched
+        "File was not patched with prepared statements. Content:\n{}",
+        patched
     );
     std::fs::write(&target_file, original).ok();
 }
@@ -45,8 +50,12 @@ fn test_python_cmdi_auto_heal() {
     let original = std::fs::read_to_string(&target_file).unwrap();
 
     let success = run_ast_tool(&[
-        "audit", "--path", fixture_dir.to_str().unwrap(),
-        "--ai-triage", "--auto-heal", "--generate-report",
+        "audit",
+        "--path",
+        fixture_dir.to_str().unwrap(),
+        "--ai-triage",
+        "--auto-heal",
+        "--generate-report",
     ]);
     assert!(success, "nexus_ast_tool audit failed");
 
@@ -55,7 +64,8 @@ fn test_python_cmdi_auto_heal() {
         patched.contains("subprocess.run")
             && !patched.contains("os.popen")
             && !patched.contains("os.system"),
-        "File was not patched with safe subprocess. Content:\n{}", patched
+        "File was not patched with safe subprocess. Content:\n{}",
+        patched
     );
     std::fs::write(&target_file, original).ok();
 }

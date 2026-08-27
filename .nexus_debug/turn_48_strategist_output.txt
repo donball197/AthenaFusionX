@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src","query":"critic|red_team|adversarial|critique","reasoning":"Find the Red Team critique loop implementation in runtime_core"}]

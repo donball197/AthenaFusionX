@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"apps/warp/crates/warp_terminal","query":"output block","reasoning":"Understand how Warp reads terminal output blocks for AI grounding"}]

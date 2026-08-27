@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"cd /home/donball197/AthenaFusionX && ls apps/warp/crates/ 2>/dev/null && echo \"---WARP APP---\" && ls apps/warp/app/ 2>/dev/null && echo \"---WARP AGENTS---\" && ls apps/warp/agents/ 2>/dev/null","reasoning":"Explore Warp's directory structure to understand its architecture and locate shell integration code.","confidence":0.95}]

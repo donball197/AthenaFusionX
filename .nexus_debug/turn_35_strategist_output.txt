@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"crates/runtime_core/src/executor.rs","reasoning":"Read the full RoboticExecutor module to understand Athena's action execution architecture."}]

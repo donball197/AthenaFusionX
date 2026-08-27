@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"/home/donball197/AthenaFusionX/apps/warp/specs/x11-background-computer-use/TECH.md","reasoning":"Read the computer use technical specification to understand the implementation"}]

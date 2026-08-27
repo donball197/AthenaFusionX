@@ -114,7 +114,14 @@ impl MemoryCortex {
         event: crate::belief_feedback::BeliefUpdateEvent,
     ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(&event)?;
-        self.store_memory("belief_update", &event.belief_id.to_string(), &payload, "Internal", None).await?;
+        self.store_memory(
+            "belief_update",
+            &event.belief_id.to_string(),
+            &payload,
+            "Internal",
+            None,
+        )
+        .await?;
         Ok(())
     }
 
@@ -123,8 +130,14 @@ impl MemoryCortex {
         decision: crate::belief_policy::BeliefDecision,
     ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(&decision)?;
-        self.store_memory("belief_decision", &decision.belief_id.to_string(), &payload, "Internal", None)
-            .await?;
+        self.store_memory(
+            "belief_decision",
+            &decision.belief_id.to_string(),
+            &payload,
+            "Internal",
+            None,
+        )
+        .await?;
         Ok(())
     }
 
@@ -133,7 +146,14 @@ impl MemoryCortex {
         decision: crate::goal_adaptation::GoalAdaptationDecision,
     ) -> anyhow::Result<()> {
         let payload = serde_json::to_string(&decision)?;
-        self.store_memory("goal_adaptation", &decision.goal_id.to_string(), &payload, "Internal", None).await?;
+        self.store_memory(
+            "goal_adaptation",
+            &decision.goal_id.to_string(),
+            &payload,
+            "Internal",
+            None,
+        )
+        .await?;
         Ok(())
     }
 

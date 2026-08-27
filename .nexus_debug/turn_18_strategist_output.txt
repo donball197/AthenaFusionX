@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"/home/donball197/AthenaFusionX/apps/warp/app/src","query":"terminal output block","reasoning":"Search for how AI reads terminal output blocks in the actual source code"}]

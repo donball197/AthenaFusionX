@@ -87,45 +87,21 @@ impl MicroAgent {
         let default_model = std::env::var("NEXUS_HEAVY_MODEL")
             .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
         let model = context.model_override.as_deref().unwrap_or(&default_model);
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-            model,
-            api_key.trim()
-        );
 
+        // 1. Build the enriched text first
         let system_instruction =
-            context.system_prompt.unwrap_or_else(|| "You are NEXUS.".to_string());
+            context.system_prompt.clone().unwrap_or_else(|| "You are NEXUS.".to_string());
 
-        let mut enriched = format!(
-            "SYSTEM: {}
-
-USER REQUEST:
-{}",
-            system_instruction, user_text
-        );
+        let mut enriched =
+            format!("SYSTEM: {}\n\nUSER REQUEST:\n{}", system_instruction, user_text);
         if let Some(code) = &context.file_content {
-            enriched += &format!(
-                "
-
-ACTIVE FILE CONTENT:
-```
-{}
-```",
-                code
-            );
+            enriched += &format!("\n\nACTIVE FILE CONTENT:\n```\n{}\n```", code);
         }
         if let Some(logs) = &context.terminal_log {
-            enriched += &format!(
-                "
-
-RECENT TERMINAL LOGS:
-```
-{}
-```",
-                logs
-            );
+            enriched += &format!("\n\nRECENT TERMINAL LOGS:\n```\n{}\n```", logs);
         }
 
+        // 2. Setup and trim history with the new text
         let mut history: Vec<Value> = self.memory.lock().unwrap().iter().cloned().collect();
         trim_history_token_aware(&mut history, &enriched);
 
@@ -134,16 +110,48 @@ RECENT TERMINAL LOGS:
             "parts": [{"text": enriched}]
         }));
 
-        let payload = json!({
-            "contents": history,
-            "generationConfig": {
-                "maxOutputTokens": 8192,
-                "temperature": 0.15
+        // 3. Now branch on API Provider with `history` fully available
+        let is_gemini = model.contains("gemini") || model.contains("gemma");
+        let (url, req_payload) = if is_gemini {
+            let u = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+                model,
+                api_key.trim()
+            );
+            let p = json!({
+                "contents": history,
+                "generationConfig": { "maxOutputTokens": 8192, "temperature": 0.15 }
+            });
+            (u, p)
+        } else {
+            let u = "https://integrate.api.nvidia.com/v1/chat/completions".to_string();
+
+            let mut messages = Vec::new();
+            if let Some(sys) = &context.system_prompt {
+                messages.push(json!({"role": "system", "content": sys}));
             }
-        });
+            for msg in &history {
+                if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+                    if let Some(text) = msg.pointer("/parts/0/text").and_then(|t| t.as_str()) {
+                        let mapped_role = if role == "model" { "assistant" } else { "user" };
+                        messages.push(json!({"role": mapped_role, "content": text}));
+                    }
+                }
+            }
+
+            let p = json!({
+                "model": model,
+                "messages": messages,
+                "temperature": 0.15,
+                "max_tokens": 8192,
+                "stream": true
+            });
+            (u, p)
+        };
 
         let response =
-            client.post(&url).json(&payload).send().await.context("API request failed")?;
+            client.post(&url).json(&req_payload).send().await.context("API request failed")?;
+
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
         let mut stream = response.bytes_stream();

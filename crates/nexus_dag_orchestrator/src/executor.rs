@@ -36,10 +36,36 @@ impl DagExecutor {
         let bin_path = Self::get_minion_binary_path();
 
         for task_id in ready_tasks {
+            // 1. Gather upstream evidence
+            let mut context_block = String::new();
+            {
+                let node = self.manager.nodes.get(&task_id).unwrap();
+                for dep_id in &node.dependencies {
+                    if let Some(dep_node) = self.manager.nodes.get(dep_id) {
+                        let out = if dep_node.result_evidence.len() > 4000 {
+                            format!("{}... [TRUNCATED]", &dep_node.result_evidence[..4000])
+                        } else {
+                            dep_node.result_evidence.clone()
+                        };
+                        context_block.push_str(&format!(
+                            "--- [EVIDENCE FROM PREVIOUS STEP: {}] ---\n{}\n\n",
+                            dep_id, out
+                        ));
+                    }
+                }
+            }
+
+            // 2. Mark in progress and build final payload
             let (tier, description) = {
                 let node = self.manager.nodes.get_mut(&task_id).unwrap();
                 node.status = TaskStatus::InProgress;
                 (node.required_tier.clone(), node.description.clone())
+            };
+
+            let combined_mission = if context_block.is_empty() {
+                description.clone()
+            } else {
+                format!("{}\n\nBACKGROUND CONTEXT (Results from previous steps):\n{}", description, context_block)
             };
 
             println!("\n==================================================");
@@ -49,30 +75,38 @@ impl DagExecutor {
                 tier.to_uppercase()
             );
             println!("Objective: {}", description);
+            if !context_block.is_empty() {
+                println!("[+] Injecting {} bytes of historical DAG evidence.", context_block.len());
+            }
             println!("==================================================");
 
-            // Spawn the minion with live stdout inheritance so ReAct sandbox logs stream in real-time
-            let status = Command::new(&bin_path)
+            // 3. Spawn the minion, piping stdout so we can capture the final evidence
+            let output = Command::new(&bin_path)
                 .arg("--tier")
                 .arg(&tier)
-                .arg(&description)
-                .stdout(Stdio::inherit())
+                .arg(&combined_mission)
+                .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
-                .status();
+                .output();
 
-            match status {
-                Ok(exit_status) if exit_status.success() => {
+            match output {
+                Ok(out) if out.status.success() => {
+                    let minion_stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                    print!("{}", minion_stdout); // Stream it back to the console
                     println!("\n[Orchestrator] Task [{}] Completed Successfully.", task_id);
-                    self.manager.complete_task(&task_id);
+                    self.manager.complete_task(&task_id, minion_stdout);
                     executed_count += 1;
                 }
-                Ok(exit_status) => {
+                Ok(out) => {
+                    let minion_stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                    print!("{}", minion_stdout);
                     eprintln!(
                         "\n[Orchestrator] Task [{}] FAILED with code: {}",
-                        task_id, exit_status
+                        task_id, out.status
                     );
                     if let Some(node) = self.manager.nodes.get_mut(&task_id) {
                         node.status = TaskStatus::Failed;
+                        node.result_evidence = minion_stdout;
                     }
                 }
                 Err(e) => {

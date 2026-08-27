@@ -1,0 +1,1 @@
+[{"type":"search_code","path":"apps/warp/app/src/ai","query":"computer use","reasoning":"Find Warp's computer use mechanics"}]

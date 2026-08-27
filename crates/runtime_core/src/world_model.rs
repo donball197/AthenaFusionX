@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceNode {
@@ -13,11 +14,28 @@ pub struct WorkspaceNode {
 pub struct WorldModel {
     pub nodes: HashMap<String, WorkspaceNode>,
     pub last_refresh: u64,
+    /// Evidence produced by each completed DAG node this mission, keyed by node_id.
+    /// Every node's semantic_query() call surfaces this automatically -- no agent
+    /// has to think to ask for it, unlike search_memory which is opt-in per turn.
+    pub node_evidence: Mutex<HashMap<String, String>>,
 }
 
 impl WorldModel {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Called once a DAG node finishes. Makes its evidence visible to every
+    /// subsequent node's semantic_query() automatically, not just direct
+    /// dependents via task_manager.rs's LINEAGE CONTEXT.
+    pub fn record_node_evidence(&self, node_id: &str, objective: &str, evidence: &str) {
+        if let Ok(mut map) = self.node_evidence.lock() {
+            let entry = format!(
+                "[NODE {} OBJECTIVE]: {}\n[NODE {} EVIDENCE]:\n{}",
+                node_id, objective, node_id, evidence
+            );
+            map.insert(node_id.to_string(), entry);
+        }
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
@@ -34,7 +52,7 @@ impl WorldModel {
         None
     }
 
-    pub async fn semantic_query(&self, _mission: &str) -> Vec<String> {
+    pub async fn semantic_query(&self, mission: &str) -> Vec<String> {
         let mut chunks = Vec::new();
 
         // 1. Inject Repository File Tree Context (Safe Rust Iteration)
@@ -56,6 +74,39 @@ impl WorldModel {
         //     chunks.push("[REPOSITORY FILE TREE (Depth 4)]".to_string());
         //     chunks.push(files.chars().take(6000).collect());
         // }
+
+        // Phase 1: surface every other completed node's evidence this mission,
+        // ranked by simple keyword overlap with this node's own mission text.
+        // Not embeddings yet (see search_memory / VectorVault for that gap) --
+        // but real usage of `mission`, and it fixes agents working blind on
+        // anything outside their direct DAG dependency chain.
+        if let Ok(map) = self.node_evidence.lock() {
+            if !map.is_empty() {
+                let mission_words: Vec<String> = mission
+                    .to_lowercase()
+                    .split_whitespace()
+                    .filter(|w| w.len() > 3)
+                    .map(|w| w.to_string())
+                    .collect();
+
+                let mut scored: Vec<(usize, &String)> = map
+                    .values()
+                    .map(|entry| {
+                        let lower = entry.to_lowercase();
+                        let score = mission_words.iter().filter(|w| lower.contains(w.as_str())).count();
+                        (score, entry)
+                    })
+                    .collect();
+                scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+
+                let mut evidence_block = String::from("[PRIOR MISSION EVIDENCE FROM OTHER NODES]\n");
+                for (_, entry) in scored {
+                    evidence_block.push_str(entry);
+                    evidence_block.push_str("\n---\n");
+                }
+                chunks.push(evidence_block);
+            }
+        }
 
         // 2. Inject Verified Machine-Readable Tool Contracts into Context
         chunks.push("\n[AVAILABLE WORKSPACE TOOL CONTRACTS]".to_string());

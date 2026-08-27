@@ -1,0 +1,1 @@
+[{"type":"execute_command","command":"find apps/warp/app/src/ai -name \"*.rs\" | xargs grep -l \"computer use\\|computer_use\\|terminal\\|execute\\|shell\\|command\" 2>/dev/null | head -50","reasoning":"Find Warp AI files related to computer use, terminal, and command execution","confidence":0.95}]

@@ -334,7 +334,16 @@ fn main() -> Result<()> {
     let output_path = parse_arg(&args, "--output").map(PathBuf::from);
 
     let mut edges = Vec::new();
-    let mut total_nodes = 40932;
+    let mut total_nodes = 40932; // Fallback default
+
+    // Attempt to read actual node count from symbol_graph.json
+    if let Ok(graph_content) = std::fs::read_to_string("repository_analysis/symbol_graph.json") {
+        if let Ok(graph_val) = serde_json::from_str::<serde_json::Value>(&graph_content) {
+            if let Some(nodes_arr) = graph_val.get("nodes").and_then(|n| n.as_array()) {
+                total_nodes = nodes_arr.len();
+            }
+        }
+    }
     let mut extracted_target = None;
 
     let graph_paths = vec![

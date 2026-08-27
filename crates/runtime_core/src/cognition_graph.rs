@@ -47,6 +47,7 @@ pub struct GraphEdge {
 }
 
 #[derive(Debug, Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct CognitiveGraph {
     pub nodes: HashMap<Uuid, CognitiveNode>,
     pub edges: Vec<GraphEdge>,

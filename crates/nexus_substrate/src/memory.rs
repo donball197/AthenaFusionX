@@ -41,7 +41,7 @@ impl MemoryPalace {
         let pool =
             SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?;
 
-        let vault = Arc::new(Mutex::new(VectorVault::new(768, 4)));
+        let vault = Arc::new(Mutex::new(VectorVault::new(384, 4)));
 
         let palace = Self { pool, vault };
         palace.init_full_schema().await?;
@@ -281,7 +281,7 @@ impl MemoryPalace {
         sqlx::query("DELETE FROM system_insights").execute(&self.pool).await?;
 
         let mut vault = self.vault.lock();
-        *vault = VectorVault::new(768, 4);
+        *vault = VectorVault::new(384, 4);
 
         Ok(())
     }

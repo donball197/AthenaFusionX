@@ -26,8 +26,10 @@ impl NexusConfig {
             .collect();
 
         Self {
-            heavy_model: env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string()),
-            light_model: env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string()),
+            heavy_model: env::var("NEXUS_HEAVY_MODEL")
+                .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string()),
+            light_model: env::var("NEXUS_LIGHT_MODEL")
+                .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string()),
             light_cascade,
             heavy_cascade,
         }

@@ -1,0 +1,1 @@
+[{"type":"read_file_chunk","path":"apps/warp/crates/computer_use/src/bin/use_computer.rs","start_line":1,"max_lines":120,"reasoning":"Understand Warp's computer use CLI mechanics"}]

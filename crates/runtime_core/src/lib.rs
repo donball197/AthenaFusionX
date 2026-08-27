@@ -1,4 +1,3 @@
-pub mod evidence_markers;
 pub mod agent_protocol;
 pub mod arbiter_agent;
 pub mod cli_utils;
@@ -12,6 +11,7 @@ pub mod diff;
 pub mod distributed_scheduler;
 pub mod epistemic_engine;
 pub mod event_bus;
+pub mod evidence_markers;
 pub mod evolution_engine;
 pub mod executor;
 pub mod fitness_evaluator;
@@ -30,6 +30,7 @@ pub mod orchestrator;
 pub mod orchestrator_v2;
 pub mod podman;
 pub mod policy;
+pub mod provider;
 pub mod router;
 pub mod runtime_metrics;
 pub mod shared_state;
@@ -39,40 +40,36 @@ pub mod wasm_forge;
 pub mod wasm_runtime;
 pub mod world_model;
 
-pub mod verification;
-
-pub mod intent_contract;
-
-pub mod motor_cortex;
-
-pub mod cognitive_events;
+pub mod action_gate;
+pub mod bayesian_calibration;
+pub mod action_intercept;
+pub mod ast_editor;
+pub mod belief_causality;
+pub mod belief_feedback;
+pub mod belief_policy;
+pub mod belief_transition;
+pub mod belief_update;
+pub mod belief_validation;
 pub mod causal_recall;
+pub mod client;
+pub mod cognitive_events;
+pub mod completion_engine;
+pub mod config;
 pub mod evidence;
+pub mod executive_cortex;
+pub mod goal_adaptation;
+pub mod intent_contract;
 pub mod memory_consolidation;
 pub mod memory_cortex;
 pub mod memory_recall;
 pub mod memory_semantic;
 pub mod memory_types;
-pub mod reflection_engine;
-pub mod goal_adaptation;
-pub mod executive_cortex;
-
-pub mod action_gate;
-pub mod action_intercept;
-pub mod completion_engine;
+pub mod motor_cortex;
 pub mod outcome_verifier;
+pub mod reflection_engine;
 pub mod tools;
-pub mod belief_policy;
-pub mod belief_update;
-pub mod belief_transition;
-pub mod belief_causality;
-pub mod belief_validation;
-pub mod belief_feedback;
-pub mod ast_editor;
-
-pub mod config;
-pub mod client;
-
-pub use config::NexusConfig;
+pub mod verification;
 pub use client::ApiClient;
+pub use config::NexusConfig;
+pub mod anti_loop;
 pub mod contract_status;

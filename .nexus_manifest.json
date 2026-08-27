@@ -145,6 +145,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-3.5-transcribe",
+    "context": "98.3K in / 32.8K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-3.6-flash",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
@@ -247,12 +253,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "baai/bge-m3",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "bigcode/starcoder2-15b",
     "context": "16K in / 4K out",
     "category": "GENERAL"
@@ -274,6 +274,12 @@
     "name": "deepseek-ai/deepseek-v4-flash-0731",
     "context": "128K in / 4K out",
     "category": "FLASH"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "deepseek-ai/deepseek-v4-pro-0813",
+    "context": "128K in / 4K out",
+    "category": "PRO"
   },
   {
     "provider": "Nvidia",
@@ -361,45 +367,15 @@
   },
   {
     "provider": "Nvidia",
-    "name": "meta/llama-3.1-70b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.1-8b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
     "name": "meta/llama-3.2-11b-vision-instruct",
     "context": "128K in / 4K out",
     "category": "VISION"
   },
   {
     "provider": "Nvidia",
-    "name": "meta/llama-3.2-1b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.2-3b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
     "name": "meta/llama-3.2-90b-vision-instruct",
     "context": "128K in / 4K out",
     "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-3.3-70b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
   },
   {
     "provider": "Nvidia",
@@ -547,18 +523,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-nano-8b-v1",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-    "context": "128K in / 4K out",
-    "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
     "context": "128K in / 4K out",
     "category": "SAFETY"
@@ -583,24 +547,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/llama-3.3-nemotron-super-49b-v1",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-nemotron-embed-1b-v2",
-    "context": "8K in / 4K out",
-    "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/llama-nemotron-embed-vl-1b-v2",
     "context": "8K in / 4K out",
     "category": "EMBEDDING"
@@ -616,12 +562,6 @@
     "name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
     "context": "32K in / 4K out",
     "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemoretriever-parse",
-    "context": "Unknown",
-    "category": "GENERAL"
   },
   {
     "provider": "Nvidia",
@@ -679,18 +619,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/nemotron-mini-4b-instruct",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-nano-12b-v2-vl",
-    "context": "4K in / 4K out",
-    "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/nemotron-nano-3-30b-a3b",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
@@ -709,24 +637,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/nv-embed-v1",
-    "context": "8K in / N/A",
-    "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nv-embedcode-7b-v1",
-    "context": "8K in / N/A",
-    "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nv-embedqa-e5-v5",
-    "context": "8K in / N/A",
-    "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/nv-embedqa-mistral-7b-v2",
     "context": "32K in / 4K out",
     "category": "EMBEDDING"
@@ -736,12 +646,6 @@
     "name": "nvidia/nvclip",
     "context": "Unknown",
     "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nvidia-nemotron-nano-9b-v2",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
   },
   {
     "provider": "Nvidia",
@@ -796,12 +700,6 @@
     "name": "stepfun-ai/step-3.7-flash",
     "context": "Unknown",
     "category": "FLASH"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "thinkingmachines/inkling",
-    "context": "Unknown",
-    "category": "GENERAL"
   },
   {
     "provider": "Nvidia",

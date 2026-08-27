@@ -57,6 +57,20 @@ pub async fn send_task(
             Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
         };
 
+    if let Some(expected_path) = crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", raw_directive)
+        .required_artifact_paths
+        .first()
+    {
+        let has_write_node = graph.nodes.values()
+            .any(|n| n.objective.contains(&expected_path.path));
+        if !has_write_node {
+            return format!(
+                "FRACTURE: Directive requires writing '{}' but Planner produced no node for it. Refusing to run an incomplete DAG.",
+                expected_path.path
+            );
+        }
+    }
+
     graph.compute_critical_path_priorities();
     let order = match graph.resolve_execution_order() {
         Ok(o) => o,
@@ -140,6 +154,7 @@ pub async fn send_task(
         };
 
         task_outputs.insert(task_id.clone(), execution_evidence.clone());
+        world_model.record_node_evidence(&task_id, &node.objective, &execution_evidence);
 
         // ⚡ FIX: Immediate Hard Abort if a dependency fails or runs out of turns
         if mission_had_failures

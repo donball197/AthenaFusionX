@@ -1,6 +1,0 @@
-apps/logic_cell/src/lib.rs:3:5: replace evaluate_signal -> i32 with 0
-apps/logic_cell/src/lib.rs:3:5: replace evaluate_signal -> i32 with 1
-apps/logic_cell/src/lib.rs:3:5: replace evaluate_signal -> i32 with -1
-apps/logic_cell/src/lib.rs:3:15: replace > with == in evaluate_signal
-apps/logic_cell/src/lib.rs:3:15: replace > with < in evaluate_signal
-apps/logic_cell/src/lib.rs:3:15: replace > with >= in evaluate_signal

@@ -32,10 +32,10 @@ tree_sitter_query: |
         (function_call_expression 
           function: (name) @func_name 
           (#match? @func_name "^(mysqli_query|mysqli_multi_query)$")
-        )
+        ) @danger.sql_injection
       )
     )
-  ) @danger.sql_injection
+  )
 
   (if_statement 
     condition: (parenthesized_expression 
@@ -43,16 +43,16 @@ tree_sitter_query: |
         (member_call_expression 
           name: (name) @func_name 
           (#match? @func_name "^(query|multi_query)$")
-        )
+        ) @danger.sql_injection
       )
     )
-  ) @danger.sql_injection
+  )
 
   (if_statement 
     condition: (parenthesized_expression 
       (function_call_expression 
         function: (name) @func_name 
         (#match? @func_name "^(mysqli_query|mysqli_multi_query)$")
-      )
+      ) @danger.sql_injection
     )
-  ) @danger.sql_injection
+  )

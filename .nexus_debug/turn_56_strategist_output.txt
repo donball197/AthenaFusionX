@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"apps/warp/crates/warp_terminal/src/shell/mod.rs","reasoning":"Understand Warp's shell integration and how it reads terminal state."}]

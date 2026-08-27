@@ -1,0 +1,19 @@
+[package]
+name = "nexus_dag_orchestrator"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dotenvy.workspace = true
+regex = "1.13.1"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+ureq = { version = "2", features = ["json"] }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "nexus_orchestrator"
+path = "src/bin/nexus_orchestrator.rs"

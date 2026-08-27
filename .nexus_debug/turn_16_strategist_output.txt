@@ -1,0 +1,1 @@
+[{"type":"read_file","path":"apps/warp/crates/computer_use/src/lib.rs","reasoning":"Understand Warp's computer_use crate public API and mechanics"}]

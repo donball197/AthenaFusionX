@@ -65,6 +65,14 @@ impl EvidenceClass {
         if t.starts_with("[ACTION_GATE_BLOCKED]") || t.starts_with("[ACTION FAILED]") {
             return EvidenceClass::ActionBlocked;
         }
+        // ⚡ OS FAILURE INTERCEPT: Catch non-zero exit codes and missing paths BEFORE ReconSuccess
+        if t.contains("exit status:") && !t.contains("exit status: 0") {
+            return EvidenceClass::ActionBlocked;
+        }
+        if t.contains("No such file or directory") || t.contains("PATH_NOT_FOUND") {
+            return EvidenceClass::ActionBlocked;
+        }
+
         if t.starts_with("[READ_OK]")
             || t.starts_with("[READ_CHUNK_OK]")
             || t.starts_with("[SEARCH_CODE_OK]")

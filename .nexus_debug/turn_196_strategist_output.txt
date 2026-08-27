@@ -1,0 +1,1 @@
+[{"type":"read_file_chunk","path":"/home/donball197/AthenaFusionX/apps/warp/app/src/ai/agent_sdk/driver.rs","start_line":3440,"max_lines":120,"reasoning":"Examine Warp's preflight check and command execution flow to ground the actionable ideas."}]

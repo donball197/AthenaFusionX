@@ -49,6 +49,7 @@ fn main() {
             required_tier: pt.required_tier,
             dependencies: pt.dependencies,
             status: TaskStatus::Pending,
+            result_evidence: String::new(),
         });
     }
 

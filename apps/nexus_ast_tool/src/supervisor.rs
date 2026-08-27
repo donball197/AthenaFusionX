@@ -17,9 +17,11 @@ impl Supervisor {
 
         let mut success_count = 0;
 
-        for sym in symbols.into_iter().filter(|s| s.language == crate::polyglot::SupportedLanguage::Rust) {
+        for sym in
+            symbols.into_iter().filter(|s| s.language == crate::polyglot::SupportedLanguage::Rust)
+        {
             println!("\n    [?] Analyzing function '{}'...", sym.name);
-            
+
             // Extract the function snippet
             let lines: Vec<&str> = original_code.lines().collect();
             let snippet = lines[sym.start_line - 1..=sym.end_line - 1].join("\n");
@@ -28,14 +30,16 @@ impl Supervisor {
             match crate::client::ApiClient::generate_optimization(&sym.name, &snippet) {
                 Ok(optimized_body) => {
                     println!("        [🧠] Optimization generated. Splicing into AST...");
-                    
+
                     // Backup the file in memory
                     let current_code = fs::read_to_string(path)?;
-                    
+
                     // 3. Mutate the file
                     let agent = RefactorAgent::new();
-                    if agent.apply_refactoring(path, &sym.name, "ReplaceFunctionBody", &optimized_body).is_ok() {
-                        
+                    if agent
+                        .apply_refactoring(path, &sym.name, "ReplaceFunctionBody", &optimized_body)
+                        .is_ok()
+                    {
                         // 4. The Sandbox (Test-Driven Mutation)
                         println!("        [🛠️] Running cargo check to verify integrity...");
                         let status = Command::new("cargo")
@@ -54,8 +58,11 @@ impl Supervisor {
                 Err(e) => println!("        [⚠️] AI failed to generate optimization: {}", e),
             }
         }
-        
-        println!("\n==> [Supervisor] Optimization complete. {} functions successfully upgraded.", success_count);
+
+        println!(
+            "\n==> [Supervisor] Optimization complete. {} functions successfully upgraded.",
+            success_count
+        );
         Ok(())
     }
 }

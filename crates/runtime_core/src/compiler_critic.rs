@@ -24,7 +24,6 @@ impl CompilerCritic {
         let compile_output = if is_rust {
             tokio::process::Command::new("cargo")
                 .arg("check")
-                .arg("--message-format=json")
                 .output()
                 .await
         } else if is_python {
@@ -67,34 +66,11 @@ impl CompilerCritic {
                 Ok(Some(CriticOutcome { success: true, evidence: format!("\n[VERIFY_OK] {} passed.", verifier_name), auto_heals_applied: 0 }))
             }
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                let mut applied_heals = 0;
-
-                if is_rust {
-                    for line in stdout.lines() {
-                        if let Some(diag) = nexus_ast_tool::engine::parse_compiler_line(line) {
-                            if let Some(action) = nexus_ast_tool::engine::determine_policy(&diag) {
-                                let file_path = std::path::PathBuf::from(&action.file);
-                                if file_path.exists() {
-                                    if let Ok(source) = std::fs::read_to_string(&file_path) {
-                                        if let Some(strategy) = nexus_ast_tool::mutation::get_strategy(&action.strategy) {
-                                            if let Ok(new_source) = strategy.apply(&source, &action.symbol, &action.payload) {
-                                                let _ = std::fs::write(&file_path, new_source);
-                                                applied_heals += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let err_preview = stderr.lines().take(15).collect::<Vec<_>>().join("\n");
+                let err_preview = stderr.lines().take(20).collect::<Vec<_>>().join("\n");
                 let fail_evidence = format!("[COMPILE_FAIL] Your patch caused a compilation error:\n{}", err_preview);
 
-                Ok(Some(CriticOutcome { success: false, evidence: fail_evidence, auto_heals_applied: applied_heals }))
+                Ok(Some(CriticOutcome { success: false, evidence: fail_evidence, auto_heals_applied: 0 }))
             }
             Err(e) => Ok(Some(CriticOutcome { success: false, evidence: format!("[COMPILER FAULT] failed to run validator: {}", e), auto_heals_applied: 0 }))
         }
