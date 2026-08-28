@@ -1,6 +1,7 @@
 //! Nexus Edge Minion Binary Runner - Multi-Step Autoregressive Stress Test
 //! Orchestrates local inference execution against the USB safetensors substrate.
 
+use nexus_edge_minion::api_gateway::{AgentRequest, ApiGateway};
 use nexus_edge_minion::inference_engine::InferenceEngine;
 use std::env;
 use std::env::consts;
@@ -9,10 +10,27 @@ use std::time::Instant;
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
-    let prompt =
-        if args.len() > 1 { args[1].clone() } else { "Substrate readiness verified.".to_string() };
+
+    // Expected invocation: nexus_minion --tier <light|heavy> <mission text>
+    let mut tier = "light".to_string();
+    let mut prompt = "Substrate readiness verified.".to_string();
+    let mut prompt_set = false;
+
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--tier" && i + 1 < args.len() {
+            tier = args[i + 1].clone();
+            i += 2;
+        } else {
+            prompt = args[i].clone();
+            prompt_set = true;
+            i += 1;
+        }
+    }
+    let _ = prompt_set; // tier/prompt now correctly separated
 
     println!(">> [NEXUS MINION] Initializing execution pipeline...");
+    println!(">> [NEXUS MINION] Task Tier: \"{}\"", tier);
     println!(">> [NEXUS MINION] Task Prompt: \"{}\"", prompt);
     println!(">> [HOST ARCH] Target Architecture: {}-{}", consts::ARCH, consts::OS);
 
@@ -61,12 +79,40 @@ async fn main() {
             }
             Err(e) => {
                 eprintln!(">> [LOCAL EDGE ERROR] Failed to initialize local engine: {}", e);
+                std::process::exit(1);
             }
         }
     } else {
-        println!(
-            ">> [CLOUD ROUTE] NEXUS_CACHE_DIR not set. Handing off to API Gateway powerhouse..."
-        );
+        println!(">> [CLOUD ROUTE] NEXUS_CACHE_DIR not set. Dispatching to API Gateway...");
+
+        let cascade_env = if tier == "heavy" {
+            env::var("NEXUS_HEAVY_CASCADE").unwrap_or_else(|_| {
+                env::var("NEXUS_HEAVY_MODEL").unwrap_or_else(|_| "gemini-2.5-pro".to_string())
+            })
+        } else {
+            env::var("NEXUS_LIGHT_CASCADE").unwrap_or_else(|_| {
+                env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| "gemini-2.0-flash".to_string())
+            })
+        };
+
+        let cascade: Vec<String> = cascade_env.split(',').map(|s| s.trim().to_string()).collect();
+
+        let gateway = ApiGateway::new();
+        let request = AgentRequest { prompt: prompt.clone(), temperature: 0.2, max_tokens: 2048 };
+
+        match gateway.dispatch_cascade(request, &cascade) {
+            Ok(response) => {
+                println!(">> [GATEWAY] Model used: {}", response.model_used);
+                println!(">> [GATEWAY] Tokens used: {}", response.tokens_used);
+                println!("---- RESULT ----");
+                println!("{}", response.text);
+                println!("----------------");
+            }
+            Err(e) => {
+                eprintln!(">> [GATEWAY ERROR] {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     println!(">> [NEXUS MINION] Execution cycle complete.");

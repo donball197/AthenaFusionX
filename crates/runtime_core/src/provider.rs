@@ -38,9 +38,9 @@ pub fn trip_circuit(model_name: &str) {
     let now = now_secs();
     let until = now + CIRCUIT_COOLDOWN_SECS;
     let lower = model_name.to_ascii_lowercase();
-    if lower.contains("gemini") {
+    if lower.contains("gemini") || lower.contains("gemma") {
         GEMINI_DISABLED_UNTIL.store(until, Ordering::Relaxed);
-        tracing::warn!("[CIRCUIT] Gemini rate-limited; bypassing for {}s", CIRCUIT_COOLDOWN_SECS);
+        tracing::warn!("[CIRCUIT] Google API rate-limited; bypassing for {}s", CIRCUIT_COOLDOWN_SECS);
     } else if lower.contains("nvidia") || lower.contains("nemotron") || lower.contains("deepseek") {
         NVIDIA_DISABLED_UNTIL.store(until, Ordering::Relaxed);
         tracing::warn!(
@@ -57,28 +57,18 @@ fn now_secs() -> u64 {
 fn provider_healthy(kind: &str) -> bool {
     let now = now_secs();
     match kind {
-        "gemini" => now > GEMINI_DISABLED_UNTIL.load(Ordering::Relaxed),
+        "gemini" | "gemma" => now > GEMINI_DISABLED_UNTIL.load(Ordering::Relaxed),
         "nvidia" => now > NVIDIA_DISABLED_UNTIL.load(Ordering::Relaxed),
         _ => true,
     }
 }
 
 /// Resolve the correct endpoint + key for a model string.
-///
-/// Rules (strict):
-///   - contains "gemini"           → Google OpenAI-compatible endpoint + GEMINI_API_KEY
-///   - contains "nvidia" | "nemotron" | "deepseek-ai" | starts with "nvidia/"
-///                                 → NVIDIA NIM + NVIDIA_API_KEY
-///   - everything else             → NEXUS_API_ENDPOINT + NEXUS_AUTH_KEY
-///
-/// Model family names (llama, gemma, ising-calibration, …) are NOT providers.
-/// They only resolve via the configured Nexus endpoint unless they carry an
-/// explicit provider prefix.
 pub fn resolve_provider(model_name: &str) -> ProviderResolved {
     let model = model_name.to_ascii_lowercase();
 
-    // Google Gemini
-    if model.contains("gemini") {
+    // Google Gemini & Gemma
+    if model.contains("gemini") || model.contains("gemma") {
         return ProviderResolved {
             endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
                 .to_string(),
@@ -137,7 +127,7 @@ pub fn get_light_models() -> Vec<String> {
     // Filter by circuit breaker
     out.retain(|m| {
         let lower = m.to_ascii_lowercase();
-        if lower.contains("gemini") {
+        if lower.contains("gemini") || lower.contains("gemma") {
             provider_healthy("gemini")
         } else if lower.contains("nvidia")
             || lower.contains("nemotron")
@@ -178,7 +168,7 @@ pub fn get_heavy_models() -> Vec<String> {
 
     out.retain(|m| {
         let lower = m.to_ascii_lowercase();
-        if lower.contains("gemini") {
+        if lower.contains("gemini") || lower.contains("gemma") {
             provider_healthy("gemini")
         } else if lower.contains("nvidia")
             || lower.contains("nemotron")
@@ -225,6 +215,13 @@ mod tests {
     }
 
     #[test]
+    fn gemma_routes_to_google() {
+        let r = resolve_provider("gemma-4-31b-it");
+        assert!(r.endpoint.contains("generativelanguage.googleapis.com"));
+        assert_eq!(r.provider_name, "google");
+    }
+
+    #[test]
     fn nemotron_routes_to_nvidia() {
         let r = resolve_provider("nvidia/nemotron-3-ultra-550b-a55b");
         assert!(r.endpoint.contains("integrate.api.nvidia.com"));
@@ -241,8 +238,8 @@ mod tests {
 
     #[test]
     fn unknown_family_uses_nexus() {
-        // "gemma" / "llama" without provider prefix must NOT go to Google or NVIDIA by name alone
-        let r = resolve_provider("gemma-2-9b");
+        // "llama" without provider prefix must NOT go to Google or NVIDIA by name alone
+        let r = resolve_provider("llama-3-8b");
         assert_eq!(r.provider_name, "nexus");
     }
 }

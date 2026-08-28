@@ -1,8 +1,8 @@
 //! Micro-Agent API Gateway
 //! Executes live HTTP/REST dispatch with multi-provider failover cascades.
 
+use nexus_runtime_core::provider::resolve_provider;
 use serde_json::json;
-use std::env;
 use std::error::Error;
 
 #[derive(Debug, Clone)]
@@ -26,33 +26,6 @@ impl ApiGateway {
         Self {}
     }
 
-    /// Dynamically resolves the correct endpoint and API key based on the model string.
-    // DEPRECATED: use runtime_core::provider::resolve_provider
-    fn resolve_provider(&self, model_name: &str) -> (String, String) {
-        if model_name.contains("gemini") {
-            (
-                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-                    .to_string(),
-                env::var("GEMINI_API_KEY").unwrap_or_default(),
-            )
-        } else if model_name.contains("nvidia")
-            || model_name.contains("nemotron")
-            || model_name.contains("llama")
-            || model_name.contains("gemma")
-        {
-            (
-                "https://generativelanguage.googleapis.com/v1beta/chat/completions".to_string(),
-                env::var("NVIDIA_API_KEY").unwrap_or_default(),
-            )
-        } else {
-            (
-                env::var("NEXUS_API_ENDPOINT")
-                    .unwrap_or_else(|_| "https://api.example.com/v1/chat/completions".to_string()),
-                env::var("NEXUS_AUTH_KEY").unwrap_or_default(),
-            )
-        }
-    }
-
     /// Executes the request, cascading through the provided model list on failure.
     pub fn dispatch_cascade(
         &self,
@@ -67,9 +40,9 @@ impl ApiGateway {
 
         for model in cascade {
             println!("[Gateway] Attempting dispatch to: {}", model);
-            let (endpoint, api_key) = self.resolve_provider(model);
+            let resolved = resolve_provider(model);
 
-            if api_key.is_empty() {
+            if resolved.api_key.is_empty() {
                 println!("  -> [WARN] Skipping {} (Missing API Key)", model);
                 continue;
             }
@@ -90,11 +63,18 @@ impl ApiGateway {
                 "max_tokens": request.max_tokens
             });
 
-            match ureq::post(&endpoint)
-                .set("Authorization", &format!("Bearer {}", api_key))
-                .set("Content-Type", "application/json")
-                .send_json(payload)
-            {
+            let req = match resolved.auth {
+                nexus_runtime_core::provider::AuthStyle::Bearer => {
+                    ureq::post(&resolved.endpoint)
+                        .set("Authorization", &format!("Bearer {}", resolved.api_key))
+                }
+                nexus_runtime_core::provider::AuthStyle::GoogleApiKey => {
+                    ureq::post(&resolved.endpoint)
+                        .set("x-goog-api-key", &resolved.api_key)
+                }
+            };
+
+            match req.set("Content-Type", "application/json").send_json(payload) {
                 Ok(response) => {
                     let response_json: serde_json::Value = response.into_json()?;
 
@@ -110,6 +90,7 @@ impl ApiGateway {
                 }
                 Err(e) => {
                     println!("  -> [FAIL] {} unreachable or returned error: {}", model, e);
+                    nexus_runtime_core::provider::trip_circuit(model);
                     last_error = Some(Box::new(e));
                     // Loop continues to the next model in the cascade
                 }
