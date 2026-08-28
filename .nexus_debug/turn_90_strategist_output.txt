@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"crates/runtime_core/src/agent_protocol.rs","start_line":150,"max_lines":30,"reasoning":"Read the SynthesizeReport variant in AgentAction enum"}]

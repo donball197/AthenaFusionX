@@ -1,1 +1,0 @@
-[{"type":"search_code","path":"apps/warp/app/src/ai","query":"computer_use","reasoning":"Find Warp's computer use implementation files"}]

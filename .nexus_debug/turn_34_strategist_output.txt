@@ -1,1 +1,0 @@
-[{"type":"search_memory","query":"Warp computer use shell hook terminal state tracking architecture","reasoning":"Retrieve prior analysis of Warp and AthenaFusionX architectures"}]

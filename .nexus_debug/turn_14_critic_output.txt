@@ -1,1 +1,0 @@
-CriticResponse { critique: "", confidence_modifier: 0.2 }

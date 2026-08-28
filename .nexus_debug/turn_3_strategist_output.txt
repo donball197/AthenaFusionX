@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"crates/runtime_core/src/agent_protocol.rs","reasoning":"Inspect current state of agent_protocol.rs"}]

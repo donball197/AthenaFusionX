@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"find /home/donball197/AthenaFusionX/apps/warp -type f | head -100","reasoning":"List all files in the apps/warp directory to understand its structure.","confidence":0.95}]

@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"/home/donball197/AthenaFusionX/crates/nexus_dag_orchestrator/src/planner.rs","reasoning":"Extract concrete DAG orchestration patterns for Warp adoption idea"}]

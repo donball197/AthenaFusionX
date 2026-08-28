@@ -1,1 +1,0 @@
-[{"type":"search_code","path":"apps/warp/crates/warp_terminal/src","query":"DCS","reasoning":"Find how Warp uses DCS escape sequences to hook the shell and read state"}]

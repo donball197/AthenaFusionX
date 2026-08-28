@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/epistemic_engine.rs","start_line":300,"max_lines":80,"reasoning":"Examine the adversarial critic loop implementation to extract concrete patterns for Warp adoption."}]

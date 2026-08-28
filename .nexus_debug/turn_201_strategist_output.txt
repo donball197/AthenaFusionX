@@ -1,1 +1,0 @@
-[{"type":"search_code","path":"/home/donball197/AthenaFusionX/apps/warp/app/src/ai/agent_sdk/driver.rs","query":"fn execute_command|collapsible|block_id|BlockId","reasoning":"Confirm Warp's command execution and collapsible block mechanism to ground the system-awareness ideas concretely."}]

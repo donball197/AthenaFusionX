@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/action_gate.rs","reasoning":"Read the full ActionGate implementation to extract concrete patterns Warp could adopt."}]

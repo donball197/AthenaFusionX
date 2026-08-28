@@ -1,1 +1,0 @@
-CriticResponse { critique: "The proposed command is a safe reconnaissance step to inspect the workspace and confirm the existence of apps/warp. It does not make any unsupported claims and aligns with the mission to investigate the directory. The use of 2>/dev/null gracefully handles the missing directory. No veto required.", confidence_modifier: 0.3 }

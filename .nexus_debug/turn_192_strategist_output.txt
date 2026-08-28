@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/epistemic_engine.rs","start_line":560,"max_lines":60,"reasoning":"Examine the adversarial critic loop preamble to ground the Red Team critique idea concretely."}]

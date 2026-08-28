@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"crates/runtime_core/src/lib.rs","reasoning":"Inspect the full lib.rs to find the correct insertion point for the version_info function."}]

@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"crates/runtime_core/src/agent_protocol.rs","start_line":165,"max_lines":20,"reasoning":"Confirm exact SynthesizeReport variant in agent_protocol.rs"}]

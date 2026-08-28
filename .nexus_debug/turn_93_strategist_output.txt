@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"find apps/warp/app/src -type d | head -50","reasoning":"Map the Warp directory structure to understand its AI architecture layout","confidence":0.95}]

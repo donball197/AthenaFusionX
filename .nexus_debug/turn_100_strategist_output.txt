@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"crates/runtime_core/src/agent_protocol.rs","reasoning":"Read the full agent_protocol.rs to see the exact SynthesizeReport variant definition."}]

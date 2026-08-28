@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"ls -la /home/donball197/AthenaFusionX/apps/warp/","reasoning":"List the Warp app directory to understand its structure before diving into specific searches.","confidence":0.95}]

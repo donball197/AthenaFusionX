@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"find apps/warp/app/src/ai -type f -name \"*.rs\" | xargs grep -l \"terminal\\|execute\\|shell\\|computer\" 2>/dev/null | head -50","reasoning":"Find Warp's AI terminal interaction files to compare with Athena's autonomous architecture","confidence":0.95}]

@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"cd /home/donball197/AthenaFusionX && ls -la && echo \"---APPS---\" && ls -la apps/ 2>/dev/null && echo \"---WARP---\" && ls -la apps/warp/ 2>/dev/null","reasoning":"Explore the workspace root and apps/warp directory structure","confidence":0.95}]

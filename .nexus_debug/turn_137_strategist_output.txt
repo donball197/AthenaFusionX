@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"ls -la /home/donball197/AthenaFusionX/crates/runtime_core/src","reasoning":"List the runtime_core source directory to identify files","confidence":0.95}]

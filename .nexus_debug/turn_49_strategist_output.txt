@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/router.rs","reasoning":"Read Athena's router to understand the autonomous architecture"}]

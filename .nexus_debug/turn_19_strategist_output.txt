@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"grep -rn \"AI\\|computer_use\\|terminal_state\\|shell\" /home/donball197/AthenaFusionX/apps/warp --include=\"*.rs\" --include=\"*.toml\" | head -200","reasoning":"Get a raw code reference map of the Warp directory focusing on AI, computer use, terminal state, and shell interfaces.","confidence":0.95}]

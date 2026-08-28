@@ -1,1 +1,0 @@
-CriticResponse { critique: "The proposed action is a legitimate reconnaissance read of Warp's computer_use crate, directly serving the mission's deep-dive requirement on 'Computer Use' mechanics. The path is mission-relevant and no quantitative claims are made. Proceed.", confidence_modifier: 0.2 }

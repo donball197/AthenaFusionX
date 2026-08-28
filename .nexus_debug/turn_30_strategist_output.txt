@@ -1,1 +1,0 @@
-[{"type":"search_code","path":"crates/runtime_core/src","query":"SynthesizeReport","reasoning":"Search for SynthesizeReport enum variants and related code in agent_protocol.rs and motor_cortex.rs"}]

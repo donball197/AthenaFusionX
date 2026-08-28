@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"crates/runtime_core/src/action_gate.rs","reasoning":"Read Athena's ActionGate to understand its autonomous action authorization architecture."}]

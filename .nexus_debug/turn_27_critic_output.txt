@@ -1,1 +1,0 @@
-CriticResponse { critique: "Proposed action is a legitimate reconnaissance read of the target file. No issues.", confidence_modifier: 0.1 }

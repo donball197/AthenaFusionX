@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"crates/runtime_core/src/executor.rs","start_line":300,"max_lines":187,"reasoning":"Read the rest of the RoboticExecutor to understand full action execution, especially DiffPatch, PatchFunction, and Halt handling."}]

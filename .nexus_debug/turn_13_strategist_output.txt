@@ -1,1 +1,0 @@
-[{"type":"read_file","path":"crates/runtime_core/src/executor.rs","reasoning":"Inspect current state of executor.rs to understand how synthesize_report is dispatched and executed."}]

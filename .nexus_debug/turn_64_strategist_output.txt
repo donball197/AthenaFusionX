@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"crates/runtime_core/src/executor.rs","start_line":1,"max_lines":120,"reasoning":"Read the full executor.rs to understand the RoboticExecutor structure and FSM"}]

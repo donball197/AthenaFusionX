@@ -1,1 +1,0 @@
-[{"type":"search_code","path":"apps/warp/app/src","query":"terminal output block","reasoning":"Find Warp's terminal output block tracking mechanism"}]

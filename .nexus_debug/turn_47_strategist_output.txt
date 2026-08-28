@@ -1,1 +1,0 @@
-[{"type":"execute_command","command":"cd /home/donball197/AthenaFusionX && echo \"=== WARP use_computer.rs (full) ===\" && cat apps/warp/app/src/ai/blocklist/action_model/execute/use_computer.rs 2>/dev/null | head -200","reasoning":"Extract Warp's computer use executor implementation","confidence":0.95}]

@@ -1,1 +1,0 @@
-[{"type":"search_code","path":"/home/donball197/AthenaFusionX/apps/warp","query":"computer use","reasoning":"Locate all references to 'computer use' in the Warp codebase"}]

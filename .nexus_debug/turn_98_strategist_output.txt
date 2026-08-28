@@ -1,3 +1,0 @@
-I need to analyze the remainingparts of the Autonomous system modules and gather more Warp-side grounding details before compiling the final comparison report. Let me start by examining the missing pieces of executor.rs and gathering Warp-specific Autonomous/AI grounding mechanisms.
-
-First, let me finish reading executor.rs and simultaneously look at Warp's AgentSDK harnesses and blocklist(action) implementations, which correspond to Autonomous system interaction and AI grounding respectively.

@@ -1,1 +1,0 @@
-[{"type":"read_file_chunk","path":"crates/runtime_core/src/tools/schema.rs","start_line":205,"max_lines":25,"reasoning":"Check how AgentAction::SynthesizeReport is constructed in schema.rs"}]
