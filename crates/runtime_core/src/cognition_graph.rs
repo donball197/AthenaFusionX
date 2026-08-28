@@ -106,7 +106,7 @@ impl CognitiveGraph {
 
         for (id, d) in delta {
             if let Some(node) = self.nodes.get_mut(&id) {
-                let candidate = (node.belief_score + d).clamp(0.0, 1.0);
+                let candidate = (0.5 + d).clamp(0.0, 1.0);
                 // Keep a fraction of the previous score (PageRank-style damping)
                 node.belief_score = DAMPING * candidate + (1.0 - DAMPING) * node.belief_score;
             }

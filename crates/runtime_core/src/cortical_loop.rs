@@ -432,6 +432,14 @@ impl CorticalLoop {
                 _ => Capability::ReadSubstrate,
             };
 
+            if let AgentAction::AtomicPatch { patches, .. } = &action {
+                for p in patches {
+                    mutation_paths.push(p.path.clone());
+                    if p.path.ends_with(".rs") {
+                        rust_files_mutated = true;
+                    }
+                }
+            }
             let mutation_path = match &action {
                 AgentAction::WriteFile { path, .. } | AgentAction::DiffPatch { path, .. } | AgentAction::PatchFunction { path, .. } => Some(path.clone()),
                 _ => None,
