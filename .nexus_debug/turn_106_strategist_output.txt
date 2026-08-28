@@ -1,1 +1,1 @@
-[{"type":"search_code","path":"crates/runtime_core/src/executor.rs","query":"RoboticExecutor","reasoning":"Understand Athena's RoboticExecutor for the architecture comparison"}]
+[{"type":"search_code","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/agent_protocol.rs","query":"SynthesizeReport","reasoning":"Locate the SynthesizeReport variant in AgentAction enum"}]

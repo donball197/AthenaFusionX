@@ -1,1 +1,1 @@
-[{"type":"search_code","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src","query":"red_team|adversarial|prompt_injection|injection","reasoning":"Search for existing red team / adversarial / prompt injection patterns in AthenaFusionX to extract concrete implementable ideas for Warp."}]
+[{"type":"read_file","path":"crates/runtime_core/src/motor_cortex.rs","reasoning":"Read the full motor_cortex.rs to see the enum definition and mapping"}]

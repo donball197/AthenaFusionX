@@ -1,1 +1,1 @@
-[{"type":"search_code","path":"apps/warp/crates/warp_terminal","query":"shell integration","reasoning":"Find how Warp hooks the shell and reads terminal state"}]
+[{"type":"read_file_chunk","path":"crates/runtime_core/src/agent_protocol.rs","start_line":155,"max_lines":15,"reasoning":"Verify exact SynthesizeReport variant in AgentAction"}]

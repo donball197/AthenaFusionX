@@ -1,1 +1,1 @@
-[{"type":"search_code","path":"crates/runtime_core/src/executor.rs","query":"RoboticExecutor","reasoning":"Understand Athena's RoboticExecutor implementation"}]
+[{"type":"read_file_chunk","path":"crates/runtime_core/src/agent_protocol.rs","start_line":155,"max_lines":15,"reasoning":"Verify current SynthesizeReport variant in AgentAction"}]

@@ -1,1 +1,1 @@
-[{"type":"read_file_chunk","path":"apps/warp/crates/computer_use/src/bin/use_computer.rs","start_line":1,"max_lines":120,"reasoning":"Understand Warp's computer use CLI mechanics"}]
+[{"type":"read_file_chunk","path":"/home/donball197/AthenaFusionX/crates/runtime_core/src/agent_protocol.rs","start_line":155,"max_lines":15,"reasoning":"Confirm exact SynthesizeReport variant in AgentAction"}]

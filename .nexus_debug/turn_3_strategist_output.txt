@@ -1,1 +1,1 @@
-[{"type":"read_file","path":"/home/donball197/AthenaFusionX/apps/warp/app/src/ai/agent/task/transaction.rs","reasoning":"Extract Warp's terminal state tracking and shell hooking mechanisms"}]
+[{"type":"read_file","path":"crates/runtime_core/src/agent_protocol.rs","reasoning":"Inspect current state of agent_protocol.rs"}]

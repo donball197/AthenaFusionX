@@ -1,1 +1,1 @@
-[{"type":"read_file","path":"crates/runtime_core/src/executor.rs","reasoning":"Read the RoboticExecutor module to understand how Athena executes actions"}]
+[{"type":"read_file_chunk","path":"crates/runtime_core/src/agent_protocol.rs","start_line":165,"max_lines":20,"reasoning":"Confirm exact SynthesizeReport variant in agent_protocol.rs"}]
