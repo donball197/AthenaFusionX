@@ -72,3 +72,4 @@ repository_analysis/symbol_graph.json
 *.safetensors
 .cargo/config.toml
 .nexus_debug/
+.nexus_debug/
