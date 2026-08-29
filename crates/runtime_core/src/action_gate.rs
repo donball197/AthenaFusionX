@@ -7,16 +7,20 @@ pub struct ActionGate {
 }
 
 impl ActionGate {
+    /// Safe default: read-only. Callers that need mutation or shell
+    /// access must opt in explicitly via `with_capabilities`.
     pub fn new() -> Self {
         Self {
-            sandbox: ExecutionSandbox {
-                active_capabilities: vec![
-                    crate::policy::Capability::ReadSubstrate,
-                    crate::policy::Capability::WriteSubstrate,
-                    crate::policy::Capability::ExecuteSystemCall,
-                    crate::policy::Capability::HaltCognition,
-                ],
-            },
+            sandbox: ExecutionSandbox::strict_lockdown(),
+        }
+    }
+
+    /// Explicit, visible capability grant. Prefer this over hand-rolling
+    /// a permissive ExecutionSandbox at each call site -- the grant should
+    /// be readable at the point a mission actually starts.
+    pub fn with_capabilities(caps: Vec<crate::policy::Capability>) -> Self {
+        Self {
+            sandbox: ExecutionSandbox { active_capabilities: caps },
         }
     }
 
@@ -98,6 +102,15 @@ impl ActionGate {
                     .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
 
+            MotorAction::AtomicPatch { patches } => {
+                for patch in patches {
+                    let raw_path = std::path::Path::new(&patch.path);
+                    if raw_path.components().any(|c| c.as_os_str() == "..") {
+                        return Err(anyhow::anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal denied via .. component in AtomicPatch"));
+                    }
+                }
+                self.sandbox.validate_intent("system_write").map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+            }
             MotorAction::DiffPatch { .. } => {
                 self.sandbox
                     .validate_intent("diff_patch")

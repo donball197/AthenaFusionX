@@ -175,6 +175,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-omni-1.1-flash",
+    "context": "131.1K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-omni-flash-preview",
     "context": "131.1K in / 65.5K out",
     "category": "FLASH"
@@ -694,12 +700,6 @@
     "name": "snowflake/arctic-embed-l",
     "context": "8K in / N/A",
     "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "stepfun-ai/step-3.7-flash",
-    "context": "Unknown",
-    "category": "FLASH"
   },
   {
     "provider": "Nvidia",

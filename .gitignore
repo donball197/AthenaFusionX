@@ -73,3 +73,10 @@ repository_analysis/symbol_graph.json
 .cargo/config.toml
 .nexus_debug/
 .nexus_debug/
+.envt
+.nexus_ui_token
+*.bak
+*.bak2
+*_dump.txt
+daemon.log
+*.cwasm

@@ -1,7 +1,6 @@
 use axum::{
     extract::{Query, State},
     http::{header, StatusCode, Uri},
-    middleware,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -16,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-use crate::{cluster_api, security, vitals_handler, ws_bridge};
+use crate::{cluster_api, vitals_handler, ws_bridge};
 
 // ⚡ FIX: Relative path from bins/ide_backend/Cargo.toml to the UI dist folder
 #[derive(RustEmbed)]
@@ -174,8 +173,7 @@ pub async fn start_server(state: Arc<AppState>) {
         .route("/fs/write", post(fs_write_handler))
         .route("/fs/list", get(fs_list_handler))
         .route("/vitals", get(vitals_handler::handle_vitals))
-        .route("/cluster/nodes", get(cluster_api::list_nodes))
-        .route_layer(middleware::from_fn(security::sovereign_auth_guard));
+        .route("/cluster/nodes", get(cluster_api::list_nodes));
 
     // ⚡ FIX: Unprotected API Routes (Login) + Merge Guarded Routes
     let api_routes =

@@ -15,6 +15,7 @@ pub enum MotorAction {
     SearchMemory { query: String },
     ReplaceLines { path: String, start_line: usize, end_line: usize, replacement: String },
     RunTests { test_target: String },
+    AtomicPatch { patches: Vec<crate::agent_protocol::FilePatch> },
     DiffPatch { path: String, search: String, replace: String },
     PatchFunction { path: String, function_name: String, new_body: String },
     SynthesizeReport { output_path: String, source_files: Vec<String> },

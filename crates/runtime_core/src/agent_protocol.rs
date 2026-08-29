@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FilePatch {
+    pub path: String,
+    pub search: String,
+    pub replace: String,
+}
+
 fn default_confidence() -> f32 {
     0.8
 }
@@ -74,6 +81,12 @@ pub enum AgentAction {
     #[serde(rename = "run_tests")]
     RunTests {
         test_target: String,
+        #[serde(default)]
+        reasoning: String,
+    },
+    #[serde(rename = "atomic_patch")]
+    AtomicPatch {
+        patches: Vec<FilePatch>,
         #[serde(default)]
         reasoning: String,
     },

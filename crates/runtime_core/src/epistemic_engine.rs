@@ -97,7 +97,7 @@ impl EpistemicEngine {
                     _ => return Err(anyhow!("Unknown provider configured: {}", resolved.provider_name))
                 };
 
-                let mut req = client.post(&url).json(&req_payload).timeout(Duration::from_secs(120));
+                let mut req = client.post(&url).json(&req_payload).timeout(Duration::from_secs(180));
                 match resolved.auth {
                     AuthStyle::Bearer => {
                         req = req.header("Authorization", format!("Bearer {}", resolved.api_key));
@@ -112,8 +112,9 @@ impl EpistemicEngine {
                     Err(e) => {
                         last_err = anyhow::anyhow!("Network timeout/error: {}", e);
                         retries += 1;
+                        eprintln!("[RETRY] {} connection-error attempt {}/8: {}", model_endpoint, retries, last_err);
                         if retries > 8 { break; }
-                        tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32))).await;
+                        tokio::time::sleep(Duration::from_secs(std::cmp::min(2_u64.pow(retries as u32), 5))).await;
                         continue;
                     }
                 };
@@ -122,6 +123,7 @@ impl EpistemicEngine {
                 if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.as_u16() == 529 || status.as_u16() == 500 {
                     last_err = anyhow::anyhow!("API Overloaded ({}). Retrying...", status);
                     retries += 1;
+                    eprintln!("[RETRY] {} server-overload attempt {}/10: {}", model_endpoint, retries, last_err);
                     if retries > 10 { break; }
                     let backoff = std::cmp::min(2_u64.pow(retries as u32) * 2, 60);
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
@@ -133,6 +135,7 @@ impl EpistemicEngine {
                     Err(e) => {
                         last_err = anyhow::anyhow!("JSON Parse Error: {}", e);
                         retries += 1;
+                        eprintln!("[RETRY] {} json-parse-error attempt {}/3: {}", model_endpoint, retries, last_err);
                         if retries > 3 { break; }
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;

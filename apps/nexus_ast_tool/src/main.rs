@@ -52,7 +52,6 @@ enum Commands {
     },
 }
 
-/// Secondary syntax check via external linters, run against a TEMP sibling
 fn external_lint(lang_str: &str, source: &str, orig_path: &Path) -> Option<bool> {
     let (program, mut args, ext): (&str, Vec<&str>, &str) = match lang_str {
         "PHP" => ("php", vec!["-l"], "php"),
@@ -78,7 +77,6 @@ fn external_lint(lang_str: &str, source: &str, orig_path: &Path) -> Option<bool>
     }
 }
 
-/// Resolve the splice anchor (0-based inclusive line indices).
 fn resolve_anchor(source: &str, finding: &SecurityFinding) -> Option<(usize, usize)> {
     let lines: Vec<&str> = source.lines().collect();
     let stored_start = finding.sink_start_line.saturating_sub(1);
@@ -111,36 +109,24 @@ fn resolve_anchor(source: &str, finding: &SecurityFinding) -> Option<(usize, usi
     }
 }
 
-/// Extract the query argument from a call like `mysqli_query($con, $q)`
-fn extract_query_var(sink_text: &str) -> Option<String> {
-    let markers = ["mysqli_query(", "mysqli_multi_query(", "->query(", "->multi_query("];
-    let start = markers.iter().find_map(|m| sink_text.find(m).map(|i| i + m.len()))?;
-    let bytes = sink_text.as_bytes();
-    let mut depth = 1i32;
-    let mut end = None;
-    for (i, &b) in bytes[start..].iter().enumerate() {
-        match b {
-            b'(' => depth += 1,
-            b')' => {
+fn expand_enclosing_block(lines: &[&str], start: usize, mut end: usize) -> usize {
+    let mut depth: i32 = 0;
+    let mut found_open = false;
+    for (i, line) in lines.iter().enumerate().skip(start) {
+        for ch in line.chars() {
+            if ch == '{' {
+                depth += 1;
+                found_open = true;
+            } else if ch == '}' {
                 depth -= 1;
-                if depth == 0 {
-                    end = Some(start + i);
-                    break;
-                }
             }
-            _ => {}
+        }
+        if i >= end && found_open && depth <= 0 {
+            end = i;
+            break;
         }
     }
-    let args = &sink_text[start..end?];
-    let last = args.rsplit(',').next()?.trim();
-    if last.starts_with('$')
-        && last.len() > 1
-        && last[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
-    {
-        Some(last.to_string())
-    } else {
-        None
-    }
+    end.min(lines.len().saturating_sub(1))
 }
 
 fn main() -> Result<()> {
@@ -284,7 +270,7 @@ fn main() -> Result<()> {
                                     let effective_start: usize;
                                     let effective_end: usize;
 
-                                    let taint = extract_query_var(&finding.sink_text).and_then(|var_name| {
+                                    let taint = nexus_ast_tool::polyglot::extract_query_var_name(&finding.sink_text).and_then(|var_name| {
                                         nexus_ast_tool::polyglot::find_concat_assignment(
                                             &file_source,
                                             &finding.language.tree_sitter_language(),
@@ -294,37 +280,21 @@ fn main() -> Result<()> {
                                         .map(|(c_start, c_end, _)| (var_name, c_start, c_end))
                                     });
 
-                                    if let Some((ref var_name, c_start, c_end)) = taint {
-                                        println!(
-                                            "        [🔗 Multi-Site Taint] {} built via concatenation at lines {}-{}. Expanding patch scope to cover taint source + sink.",
-                                            var_name, c_start, c_end
-                                        );
+                                    if let Some((ref var_name, c_start, _)) = taint {
                                         let start = c_start.saturating_sub(1);
-                                        let mut end = finding.sink_end_line.saturating_sub(1);
-                                        
-                                        // Extend end to cover the full if/else block if the sink is an if statement
-                                        let sink_line = lines[end].trim();
-                                        if sink_line.starts_with("if") || sink_line.starts_with("} else") || sink_line.starts_with("}else") {
-                                            let mut depth = 0;
-                                            let mut found_open = false;
-                                            for (i, line) in lines.iter().enumerate().skip(end) {
-                                                for ch in line.chars() {
-                                                    if ch == '{' { depth += 1; found_open = true; }
-                                                    if ch == '}' { depth -= 1; }
-                                                }
-                                                if found_open && depth <= 0 {
-                                                    end = i;
-                                                    break;
-                                                }
-                                            }
-                                        }
+                                        let end = expand_enclosing_block(&lines, start, finding.sink_end_line.saturating_sub(1));
 
-                                        end = end.min(lines.len().saturating_sub(1));
+                                        println!(
+                                            "        [🔗 Multi-Site Taint] {} built via concatenation. Expanding block scope: lines {}-{}.",
+                                            var_name, start + 1, end + 1
+                                        );
+
                                         effective_snippet = lines[start..=end].join("\n");
                                         effective_start = start;
                                         effective_end = end;
                                     } else {
-                                        if !file_source.contains(&finding.sink_text) {
+                                        let anchor = resolve_anchor(&file_source, &finding);
+                                        if anchor.is_none() {
                                             println!("        [ℹ️ Already Resolved] Sink text no longer present. Skipping.");
                                             already_resolved_count += 1;
                                             report_md.push_str(
@@ -332,20 +302,11 @@ fn main() -> Result<()> {
                                             );
                                             continue;
                                         }
-
-                                        let Some((start_idx, end_idx)) = resolve_anchor(&file_source, &finding) else {
-                                            println!("        [❌ Patch Rejected] Anchor drift: recorded sink lines no longer match the file.");
-                                            failed_fix_count += 1;
-                                            report_md.push_str(
-                                                "### Patch (REJECTED: anchor drift - recorded sink lines no longer match the file)\n\n---\n\n",
-                                            );
-                                            continue;
-                                        };
+                                        let (start_idx, end_idx) = anchor.unwrap();
                                         effective_start = start_idx;
                                         effective_end = end_idx;
                                     }
 
-                                    
                                     let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
                                         &finding.pattern_name, &effective_snippet, &lang_str,
                                     ) {

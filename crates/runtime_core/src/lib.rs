@@ -1,3 +1,4 @@
+pub mod health_check;
 pub mod agent_protocol;
 pub mod arbiter_agent;
 pub mod cli_utils;

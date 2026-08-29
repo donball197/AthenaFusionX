@@ -93,8 +93,14 @@ impl DagExecutor {
                 Ok(out) if out.status.success() => {
                     let minion_stdout = String::from_utf8_lossy(&out.stdout).to_string();
                     print!("{}", minion_stdout); // Stream it back to the console
+
+                    // Only persist the RESULT block as evidence -- not the full
+                    // log stream -- so downstream tasks don't inherit exploding
+                    // nested logs from every prior step.
+                    let evidence = extract_result_block(&minion_stdout);
+
                     println!("\n[Orchestrator] Task [{}] Completed Successfully.", task_id);
-                    self.manager.complete_task(&task_id, minion_stdout);
+                    self.manager.complete_task(&task_id, evidence);
                     executed_count += 1;
                 }
                 Ok(out) => {
@@ -120,4 +126,21 @@ impl DagExecutor {
 
         Ok(executed_count)
     }
+}
+
+/// Extracts just the text between "---- RESULT ----" and "----------------"
+/// markers from a minion's captured stdout. Falls back to the full text if
+/// the markers aren't present (e.g. local-edge stress-test output that
+/// doesn't go through the gateway).
+fn extract_result_block(stdout: &str) -> String {
+    const START: &str = "---- RESULT ----";
+    const END: &str = "----------------";
+
+    if let Some(start_idx) = stdout.find(START) {
+        let after_start = &stdout[start_idx + START.len()..];
+        if let Some(end_idx) = after_start.find(END) {
+            return after_start[..end_idx].trim().to_string();
+        }
+    }
+    stdout.trim().to_string()
 }

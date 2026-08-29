@@ -67,7 +67,14 @@ impl CorticalLoop {
             vmo_state,
             dist,
             tx,
-            action_gate: ActionGate::new(),
+            action_gate: ActionGate::with_capabilities(vec![
+                Capability::ReadSubstrate,
+                Capability::WriteSubstrate,
+                Capability::HaltCognition,
+                // ExecuteSystemCall intentionally omitted -- remediation missions
+                // patch files, they don't need shell access. Grant explicitly
+                // here if a future mission type genuinely requires it.
+            ]),
         }
     }
 

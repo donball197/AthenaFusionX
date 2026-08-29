@@ -73,7 +73,6 @@ impl SupportedLanguage {
         }
     }
 
-    /// In-memory syntax gate: true iff the source parses to an error-free tree.
     pub fn parses_cleanly(&self, source: &str) -> bool {
         let mut parser = Parser::new();
         if parser.set_language(&self.tree_sitter_language()).is_err() {
@@ -110,26 +109,51 @@ pub struct SecurityFinding {
     pub pattern_name: String,
     pub severity: String,
     pub path: PathBuf,
-    // Context window (display / triage only)
-    pub start_line: usize,      // window start (sink - 20)
-    pub end_line: usize,        // window end   (sink + 3)
-    pub source_snippet: String, // wide window, for the triage LLM
-    /// NARROW snippet: exactly the sink lines.
+    pub start_line: usize,
+    pub end_line: usize,
+    pub source_snippet: String,
     pub patch_snippet: String,
-    
-    // --- Sink identity (authoritative: use for verification and splice anchoring) ---
-    pub sink_start_line: usize, // 1-based, inclusive
-    pub sink_end_line: usize,   // 1-based, inclusive
-    pub sink_text: String,      // exact source text of the @danger capture
+    pub sink_start_line: usize,
+    pub sink_end_line: usize,
+    pub sink_text: String,
 }
 
-/// Finds the nearest assignment strictly before `before_line` that builds
-/// `var_name` via string concatenation (`$var = "..." . $x . "...";`).
+pub fn extract_query_var_name(sink_text: &str) -> Option<String> {
+    let markers = ["mysqli_query(", "mysqli_multi_query(", "->query(", "->multi_query("];
+    let start = markers.iter().find_map(|m| sink_text.find(m).map(|i| i + m.len()))?;
+    let bytes = sink_text.as_bytes();
+    let mut depth = 1i32;
+    let mut end = None;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(start + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let args = &sink_text[start..end?];
+    let last = args.rsplit(',').next()?.trim();
+    if last.starts_with('$')
+        && last.len() > 1
+        && last[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        Some(last.to_string())
+    } else {
+        None
+    }
+}
+
 pub fn find_concat_assignment(
     source: &str,
     ts_lang: &Language,
     var_name: &str,
-    before_line: usize, // 1-based
+    before_line: usize,
 ) -> Option<(usize, usize, String)> {
     let mut parser = Parser::new();
     parser.set_language(ts_lang).ok()?;
@@ -141,7 +165,7 @@ pub fn find_concat_assignment(
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
-    let mut best: Option<(usize, usize, usize, String)> = None; // (start_row, end_row, dist, text)
+    let mut best: Option<(usize, usize, usize, String)> = None;
     for m in matches {
         let mut var_text = None;
         let mut assign_node = None;
@@ -156,9 +180,9 @@ pub fn find_concat_assignment(
             continue;
         }
         let Some(node) = assign_node else { continue };
-        let end_row = node.end_position().row; // 0-based
+        let end_row = node.end_position().row;
         if end_row + 1 >= before_line {
-            continue; // not strictly before the call site
+            continue;
         }
         let dist = before_line - (end_row + 1);
         if best.as_ref().map(|(_, _, d, _)| dist < *d).unwrap_or(true) {
@@ -167,7 +191,7 @@ pub fn find_concat_assignment(
             best = Some((start_row, end_row, dist, text.to_string()));
         }
     }
-    best.map(|(s, e, _, t)| (s + 1, e + 1, t)) // back to 1-based
+    best.map(|(s, e, _, t)| (s + 1, e + 1, t))
 }
 
 pub struct PolyglotScanner;
@@ -293,11 +317,17 @@ impl PolyglotScanner {
                 if !capture_name.starts_with("danger") { continue; }
 
                 let range = capture.node.range();
-                let sink_start = range.start_point.row; // 0-based
+                let sink_start = range.start_point.row;
                 let sink_end = range.end_point.row;
-                
-                let context_start = sink_start.saturating_sub(20);
-                let context_end = (sink_end + 3).min(source_lines.len().saturating_sub(1));
+                let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
+
+                let mut context_start = sink_start.saturating_sub(60);
+                if let Some(var_name) = extract_query_var_name(&sink_text) {
+                    if let Some((c_start, _, _)) = find_concat_assignment(source, &ts_lang, &var_name, sink_start + 1) {
+                        context_start = context_start.min(c_start.saturating_sub(5));
+                    }
+                }
+                let context_end = (sink_end + 10).min(source_lines.len().saturating_sub(1));
                 
                 let snippet = if sink_start < source_lines.len() {
                     source_lines[context_start..=context_end].join("\n")
@@ -306,8 +336,6 @@ impl PolyglotScanner {
                 let patch_snippet = if sink_end < source_lines.len() {
                     source_lines[sink_start..=sink_end].join("\n")
                 } else { String::new() };
-
-                let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
 
                 results.push(SecurityFinding {
                     language: lang,

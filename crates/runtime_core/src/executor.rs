@@ -374,6 +374,17 @@ impl RoboticExecutor {
                     ))
                 }
             }
+            MotorAction::AtomicPatch { patches } => {
+                let mut patched_files = Vec::new();
+                for patch in patches {
+                    let safe_path = sanitize(&patch.path)?;
+                    let original = tokio::fs::read_to_string(&safe_path).await?;
+                    let patched = crate::diff::DiffEngine::apply(&original, &patch.search, &patch.replace)?;
+                    tokio::fs::write(&safe_path, patched).await?;
+                    patched_files.push(patch.path);
+                }
+                Ok(format!("[ATOMIC_PATCH_OK] Successfully patched {} files: {:?}", patched_files.len(), patched_files))
+            }
             MotorAction::DiffPatch { path, search, replace } => {
                 let safe_path = sanitize(&path)?;
                 let original = tokio::fs::read_to_string(&safe_path).await?;

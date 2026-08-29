@@ -36,6 +36,7 @@ impl MemoryPalace {
             .filename(db_path)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5))
             .pragma("cache_size", "-16000");
 
         let pool =

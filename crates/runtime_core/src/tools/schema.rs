@@ -188,6 +188,14 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             reasoning: get_str("reasoning")?,
             confidence: 0.95,
         }),
+        "atomic_patch" => {
+            let patches_val = args.get("patches").ok_or("Missing patches field".to_string())?;
+            let patches: Vec<crate::agent_protocol::FilePatch> = serde_json::from_value(patches_val.clone()).unwrap_or_default();
+            Ok(AgentAction::AtomicPatch {
+                patches,
+                reasoning: args.get("reasoning").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            })
+        },
         "diff_patch" => Ok(AgentAction::DiffPatch {
             path: get_str("path")?,
             search: get_str("search")?,

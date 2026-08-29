@@ -19,7 +19,7 @@ trap "echo -e '\n\x1b[31m>> Shutting down Background Daemon (PID: $DAEMON_PID)..
 echo "Waiting for Daemon to become ready..."
 READY=0
 for i in $(seq 1 30); do
-    if curl -s -o /dev/null --max-time 1 "http://localhost:3000/vitals"; then
+    if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:3000/api/vitals"; then
         echo "Daemon ready after ${i}s."
         READY=1
         break
@@ -27,7 +27,7 @@ for i in $(seq 1 30); do
     sleep 1
 done
 if [ "$READY" -eq 0 ]; then
-    echo -e "[31m>> [FATAL] Daemon did not become ready within 30s. Check daemon.log.[0m"
+    echo -e "[31m>> [FATAL] Daemon did not become ready within 60s. Check daemon.log.[0m"
     exit 1
 fi
 

@@ -8,6 +8,7 @@ sovereign_persona: |
   MANDATORY SCHEMA:
   [
     { "type": "patch_function", "path": "...", "function_name": "...", "new_body": "...", "reasoning": "..." },
+    { "type": "atomic_patch", "patches": [ {"path": "...", "search": "...", "replace": "..."} ], "reasoning": "..." },
     { "type": "diff_patch", "path": "...", "search": "...", "replace": "...", "reasoning": "..." },
     { "type": "write_file", "path": "...", "content": "...", "reasoning": "..." },
     { "type": "replace_lines", "path": "...", "start_line": 0, "end_line": 0, "replacement": "...", "reasoning": "..." },
@@ -18,7 +19,7 @@ sovereign_persona: |
     { "type": "search_code", "path": "...", "query": "...", "reasoning": "..." },
     { "type": "search_code_semantic", "query": "...", "reasoning": "..." },
     { "type": "index_codebase", "path": "...", "reasoning": "..." },
-    { "type": "synthesize_report", "output_path": "...", "source_files": ["..."], "reasoning": "..." },
+    { "type": "synthesize_report", "output_path": "...", "source_files": ["..."], "instructions": "...", "reasoning": "..." },
     { "type": "search_memory", "query": "...", "reasoning": "..." },
     { "type": "halt", "reasoning": "..." },
     { "type": "run_impact_analyzer", "target_symbol": "...", "reasoning": "..." },

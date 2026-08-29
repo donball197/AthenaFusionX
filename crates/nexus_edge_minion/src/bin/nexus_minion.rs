@@ -27,7 +27,7 @@ async fn main() {
             i += 1;
         }
     }
-    let _ = prompt_set; // tier/prompt now correctly separated
+    let _ = prompt_set;
 
     println!(">> [NEXUS MINION] Initializing execution pipeline...");
     println!(">> [NEXUS MINION] Task Tier: \"{}\"", tier);
@@ -97,10 +97,16 @@ async fn main() {
 
         let cascade: Vec<String> = cascade_env.split(',').map(|s| s.trim().to_string()).collect();
 
+        let workspace_root = env::var("NEXUS_WORKSPACE_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+
+        println!(">> [GATEWAY] Workspace root for tools: {}", workspace_root.display());
+
         let gateway = ApiGateway::new();
         let request = AgentRequest { prompt: prompt.clone(), temperature: 0.2, max_tokens: 2048 };
 
-        match gateway.dispatch_cascade(request, &cascade) {
+        match gateway.dispatch_with_tools(request, &cascade, &workspace_root) {
             Ok(response) => {
                 println!(">> [GATEWAY] Model used: {}", response.model_used);
                 println!(">> [GATEWAY] Tokens used: {}", response.tokens_used);
