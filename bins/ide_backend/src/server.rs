@@ -1,6 +1,7 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Query, Request, State},
     http::{header, StatusCode, Uri},
+    middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -164,6 +165,25 @@ pub async fn fs_list_handler(
     }
 }
 
+/// Rejects any request without a valid bearer token issued by /auth/login.
+/// Applied to every route in `guarded_api` -- login itself stays outside this.
+async fn auth_guard(request: Request, next: Next) -> Result<impl IntoResponse, StatusCode> {
+    let token = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "));
+
+    let Some(token) = token else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+
+    match crate::auth::verify_token_detailed(token) {
+        Ok(crate::auth::TokenVerdict::Valid) => Ok(next.run(request).await),
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
 pub async fn start_server(state: Arc<AppState>) {
     // ⚡ Secure API Routes behind Auth Guard
     let guarded_api = Router::new()
@@ -173,7 +193,8 @@ pub async fn start_server(state: Arc<AppState>) {
         .route("/fs/write", post(fs_write_handler))
         .route("/fs/list", get(fs_list_handler))
         .route("/vitals", get(vitals_handler::handle_vitals))
-        .route("/cluster/nodes", get(cluster_api::list_nodes));
+        .route("/cluster/nodes", get(cluster_api::list_nodes))
+        .layer(middleware::from_fn(auth_guard));
 
     // ⚡ FIX: Unprotected API Routes (Login) + Merge Guarded Routes
     let api_routes =
