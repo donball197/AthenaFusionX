@@ -7,62 +7,47 @@ pub struct ActionGate {
 }
 
 impl ActionGate {
-    /// Safe default: read-only. Callers that need mutation or shell
-    /// access must opt in explicitly via `with_capabilities`.
     pub fn new() -> Self {
         Self {
             sandbox: ExecutionSandbox::strict_lockdown(),
         }
     }
 
-    /// Explicit, visible capability grant. Prefer this over hand-rolling
-    /// a permissive ExecutionSandbox at each call site -- the grant should
-    /// be readable at the point a mission actually starts.
     pub fn with_capabilities(caps: Vec<crate::policy::Capability>) -> Self {
         Self {
             sandbox: ExecutionSandbox { active_capabilities: caps },
         }
     }
 
-    /// Enforces deterministic security inspection on sealed MotorCommands.
     pub fn approve(&self, command: &MotorCommand) -> Result<()> {
         match &command.action {
-            &MotorAction::PatchFile { .. } => {
+            MotorAction::PolyglotAstPatch { path, .. } => {
+                if path.contains("..") {
+                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal denied in AST patch."));
+                }
+                self.sandbox.validate_intent("patch_function")
+                    .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+            }
+            MotorAction::PatchFile { .. } => {
                 self.sandbox
                     .validate_intent("patch_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
             MotorAction::ExecuteCommand { command: cmd_str } => {
                 let cmd_lower = cmd_str.to_lowercase();
-                if cmd_lower.contains("rm -rf /")
-                    || cmd_lower.contains("rm -rf ~")
-                    || cmd_lower.contains("mkfs")
-                {
-                    return Err(anyhow!(
-                        "ACTION_GATE_SECURITY_VIOLATION: Destructive command blocked: '{}'",
-                        cmd_str
-                    ));
+                if cmd_lower.contains("rm -rf /") || cmd_lower.contains("rm -rf ~") || cmd_lower.contains("mkfs") {
+                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Destructive command blocked: '{}'", cmd_str));
                 }
-                if cmd_lower.contains("cat .env")
-                    || cmd_lower.contains("env |")
-                    || cmd_lower.contains("printenv")
-                {
-                    return Err(anyhow!(
-                        "ACTION_GATE_SECURITY_VIOLATION: Secret inspection command blocked: '{}'",
-                        cmd_str
-                    ));
+                if cmd_lower.contains("cat .env") || cmd_lower.contains("env |") || cmd_lower.contains("printenv") {
+                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Secret inspection command blocked: '{}'", cmd_str));
                 }
                 self.sandbox
                     .validate_intent("execute_command")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::WriteFile { path, content } => {
                 if path.contains("..") {
-                    return Err(anyhow!(
-                        "ACTION_GATE_SECURITY_VIOLATION: Path traversal detected: '{}'",
-                        path
-                    ));
+                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal detected: '{}'", path));
                 }
                 if content.contains("GEMINI_API_KEY=") || content.contains("NVIDIA_API_KEY=") {
                     return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Plaintext API key leak blocked in WriteFile."));
@@ -71,77 +56,66 @@ impl ActionGate {
                     .validate_intent("write_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::ReadFile { .. } => {
                 self.sandbox
                     .validate_intent("read_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::ReadFileChunk { .. } => {
                 self.sandbox
                     .validate_intent("read_file_chunk")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::SearchCode { .. } => {
                 self.sandbox
                     .validate_intent("search_code")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::ReplaceLines { .. } => {
                 self.sandbox
                     .validate_intent("replace_lines")
                     .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::RunTests { .. } => {
                 self.sandbox
                     .validate_intent("run_tests")
                     .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::AtomicPatch { patches } => {
                 for patch in patches {
                     let raw_path = std::path::Path::new(&patch.path);
                     if raw_path.components().any(|c| c.as_os_str() == "..") {
-                        return Err(anyhow::anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal denied via .. component in AtomicPatch"));
+                        return Err(anyhow::anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal denied via .. in AtomicPatch"));
                     }
                 }
-                self.sandbox.validate_intent("system_write").map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+                self.sandbox.validate_intent("write_file").map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
             MotorAction::DiffPatch { .. } => {
                 self.sandbox
                     .validate_intent("diff_patch")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::PatchFunction { .. } => {
                 self.sandbox
                     .validate_intent("patch_function")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::SearchMemory { .. } => {
                 self.sandbox
                     .validate_intent("search_memory")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::SynthesizeReport { .. } => {
                 self.sandbox
                     .validate_intent("write_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-
             MotorAction::Halt { .. } => {
                 self.sandbox
                     .validate_intent("halt")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
         }
-
         Ok(())
     }
 }

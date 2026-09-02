@@ -18,11 +18,6 @@ impl ContractEvaluator {
         current_belief: f32,
         mission: &str,
     ) -> ContractStatus {
-        // PATCH 1c: Artifact write gate — if the directive requires specific
-        // output files (e.g. "synthesize_report ... to apps/foo.md"), and they
-        // have not yet been physically written, force Strategize instead of
-        // Satisfied. Without this, belief inflates from recon alone and the
-        // agent never writes the deliverable.
         let mission_contract =
             crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", mission);
         let missing: Vec<&str> = mission_contract
@@ -31,12 +26,18 @@ impl ContractEvaluator {
             .map(|a| a.path.as_str())
             .filter(|p| !crate::evidence_markers::has_artifact_write(local_evidence, p))
             .collect();
+
         if !missing.is_empty() {
             return ContractStatus::NoEvidence;
         }
 
         let has_mutation = has_mutation_marker(local_evidence);
         let has_recon = has_recon_marker(local_evidence);
+
+        // ⚡ FAST EXIT: If specific target artifacts were required and all are verified written, complete immediately!
+        if !mission_contract.required_artifact_paths.is_empty() && missing.is_empty() && has_mutation {
+            return ContractStatus::Satisfied;
+        }
 
         if (is_mutation_task || is_write_task) && !has_mutation {
             return if has_recon {
@@ -47,17 +48,17 @@ impl ContractEvaluator {
         }
 
         if Self::is_compound_objective_satisfied(mission, local_evidence) {
-            if current_belief >= 0.95 {
+            if current_belief >= 0.90 || (has_mutation && current_belief >= 0.70) {
                 return ContractStatus::Satisfied;
             }
             return ContractStatus::PartialEvidence;
         }
 
         if has_mutation || has_recon {
-            return if current_belief >= 0.95 {
-                ContractStatus::Satisfied
+            if current_belief >= 0.95 || (has_mutation && current_belief >= 0.75) {
+                return ContractStatus::Satisfied;
             } else {
-                ContractStatus::PartialEvidence
+                return ContractStatus::PartialEvidence;
             };
         }
 

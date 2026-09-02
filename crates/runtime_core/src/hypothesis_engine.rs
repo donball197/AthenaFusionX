@@ -35,7 +35,6 @@ impl HypothesisEngine {
              Output ONLY valid JSON matching this schema:\n\
              { \"root_cause_analysis\": \"...\", \"hypotheses\": [ { \"description\": \"...\", \"probability_score\": 0.9, \"proposed_fix_action\": \"...\" } ], \"selected_path\": { ... } }";
 
-        // ⚡ FIX 4: Removed responseMimeType here too for Gemma compatibility.
         let payload = serde_json::json!({
             "systemInstruction": { "parts": [{ "text": system_instruction }] },
             "contents": [
@@ -49,28 +48,17 @@ impl HypothesisEngine {
             }
         });
 
-        let base_url = std::env::var("NEXUS_API_GATEWAY")
-            .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
-
-        let active_model = std::env::var("NEXUS_PLANNER_MODEL")
-            .or_else(|_| std::env::var("NEXUS_HEAVY_MODEL"))
-            .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
-        let url =
-            format!("{}/v1beta/models/{}:generateContent?key={}", base_url, active_model, api_key);
-
-        let res = client.post(&url).json(&payload).send().await?;
-        let body: serde_json::Value = res.json().await?;
-
-        if let Some(err) = body.pointer("/error/message") {
-            return Err(anyhow!("GoT API Error: {}", err));
+        let heavy_models = crate::model_config::get_heavy_models();
+        if heavy_models.is_empty() {
+            return Err(anyhow!("No heavy models configured in NEXUS_HEAVY_MODEL or NEXUS_HEAVY_CASCADE"));
         }
 
-        let text = body
-            .pointer("/candidates/0/content/parts/0/text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("{}")
-            .replace("```json", "")
-            .replace("```", "");
+        let text = crate::epistemic_engine::EpistemicEngine::safe_api_call(
+            client,
+            api_key,
+            &heavy_models,
+            &payload
+        ).await?;
 
         let resolution: GoTResolution =
             serde_json::from_str(text.trim()).map_err(|e| anyhow!("GoT Schema Fracture: {}", e))?;

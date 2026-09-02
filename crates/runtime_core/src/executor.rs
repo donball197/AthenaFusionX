@@ -146,20 +146,33 @@ impl RoboticExecutor {
                     }
                 }
 
-                let out = crate::podman::PodmanShield::execute(&command)?;
+                let cmd_clone = command.clone();
+                let exec_res = tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    tokio::task::spawn_blocking(move || crate::podman::PodmanShield::execute(&cmd_clone))
+                ).await;
+
+                let out = match exec_res {
+                    Ok(Ok(Ok(output))) => output,
+                    Ok(Ok(Err(e))) => return Err(anyhow!("Command execution error: {}", e)),
+                    Ok(Err(join_err)) => return Err(anyhow!("Task spawn error: {}", join_err)),
+                    Err(_) => {
+                        return Ok(format!("[TIMEOUT] Command timed out after 60s: `{}`", command));
+                    }
+                };
                 let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
                 let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
                 let mut stdout_trunc = stdout;
                 let mut stderr_trunc = stderr;
-                if stdout_trunc.len() > 8000 {
-                    stdout_trunc.truncate(8000);
-                    stdout_trunc.push_str("\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]");
+                if stdout_trunc.chars().count() > 2500 {
+                    let safe_head: String = stdout_trunc.chars().take(2500).collect();
+                    stdout_trunc = format!("{}\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]", safe_head);
                 }
-                if stderr_trunc.len() > 1500 {
-                    let offset = stderr_trunc.len() - 1500;
-                    stderr_trunc =
-                        format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", &stderr_trunc[offset..]);
+                if stderr_trunc.chars().count() > 1500 {
+                    let total_chars = stderr_trunc.chars().count();
+                    let safe_tail: String = stderr_trunc.chars().skip(total_chars.saturating_sub(1500)).collect();
+                    stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", safe_tail);
                 }
 
                 let mut res = format!("[CMD_OK] Status: {}\n", out.status);
@@ -219,32 +232,35 @@ impl RoboticExecutor {
                 if let Some(parent) = safe_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                tokio::fs::write(&safe_path, content).await?;
+                tokio::fs::write(&safe_path, &content).await?;
+                _dist.broadcast_file_shift(&path, "write_file");
+                *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
+                
+                let snippet: String = content.chars().take(4000).collect();
+                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await.ok();
+                let _ = memory.store_memory("WriteFile", &path, &content, "Mutated", emb).await;
+                
                 Ok(format!("[WRITE_OK] {}", path))
             }
             MotorAction::ReadFile { path } => {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
-                let snippet = if content.len() > 8000 { &content[..8000] } else { &content };
-                if let Ok(emb) =
-                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, snippet).await
-                {
-                    let _ = memory
-                        .store_memory("ReadFile", &path, &content, "Observed", Some(emb))
-                        .await;
+                let snippet: String = content.chars().take(4000).collect();
+                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await {
+                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", Some(emb)).await;
                 } else {
-                    let _ =
-                        memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
+                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
                 }
 
                 let total_lines = content.lines().count();
-                let return_content = if content.len() > 16000 {
-                    format!("{}...\n\n[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: {}. USE THE `read_file_chunk` TOOL BY SPECIFYING `start_line` AND `max_lines` TO READ BEYOND THIS POINT.]", &content[..16000], total_lines)
+                let return_content = if content.chars().count() > 3000 {
+                    let prefix: String = content.chars().take(3000).collect();
+                    format!("{}...\n\n[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: {}. USE THE `read_file_chunk` TOOL BY SPECIFYING `start_line` AND `max_lines` TO READ BEYOND THIS POINT.]", prefix, total_lines)
                 } else {
                     content.clone()
                 };
 
-                Ok(format!("[READ_OK] {}\nCONTENT PREVIEW:\n{}", path, return_content))
+                Ok(format!("[READ_OK] {}\nFULL FILE CONTENT:\n{}", path, return_content))
             }
             MotorAction::ReadFileChunk { path, start_line, max_lines } => {
                 let safe_path = sanitize(&path)?;
@@ -268,6 +284,10 @@ impl RoboticExecutor {
                 ))
             }
             MotorAction::SearchCode { path, query } => {
+                if query.trim().is_empty() {
+                    return Ok("[SEARCH_FAILED] Empty search query is not permitted. Provide a specific search symbol or pattern.".to_string());
+                }
+
                 let safe_path = sanitize(&path).unwrap_or_else(|_| PathBuf::from("crates"));
                 let p_str = safe_path.to_str().unwrap_or(&path);
 
@@ -296,8 +316,9 @@ impl RoboticExecutor {
                     }
                 }
 
-                let trunc = if stdout.len() > 8000 {
-                    format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", &stdout[..8000])
+                let trunc = if stdout.chars().count() > 2500 {
+                    let prefix: String = stdout.chars().take(2500).collect();
+                    format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", prefix)
                 } else {
                     stdout
                 };
@@ -359,8 +380,10 @@ impl RoboticExecutor {
                 let err_str = String::from_utf8_lossy(&out.stderr);
                 let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
 
-                let trunc = if combined.len() > 6000 {
-                    format!("{}...\n[OUTPUT TRUNCATED]", &combined[combined.len() - 6000..])
+                let char_count = combined.chars().count();
+                let trunc = if char_count > 3000 {
+                    let safe_tail: String = combined.chars().skip(char_count.saturating_sub(3000)).collect();
+                    format!("{}...\n[OUTPUT TRUNCATED]", safe_tail)
                 } else {
                     combined
                 };
@@ -389,7 +412,14 @@ impl RoboticExecutor {
                 let safe_path = sanitize(&path)?;
                 let original = tokio::fs::read_to_string(&safe_path).await?;
                 let patched = crate::diff::DiffEngine::apply(&original, &search, &replace)?;
-                tokio::fs::write(&safe_path, patched).await?;
+                tokio::fs::write(&safe_path, &patched).await?;
+                _dist.broadcast_file_shift(&path, "diff_patch");
+                *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
+                
+                let snippet: String = patched.chars().take(4000).collect();
+                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await.ok();
+                let _ = memory.store_memory("DiffPatch", &path, &patched, "Mutated", emb).await;
+                
                 Ok(format!("[DIFF_PATCH_OK] Applied changes to {}", path))
             }
             MotorAction::PatchFunction { path, function_name, new_body } => {
@@ -410,8 +440,7 @@ impl RoboticExecutor {
                 {
                     if let Ok(results) = memory.semantic_search(&emb).await {
                         for r in results {
-                            let snippet =
-                                if r.result.len() > 3000 { &r.result[..3000] } else { &r.result };
+                            let snippet: String = r.result.chars().take(1500).collect();
                             results_text.push_str(&format!(
                                 "Source: {}\nData: {}...\n---\n",
                                 r.directive, snippet
@@ -470,20 +499,30 @@ impl RoboticExecutor {
                 .await
                 {
                     Ok(markdown) => {
-                        let raw_path = Path::new(&output_path);
-                        if raw_path.is_absolute() {
-                            return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED"));
-                        }
-                        let ws = std::env::current_dir().unwrap().canonicalize().unwrap();
-                        let safe_path = ws.join(raw_path);
-                        if !safe_path.starts_with(&ws) {
-                            return Err(anyhow::anyhow!("PATH_TRAVERSAL_DENIED"));
+                        let raw_output_path = Path::new(&output_path);
+                        let workspace_root = std::env::current_dir()
+                            .and_then(std::fs::canonicalize)
+                            .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+                        let output_target = if raw_output_path.is_absolute() {
+                            raw_output_path.to_path_buf()
+                        } else {
+                            workspace_root.join(raw_output_path)
+                        };
+                        let safe_path = canonicalize_or_parent(&output_target)
+                            .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", output_path))?;
+                        if !safe_path.starts_with(&workspace_root) {
+                            return Err(anyhow!(
+                                "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
+                                output_path
+                            ));
                         }
 
                         if let Some(parent) = safe_path.parent() {
                             let _ = tokio::fs::create_dir_all(parent).await;
                         }
                         tokio::fs::write(&safe_path, markdown).await?;
+                        _dist.broadcast_file_shift(&output_path, "synthesize_report");
+                        *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
                         Ok(format!(
                             "[WRITE_OK] Successfully synthesized and wrote report to {}",
                             output_path
@@ -493,6 +532,9 @@ impl RoboticExecutor {
                 }
             }
             MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
+            MotorAction::PolyglotAstPatch { .. } => {
+                Err(anyhow!("PolyglotAstPatch is defined but not yet implemented in the executor"))
+            }
         }
     }
 }

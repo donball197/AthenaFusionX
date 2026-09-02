@@ -1,7 +1,7 @@
 use crate::graph::{DagManager, TaskStatus};
 use std::env;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 pub struct DagExecutor {
     pub manager: DagManager,
@@ -25,6 +25,48 @@ impl DagExecutor {
         }
     }
 
+    fn execute_grounded_task(description: &str, _evidence_context: &str) -> Option<String> {
+        let desc_lower = description.to_lowercase();
+        
+        // 1. Direct Physical Shell Execution for Compiler & Build Checks
+        if desc_lower.contains("cargo check") || desc_lower.contains("compiler check") || desc_lower.contains("build dry-run") {
+            println!("  -> [PHYSICAL ENGINE] Executing real host command: `cargo check --workspace`");
+            let output = Command::new("cargo")
+                .args(["check", "--workspace", "--color", "never"])
+                .output()
+                .ok()?;
+            
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+            let status_code = output.status.code().unwrap_or(-1);
+            return Some(format!("[CMD_OK] Exit Status: {}\n{}", status_code, combined.trim()));
+        }
+
+        // 2. Direct Physical Filesystem Scans
+        if (desc_lower.contains("scan") || desc_lower.contains("list")) && desc_lower.contains("top-level") {
+            println!("  -> [PHYSICAL ENGINE] Executing filesystem scan on workspace root");
+            if let Ok(entries) = std::fs::read_dir(".") {
+                let mut files = Vec::new();
+                let mut dirs = Vec::new();
+                for e in entries.flatten() {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if e.path().is_dir() {
+                        dirs.push(name);
+                    } else {
+                        files.push(name);
+                    }
+                }
+                dirs.sort();
+                files.sort();
+                let result = format!("{{\n  \"directories\": {:?},\n  \"files\": {:?}\n}}", dirs, files);
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
     pub fn run_step(&mut self) -> Result<usize, String> {
         let ready_tasks = self.manager.get_ready_tasks();
         let mut executed_count = 0;
@@ -36,37 +78,24 @@ impl DagExecutor {
         let bin_path = Self::get_minion_binary_path();
 
         for task_id in ready_tasks {
-            // 1. Gather upstream evidence
-            let mut context_block = String::new();
-            {
-                let node = self.manager.nodes.get(&task_id).unwrap();
-                for dep_id in &node.dependencies {
-                    if let Some(dep_node) = self.manager.nodes.get(dep_id) {
-                        let out = if dep_node.result_evidence.len() > 4000 {
-                            format!("{}... [TRUNCATED]", &dep_node.result_evidence[..4000])
-                        } else {
-                            dep_node.result_evidence.clone()
-                        };
-                        context_block.push_str(&format!(
+            let (tier, description, deps) = {
+                let node = self.manager.nodes.get_mut(&task_id).unwrap();
+                node.status = TaskStatus::InProgress;
+                (node.required_tier.clone(), node.description.clone(), node.dependencies.clone())
+            };
+
+            // Collect historical evidence from parent tasks
+            let mut parent_evidence = String::new();
+            for dep in &deps {
+                if let Some(dep_node) = self.manager.nodes.get(dep) {
+                    if !dep_node.result_evidence.is_empty() {
+                        parent_evidence.push_str(&format!(
                             "--- [EVIDENCE FROM PREVIOUS STEP: {}] ---\n{}\n\n",
-                            dep_id, out
+                            dep, dep_node.result_evidence
                         ));
                     }
                 }
             }
-
-            // 2. Mark in progress and build final payload
-            let (tier, description) = {
-                let node = self.manager.nodes.get_mut(&task_id).unwrap();
-                node.status = TaskStatus::InProgress;
-                (node.required_tier.clone(), node.description.clone())
-            };
-
-            let combined_mission = if context_block.is_empty() {
-                description.clone()
-            } else {
-                format!("{}\n\nBACKGROUND CONTEXT (Results from previous steps):\n{}", description, context_block)
-            };
 
             println!("\n==================================================");
             println!(
@@ -75,48 +104,57 @@ impl DagExecutor {
                 tier.to_uppercase()
             );
             println!("Objective: {}", description);
-            if !context_block.is_empty() {
-                println!("[+] Injecting {} bytes of historical DAG evidence.", context_block.len());
+            if !parent_evidence.is_empty() {
+                println!("[+] Injecting {} bytes of historical DAG evidence.", parent_evidence.len());
             }
             println!("==================================================");
 
-            // 3. Spawn the minion, piping stdout so we can capture the final evidence
-            let output = Command::new(&bin_path)
-                .arg("--tier")
-                .arg(&tier)
-                .arg(&combined_mission)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .output();
+            // Check if task can be physically executed directly on host
+            let task_output = if let Some(physical_output) = Self::execute_grounded_task(&description, &parent_evidence) {
+                println!("\n[+] Physical Result:\n{}", physical_output);
+                Some(physical_output)
+            } else {
+                // Otherwise pipe prompt + parent evidence to the minion binary
+                let full_prompt = if parent_evidence.is_empty() {
+                    description.clone()
+                } else {
+                    format!("{}\n\nBACKGROUND CONTEXT (Results from previous steps):\n{}", description, parent_evidence)
+                };
 
-            match output {
-                Ok(out) if out.status.success() => {
-                    let minion_stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                    print!("{}", minion_stdout); // Stream it back to the console
+                let output = Command::new(&bin_path)
+                    .arg("--tier")
+                    .arg(&tier)
+                    .arg(&full_prompt)
+                    .output();
 
-                    // Only persist the RESULT block as evidence -- not the full
-                    // log stream -- so downstream tasks don't inherit exploding
-                    // nested logs from every prior step.
-                    let evidence = extract_result_block(&minion_stdout);
-
-                    println!("\n[Orchestrator] Task [{}] Completed Successfully.", task_id);
-                    self.manager.complete_task(&task_id, evidence);
-                    executed_count += 1;
-                }
-                Ok(out) => {
-                    let minion_stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                    print!("{}", minion_stdout);
-                    eprintln!(
-                        "\n[Orchestrator] Task [{}] FAILED with code: {}",
-                        task_id, out.status
-                    );
-                    if let Some(node) = self.manager.nodes.get_mut(&task_id) {
-                        node.status = TaskStatus::Failed;
-                        node.result_evidence = minion_stdout;
+                match output {
+                    Ok(out) if out.status.success() => {
+                        let text = String::from_utf8_lossy(&out.stdout).to_string();
+                        print!("{}", text);
+                        Some(text)
+                    }
+                    Ok(out) => {
+                        let err = String::from_utf8_lossy(&out.stderr);
+                        eprintln!("\n[Orchestrator] Task [{}] FAILED with code: {} | {}", task_id, out.status, err);
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("\n[Orchestrator] FATAL: Failed to execute minion daemon: {}", e);
+                        None
                     }
                 }
-                Err(e) => {
-                    eprintln!("\n[Orchestrator] FATAL: Failed to execute minion daemon: {}", e);
+            };
+
+            match task_output {
+                Some(evidence) => {
+                    println!("\n[Orchestrator] Task [{}] Completed Successfully.", task_id);
+                    if let Some(node) = self.manager.nodes.get_mut(&task_id) {
+                        node.status = TaskStatus::Completed;
+                        node.result_evidence = evidence;
+                    }
+                    executed_count += 1;
+                }
+                None => {
                     if let Some(node) = self.manager.nodes.get_mut(&task_id) {
                         node.status = TaskStatus::Failed;
                     }
@@ -126,21 +164,4 @@ impl DagExecutor {
 
         Ok(executed_count)
     }
-}
-
-/// Extracts just the text between "---- RESULT ----" and "----------------"
-/// markers from a minion's captured stdout. Falls back to the full text if
-/// the markers aren't present (e.g. local-edge stress-test output that
-/// doesn't go through the gateway).
-fn extract_result_block(stdout: &str) -> String {
-    const START: &str = "---- RESULT ----";
-    const END: &str = "----------------";
-
-    if let Some(start_idx) = stdout.find(START) {
-        let after_start = &stdout[start_idx + START.len()..];
-        if let Some(end_idx) = after_start.find(END) {
-            return after_start[..end_idx].trim().to_string();
-        }
-    }
-    stdout.trim().to_string()
 }

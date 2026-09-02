@@ -3,14 +3,13 @@
 #[link(name = "cblas")]
 extern "C" {}
 
-// Project Nexus Singularity v3.0.0 — Sovereign Context Index
 use std::collections::HashMap;
 use std::path::Path;
 use turbovec::TurboQuantIndex;
 
 pub struct VectorVault {
     index: TurboQuantIndex,
-    id_map: HashMap<usize, u64>, // Maps TurboVec Index to SQLite ID!
+    id_map: HashMap<usize, u64>, // Maps TurboVec index slot to SQLite ID
     current_idx: usize,
     dimension: usize,
     #[allow(dead_code)]
@@ -28,7 +27,7 @@ impl VectorVault {
         }
     }
 
-    pub fn commit_state(&mut self, id: u64, embedding: &[f32]) -> Result<(), String> {
+    pub fn commit_state(&mut self, sqlite_id: u64, embedding: &[f32]) -> Result<(), String> {
         if embedding.len() != self.dimension {
             return Err(format!(
                 "Dimension mismatch: expected {}, got {}",
@@ -37,7 +36,7 @@ impl VectorVault {
             ));
         }
         self.index.add(embedding);
-        self.id_map.insert(self.current_idx, id);
+        self.id_map.insert(self.current_idx, sqlite_id);
         self.current_idx += 1;
         Ok(())
     }

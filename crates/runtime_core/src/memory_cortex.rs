@@ -330,6 +330,9 @@ pub struct ActionCache {
 }
 
 impl ActionCache {
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
     pub fn new() -> Self {
         Self { cache: HashMap::new() }
     }

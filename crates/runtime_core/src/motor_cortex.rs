@@ -2,7 +2,6 @@ use crate::agent_protocol::AgentAction;
 use crate::intent_contract::IntentContract;
 use crate::policy::Capability;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MotorAction {
@@ -11,26 +10,25 @@ pub enum MotorAction {
     ReadFile { path: String },
     ReadFileChunk { path: String, start_line: usize, max_lines: usize },
     SearchCode { path: String, query: String },
-    PatchFile { path: String, target: String, replacement: String },
     SearchMemory { query: String },
     ReplaceLines { path: String, start_line: usize, end_line: usize, replacement: String },
     RunTests { test_target: String },
     AtomicPatch { patches: Vec<crate::agent_protocol::FilePatch> },
     DiffPatch { path: String, search: String, replace: String },
     PatchFunction { path: String, function_name: String, new_body: String },
+    PatchFile { path: String, target: String, replacement: String },
     SynthesizeReport { output_path: String, source_files: Vec<String> },
+    PolyglotAstPatch { path: String, pattern_name: String, patch_snippet: String },
     Halt { reasoning: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MotorCommand {
-    pub command_id: Uuid,
-    pub intent_id: Uuid,
-    pub goal_id: Option<Uuid>,
+    pub intent_id: String,
+    pub parent_action_id: Option<String>,
     pub action: MotorAction,
-    pub capability: Capability,
-    pub expected_outcome: String,
-    pub created_at: u64,
+    pub required_capability: Capability,
+    pub rationale: String,
 }
 
 pub struct MotorCortex;
@@ -38,55 +36,34 @@ pub struct MotorCortex;
 impl MotorCortex {
     pub fn translate(
         intent: &IntentContract,
-        goal_id: Option<Uuid>,
+        parent_action_id: Option<String>,
         action: AgentAction,
         capability: Capability,
-        expected_outcome: String,
+        rationale: String,
     ) -> MotorCommand {
         let motor_action = match action {
             AgentAction::ExecuteCommand { command, .. } => MotorAction::ExecuteCommand { command },
-            AgentAction::WriteFile { path, content, .. } => {
-                MotorAction::WriteFile { path, content }
-            }
+            AgentAction::WriteFile { path, content, .. } => MotorAction::WriteFile { path, content },
             AgentAction::ReadFile { path, .. } => MotorAction::ReadFile { path },
-            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
-                MotorAction::ReadFileChunk { path, start_line, max_lines }
-            }
+            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => MotorAction::ReadFileChunk { path, start_line, max_lines },
             AgentAction::SearchCode { path, query, .. } => MotorAction::SearchCode { path, query },
             AgentAction::SearchMemory { query, .. } => MotorAction::SearchMemory { query },
-            AgentAction::PatchFile { path, target, replacement, .. } => {
-                MotorAction::PatchFile { path, target, replacement }
-            }
-            AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
-                MotorAction::ReplaceLines { path, start_line, end_line, replacement }
-            }
+            AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => MotorAction::ReplaceLines { path, start_line, end_line, replacement },
             AgentAction::RunTests { test_target, .. } => MotorAction::RunTests { test_target },
-            AgentAction::DiffPatch { path, search, replace, .. } => {
-                MotorAction::DiffPatch { path, search, replace }
-            }
-            AgentAction::PatchFunction { path, function_name, new_body, .. } => {
-                MotorAction::PatchFunction { path, function_name, new_body }
-            }
-            AgentAction::SynthesizeReport { output_path, source_files, .. } => {
-                MotorAction::SynthesizeReport { output_path, source_files }
-            }
-            AgentAction::Halt { reasoning } => MotorAction::Halt { reasoning },
-            _ => MotorAction::Halt { reasoning: "Fallback halt for unmapped action".to_string() },
+            AgentAction::AtomicPatch { patches, .. } => MotorAction::AtomicPatch { patches },
+            AgentAction::DiffPatch { path, search, replace, .. } => MotorAction::DiffPatch { path, search, replace },
+            AgentAction::PatchFunction { path, function_name, new_body, .. } => MotorAction::PatchFunction { path, function_name, new_body },
+            AgentAction::SynthesizeReport { output_path, source_files, .. } => MotorAction::SynthesizeReport { output_path, source_files },
+            AgentAction::Halt { reasoning, .. } => MotorAction::Halt { reasoning },
+            _ => MotorAction::Halt { reasoning: "Unmapped reflex action".to_string() },
         };
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
         MotorCommand {
-            command_id: Uuid::new_v4(),
-            intent_id: intent.id,
-            goal_id,
+            intent_id: intent.id.to_string(),
+            parent_action_id,
             action: motor_action,
-            capability,
-            expected_outcome,
-            created_at: now,
+            required_capability: capability,
+            rationale,
         }
     }
 }

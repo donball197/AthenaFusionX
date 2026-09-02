@@ -5,7 +5,14 @@ use crate::agent_protocol::AgentAction;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-/// Function declaration shared across both APIs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CognitivePhase {
+    Reconnaissance,
+    Execution,
+    Verification,
+    All,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionDeclaration {
     pub name: String,
@@ -32,7 +39,6 @@ impl FunctionDeclaration {
     }
 }
 
-/// Returns the full list of tool declarations for all core AgentAction variants.
 pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
     vec![
         FunctionDeclaration::for_action(
@@ -124,7 +130,6 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
                 "reasoning": { "type": "string" },
             }),
         ),
-        
         FunctionDeclaration::for_action(
             "synthesize_report",
             "Generates a massive, multi-section markdown report from a list of source files, bypassing JSON formatting limits.",
@@ -135,7 +140,7 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
                 "reasoning": { "type": "string" },
             }),
         ),
-FunctionDeclaration::for_action(
+        FunctionDeclaration::for_action(
             "halt",
             "Halt the current cognitive task when the mission is successfully completed.",
             &["reasoning"],
@@ -146,7 +151,22 @@ FunctionDeclaration::for_action(
     ]
 }
 
-/// Fully maps tool names and argument objects back into native AgentAction variants.
+pub fn tool_declarations_for_phase(phase: CognitivePhase) -> Vec<FunctionDeclaration> {
+    let all = all_tool_declarations();
+    match phase {
+        CognitivePhase::Reconnaissance => all.into_iter().filter(|t| {
+            t.name == "read_file" || t.name == "read_file_chunk" || t.name == "search_code" || t.name == "search_memory" || t.name == "execute_command"
+        }).collect(),
+        CognitivePhase::Execution => all.into_iter().filter(|t| {
+            t.name == "write_file" || t.name == "diff_patch" || t.name == "patch_function" || t.name == "replace_lines" || t.name == "synthesize_report" || t.name == "execute_command" || t.name == "halt"
+        }).collect(),
+        CognitivePhase::Verification => all.into_iter().filter(|t| {
+            t.name == "run_tests" || t.name == "execute_command" || t.name == "read_file" || t.name == "halt"
+        }).collect(),
+        CognitivePhase::All => all,
+    }
+}
+
 pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<AgentAction, String> {
     let get_str = |field: &str| -> Result<String, String> {
         args.get(field)
@@ -221,10 +241,15 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             let arr = args.get("source_files").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
             let source_files =
                 arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            let out_path = args.get("output_path")
+                .or_else(|| args.get("target_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("report.md")
+                .to_string();
             Ok(AgentAction::SynthesizeReport {
-                output_path: get_str("output_path")?,
+                output_path: out_path,
                 source_files,
-                reasoning: get_str("reasoning")?,
+                reasoning: args.get("reasoning").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
             })
         }
         "halt" => Ok(AgentAction::Halt { reasoning: get_str("reasoning")? }),
@@ -232,18 +257,15 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
     }
 }
 
-/// Universal response inspector that extracts tool calls from either Gemini or OpenAI/NVIDIA NIM responses.
 pub fn extract_tool_call_from_response(
     response_json: &serde_json::Value,
 ) -> Result<AgentAction, String> {
-    // 1. Check Gemini format: candidates[0].content.parts[0].functionCall
     if let Some(fc) = response_json.pointer("/candidates/0/content/parts/0/functionCall") {
         let name = fc["name"].as_str().ok_or("Gemini tool call missing 'name'")?;
         let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
         return parse_tool_call(name, &args);
     }
 
-    // 2. Check OpenAI / NVIDIA NIM format: choices[0].message.tool_calls[0]
     if let Some(tc) = response_json.pointer("/choices/0/message/tool_calls/0") {
         let name = tc
             .pointer("/function/name")

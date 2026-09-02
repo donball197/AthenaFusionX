@@ -243,13 +243,11 @@ async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse 
         },
     };
     let motor_cmd = nexus_runtime_core::motor_cortex::MotorCommand {
-        command_id: uuid::Uuid::new_v4(),
-        intent_id: uuid::Uuid::new_v4(),
-        goal_id: None,
+        intent_id: uuid::Uuid::new_v4().to_string(),
+        parent_action_id: None,
         action: motor_action,
-        capability: nexus_runtime_core::policy::Capability::ExecuteSystemCall, // Human override
-        expected_outcome: "CLI_DIRECT_INVOCATION".to_string(),
-        created_at: 0,
+        required_capability: nexus_runtime_core::policy::Capability::ExecuteSystemCall, // Human override
+        rationale: "CLI_DIRECT_INVOCATION".to_string(),
     };
     match executor.execute_motor_command(motor_cmd, memory, vmo_state, dist).await {
         Ok(obs) => (StatusCode::OK, obs).into_response(),

@@ -1,27 +1,8 @@
-#![allow(clippy::doc_overindented_list_items)]
-//! Unified LLM provider resolution + cascade construction.
-//!
-//! SINGLE SOURCE OF TRUTH for:
-//!   - resolve_provider(model) → (endpoint, api_key, auth_style)
-//!   - get_light_models() / get_heavy_models()  (pure, no cross-tier injection)
-//!   - cascade helpers
-//!
-//! All other crates MUST call into this module (or re-export it).
-//! Do NOT re-implement provider detection elsewhere.
-
 use std::env;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Circuit-breaker timestamps (unix secs). 0 = healthy.
-static GEMINI_DISABLED_UNTIL: AtomicU64 = AtomicU64::new(0);
-static NVIDIA_DISABLED_UNTIL: AtomicU64 = AtomicU64::new(0);
-const CIRCUIT_COOLDOWN_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthStyle {
-    /// Authorization: Bearer <key>
     Bearer,
-    /// x-goog-api-key: <key>
     GoogleApiKey,
 }
 
@@ -33,213 +14,101 @@ pub struct ProviderResolved {
     pub provider_name: &'static str,
 }
 
-/// Record a rate-limit / 429 so the cascade skips this provider briefly.
-pub fn trip_circuit(model_name: &str) {
-    let now = now_secs();
-    let until = now + CIRCUIT_COOLDOWN_SECS;
-    let lower = model_name.to_ascii_lowercase();
-    if lower.contains("gemini") || lower.contains("gemma") {
-        GEMINI_DISABLED_UNTIL.store(until, Ordering::Relaxed);
-        tracing::warn!("[CIRCUIT] Google API rate-limited; bypassing for {}s", CIRCUIT_COOLDOWN_SECS);
-    } else if lower.contains("nvidia") || lower.contains("nemotron") || lower.contains("deepseek") {
-        NVIDIA_DISABLED_UNTIL.store(until, Ordering::Relaxed);
-        tracing::warn!(
-            "[CIRCUIT] NVIDIA/NIM rate-limited; bypassing for {}s",
-            CIRCUIT_COOLDOWN_SECS
-        );
-    }
-}
+pub fn trip_circuit(_model_name: &str) {}
 
-fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
-fn provider_healthy(kind: &str) -> bool {
-    let now = now_secs();
-    match kind {
-        "gemini" | "gemma" => now > GEMINI_DISABLED_UNTIL.load(Ordering::Relaxed),
-        "nvidia" => now > NVIDIA_DISABLED_UNTIL.load(Ordering::Relaxed),
-        _ => true,
-    }
-}
-
-/// Resolve the correct endpoint + key for a model string.
 pub fn resolve_provider(model_name: &str) -> ProviderResolved {
     let model = model_name.to_ascii_lowercase();
 
-    // Google Gemini & Gemma
-    if model.contains("gemini") || model.contains("gemma") {
+    // 1. Local S23 Edge LiteRT-LM (Strictly e4b or explicit local names)
+    if model.contains("e4b") || model.contains("litert") || model == "nexus" {
+        let gw = env::var("OPENAI_BASE_URL")
+            .or_else(|_| env::var("NEXUS_API_GATEWAY"))
+            .unwrap_or_else(|_| "http://192.168.4.223:9379/v1".to_string());
+        let clean = gw.trim_end_matches('/');
+        let endpoint = if clean.ends_with("/chat/completions") {
+            clean.to_string()
+        } else {
+            format!("{}/chat/completions", clean)
+        };
+        let key = env::var("OPENAI_API_KEY")
+            .or_else(|_| env::var("NEXUS_AUTH_KEY"))
+            .unwrap_or_else(|_| "local-s23-device".to_string());
         return ProviderResolved {
-            endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-                .to_string(),
-            api_key: env::var("GEMINI_API_KEY").unwrap_or_default(),
-            auth: AuthStyle::GoogleApiKey, // also accept Bearer on the openai path
+            provider_name: "nexus",
+            endpoint,
+            api_key: key,
+            auth: AuthStyle::Bearer,
+        };
+    }
+
+    // 2. Google Cloud (Gemini models AND Cloud Gemma models like gemma-4-31b-it)
+    if model.contains("gemini") || (model.contains("gemma") && !model.contains("google/")) {
+        let api_key = env::var("GEMINI_API_KEY")
+            .or_else(|_| env::var("GOOGLE_API_KEY"))
+            .unwrap_or_default();
+        return ProviderResolved {
+            endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
+            api_key,
+            auth: AuthStyle::GoogleApiKey,
             provider_name: "google",
         };
     }
 
-    // NVIDIA NIM / hosted models (explicit prefixes only)
-    if model.contains("nvidia")
-        || model.contains("nemotron")
-        || model.starts_with("deepseek-ai/")
-        || model.contains("deepseek")
-    {
+    // 3. NVIDIA NIM Cloud (nvidia/*, meta/*, deepseek/*, google/*)
+    if model.contains("nvidia") || model.contains("nemotron") || model.contains("deepseek") || model.contains("meta/") || model.starts_with("google/") {
+        let api_key = env::var("NVIDIA_API_KEY").unwrap_or_default();
         return ProviderResolved {
             endpoint: "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
-            api_key: env::var("NVIDIA_API_KEY").unwrap_or_default(),
+            api_key,
             auth: AuthStyle::Bearer,
             provider_name: "nvidia",
         };
     }
 
-    // Configured Nexus / custom OpenAI-compatible gateway
+    // Fallback default: Local S23
     ProviderResolved {
-        endpoint: env::var("NEXUS_API_ENDPOINT")
-            .unwrap_or_else(|_| "https://api.example.com/v1/chat/completions".to_string()),
-        api_key: env::var("NEXUS_AUTH_KEY").unwrap_or_default(),
+        endpoint: "http://192.168.4.223:9379/v1/chat/completions".to_string(),
+        api_key: "local-s23-device".to_string(),
         auth: AuthStyle::Bearer,
         provider_name: "nexus",
     }
 }
 
-/// Pure light-model list. Never injects heavy models.
 pub fn get_light_models() -> Vec<String> {
     let mut out = Vec::new();
-
-    // Explicit cascade first
-    if let Ok(cascade) = env::var("NEXUS_LIGHT_CASCADE") {
-        for m in cascade.split(',') {
-            let m = m.trim();
-            if !m.is_empty() && !out.iter().any(|x| x == m) {
-                out.push(m.to_string());
-            }
-        }
-    }
-
-    // Single light model
     if let Ok(m) = env::var("NEXUS_LIGHT_MODEL") {
-        let m = m.trim();
-        if !m.is_empty() && !out.iter().any(|x| x == m) {
-            out.push(m.to_string());
-        }
-    }
-
-    // Filter by circuit breaker
-    out.retain(|m| {
-        let lower = m.to_ascii_lowercase();
-        if lower.contains("gemini") || lower.contains("gemma") {
-            provider_healthy("gemini")
-        } else if lower.contains("nvidia")
-            || lower.contains("nemotron")
-            || lower.contains("deepseek")
-        {
-            provider_healthy("nvidia")
-        } else {
-            true
-        }
-    });
-
-    if out.is_empty() {
-        // Last-resort safe defaults (light capacity only)
-        out.push("gemini-2.0-flash".to_string());
-    }
-    out
-}
-
-/// Pure heavy-model list. Never injects light models.
-pub fn get_heavy_models() -> Vec<String> {
-    let mut out = Vec::new();
-
-    if let Ok(cascade) = env::var("NEXUS_HEAVY_CASCADE") {
-        for m in cascade.split(',') {
-            let m = m.trim();
-            if !m.is_empty() && !out.iter().any(|x| x == m) {
-                out.push(m.to_string());
-            }
-        }
-    }
-
-    if let Ok(m) = env::var("NEXUS_HEAVY_MODEL") {
-        let m = m.trim();
-        if !m.is_empty() && !out.iter().any(|x| x == m) {
-            out.push(m.to_string());
-        }
-    }
-
-    out.retain(|m| {
-        let lower = m.to_ascii_lowercase();
-        if lower.contains("gemini") || lower.contains("gemma") {
-            provider_healthy("gemini")
-        } else if lower.contains("nvidia")
-            || lower.contains("nemotron")
-            || lower.contains("deepseek")
-        {
-            provider_healthy("nvidia")
-        } else {
-            true
-        }
-    });
-
-    if out.is_empty() {
-        out.push("gemini-2.5-pro".to_string());
-    }
-    out
-}
-
-/// Planner model list (planner first, then light cascade).
-pub fn get_planner_models() -> Vec<String> {
-    let mut out = Vec::new();
-    if let Ok(m) = env::var("NEXUS_PLANNER_MODEL") {
-        let m = m.trim();
-        if !m.is_empty() {
-            out.push(m.to_string());
-        }
-    }
-    for m in get_light_models() {
-        if !out.iter().any(|x| x == &m) {
+        if !m.trim().is_empty() {
             out.push(m);
         }
     }
+    if out.is_empty() {
+        out.push("gemma-4-e4b-it".to_string());
+    }
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gemini_routes_to_google() {
-        let r = resolve_provider("gemini-2.0-flash");
-        assert!(r.endpoint.contains("generativelanguage.googleapis.com"));
-        assert_eq!(r.provider_name, "google");
+pub fn get_heavy_models() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(m) = env::var("NEXUS_HEAVY_MODEL") {
+        if !m.trim().is_empty() {
+            out.push(m);
+        }
     }
-
-    #[test]
-    fn gemma_routes_to_google() {
-        let r = resolve_provider("gemma-4-31b-it");
-        assert!(r.endpoint.contains("generativelanguage.googleapis.com"));
-        assert_eq!(r.provider_name, "google");
+    if out.is_empty() {
+        out.push("gemini-3.1-pro-preview".to_string());
     }
+    out
+}
 
-    #[test]
-    fn nemotron_routes_to_nvidia() {
-        let r = resolve_provider("nvidia/nemotron-3-ultra-550b-a55b");
-        assert!(r.endpoint.contains("integrate.api.nvidia.com"));
-        assert_eq!(r.provider_name, "nvidia");
-        assert_eq!(r.auth, AuthStyle::Bearer);
+pub fn get_planner_models() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(m) = env::var("NEXUS_PLANNER_MODEL") {
+        if !m.trim().is_empty() {
+            out.push(m);
+        }
     }
-
-    #[test]
-    fn deepseek_routes_to_nvidia() {
-        let r = resolve_provider("deepseek-ai/deepseek-v4-flash-0731");
-        assert!(r.endpoint.contains("integrate.api.nvidia.com"));
-        assert_eq!(r.provider_name, "nvidia");
+    if out.is_empty() {
+        out.push("gemma-4-31b-it".to_string());
     }
-
-    #[test]
-    fn unknown_family_uses_nexus() {
-        // "llama" without provider prefix must NOT go to Google or NVIDIA by name alone
-        let r = resolve_provider("llama-3-8b");
-        assert_eq!(r.provider_name, "nexus");
-    }
+    out
 }

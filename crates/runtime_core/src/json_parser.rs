@@ -1,7 +1,6 @@
 use crate::agent_protocol::AgentAction;
 use anyhow::Result;
 
-/// Public shared JSON string escape sanitizer.
 pub fn sanitize_json_escapes(json_str: &str) -> String {
     let mut sanitized = String::with_capacity(json_str.len() + 128);
     let mut in_string = false;
@@ -32,42 +31,44 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         return Ok(vec![]);
     }
 
-    // ⚡ NUCLEAR ARTIFACT INTERCEPT: Bypass JSON entirely for large file writes
+    // 1. Raw write artifact intercept
     if text.contains("[WRITE_FILE_TARGET]:") && text.contains("[WRITE_FILE_CONTENT]:") {
         if let Some(target_start) = text.find("[WRITE_FILE_TARGET]:") {
             let path_start = target_start + 20;
             if let Some(path_end) = text[path_start..].find('\n') {
-                let path = text[path_start..path_start + path_end].trim().to_string();
+                let path = text[path_start..path_start + path_end].trim().trim_matches('`').to_string();
                 if let Some(content_start) = text.find("[WRITE_FILE_CONTENT]:") {
-                    if let Some(fence_start) = text[content_start..].find("```") {
-                        let actual_start = content_start + fence_start + 3;
-                        let mut final_start = actual_start;
-                        if let Some(newline) = text[actual_start..].find('\n') {
-                            if newline < 15 {
-                                final_start = actual_start + newline + 1;
-                            }
+                    let raw_content = &text[content_start + 21..];
+
+                    let content = if let Some(end_tag) = raw_content.find("[/WRITE_FILE_CONTENT]") {
+                        raw_content[..end_tag].trim().to_string()
+                    } else if let Some(fence_start) = raw_content.find("```") {
+                        let after_fence = &raw_content[fence_start + 3..];
+                        let final_start = after_fence.find('\n').map(|idx| idx + 1).unwrap_or(0);
+                        if let Some(fence_end) = after_fence[final_start..].find("```") {
+                            after_fence[final_start..final_start + fence_end].trim().to_string()
+                        } else {
+                            after_fence[final_start..].trim().to_string()
                         }
-                        if let Some(fence_end) = text[final_start..].find("```") {
-                            let content =
-                                text[final_start..final_start + fence_end].trim().to_string();
-                            tracing::info!(
-                                ">> [CORTEX INTERCEPT] Plucked raw fenced artifact for {}",
-                                path
-                            );
-                            return Ok(vec![crate::agent_protocol::AgentAction::WriteFile {
-                                path,
-                                content,
-                                reasoning: "Intercepted via raw text block".to_string(),
-                                confidence: 1.0,
-                            }]);
-                        }
+                    } else {
+                        raw_content.trim().to_string()
+                    };
+
+                    if !path.is_empty() && !content.is_empty() {
+                        tracing::info!(">> [CORTEX INTERCEPT] Plucked raw artifact for {}", path);
+                        return Ok(vec![crate::agent_protocol::AgentAction::WriteFile {
+                            path,
+                            content,
+                            reasoning: "Intercepted via raw text block".to_string(),
+                            confidence: 1.0,
+                        }]);
                     }
                 }
             }
         }
     }
 
-    // 1. Aggressively carve out code blocks
+    // 2. Extract markdown code blocks
     let mut extracted = text;
     if let Some(start) = text.find("```json") {
         if let Some(end) = text[start + 7..].find("```") {
@@ -81,10 +82,16 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     extracted = extracted.trim();
 
-    // 2. Locate boundaries
-    let json_str = if let (Some(s), Some(e)) = (extracted.find('['), extracted.rfind(']')) {
+    // 3. Strict JSON boundary discovery (Do NOT match pseudo-text like [TOOL]:)
+    let json_str = if let (Some(s), Some(e)) = (
+        extracted.find("[{").or_else(|| extracted.find("[\n")).or_else(|| extracted.find("[\"")).or_else(|| extracted.find("[ \"")),
+        extracted.rfind(']'),
+    ) {
         &extracted[s..=e]
-    } else if let (Some(s), Some(e)) = (extracted.find('{'), extracted.rfind('}')) {
+    } else if let (Some(s), Some(e)) = (
+        extracted.find("{\"").or_else(|| extracted.find("{\n")),
+        extracted.rfind('}'),
+    ) {
         &extracted[s..=e]
     } else {
         return Err(anyhow::anyhow!("No JSON boundaries found in model output."));
@@ -92,40 +99,29 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     let clean_text = sanitize_json_escapes(json_str);
 
-    // ANTI-DEGENERACY GATE
-    if clean_text.contains("00000000000000000000") || clean_text.len() > 25_000 {
-        tracing::error!(
-            "[CORTEX PARSE ABORT] Token Resonance / Runaway block. Returning safe halt."
-        );
+    if clean_text.contains("00000000000000000000") || clean_text.len() > 35_000 {
+        tracing::error!("[CORTEX PARSE ABORT] Token Resonance block. Returning safe halt.");
         return Ok(vec![]);
     }
 
-    // 3. Serializer & Transparent Fallback Log
-
-    // ⚡ ROBUST Auto-normalize arbitrary tool schemas to Athena AgentAction array
     let clean_text = if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&clean_text) {
         let process_obj = |obj: &mut serde_json::Map<String, serde_json::Value>| {
-            // Map "tool" -> "type"
             if let Some(tool_val) = obj.remove("tool") {
                 obj.insert("type".to_string(), tool_val);
             }
-            // Flatten "args"
-            if let Some(args_val) = obj.remove("args") {
+            if let Some(action_val) = obj.remove("action") {
+                obj.insert("type".to_string(), action_val);
+            }
+            if let Some(target_val) = obj.remove("target_path").or_else(|| obj.remove("output")) {
+                obj.insert("output_path".to_string(), target_val);
+            }
+            if let Some(args_val) = obj.remove("args").or_else(|| obj.remove("arguments")) {
                 if let Some(args_obj) = args_val.as_object() {
                     for (k, v) in args_obj {
                         obj.insert(k.clone(), v.clone());
                     }
                 }
             }
-            // Flatten "arguments" (alias)
-            if let Some(args_val) = obj.remove("arguments") {
-                if let Some(args_obj) = args_val.as_object() {
-                    for (k, v) in args_obj {
-                        obj.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-            // Map "bash_command" -> "command" (alias)
             if let Some(cmd) = obj.remove("bash_command") {
                 obj.insert("command".to_string(), cmd);
             }
@@ -150,16 +146,9 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
         Ok(actions) => Ok(actions),
-        Err(e1) => match serde_json::from_str::<AgentAction>(&clean_text) {
+        Err(_) => match serde_json::from_str::<AgentAction>(&clean_text) {
             Ok(single) => Ok(vec![single]),
-            Err(e2) => {
-                let snippet = if clean_text.len() > 400 { &clean_text[..400] } else { &clean_text };
-                tracing::warn!(
-                        "[JSON PARSER] Serialization Failure!\nArray Err: {}\nSingle Err: {}\n--- OFFENDING SNIPPET ---\n{}\n-------------------------", 
-                        e1, e2, snippet
-                    );
-                Err(anyhow::anyhow!("JSON serialization failed. Invalid format."))
-            }
+            Err(e) => Err(anyhow::anyhow!("JSON serialization failed: {}", e)),
         },
     }
 }

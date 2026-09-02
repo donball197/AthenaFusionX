@@ -67,7 +67,7 @@ impl EpistemicEngine {
                         );
                         (u, payload.clone())
                     }
-                    "nvidia" | "nexus" => {
+                    "nvidia" | "nexus" | "bob" | _ => {
                         let text = payload.pointer("/contents/0/parts/0/text")
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
@@ -97,7 +97,8 @@ impl EpistemicEngine {
                     _ => return Err(anyhow!("Unknown provider configured: {}", resolved.provider_name))
                 };
 
-                let mut req = client.post(&url).json(&req_payload).timeout(Duration::from_secs(180));
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                let mut req = client.post(let mut req = client.post(&url)url).json(&req_payload).timeout(Duration::from_secs(90));
                 match resolved.auth {
                     AuthStyle::Bearer => {
                         req = req.header("Authorization", format!("Bearer {}", resolved.api_key));
@@ -112,8 +113,8 @@ impl EpistemicEngine {
                     Err(e) => {
                         last_err = anyhow::anyhow!("Network timeout/error: {}", e);
                         retries += 1;
-                        eprintln!("[RETRY] {} connection-error attempt {}/8: {}", model_endpoint, retries, last_err);
-                        if retries > 8 { break; }
+                        eprintln!("[RETRY] {} connection-error attempt {}/3: {}", model_endpoint, retries, last_err);
+                        if retries >= 3 { break; }
                         tokio::time::sleep(Duration::from_secs(std::cmp::min(2_u64.pow(retries as u32), 5))).await;
                         continue;
                     }
@@ -160,7 +161,7 @@ impl EpistemicEngine {
                             break;
                         }
                     }
-                    "nvidia" | "nexus" => {
+                    "nvidia" | "nexus" | "bob" | _ => {
                         if body.get("error").is_some() {
                             last_err = anyhow!("NVIDIA/Nexus API Error: {:?}", body);
                             break;
@@ -187,7 +188,7 @@ impl EpistemicEngine {
                             }
                         }
                     }
-                    "nvidia" | "nexus" => {
+                    "nvidia" | "nexus" | "bob" | _ => {
                         if let Some(content) = body.pointer("/choices/0/message/content").and_then(|v| v.as_str()) {
                             final_text = content.to_string();
                         }
@@ -276,6 +277,13 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
         world_context: &str,
         evidence_so_far: &str,
     ) -> Result<String> {
+        let phase = if evidence_so_far.contains("[WRITE_OK]") || evidence_so_far.contains("[DIFF_PATCH_OK]") {
+            crate::tools::schema::CognitivePhase::Verification
+        } else if evidence_so_far.contains("[READ_OK]") || evidence_so_far.contains("[SEARCH_CODE_OK]") {
+            crate::tools::schema::CognitivePhase::Execution
+        } else {
+            crate::tools::schema::CognitivePhase::Reconnaissance
+        };
         let prompt = format!(
             r#"You are the Prefrontal and Synthesizer Cortex. Your role is purely strategic, creative, and intellectual.
 ORIGINAL DIRECTIVE: {}
@@ -288,7 +296,7 @@ Propose the exact next step to fulfill the strategy.
 CRITICAL RULE 0: NATIVE TOOLS ONLY (read_file, read_file_chunk, execute_command, patch_function, write_file, replace_lines, diff_patch, search_code, search_memory, run_tests, synthesize_report, halt).
 CRITICAL RULE 1: If the EVIDENCE contains an exact file path outputted by a previous command, you MUST use that exact path.
 CRITICAL RULE 2: If EVIDENCE satisfies the strategy, declare HALT.
-CRITICAL RULE 3: For simple commands, state your intent in natural language. HOWEVER, if your action is write_file, replace_lines, or diff_patch, you MAY output the exact JSON array directly to prevent text corruption during downstream translation.
+CRITICAL RULE 3: There is NO downstream translator. Your proposal is parsed directly for a JSON action array -- natural-language-only descriptions of intent will NOT be executed and will waste a turn. You MUST end your response with a valid JSON array of action object(s) matching the ALLOWED ACTIONS schema (e.g. [{{"type": "read_file", "path": "...", "reasoning": "..."}}]). This applies to ALL actions, not just write_file/replace_lines/diff_patch.
 CRITICAL RULE 4: JSON string escaping breaks on large documents. DO NOT USE JSON for write_file. If you need to write a file, you MUST use this exact plaintext format:
 
 [WRITE_FILE_TARGET]: <path>
@@ -305,15 +313,16 @@ sub-agents (WORKSPACE TOOL CONTRACTS like impact_analyzer, benchmark_runner,
 mutation_ranker). To use them, you MUST use the execute_command native tool,
 passing the binary path and arguments as the command string.
 
-Think step by step. State the intended tool, the exact target path, and provide
-any required text/code cleanly. A downstream Motor Cortex will translate this
-into executable JSON formatting."#, mission, strategy, world_context,
+Think step by step if it helps, but your response MUST end with the exact
+target path and a valid JSON action array. There is no downstream translator --
+your response is parsed directly, so natural-language-only intent will not be
+executed."#, mission, strategy, world_context,
 evidence_so_far );
 
     let payload = serde_json::json!({
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "tools": [{
-            "functionDeclarations": all_tool_declarations()
+            "functionDeclarations": crate::tools::schema::tool_declarations_for_phase(phase)
         }],
         "generationConfig": {
             "temperature": 0.1,
@@ -353,7 +362,7 @@ the XML tags above. Do NOT veto legitimate search/recon commands; information
 gathering is a strict prerequisite to writing."#, proposed_action ); let
 proposed_action = &p_armored;
 
-    const K: usize = 24;
+    const K: usize = 6;
     let grounded_evidence = {
         let chunks: Vec<&str> =
             evidence_history.split("\n\n").filter(|c| !c.trim().is_empty()).collect();
@@ -390,8 +399,8 @@ completion claim as a reason for a negative confidence_modifier and mandate the
 missing execution step. CRITICAL RULE 2.5 [SCOPE]: Rule 2 applies ONLY when the
 PROPOSED ACTION is itself 'halt'. If the PROPOSED ACTION is write_file,
 patch_function, diff_patch, or replace_lines, do NOT veto it merely because the
-target file or a success marker does not exist yet. CRITICAL RULE 4:
-CONSTRUCTIVE VETO. If you issue a negative confidence_modifier, your critique
+target file or a success marker does not exist yet. CRITICAL RULE 4: CONSTRUCTIVE VETO.
+CRITICAL RULE 5 [ANTI-REDUNDANT-READ]: If EVIDENCE HISTORY already contains a successful [READ_OK] for a file, you MUST VETO any subsequent read_file on that exact same path with a negative modifier (-0.30) and instruct the Strategist to proceed immediately to writing or patching. If you issue a negative confidence_modifier, your critique
 MUST explicitly state the exact command or action the Strategist should take
 next to escape the failure. CRITICAL RULE 3: THE EVIDENCE VERIFICATION TAXONOMY.
 If the proposed action contains a quantitative claim, architectural assumption,
@@ -494,7 +503,13 @@ pub async fn translate_to_action(
         action: &str,
         evidence: &str,
     ) -> Result<CriticResponse> {
-        let truncated_evidence: String = evidence.chars().take(8000).collect();
+        let truncated_evidence: String = if evidence.chars().count() <= 2500 {
+            evidence.to_string()
+        } else {
+            let start: String = evidence.chars().take(1000).collect();
+            let end: String = evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
+            format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
+        };
         let prompt = format!(
             r#"You are the Scientific Evaluator.
 STRATEGY: {}
@@ -502,7 +517,7 @@ ACTION TAKEN: {}
 EVIDENCE GATHERED:
 {}
 Does this evidence represent meaningful partial progress? CRITICAL ANTI-HALLUCINATION RULE: Evaluate ONLY the exact ACTION TAKEN and its EVIDENCE. Do NOT award points for unexecuted steps mentioned in the STRATEGY. FAILED ACTIONS MUST NEVER RECEIVE A POSITIVE MODIFIER. An OS/command failure (non-zero exit status, PATH_NOT_FOUND) is NEGATIVE evidence even if the failure provides useful diagnostic information. Diagnostic usefulness does not constitute task progress. Apply a negative modifier (e.g. -0.15 to -0.30).
-NEGATIVE SPACE RULE: If the strategy is to search for a contract, pattern, or file, and the ACTION TAKEN (like search_code or find) definitively proves the object DOES NOT EXIST (e.g., 'No code matches found'), this is NOT a failure. Proving non-existence is a SUCCESSFUL resolution of the search. Give a POSITIVE modifier, NOT negative.
+NEGATIVE SPACE RULE: Proving non-existence via search_code is ONLY positive if the user explicitly asked to verify if something is missing. If the objective requires finding information to WRITE or UPDATE a file, a search returning 'No code matches found' is UNPRODUCTIVE and must receive a neutral (0.0) or slight negative (-0.10) modifier.
 HALT RULE: If ACTION TAKEN is 'halt' and the EVIDENCE GATHERED (this turn or earlier in context) already shows a concrete success marker ([CMD_OK], [READ_OK], [WRITE_OK], [REPLACE_LINES_OK]) satisfying the strategy, this is a CORRECT completion, not a loss of progress -- give a positive modifier, not negative.
 MUTATION RULE: A successful mutating command (write, patch, mv, rm, mkdir, synthesize_report, etc.) with [CMD_OK] and no stdout is genuine positive progress, not neutral reconnaissance -- do not score it 0.0 solely for lacking output.
 OUTPUT ONLY VALID JSON:
@@ -564,7 +579,13 @@ OUTPUT ONLY VALID JSON:
         action: &str,
         evidence: &str,
     ) -> Result<crate::cognition_graph::VerificationReport> {
-        let truncated_evidence: String = evidence.chars().take(8000).collect();
+        let truncated_evidence: String = if evidence.chars().count() <= 2500 {
+            evidence.to_string()
+        } else {
+            let start: String = evidence.chars().take(1000).collect();
+            let end: String = evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
+            format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
+        };
         let truncated_action: String = action.chars().take(2000).collect();
         let prompt = format!(
             r#"You are the Epistemic Verifier.
@@ -626,7 +647,13 @@ OUTPUT ONLY VALID JSON matching this schema:
         strategy: &str,
         evidence: &str,
     ) -> Result<String> {
-        let truncated_evidence: String = evidence.chars().take(8000).collect();
+        let truncated_evidence: String = if evidence.chars().count() <= 2500 {
+            evidence.to_string()
+        } else {
+            let start: String = evidence.chars().take(1000).collect();
+            let end: String = evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
+            format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
+        };
         let prompt = format!(
             r#"You are the Meta-Cognitive Reflector.
 STRATEGY: {}

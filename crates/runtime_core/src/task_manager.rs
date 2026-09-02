@@ -141,6 +141,10 @@ pub async fn send_task(
                 if let Ok(report) = ctx.reflection_engine.reflect(&outcome).await {
                     for lesson in report.lessons {
                         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[REFLECTION ENGINE] {}", lesson)}).to_string());
+                        // ⚡ Commit lesson to VectorVault so future missions automatically inherit it
+                        let lesson_text = format!("[REFLECTION_LESSON] Objective: {} | Insight: {}", node.objective, lesson);
+                        let emb = nexus_substrate::vector_bridge::get_embedding(&ctx.api_key, &lesson_text).await.ok();
+                        let _ = ctx.memory.store_memory("ReflectionEngine", &node.objective, &lesson_text, "Internal", emb).await;
                     }
                 }
                 let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX INCOMPLETE] Node {} exhausted turns (best belief {:.2}).", task_id, best_belief)}).to_string());

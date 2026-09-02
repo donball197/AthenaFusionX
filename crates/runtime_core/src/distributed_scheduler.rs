@@ -1,19 +1,41 @@
-// src/distributed_scheduler.rs — v2.0 [PRE-EMPTIVE FORGE OFFLOAD]
+// src/distributed_scheduler.rs — v2.1 [PRE-EMPTIVE FORGE OFFLOAD & CODE-SHIFT BUS]
 use crate::cluster::ClusterMesh;
 use crate::wasm_runtime::WasmRuntime;
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::broadcast;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileShiftEvent {
+    pub path: String,
+    pub modifier: String,
+    pub timestamp: u64,
+}
 
 #[derive(Clone)]
 pub struct DistributedScheduler {
     pub mesh: Arc<ClusterMesh>,
+    pub file_shift_tx: broadcast::Sender<FileShiftEvent>,
 }
 
 impl DistributedScheduler {
     pub fn new(mesh: Arc<ClusterMesh>) -> Self {
-        Self { mesh }
+        let (tx, _) = broadcast::channel(128);
+        Self { mesh, file_shift_tx: tx }
+    }
+
+    pub fn broadcast_file_shift(&self, path: &str, modifier: &str) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let _ = self.file_shift_tx.send(FileShiftEvent {
+            path: path.to_string(),
+            modifier: modifier.to_string(),
+            timestamp,
+        });
     }
 
     pub async fn synthesize(&self, code: &str) -> Result<String> {

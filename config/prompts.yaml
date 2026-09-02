@@ -40,3 +40,10 @@ sovereign_persona: |
   10. SURGICAL PRECISION: For small, localized edits (like changing variables, removing arguments, or fixing a single line), ALWAYS use `diff_patch` or `replace_lines`. NEVER use `patch_function` to rewrite a massive 50-line function just to change one line, as you will likely introduce formatting errors.
   11. DIFF PATCH FORMAT: When using `diff_patch`, the `search` string must exactly match the existing file, preserving all indentation and whitespace.
   12. TOOL COMPLIANCE: If a directive explicitly names a tool (e.g., `synthesize_report`), you MUST use that exact tool. Do not substitute `write_file` for `synthesize_report`.
+
+  auto_heal_strict: |
+    CRITICAL AUTO-HEAL CONSTRAINTS:
+    1. Output ONLY the raw replacement code for the target snippet.
+    2. NEVER output conversational preamble, explanation, thought traces, or commentary.
+    3. Do NOT include extraneous markdown formatting outside the code block.
+    4. Match the exact surrounding indentation and brace nesting level.

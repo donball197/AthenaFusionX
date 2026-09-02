@@ -1,0 +1,13 @@
+id: "SQL_INJECTION"
+language: "Python"
+severity: "High"
+description: "SQL query execution with string formatting or concatenation."
+tree_sitter_query: |
+  (call
+    function: (attribute attribute: (identifier) @obj name: (identifier) @method (#match? @method "^(execute|executemany)$"))
+    arguments: (argument_list (binary_operator) @danger.sql_injection)
+  )
+  (call
+    function: (attribute attribute: (identifier) @obj name: (identifier) @method (#match? @method "^(execute|executemany)$"))
+    arguments: (argument_list (string (interpolation)) @danger.sql_injection)
+  )

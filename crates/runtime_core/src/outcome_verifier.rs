@@ -68,10 +68,29 @@ impl OutcomeVerifier {
                 }
                 CompletionCondition::CommandMarkerAcquired => local_evidence.contains("[CMD_OK]"),
                 CompletionCondition::SourceCodeEvidenceRequired => {
-                    local_evidence.lines().any(|l| {
-                        (l.starts_with("[READ_OK]") || l.starts_with("[SEARCH_CODE_OK]"))
-                            && l.contains(".rs")
-                    })
+                    // Was more than one distinct file/path actually examined? A comparative
+                    // or audit-style mission naming multiple subjects should not be satisfiable
+                    // by evidence for a single path -- previously this also hardcoded a ".rs"
+                    // extension requirement, which made it both too narrow (rejected valid
+                    // README/doc-based comparisons) and too weak (a single .rs read/search was
+                    // enough). This checks distinct-path count instead of file type.
+                    let mut seen_paths = std::collections::HashSet::new();
+                    for l in local_evidence.lines() {
+                        if let Some(path) = l.strip_prefix("[READ_OK]") {
+                            let path = path.trim();
+                            if !path.is_empty() {
+                                seen_paths.insert(path.to_string());
+                            }
+                        } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
+                            if let Some(path) = rest.split(" | ").next() {
+                                let path = path.trim();
+                                if !path.is_empty() {
+                                    seen_paths.insert(path.to_string());
+                                }
+                            }
+                        }
+                    }
+                    seen_paths.len() >= 2
                 }
                 CompletionCondition::MinBeliefScore(min_score) => belief_score >= *min_score,
             };

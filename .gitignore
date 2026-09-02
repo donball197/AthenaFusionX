@@ -80,3 +80,19 @@ repository_analysis/symbol_graph.json
 *_dump.txt
 daemon.log
 *.cwasm
+
+# Environment & Credentials
+.env
+.env.*
+.nexus_ui_token
+
+# Databases & Runtime Sockets
+*.db
+*.db-wal
+*.db-shm
+
+# Build Artifacts & Audit Targets
+nexus_audit_target/
+.nexus_debug/
+daemon.log
+/tmp/

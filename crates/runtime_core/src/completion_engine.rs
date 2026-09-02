@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactSpec {
     pub path: String,
@@ -96,7 +95,7 @@ impl SubgoalCompletionEngine {
         let mut is_mutation_task = false;
 
         let has_patch = any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate", "mutate"]);
-        let has_write = any_word_unnegated(classify_text, &["write", "export", "save", "implement", "integrate", "add", "create"]);
+        let has_write = any_word_unnegated(classify_text, &["write", "export", "save", "implement", "integrate", "add", "create", "synthesize"]);
 
         if has_patch || has_write {
             is_mutation_task = true;
@@ -105,7 +104,7 @@ impl SubgoalCompletionEngine {
             } else {
                 conditions.push(CompletionCondition::WriteMarkerAcquired);
             }
-            if any_word(classify_text, &["roadmap", "audit", "comparison"]) {
+            if any_word(classify_text, &["roadmap", "audit", "comparison", "comparative", "compare", "comparing", "compares", "compared", "versus"]) {
                 conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
             }
         } else {
@@ -119,7 +118,6 @@ impl SubgoalCompletionEngine {
 
             if is_recon_intent || has_read_intent || has_search_intent {
                 if has_read_intent && has_search_intent {
-                    // Compound tasks (investigate, analyze, contrast, evaluate) require BOTH search AND read evidence
                     conditions.push(CompletionCondition::SearchMarkerAcquired);
                     conditions.push(CompletionCondition::ReadMarkerAcquired);
                     conditions.push(CompletionCondition::MinBeliefScore(0.80));
@@ -155,8 +153,6 @@ impl SubgoalCompletionEngine {
         local_evidence: &str, 
         belief_score: f32
     ) -> bool {
-        // ⚡ DETERMINISTIC VERIFIER INTERFACE
-        // Passes the contract conditions and belief score to the strict verifier
         let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(
             &contract.node_id, 
             local_evidence,
@@ -170,22 +166,24 @@ impl SubgoalCompletionEngine {
 fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
     let mut out: Vec<ArtifactSpec> = Vec::new();
     let exts = ["md", "json", "rs", "toml", "yaml", "yml", "txt", "py"];
-    let mut rest = objective;
-    while let Some(s) = rest.find('`') {
-        let after = &rest[s + 1..];
-        if let Some(e) = after.find('`') {
-            let cand = &after[..e];
-            if (cand.contains('/') || cand.starts_with('.'))
-                && exts.iter().any(|x| cand.ends_with(&format!(".{}", x)))
-                && !out.iter().any(|a: &ArtifactSpec| a.path == cand)
-            {
+    let tokens: Vec<&str> = objective.split_whitespace().collect();
+
+    for (i, tok) in tokens.iter().enumerate() {
+        let clean = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-');
+        if exts.iter().any(|ext| clean.ends_with(&format!(".{}", ext))) && (clean.contains('/') || clean.contains('.')) {
+            // Check context window for read vs write
+            let start = i.saturating_sub(3);
+            let prev = tokens[start..i].join(" ").to_lowercase();
+            let is_read_src = prev.contains("read") || prev.contains("from") || prev.contains("inspect") || prev.contains("cat");
+            let is_write_tgt = prev.contains("to") || prev.contains("write") || prev.contains("save") || prev.contains("export") || prev.contains("synthesize");
+
+            if (!is_read_src || is_write_tgt) && !out.iter().any(|a| a.path == clean) {
                 out.push(ArtifactSpec {
-                    path: cand.to_string(),
-                    reason: "backtick".into(),
+                    path: clean.to_string(),
+                    reason: "output_deliverable".into(),
                 });
             }
-            rest = &after[e + 1..];
-        } else { break; }
+        }
     }
     out
 }

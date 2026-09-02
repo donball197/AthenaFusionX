@@ -74,3 +74,6 @@ pub use client::ApiClient;
 pub use config::NexusConfig;
 pub mod anti_loop;
 pub mod contract_status;
+pub mod sovereign_core;
+pub mod epistemic_tuple;
+pub mod probabilistic_memory;

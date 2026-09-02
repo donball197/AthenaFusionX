@@ -162,6 +162,27 @@ impl MemoryPalace {
         taint_label: &str, // <-- LATTICE TAINT ADDED
         embedding: Option<Vec<f32>>,
     ) -> Result<(), sqlx::Error> {
+        // Deduplication: Check if most recent entry for (origin, directive) has identical content
+        let existing = sqlx::query(
+            "SELECT id, result FROM neural_context WHERE origin = ? AND directive = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(origin)
+        .bind(directive)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = existing {
+            let prev_result: String = row.get("result");
+            if prev_result == result {
+                let existing_id: i64 = row.get("id");
+                sqlx::query("UPDATE neural_context SET timestamp = CURRENT_TIMESTAMP WHERE id = ?")
+                    .bind(existing_id)
+                    .execute(&self.pool)
+                    .await?;
+                return Ok(());
+            }
+        }
+
         let emb_str = embedding.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
         let mut tx = self.pool.begin().await?;
 

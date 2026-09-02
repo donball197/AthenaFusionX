@@ -118,37 +118,6 @@ pub struct SecurityFinding {
     pub sink_text: String,
 }
 
-pub fn extract_query_var_name(sink_text: &str) -> Option<String> {
-    let markers = ["mysqli_query(", "mysqli_multi_query(", "->query(", "->multi_query("];
-    let start = markers.iter().find_map(|m| sink_text.find(m).map(|i| i + m.len()))?;
-    let bytes = sink_text.as_bytes();
-    let mut depth = 1i32;
-    let mut end = None;
-    for (i, &b) in bytes[start..].iter().enumerate() {
-        match b {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = Some(start + i);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let args = &sink_text[start..end?];
-    let last = args.rsplit(',').next()?.trim();
-    if last.starts_with('$')
-        && last.len() > 1
-        && last[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
-    {
-        Some(last.to_string())
-    } else {
-        None
-    }
-}
-
 pub fn find_concat_assignment(
     source: &str,
     ts_lang: &Language,
@@ -192,6 +161,37 @@ pub fn find_concat_assignment(
         }
     }
     best.map(|(s, e, _, t)| (s + 1, e + 1, t))
+}
+
+pub fn extract_query_var(sink_text: &str) -> Option<String> {
+    let markers = ["mysqli_query(", "mysqli_multi_query(", "->query(", "->multi_query("];
+    let start = markers.iter().find_map(|m| sink_text.find(m).map(|i| i + m.len()))?;
+    let bytes = sink_text.as_bytes();
+    let mut depth = 1i32;
+    let mut end = None;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(start + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let args = &sink_text[start..end?];
+    let last = args.rsplit(',').next()?.trim();
+    if last.starts_with('$')
+        && last.len() > 1
+        && last[1..].chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        Some(last.to_string())
+    } else {
+        None
+    }
 }
 
 pub struct PolyglotScanner;
@@ -319,15 +319,9 @@ impl PolyglotScanner {
                 let range = capture.node.range();
                 let sink_start = range.start_point.row;
                 let sink_end = range.end_point.row;
-                let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
-
-                let mut context_start = sink_start.saturating_sub(60);
-                if let Some(var_name) = extract_query_var_name(&sink_text) {
-                    if let Some((c_start, _, _)) = find_concat_assignment(source, &ts_lang, &var_name, sink_start + 1) {
-                        context_start = context_start.min(c_start.saturating_sub(5));
-                    }
-                }
-                let context_end = (sink_end + 10).min(source_lines.len().saturating_sub(1));
+                
+                let context_start = sink_start.saturating_sub(6);
+                let context_end = (sink_end + 2).min(source_lines.len().saturating_sub(1));
                 
                 let snippet = if sink_start < source_lines.len() {
                     source_lines[context_start..=context_end].join("\n")
@@ -336,6 +330,8 @@ impl PolyglotScanner {
                 let patch_snippet = if sink_end < source_lines.len() {
                     source_lines[sink_start..=sink_end].join("\n")
                 } else { String::new() };
+
+                let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
 
                 results.push(SecurityFinding {
                     language: lang,
@@ -353,5 +349,108 @@ impl PolyglotScanner {
             }
         }
         Ok(results)
+    }
+
+    /// Universal Polyglot Semantic Gate:
+    /// Covers PHP, Python, JavaScript, and Go for SQLi and Command Injection.
+    pub fn verify_semantic_integrity(
+        finding_type: &str,
+        lang: SupportedLanguage,
+        source: &str,
+        patch_snippet: &str,
+    ) -> Result<(), String> {
+        match finding_type {
+            "SQL_INJECTION" => Self::verify_sqli_patch(lang, source, patch_snippet),
+            "PHP_COMMAND_INJECTION" | "OS_COMMAND" => Self::verify_cmdi_patch(lang, source, patch_snippet),
+            _ => Ok(()),
+        }
+    }
+
+    fn verify_sqli_patch(lang: SupportedLanguage, source: &str, patch: &str) -> Result<(), String> {
+        match lang {
+            SupportedLanguage::PHP => {
+                let has_var_prepare = patch.contains("->prepare($") || patch.contains("mysqli_prepare($con, $");
+                if has_var_prepare && !patch.contains('?') {
+                    return Err("SECURITY THEATER REJECTED: prepare() called with raw variable without parameterized template".into());
+                }
+
+                if patch.contains("->prepare(") || patch.contains("mysqli_prepare(") {
+                    let placeholder_count = patch.matches('?').count();
+                    if placeholder_count == 0 && (patch.contains("WHERE") || patch.contains("where") || patch.contains("VALUES") || patch.contains("values") || patch.contains("SET") || patch.contains("set")) {
+                        return Err("MISSING PLACEHOLDERS: SQL query inside prepare() contains 0 '?' parameter markers".into());
+                    }
+
+                    if placeholder_count > 0 && !patch.contains("bind_param") {
+                        return Err(format!("UNBOUND PLACEHOLDERS: Query contains {} '?' placeholder(s) but bind_param was omitted", placeholder_count));
+                    }
+
+                    let mut start_idx = 0;
+                    while let Some(pos) = patch[start_idx..].find('$') {
+                        let abs_pos = start_idx + pos;
+                        let var_part = &patch[abs_pos..];
+                        let end_pos = var_part.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(var_part.len());
+                        let var_name = &var_part[..end_pos];
+                        start_idx = abs_pos + var_name.len().max(1);
+
+                        if var_name == "$con"
+                            || var_name == "$stmt"
+                            || var_name == "$result"
+                            || var_name == "$row"
+                            || var_name == "$q"
+                            || var_name == "$msg"
+                            || var_name == "$search_term"
+                            || var_name.starts_with("$_")
+                        {
+                            continue;
+                        }
+
+                        if !source.contains(var_name) {
+                            return Err(format!("HALLUCINATED SYMBOL REJECTED: Variable '{}' does not exist in the source file", var_name));
+                        }
+                    }
+                }
+            }
+            SupportedLanguage::Python => {
+                if patch.contains("execute(f\"") || patch.contains("execute(f'") || (patch.contains("execute(\"\"\"") && patch.contains('{')) {
+                    return Err("UNSAFE PYTHON SQL: execute() uses f-string interpolation instead of parameter tuple".into());
+                }
+                if patch.contains("execute(") && (patch.contains(" % ") || patch.contains(".format(")) {
+                    return Err("UNSAFE PYTHON SQL: execute() uses string formatting instead of parameter tuple".into());
+                }
+            }
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScript
+                if (patch.contains("query(`") && patch.contains("${"))
+                    || (patch.contains("execute(`") && patch.contains("${")) =>
+            {
+                return Err("UNSAFE JS SQL: query uses template literal interpolation ${...} instead of parameterized array".into());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn verify_cmdi_patch(lang: SupportedLanguage, _source: &str, patch: &str) -> Result<(), String> {
+        match lang {
+            SupportedLanguage::PHP
+                if (patch.contains("shell_exec(")
+                    || patch.contains("system(")
+                    || patch.contains("exec(")
+                    || patch.contains("passthru("))
+                    && !patch.contains("escapeshellarg(")
+                    && !patch.contains("escapeshellcmd(") =>
+            {
+                return Err("UNSANITIZED COMMAND EXECUTION: System call does not sanitize arguments with escapeshellarg()".into());
+            }
+            SupportedLanguage::Python if patch.contains("shell=True") => {
+                return Err("UNSAFE SUBPROCESS: subprocess call uses shell=True".into());
+            }
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScript
+                if patch.contains("exec(") && !patch.contains("execFile(") =>
+            {
+                return Err("UNSAFE COMMAND EXECUTION: Use child_process.execFile with argument array instead of exec(shell_string)".into());
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
