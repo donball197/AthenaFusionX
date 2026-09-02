@@ -239,6 +239,18 @@ fn main() -> Result<()> {
             }
 
             if branch_fix {
+                // Check if working tree has uncommitted modifications
+                let status_out = Command::new("git")
+                    .args(["status", "--porcelain"])
+                    .current_dir(&scan_path)
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+
+                if !status_out.is_empty() {
+                    println!("==> [Git Automation Warning] Working directory contains uncommitted changes. Branching will include dirty state.");
+                }
+
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -266,15 +278,6 @@ fn main() -> Result<()> {
 
             let mut findings = PolyglotScanner::scan_security_vulnerabilities(&scan_path, &rules);
 
-            if findings.is_empty() {
-                println!("==> [Security Auditor] No obvious dangerous sinks found. Codebase looks clean!");
-                return Ok(());
-            }
-            println!(
-                "==> [Security Auditor] WARNING: Discovered {} potential vulnerabilities.",
-                findings.len()
-            );
-
             let mut report_md = String::from("# 🛡️ Nexus Singularity Bug Bounty Report\n\n");
 
             let mut actionable_count = 0;
@@ -285,312 +288,322 @@ fn main() -> Result<()> {
             let mut unknown_count = 0;
             let mut _triage_error_count = 0;
 
-            if ai_triage {
-                println!("\n==> [AI Triage] Initializing LLM to filter false positives...");
+            if findings.is_empty() {
+                println!("==> [Security Auditor] No obvious dangerous sinks found. Codebase looks clean!");
+            } else {
+                println!(
+                    "==> [Security Auditor] WARNING: Discovered {} potential vulnerabilities.",
+                    findings.len()
+                );
 
-                findings.sort_by(|a, b| {
-                    a.path.cmp(&b.path).then(a.sink_start_line.cmp(&b.sink_start_line))
-                });
+                if ai_triage {
+                    println!("\n==> [AI Triage] Initializing LLM to filter false positives...");
 
-                for finding in findings {
-                    let file_source = match fs::read_to_string(&finding.path) {
-                        Ok(s) => s,
-                        Err(_) => continue,
-                    };
+                    findings.sort_by(|a, b| {
+                        a.path.cmp(&b.path).then(a.sink_start_line.cmp(&b.sink_start_line))
+                    });
 
-                    if !file_source.contains(&finding.sink_text) {
-                        already_resolved_count += 1;
-                        continue;
-                    }
+                    for finding in findings {
+                        let file_source = match fs::read_to_string(&finding.path) {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
 
-                    println!(
-                        "\n    [?] Evaluating {} at line {} in {}...",
-                        finding.pattern_name.to_uppercase(),
-                        finding.sink_start_line,
-                        finding.path.file_name().unwrap_or_default().to_string_lossy()
-                    );
-                    let file_path_str = finding.path.display().to_string();
-                    let lang_str = format!("{:?}", finding.language);
+                        if !file_source.contains(&finding.sink_text) {
+                            already_resolved_count += 1;
+                            continue;
+                        }
 
-                    match nexus_ast_tool::client::ApiClient::triage_vulnerability(
-                        &finding.pattern_name,
-                        &finding.source_snippet,
-                    ) {
-                        Ok((state_raw, llm_severity, reason)) => {
-                            let classification = match state_raw.trim().to_uppercase().as_str() {
-                                "EXPLOITABLE" => "EXPLOITABLE",
-                                "SAFE" => "SAFE",
-                                _ => "UNKNOWN",
-                            };
+                        println!(
+                            "\n    [?] Evaluating {} at line {} in {}...",
+                            finding.pattern_name.to_uppercase(),
+                            finding.sink_start_line,
+                            finding.path.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                        let file_path_str = finding.path.display().to_string();
+                        let lang_str = format!("{:?}", finding.language);
 
-                            if classification == "EXPLOITABLE" {
-                                actionable_count += 1;
-                                println!(
-                                    "        [🔴 EXPLOITABLE] Rule severity: {} (model said: {})",
-                                    finding.severity, llm_severity
-                                );
-                                println!("        [🧠 AI Reasoning] {}", reason);
+                        match nexus_ast_tool::client::ApiClient::triage_vulnerability(
+                            &finding.pattern_name,
+                            &finding.source_snippet,
+                        ) {
+                            Ok((state_raw, llm_severity, reason)) => {
+                                let classification = match state_raw.trim().to_uppercase().as_str() {
+                                    "EXPLOITABLE" => "EXPLOITABLE",
+                                    "SAFE" => "SAFE",
+                                    _ => "UNKNOWN",
+                                };
 
-                                report_md.push_str(&format!(
-                                    "## 🚨 Vulnerability: {}\n",
-                                    finding.pattern_name.to_uppercase()
-                                ));
-                                report_md
-                                    .push_str(&format!("- **Severity:** {}\n", finding.severity));
-                                report_md.push_str(&format!(
-                                    "- **File:** `{}` (Sink lines {}-{})\n\n",
-                                    file_path_str, finding.sink_start_line, finding.sink_end_line
-                                ));
-                                report_md.push_str(&format!("### Description\n{}\n\n", reason));
-                                report_md.push_str(&format!(
-                                    "### Vulnerable Code\n```{}\n{}\n```\n\n",
-                                    lang_str.to_lowercase(),
-                                    finding.patch_snippet
-                                ));
+                                if classification == "EXPLOITABLE" {
+                                    actionable_count += 1;
+                                    println!(
+                                        "        [🔴 EXPLOITABLE] Rule severity: {} (model said: {})",
+                                        finding.severity, llm_severity
+                                    );
+                                    println!("        [🧠 AI Reasoning] {}", reason);
 
-                                if auto_heal {
-                                    println!("        [🛠️ Auto-Heal] Generating secure anchor-based patch...");
+                                    report_md.push_str(&format!(
+                                        "## 🚨 Vulnerability: {}\n",
+                                        finding.pattern_name.to_uppercase()
+                                    ));
+                                    report_md
+                                        .push_str(&format!("- **Severity:** {}\n", finding.severity));
+                                    report_md.push_str(&format!(
+                                        "- **File:** `{}` (Sink lines {}-{})\n\n",
+                                        file_path_str, finding.sink_start_line, finding.sink_end_line
+                                    ));
+                                    report_md.push_str(&format!("### Description\n{}\n\n", reason));
+                                    report_md.push_str(&format!(
+                                        "### Vulnerable Code\n```{}\n{}\n```\n\n",
+                                        lang_str.to_lowercase(),
+                                        finding.patch_snippet
+                                    ));
 
-                                    let file_source = match fs::read_to_string(&finding.path) {
-                                        Ok(src) => src,
-                                        Err(e) => {
-                                            println!("        [❌ Patch Error] Fail-closed read failure: {}", e);
-                                            failed_fix_count += 1;
-                                            continue;
-                                        }
-                                    };
+                                    if auto_heal {
+                                        println!("        [🛠️ Auto-Heal] Generating secure anchor-based patch...");
 
-                                    let lines: Vec<&str> = file_source.lines().collect();
-
-                                    let Some((live_sink_start, live_sink_end)) = resolve_anchor(&file_source, &finding) else {
-                                        println!("        [ℹ️ Already Resolved] Sink lines no longer present. Marked clean.");
-                                        already_resolved_count += 1;
-                                        continue;
-                                    };
-
-                                    let live_sink_line = live_sink_start + 1;
-
-                                    let is_secondary_fetch = finding.sink_text.contains("$result = mysqli_query")
-                                        || finding.sink_text.contains("$result=mysqli_query");
-
-                                    let (cleaned_patch, effective_start, effective_end) = if is_secondary_fetch && file_source.contains("$stmt = $con->prepare") {
-                                        println!("        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement.");
-                                        (
-                                            "$result = $stmt->get_result();".to_string(),
-                                            live_sink_start,
-                                            live_sink_end,
-                                        )
-                                    } else {
-                                        let mut eff_start = live_sink_start;
-                                        let mut eff_end = live_sink_end;
-
-                                        let taint = extract_query_var(&finding.sink_text).and_then(|var_name| {
-                                            nexus_ast_tool::polyglot::find_concat_assignment(
-                                                &file_source,
-                                                &finding.language.tree_sitter_language(),
-                                                &var_name,
-                                                live_sink_line,
-                                            )
-                                            .map(|(c_start, c_end, _)| (var_name, c_start, c_end))
-                                        });
-
-                                        if let Some((ref var_name, c_start, _c_end)) = taint {
-                                            println!(
-                                                "        [🔗 Multi-Site Taint] {} built near line {}. Splicing locally to line {}.",
-                                                var_name, c_start, live_sink_line
-                                            );
-                                            eff_start = c_start.saturating_sub(1);
-                                            eff_end = live_sink_end.min(lines.len().saturating_sub(1));
-                                        }
-
-                                        let effective_snippet = lines[eff_start..=eff_end].join("\n");
-
-                                        let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
-                                            &finding.pattern_name, &effective_snippet, &lang_str,
-                                        ) {
-                                            Ok(r) => r,
+                                        let file_source = match fs::read_to_string(&finding.path) {
+                                            Ok(src) => src,
                                             Err(e) => {
-                                                println!("        [❌ Patch Gen Error] {}", e);
+                                                println!("        [❌ Patch Error] Fail-closed read failure: {}", e);
                                                 failed_fix_count += 1;
                                                 continue;
                                             }
                                         };
 
-                                        let is_php = lang_str.eq_ignore_ascii_case("PHP");
-                                        let raw_cleaned = nexus_ast_tool::sanitizer::sanitize_model_patch(&replacement, is_php);
-                                        let target_first_line = lines[eff_start];
-                                        let indented_patch = format_with_indentation(&raw_cleaned, target_first_line);
+                                        let lines: Vec<&str> = file_source.lines().collect();
 
-                                        (
-                                            indented_patch,
-                                            eff_start,
-                                            eff_end,
-                                        )
-                                    };
+                                        let Some((live_sink_start, live_sink_end)) = resolve_anchor(&file_source, &finding) else {
+                                            println!("        [ℹ️ Already Resolved] Sink lines no longer present. Marked clean.");
+                                            already_resolved_count += 1;
+                                            continue;
+                                        };
 
-                                    if cleaned_patch.trim().is_empty() {
-                                        println!("        [❌ Patch Rejected] Empty replacement.");
-                                        failed_fix_count += 1;
-                                        continue;
-                                    }
+                                        let live_sink_line = live_sink_start + 1;
 
-                                    let crlf = file_source.matches("\r\n").count() * 2 > file_source.matches('\n').count();
-                                    let sep = if crlf { "\r\n" } else { "\n" };
-                                    let patch_text = if crlf {
-                                        cleaned_patch.replace('\n', "\r\n")
-                                    } else {
-                                        cleaned_patch.clone()
-                                    };
+                                        let is_secondary_fetch = finding.sink_text.contains("$result = mysqli_query")
+                                            || finding.sink_text.contains("$result=mysqli_query");
 
-                                    let mut new_source = String::with_capacity(file_source.len() + patch_text.len());
-                                    new_source.push_str(&lines[..effective_start].join(sep));
-                                    if effective_start > 0 { new_source.push_str(sep); }
-                                    new_source.push_str(&patch_text);
-                                    if effective_end + 1 < lines.len() {
-                                        new_source.push_str(sep);
-                                        new_source.push_str(&lines[effective_end + 1..].join(sep));
-                                    }
-                                    if file_source.ends_with('\n') && !new_source.ends_with('\n') {
-                                        new_source.push_str(sep);
-                                    }
+                                        let (cleaned_patch, effective_start, effective_end) = if is_secondary_fetch && file_source.contains("$stmt = $con->prepare") {
+                                            println!("        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement.");
+                                            (
+                                                "$result = $stmt->get_result();".to_string(),
+                                                live_sink_start,
+                                                live_sink_end,
+                                            )
+                                        } else {
+                                            let mut eff_start = live_sink_start;
+                                            let mut eff_end = live_sink_end;
 
-                                    // Gate 1: Formal Syntax Check
-                                    let ts_ok = finding.language.parses_cleanly(&new_source);
-                                    let lint = if ts_ok { external_lint(&lang_str, &new_source, &finding.path) } else { None };
-                                    let syntax_ok = ts_ok && lint.unwrap_or(true);
+                                            let taint = extract_query_var(&finding.sink_text).and_then(|var_name| {
+                                                nexus_ast_tool::polyglot::find_concat_assignment(
+                                                    &file_source,
+                                                    &finding.language.tree_sitter_language(),
+                                                    &var_name,
+                                                    live_sink_line,
+                                                )
+                                                .map(|(c_start, c_end, _)| (var_name, c_start, c_end))
+                                            });
 
-                                    // Gate 2: Semantic Integrity Gate
-                                    let mut semantic_error = String::new();
-                                    let semantic_ok = if syntax_ok {
-                                        match PolyglotScanner::verify_semantic_integrity(
-                                            &finding.pattern_name,
-                                            finding.language,
-                                            &file_source,
-                                            &cleaned_patch,
-                                        ) {
-                                            Ok(()) => true,
-                                            Err(err) => {
-                                                semantic_error = err;
-                                                false
+                                            if let Some((ref var_name, c_start, _c_end)) = taint {
+                                                println!(
+                                                    "        [🔗 Multi-Site Taint] {} built near line {}. Splicing locally to line {}.",
+                                                    var_name, c_start, live_sink_line
+                                                );
+                                                eff_start = c_start.saturating_sub(1);
+                                                eff_end = live_sink_end.min(lines.len().saturating_sub(1));
                                             }
-                                        }
-                                    } else { false };
 
-                                    // Gate 3: Strict AST Rescan
-                                    let ast_ok = if syntax_ok && semantic_ok {
-                                        let new_start = effective_start + 1;
-                                        let new_end = new_start + patch_text.lines().count().saturating_sub(1);
-                                        let residuals = PolyglotScanner::scan_source(&finding.path, &new_source, &rules);
-                                        !residuals.iter().any(|f| {
-                                            f.pattern_name == finding.pattern_name
-                                                && f.sink_start_line + 2 >= new_start
-                                                && f.sink_end_line <= new_end + 2
-                                        })
-                                    } else { false };
+                                            let effective_snippet = lines[eff_start..=eff_end].join("\n");
 
-                                    if syntax_ok && semantic_ok && ast_ok {
-                                        if let Err(e) = fs::write(&finding.path, &new_source) {
-                                            println!("        [❌ Patch Error] I/O write error: {}", e);
+                                            let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
+                                                &finding.pattern_name, &effective_snippet, &lang_str,
+                                            ) {
+                                                Ok(r) => r,
+                                                Err(e) => {
+                                                    println!("        [❌ Patch Gen Error] {}", e);
+                                                    failed_fix_count += 1;
+                                                    continue;
+                                                }
+                                            };
+
+                                            let is_php = lang_str.eq_ignore_ascii_case("PHP");
+                                            let raw_cleaned = nexus_ast_tool::sanitizer::sanitize_model_patch(&replacement, is_php);
+                                            let target_first_line = lines[eff_start];
+                                            let indented_patch = format_with_indentation(&raw_cleaned, target_first_line);
+
+                                            (
+                                                indented_patch,
+                                                eff_start,
+                                                eff_end,
+                                            )
+                                        };
+
+                                        if cleaned_patch.trim().is_empty() {
+                                            println!("        [❌ Patch Rejected] Empty replacement.");
                                             failed_fix_count += 1;
                                             continue;
                                         }
-                                        fixed_count += 1;
-                                        println!("        [✅ Patch Verified] Syntax OK, Semantic checks passed, and AST rescan confirms sink eliminated.");
-                                        report_md.push_str("### Recommended Patch (Auto-Healed, Verified)\n");
+
+                                        let crlf = file_source.matches("\r\n").count() * 2 > file_source.matches('\n').count();
+                                        let sep = if crlf { "\r\n" } else { "\n" };
+                                        let patch_text = if crlf {
+                                            cleaned_patch.replace('\n', "\r\n")
+                                        } else {
+                                            cleaned_patch.clone()
+                                        };
+
+                                        let mut new_source = String::with_capacity(file_source.len() + patch_text.len());
+                                        new_source.push_str(&lines[..effective_start].join(sep));
+                                        if effective_start > 0 { new_source.push_str(sep); }
+                                        new_source.push_str(&patch_text);
+                                        if effective_end + 1 < lines.len() {
+                                            new_source.push_str(sep);
+                                            new_source.push_str(&lines[effective_end + 1..].join(sep));
+                                        }
+                                        if file_source.ends_with('\n') && !new_source.ends_with('\n') {
+                                            new_source.push_str(sep);
+                                        }
+
+                                        // Gate 1: Formal Syntax Check
+                                        let ts_ok = finding.language.parses_cleanly(&new_source);
+                                        let lint = if ts_ok { external_lint(&lang_str, &new_source, &finding.path) } else { None };
+                                        let syntax_ok = ts_ok && lint.unwrap_or(true);
+
+                                        // Gate 2: Semantic Integrity Gate
+                                        let mut semantic_error = String::new();
+                                        let semantic_ok = if syntax_ok {
+                                            match PolyglotScanner::verify_semantic_integrity(
+                                                &finding.pattern_name,
+                                                finding.language,
+                                                &file_source,
+                                                &cleaned_patch,
+                                            ) {
+                                                Ok(()) => true,
+                                                Err(err) => {
+                                                    semantic_error = err;
+                                                    false
+                                                }
+                                            }
+                                        } else { false };
+
+                                        // Gate 3: Strict AST Rescan
+                                        let ast_ok = if syntax_ok && semantic_ok {
+                                            let new_start = effective_start + 1;
+                                            let new_end = new_start + patch_text.lines().count().saturating_sub(1);
+                                            let residuals = PolyglotScanner::scan_source(&finding.path, &new_source, &rules);
+                                            !residuals.iter().any(|f| {
+                                                f.pattern_name == finding.pattern_name
+                                                    && f.sink_start_line + 2 >= new_start
+                                                    && f.sink_end_line <= new_end + 2
+                                            })
+                                        } else { false };
+
+                                        if syntax_ok && semantic_ok && ast_ok {
+                                            if let Err(e) = fs::write(&finding.path, &new_source) {
+                                                println!("        [❌ Patch Error] I/O write error: {}", e);
+                                                failed_fix_count += 1;
+                                                continue;
+                                            }
+                                            fixed_count += 1;
+                                            println!("        [✅ Patch Verified] Syntax OK, Semantic checks passed, and AST rescan confirms sink eliminated.");
+                                            report_md.push_str("### Recommended Patch (Auto-Healed, Verified)\n");
+                                            report_md.push_str(&format!(
+                                                "```{}\n{}\n```\n\n---\n\n",
+                                                lang_str.to_lowercase(),
+                                                cleaned_patch
+                                            ));
+                                            continue;
+                                        }
+
+                                        let reject_reason = if !ts_ok {
+                                            "tree-sitter syntax gate failed"
+                                        } else if lint == Some(false) {
+                                            "external linter rejected the patch"
+                                        } else if !semantic_ok {
+                                            &semantic_error
+                                        } else {
+                                            "AST rescan still detects the sink"
+                                        };
+
+                                        failed_fix_count += 1;
+                                        println!("        [❌ Patch Rejected] {}. Nothing was written.", reject_reason);
                                         report_md.push_str(&format!(
-                                            "```{}\n{}\n```\n\n---\n\n",
-                                            lang_str.to_lowercase(),
-                                            cleaned_patch
-                                        ));
+                                            "### Recommended Patch (REJECTED: {} - never written)\n```{}\n{}\n```\n\n---\n\n",
+                                            reject_reason, lang_str.to_lowercase(), cleaned_patch));
                                         continue;
                                     }
 
-                                    let reject_reason = if !ts_ok {
-                                        "tree-sitter syntax gate failed"
-                                    } else if lint == Some(false) {
-                                        "external linter rejected the patch"
-                                    } else if !semantic_ok {
-                                        &semantic_error
-                                    } else {
-                                        "AST rescan still detects the sink"
-                                    };
-
-                                    failed_fix_count += 1;
-                                    println!("        [❌ Patch Rejected] {}. Nothing was written.", reject_reason);
-                                    report_md.push_str(&format!(
-                                        "### Recommended Patch (REJECTED: {} - never written)\n```{}\n{}\n```\n\n---\n\n",
-                                        reject_reason, lang_str.to_lowercase(), cleaned_patch));
-                                    continue;
+                                    report_md.push_str("---\n\n");
+                                } else if classification == "SAFE" {
+                                    safe_count += 1;
+                                    println!("        [🟢 SAFE] Explicitly classified safe.");
+                                } else {
+                                    unknown_count += 1;
+                                    println!("        [🟡 UNKNOWN] Security state cannot be established without assumptions.");
                                 }
-
-                                report_md.push_str("---\n\n");
-                            } else if classification == "SAFE" {
-                                safe_count += 1;
-                                println!("        [🟢 SAFE] Explicitly classified safe.");
-                            } else {
-                                unknown_count += 1;
-                                println!("        [🟡 UNKNOWN] Security state cannot be established without assumptions.");
+                            }
+                            Err(e) => {
+                                _triage_error_count += 1;
+                                println!("        [⚠️ API Error] {}", e);
                             }
                         }
-                        Err(e) => {
-                            _triage_error_count += 1;
-                            println!("        [⚠️ API Error] {}", e);
-                        }
                     }
                 }
+            }
 
-                let tests_passed = if run_tests {
-                    run_project_test_suite(&scan_path).unwrap_or(true)
+            // Always execute test suite if requested, regardless of findings count
+            let tests_passed = if run_tests {
+                run_project_test_suite(&scan_path).unwrap_or(true)
+            } else {
+                true
+            };
+
+            let remediation_clean = failed_fix_count == 0
+                && actionable_count == (fixed_count + already_resolved_count)
+                && tests_passed;
+
+            if generate_report {
+                report_md.push_str("\n# Final Audit Summary\n\n");
+                report_md.push_str(&format!("- **Actionable findings:** {}\n", actionable_count));
+                report_md.push_str(&format!("- **Verified fixed:** {}\n", fixed_count));
+                report_md.push_str(&format!("- **Remediation failed:** {}\n", failed_fix_count));
+                report_md.push_str(&format!("- **Already resolved:** {}\n", already_resolved_count));
+                report_md.push_str(&format!("- **Explicitly safe:** {}\n", safe_count));
+                report_md.push_str(&format!("- **Unknown (needs manual review):** {}\n", unknown_count));
+                report_md.push_str(&format!("- **Test Suite Status:** {}\n", if tests_passed { "PASSED / SKIPPED" } else { "FAILED" }));
+
+                if remediation_clean {
+                    report_md.push_str("\n## Remediation Integrity\n\n**PASS** — Every actionable finding was verified fixed and passed all gates.\n\n");
                 } else {
-                    true
-                };
-
-                let remediation_clean = failed_fix_count == 0
-                    && actionable_count == fixed_count + already_resolved_count
-                    && tests_passed;
-
-                if generate_report {
-                    report_md.push_str("\n# Final Audit Summary\n\n");
-                    report_md.push_str(&format!("- **Actionable findings:** {}\n", actionable_count));
-                    report_md.push_str(&format!("- **Verified fixed:** {}\n", fixed_count));
-                    report_md.push_str(&format!("- **Remediation failed:** {}\n", failed_fix_count));
-                    report_md.push_str(&format!("- **Already resolved:** {}\n", already_resolved_count));
-                    report_md.push_str(&format!("- **Explicitly safe:** {}\n", safe_count));
-                    report_md.push_str(&format!("- **Unknown (needs manual review):** {}\n", unknown_count));
-                    report_md.push_str(&format!("- **Test Suite Status:** {}\n", if tests_passed { "PASSED / SKIPPED" } else { "FAILED" }));
-
-                    if remediation_clean {
-                        report_md.push_str("\n## Remediation Integrity\n\n**PASS** — Every actionable finding was verified fixed and passed all gates.\n\n");
-                    } else {
-                        report_md.push_str("\n## Remediation Integrity\n\n**FAIL** — One or more actionable findings were not verified fixed or tests failed.\n\n");
-                    }
-
-                    fs::write("bounty_report.md", &report_md)?;
-
-                    println!("\n==> [Report Generator] 📄 bounty_report.md generated.");
-                    println!("    Actionable findings : {}", actionable_count);
-                    println!("    Verified fixed      : {}", fixed_count);
-                    println!("    Remediation failed  : {}", failed_fix_count);
-                    println!("    Already resolved    : {}", already_resolved_count);
-                    if remediation_clean {
-                        println!("    [✅ REMEDIATION INTEGRITY] PASS");
-                    } else {
-                        println!("    [❌ REMEDIATION INTEGRITY] FAIL");
-                    }
+                    report_md.push_str("\n## Remediation Integrity\n\n**FAIL** — One or more actionable findings were not verified fixed or tests failed.\n\n");
                 }
 
-                if branch_fix && remediation_clean {
-                    println!("\n==> [Git Automation] Staging verified fixes & creating commit...");
-                    let _ = Command::new("git").args(["add", "."]).current_dir(&scan_path).output();
-                    let commit_msg = format!("chore(security): automated remediation of {} vulnerabilities via AthenaFusionX", fixed_count);
-                    let commit_status = Command::new("git")
-                        .args(["commit", "-m", &commit_msg])
-                        .current_dir(&scan_path)
-                        .status();
+                fs::write("bounty_report.md", &report_md)?;
 
-                    if commit_status.map(|s| s.success()).unwrap_or(false) {
-                        println!("    [🚀 Git Commit OK] Branch `{}` is ready for Pull Request creation.", branch_name);
-                    }
+                println!("\n==> [Report Generator] 📄 bounty_report.md generated.");
+                println!("    Actionable findings : {}", actionable_count);
+                println!("    Verified fixed      : {}", fixed_count);
+                println!("    Remediation failed  : {}", failed_fix_count);
+                println!("    Already resolved    : {}", already_resolved_count);
+                if remediation_clean {
+                    println!("    [✅ REMEDIATION INTEGRITY] PASS");
+                } else {
+                    println!("    [❌ REMEDIATION INTEGRITY] FAIL");
+                }
+            }
+
+            if branch_fix && fixed_count > 0 && remediation_clean {
+                println!("\n==> [Git Automation] Staging verified fixes & creating commit...");
+                let _ = Command::new("git").args(["add", "."]).current_dir(&scan_path).output();
+                let commit_msg = format!("chore(security): automated remediation of {} vulnerabilities via AthenaFusionX", fixed_count);
+                let commit_status = Command::new("git")
+                    .args(["commit", "-m", &commit_msg])
+                    .current_dir(&scan_path)
+                    .status();
+
+                if commit_status.map(|s| s.success()).unwrap_or(false) {
+                    println!("    [🚀 Git Commit OK] Branch `{}` is ready for Pull Request creation.", branch_name);
                 }
             }
         }
