@@ -8,6 +8,7 @@ use axum::{
 };
 use nexus_runtime_core::memory_cortex::MemoryCortex;
 use nexus_runtime_core::shared_state::VmoState;
+use nexus_runtime_core::mcp::McpServer;
 use rust_embed::RustEmbed;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -36,6 +37,7 @@ pub struct AppState {
     pub vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
     pub cluster: Arc<nexus_runtime_core::cluster::ClusterMesh>,
     pub dist: Arc<nexus_runtime_core::distributed_scheduler::DistributedScheduler>,
+    pub mcp: Arc<McpServer>,
 }
 
 #[derive(serde::Deserialize)]
@@ -75,6 +77,14 @@ pub async fn unified_gateway(
         .await;
     });
     (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
+}
+
+pub async fn mcp_handler(
+    State(state): State<Arc<AppState>>,
+    body: String,
+) -> impl IntoResponse {
+    let response = state.mcp.handle_request(&body);
+    ([(header::CONTENT_TYPE, "application/json")], response)
 }
 
 async fn metrics_handler() -> impl IntoResponse {
@@ -188,6 +198,7 @@ pub async fn start_server(state: Arc<AppState>) {
     // ⚡ Secure API Routes behind Auth Guard
     let guarded_api = Router::new()
         .route("/task", post(unified_gateway))
+        .route("/mcp", post(mcp_handler))
         .route("/metrics", get(metrics_handler))
         .route("/fs/read", get(fs_read_handler))
         .route("/fs/write", post(fs_write_handler))

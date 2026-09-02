@@ -8,6 +8,7 @@ use nexus_runtime_core::cluster::ClusterMesh;
 use nexus_runtime_core::distributed_scheduler::DistributedScheduler;
 use nexus_runtime_core::memory_cortex::MemoryCortex;
 use nexus_runtime_core::orchestrator::Orchestrator;
+use nexus_runtime_core::mcp::McpServer;
 use nexus_runtime_core::shared_state::VmoState;
 use nexus_substrate::memory::MemoryPalace;
 use secrecy::SecretString;
@@ -97,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         vmo_state,
         cluster,
         dist,
+        mcp: Arc::new(McpServer::new()),
     });
 
     // 🌟 Boot WASM Sidecars 🌟
