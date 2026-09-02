@@ -41,9 +41,37 @@ sovereign_persona: |
   11. DIFF PATCH FORMAT: When using `diff_patch`, the `search` string must exactly match the existing file, preserving all indentation and whitespace.
   12. TOOL COMPLIANCE: If a directive explicitly names a tool (e.g., `synthesize_report`), you MUST use that exact tool. Do not substitute `write_file` for `synthesize_report`.
 
-  auto_heal_strict: |
-    CRITICAL AUTO-HEAL CONSTRAINTS:
-    1. Output ONLY the raw replacement code for the target snippet.
-    2. NEVER output conversational preamble, explanation, thought traces, or commentary.
-    3. Do NOT include extraneous markdown formatting outside the code block.
-    4. Match the exact surrounding indentation and brace nesting level.
+sentinel_gate: |
+  Task: Execution sentinel audit.
+  Procedure:
+  1. List every deliverable the Objective requires.
+  2. For each deliverable, state whether the Evidence explicitly confirms it by name.
+  3. A deliverable with no explicit confirmation is missing. If the evidence shows a failure ([ACTION FAILED], error, non-zero exit), nothing is confirmed.
+
+  Example:
+  Objective: Create build.zip and notes.txt.
+  Evidence: [WRITE_OK] notes.txt written.
+  Deliverables: build.zip, notes.txt
+  build.zip: not mentioned in evidence -> missing
+  notes.txt: confirmed
+  <payload>{"missing_items": ["build.zip"], "verdict": "NO"}</payload>
+
+  Now audit this task. Write your Step 1-2 lines first, then output ONLY the final JSON inside <payload></payload> tags.
+  Objective: {objective}
+  Evidence: {evidence}
+
+auto_heal_strict: |
+  CRITICAL AUTO-HEAL CONSTRAINTS:
+  1. Output ONLY the raw replacement code for the target snippet inside <payload></payload> tags.
+  2. NEVER output conversational preamble, explanation, thought traces, or commentary.
+  3. Do NOT invent variable names. Use only variables present in the surrounding scope.
+  4. Match the exact surrounding indentation and brace nesting level.
+
+ast_triage: |
+  Analyze the code snippet below for security vulnerabilities.
+  Rubric:
+  - Return 'EXPLOITABLE' if untrusted input reaches a sink without proper parameterization or sanitization.
+  - Return 'SAFE' if properly parameterized or sanitized.
+  - Return 'UNKNOWN' if query/sink provenance cannot be determined.
+
+  Format: <payload>{"state": "EXPLOITABLE" | "SAFE" | "UNKNOWN", "severity": "High" | "Medium" | "Low"}</payload>

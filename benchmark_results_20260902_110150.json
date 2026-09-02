@@ -1,0 +1,457 @@
+{
+  "timestamp": "20260902_110150",
+  "model": "gemma-4-e4b-it",
+  "runs_per_test": 3,
+  "overhead_floor_s": 10.110439385985956,
+  "accuracy_pct": 100.0,
+  "tasks": [
+    {
+      "id": "T00_probe_latency_floor",
+      "domain": "Latency Probe",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 10.110439385985956,
+      "median_effective_tps": 7.319167562843128,
+      "median_tokens": 74,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 9.36290884698974,
+          "effective_tps": 7.903526693394188,
+          "gen_tokens": 74,
+          "content": "It looks like you've sent the number \"1\".\n\nHow can I help you with this? Are you looking for:\n\n* **A definition or explanation of the number 1?**\n* **A math problem involving 1?**\n* **Something else entirely?**\n\nPlease let me know what you'd like to do! \ud83d\ude0a"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.110439385985956,
+          "effective_tps": 7.319167562843128,
+          "gen_tokens": 74,
+          "content": "It looks like you've sent the number \"1\".\n\nHow can I help you with this? Are you looking for:\n\n* **A definition or explanation of the number 1?**\n* **A math problem involving 1?**\n* **Something else entirely?**\n\nPlease let me know what you'd like to do! \ud83d\ude0a"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.647259846999077,
+          "effective_tps": 6.9501450197871195,
+          "gen_tokens": 74,
+          "content": "It looks like you've sent the number \"1\".\n\nHow can I help you with this? Are you looking for:\n\n* **A definition or explanation of the number 1?**\n* **A math problem involving 1?**\n* **Something else entirely?**\n\nPlease let me know what you'd like to do! \ud83d\ude0a"
+        }
+      ]
+    },
+    {
+      "id": "T01_gate_completed_objective",
+      "domain": "Sentinel Core",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 8.384900845994707,
+      "median_effective_tps": 3.935645824096228,
+      "median_tokens": 33,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 8.298436231998494,
+          "effective_tps": 3.976652838850903,
+          "gen_tokens": 33,
+          "content": "Deliverables: report.md\nreport.md: confirmed\n\n<payload>{\"missing_items\": [], \"verdict\": \"YES\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 8.64007484697504,
+          "effective_tps": 3.8194113574784097,
+          "gen_tokens": 33,
+          "content": "Deliverables: report.md\nreport.md: confirmed\n\n<payload>{\"missing_items\": [], \"verdict\": \"YES\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 8.384900845994707,
+          "effective_tps": 3.935645824096228,
+          "gen_tokens": 33,
+          "content": "Deliverables: report.md\nreport.md: confirmed\n\n<payload>{\"missing_items\": [], \"verdict\": \"YES\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T02_gate_missing_deliverable",
+      "domain": "Sentinel Core",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 10.014007076999405,
+      "median_effective_tps": 4.693425882227664,
+      "median_tokens": 47,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 10.31083146200399,
+          "effective_tps": 4.558313281833548,
+          "gen_tokens": 47,
+          "content": "Deliverables: audit.json, summary.md\naudit.json: confirmed\nsummary.md: missing\n\n<payload>{\"missing_items\": [\"summary.md\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.014007076999405,
+          "effective_tps": 4.693425882227664,
+          "gen_tokens": 47,
+          "content": "Deliverables: audit.json, summary.md\naudit.json: confirmed\nsummary.md: missing\n\n<payload>{\"missing_items\": [\"summary.md\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 9.9142479239963,
+          "effective_tps": 4.740652075710341,
+          "gen_tokens": 47,
+          "content": "Deliverables: audit.json, summary.md\naudit.json: confirmed\nsummary.md: missing\n\n<payload>{\"missing_items\": [\"summary.md\"], \"verdict\": \"NO\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T03_gate_failed_command_trap",
+      "domain": "Sentinel Core",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 9.939799384999787,
+      "median_effective_tps": 4.326043045183745,
+      "median_tokens": 43,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 10.175300847011385,
+          "effective_tps": 4.225919277131707,
+          "gen_tokens": 43,
+          "content": "Deliverables: Compile release binary.\nCompile release binary: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"Compile release binary\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 9.79002054000739,
+          "effective_tps": 4.392227761349267,
+          "gen_tokens": 43,
+          "content": "Deliverables: Compile release binary.\nCompile release binary: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"Compile release binary\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 9.939799384999787,
+          "effective_tps": 4.326043045183745,
+          "gen_tokens": 43,
+          "content": "Deliverables: Compile release binary.\nCompile release binary: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"Compile release binary\"], \"verdict\": \"NO\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T04_triage_sqli_raw_concat",
+      "domain": "AST Security",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 8.06188153900439,
+      "median_effective_tps": 2.728891499281062,
+      "median_tokens": 22,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 8.121128769998904,
+          "effective_tps": 2.7089830272452344,
+          "gen_tokens": 22,
+          "content": "<payload>{\"state\": \"EXPLOITABLE\", \"severity\": \"High\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 7.505669077014318,
+          "effective_tps": 2.9311177690172543,
+          "gen_tokens": 22,
+          "content": "<payload>{\"state\": \"EXPLOITABLE\", \"severity\": \"High\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 8.06188153900439,
+          "effective_tps": 2.728891499281062,
+          "gen_tokens": 22,
+          "content": "<payload>{\"state\": \"EXPLOITABLE\", \"severity\": \"High\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T05_triage_sqli_prepared_stmt",
+      "domain": "AST Security",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 7.77783707701019,
+      "median_effective_tps": 2.4428385181994097,
+      "median_tokens": 19,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 7.77783707701019,
+          "effective_tps": 2.4428385181994097,
+          "gen_tokens": 19,
+          "content": "<payload>{\"state\": \"SAFE\", \"severity\": \"Low\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 7.787209231988527,
+          "effective_tps": 2.4398984840360063,
+          "gen_tokens": 19,
+          "content": "<payload>{\"state\": \"SAFE\", \"severity\": \"Low\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 7.238118845998542,
+          "effective_tps": 2.6249914382800985,
+          "gen_tokens": 19,
+          "content": "<payload>{\"state\": \"SAFE\", \"severity\": \"Low\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T06_triage_unknown_provenance",
+      "domain": "AST Security",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 7.780323154001962,
+      "median_effective_tps": 2.4420579484834093,
+      "median_tokens": 19,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 7.909730999992462,
+          "effective_tps": 2.4021044457792695,
+          "gen_tokens": 19,
+          "content": "<payload>{\"state\": \"UNKNOWN\", \"severity\": \"High\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 7.780323154001962,
+          "effective_tps": 2.4420579484834093,
+          "gen_tokens": 19,
+          "content": "<payload>{\"state\": \"UNKNOWN\", \"severity\": \"High\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 7.77021153899841,
+          "effective_tps": 2.4452358735202626,
+          "gen_tokens": 19,
+          "content": "<payload>{\"state\": \"UNKNOWN\", \"severity\": \"High\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T07_extract_parameter_mapping",
+      "domain": "Code Extraction",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 4.920444384973962,
+      "median_effective_tps": 2.2355704361971385,
+      "median_tokens": 11,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 4.920444384973962,
+          "effective_tps": 2.2355704361971385,
+          "gen_tokens": 11,
+          "content": "$user, $pass, $role_id"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 5.103899001027457,
+          "effective_tps": 2.155215061619677,
+          "gen_tokens": 11,
+          "content": "$user, $pass, $role_id"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 4.746339539007749,
+          "effective_tps": 2.31757545148142,
+          "gen_tokens": 11,
+          "content": "$user, $pass, $role_id"
+        }
+      ]
+    },
+    {
+      "id": "T08_remediation_diff_anchor",
+      "domain": "Code Remediation",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 9.20158869199804,
+      "median_effective_tps": 5.7598749274775,
+      "median_tokens": 53,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 9.20158869199804,
+          "effective_tps": 5.7598749274775,
+          "gen_tokens": 53,
+          "content": "<payload>$stmt = $con->prepare(\"SELECT * FROM users WHERE id = ?\");\n$stmt->bind_param(\"i\", $id);\n$stmt->execute();\n$r = $stmt->get_result();</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 9.42269400099758,
+          "effective_tps": 5.62471836551085,
+          "gen_tokens": 53,
+          "content": "<payload>$stmt = $con->prepare(\"SELECT * FROM users WHERE id = ?\");\n$stmt->bind_param(\"i\", $id);\n$stmt->execute();\n$r = $stmt->get_result();</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 8.964489539008355,
+          "effective_tps": 5.912216169071778,
+          "gen_tokens": 53,
+          "content": "<payload>$stmt = $con->prepare(\"SELECT * FROM users WHERE id = ?\");\n$stmt->bind_param(\"i\", $id);\n$stmt->execute();\n$r = $stmt->get_result();</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T09_gate_name_in_failure_trap",
+      "domain": "Blind Generalization",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 11.26303969300352,
+      "median_effective_tps": 4.616870881872311,
+      "median_tokens": 52,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 11.30695930798538,
+          "effective_tps": 4.598937573187845,
+          "gen_tokens": 52,
+          "content": "Deliverables: metrics.log, app.bin\nmetrics.log: not mentioned in evidence -> missing\napp.bin: confirmed\n\n<payload>{\"missing_items\": [\"metrics.log\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 11.26303969300352,
+          "effective_tps": 4.616870881872311,
+          "gen_tokens": 52,
+          "content": "Deliverables: metrics.log, app.bin\nmetrics.log: not mentioned in evidence -> missing\napp.bin: confirmed\n\n<payload>{\"missing_items\": [\"metrics.log\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.960220154986018,
+          "effective_tps": 4.744430245440297,
+          "gen_tokens": 52,
+          "content": "Deliverables: metrics.log, app.bin\nmetrics.log: not mentioned in evidence -> missing\napp.bin: confirmed\n\n<payload>{\"missing_items\": [\"metrics.log\"], \"verdict\": \"NO\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T10_gate_three_item_generalization",
+      "domain": "Blind Generalization",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 11.699271924007917,
+      "median_effective_tps": 4.872098056207333,
+      "median_tokens": 57,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 11.976012461993378,
+          "effective_tps": 4.759514085418085,
+          "gen_tokens": 57,
+          "content": "Deliverables: config.json, schema.sql, seed.py\nconfig.json: confirmed\nschema.sql: missing\nseed.py: confirmed\n\n<payload>{\"missing_items\": [\"schema.sql\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 11.699271924007917,
+          "effective_tps": 4.872098056207333,
+          "gen_tokens": 57,
+          "content": "Deliverables: config.json, schema.sql, seed.py\nconfig.json: confirmed\nschema.sql: missing\nseed.py: confirmed\n\n<payload>{\"missing_items\": [\"schema.sql\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 11.678418693016283,
+          "effective_tps": 4.880797777363995,
+          "gen_tokens": 57,
+          "content": "Deliverables: config.json, schema.sql, seed.py\nconfig.json: confirmed\nschema.sql: missing\nseed.py: confirmed\n\n<payload>{\"missing_items\": [\"schema.sql\"], \"verdict\": \"NO\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T11_gate_overdelivery_acceptance",
+      "domain": "Blind Generalization",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 9.780584924010327,
+      "median_effective_tps": 3.3740313341575723,
+      "median_tokens": 33,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 10.063588616001653,
+          "effective_tps": 3.279148349479251,
+          "gen_tokens": 33,
+          "content": "Deliverables: license.txt\nlicense.txt: confirmed\n\n<payload>{\"missing_items\": [], \"verdict\": \"YES\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 9.615114000975154,
+          "effective_tps": 3.4320965925784317,
+          "gen_tokens": 33,
+          "content": "Deliverables: license.txt\nlicense.txt: confirmed\n\n<payload>{\"missing_items\": [], \"verdict\": \"YES\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 9.780584924010327,
+          "effective_tps": 3.3740313341575723,
+          "gen_tokens": 33,
+          "content": "Deliverables: license.txt\nlicense.txt: confirmed\n\n<payload>{\"missing_items\": [], \"verdict\": \"YES\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T12_gate_substring_shadow_trap",
+      "domain": "Blind Generalization",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 10.896163076977246,
+      "median_effective_tps": 4.405220412075174,
+      "median_tokens": 48,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 11.262501769990195,
+          "effective_tps": 4.261930517773565,
+          "gen_tokens": 48,
+          "content": "Deliverables: final_report.md\nfinal_report.md: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"final_report.md\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.896163076977246,
+          "effective_tps": 4.405220412075174,
+          "gen_tokens": 48,
+          "content": "Deliverables: final_report.md\nfinal_report.md: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"final_report.md\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.767312770010903,
+          "effective_tps": 4.457936815366736,
+          "gen_tokens": 48,
+          "content": "Deliverables: final_report.md\nfinal_report.md: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"final_report.md\"], \"verdict\": \"NO\"}</payload>"
+        }
+      ]
+    },
+    {
+      "id": "T13_gate_action_crash_generalization",
+      "domain": "Blind Generalization",
+      "passed": true,
+      "deterministic": true,
+      "median_wall_s": 11.217035539011704,
+      "median_effective_tps": 3.8334549133280706,
+      "median_tokens": 43,
+      "runs": [
+        {
+          "passed": true,
+          "wall_time_s": 11.308526846987661,
+          "effective_tps": 3.8024404577024318,
+          "gen_tokens": 43,
+          "content": "Deliverables: Deploy migration script.\nDeploy migration script: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"Deploy migration script\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 10.959427001012955,
+          "effective_tps": 3.923562791743182,
+          "gen_tokens": 43,
+          "content": "Deliverables: Deploy migration script.\nDeploy migration script: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"Deploy migration script\"], \"verdict\": \"NO\"}</payload>"
+        },
+        {
+          "passed": true,
+          "wall_time_s": 11.217035539011704,
+          "effective_tps": 3.8334549133280706,
+          "gen_tokens": 43,
+          "content": "Deliverables: Deploy migration script.\nDeploy migration script: not mentioned in evidence -> missing\n\n<payload>{\"missing_items\": [\"Deploy migration script\"], \"verdict\": \"NO\"}</payload>"
+        }
+      ]
+    }
+  ]
+}
