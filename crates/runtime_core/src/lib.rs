@@ -77,3 +77,8 @@ pub mod contract_status;
 pub mod sovereign_core;
 pub mod epistemic_tuple;
 pub mod probabilistic_memory;
+
+// Phase 1 Architecture Evolution Modules
+pub mod virtual_fs;
+pub mod sum_tree_buffer;
+pub mod mcp;
