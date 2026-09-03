@@ -76,7 +76,7 @@ impl EpistemicEngine {
                             "model": model_endpoint,
                             "messages": [{"role": "user", "content": text}],
                             "max_tokens": 4096,
-                            "temperature": 0.1
+                            "temperature": 0.0
                         });
 
                         if let Some(funcs) = payload.pointer("/tools/0/functionDeclarations").and_then(|v| v.as_array()) {
@@ -98,7 +98,7 @@ impl EpistemicEngine {
                 };
 
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                let mut req = client.post(let mut req = client.post(&url)url).json(&req_payload).timeout(Duration::from_secs(90));
+                let mut req = client.post(&url).json(&req_payload).timeout(Duration::from_secs(180));
                 match resolved.auth {
                     AuthStyle::Bearer => {
                         req = req.header("Authorization", format!("Bearer {}", resolved.api_key));
@@ -219,15 +219,30 @@ impl EpistemicEngine {
         problem: &str,
         world_context: &str,
     ) -> Result<Vec<String>> {
+        let audit_guidance = if problem.to_lowercase().contains("audit") || problem.to_lowercase().contains("vulnerabilit") || problem.to_lowercase().contains("security") {
+            "\nCRITICAL RULE FOR SECURITY AUDITS: At least ONE strategy MUST be: execute_command 'nexus_ast_tool audit -p nexus_audit_target --ai-triage --auto-heal --generate-report'.\n"
+        } else {
+            ""
+        };
+
+        let analysis_guidance = if problem.to_lowercase().contains("analy")
+            || problem.to_lowercase().contains("compar")
+            || problem.to_lowercase().contains("dissect")
+            || problem.to_lowercase().contains("investigat")
+        {
+            "\nCRITICAL RULE FOR CODE ANALYSIS / COMPARISON TASKS: Prefer read-only exploration strategies (read_file, search_code, or execute_command 'ls -R' / 'find') over 'cargo build' or 'cargo test'. Only propose a build or test command if the directive EXPLICITLY asks to build, run, or execute the code -- a request to analyze, compare, dissect, or investigate architecture does NOT require compiling it.\n"
+        } else {
+            ""
+        };
+
         let prompt = format!(
             r#"You are AthenaFusionX. Analyze this directive.
-DIRECTIVE: {}
-WORLD CONTEXT: {}
+DIRECTIVE: {problem}
+WORLD CONTEXT: {world_context}{audit_guidance}{analysis_guidance}
 CRITICAL RULE: If the directive explicitly tells you to execute a specific command, at least ONE of your strategies MUST be to simply execute that exact command.
-Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS. No markdown."#,
-            problem, world_context
+Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS. No markdown."#
         );
-        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 2048 }});
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 2048 }});
         let text = Self::safe_api_call(
             client,
             api_key,
@@ -285,7 +300,9 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
             crate::tools::schema::CognitivePhase::Reconnaissance
         };
         let prompt = format!(
-            r#"You are the Prefrontal and Synthesizer Cortex. Your role is purely strategic, creative, and intellectual.
+            r#"You are Athena's Edge Prefrontal Cortex (gemma-4-e4b-it).
+You are the fast local vanguard, supported by your 31B cloud siblings (gemma-4-31b-it and ising).
+Your edge specialty is precision and speed: use read_file_chunk for small windows, search_code for lines, and nexus_ast_tool for security audits.
 ORIGINAL DIRECTIVE: {}
 STRATEGY: {}
 WORLD CONTEXT: {}
@@ -293,6 +310,7 @@ EVIDENCE GATHERED SO FAR:
 {}
 Propose the exact next step to fulfill the strategy.
 
+CRITICAL RULE 0.5: If the STRATEGY starts with execute_command or names a CLI tool (like nexus_ast_tool, cargo, git), you MUST emit an execute_command action with that exact command string.
 CRITICAL RULE 0: NATIVE TOOLS ONLY (read_file, read_file_chunk, execute_command, patch_function, write_file, replace_lines, diff_patch, search_code, search_memory, run_tests, synthesize_report, halt).
 CRITICAL RULE 1: If the EVIDENCE contains an exact file path outputted by a previous command, you MUST use that exact path.
 CRITICAL RULE 2: If EVIDENCE satisfies the strategy, declare HALT.
@@ -325,7 +343,7 @@ evidence_so_far );
             "functionDeclarations": crate::tools::schema::tool_declarations_for_phase(phase)
         }],
         "generationConfig": {
-            "temperature": 0.1,
+            "temperature": 0.0,
             "maxOutputTokens": 8192
         }
     });
@@ -411,7 +429,7 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
 strategy = strategy, proposed_action = proposed_action, world_context =
 world_context, grounded_evidence = grounded_evidence );
 
-    let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
+    let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
     let text = Self::safe_api_call(
         client,
         api_key,
@@ -599,7 +617,7 @@ OUTPUT ONLY VALID JSON matching this schema:
             strategy, truncated_action, truncated_evidence
         );
         
-        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }});
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
         let text = Self::safe_api_call(
             client,
             api_key,
