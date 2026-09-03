@@ -1,0 +1,63 @@
+name: Android Cross-Build (wasmtime crates)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'crates/runtime_core/**'
+      - 'apps/benchmark_runner/**'
+      - 'apps/wasm_tester/**'
+      - 'Cargo.lock'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27
+          add-to-path: true
+
+      - name: Build runtime_core
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk -t arm64-v8a -o ./target-android build \
+            -p nexus_runtime_core --release
+
+      - name: Build benchmark_runner
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk -t arm64-v8a -o ./target-android build \
+            -p benchmark_runner --release
+
+      - name: Build wasm_tester
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo ndk -t arm64-v8a -o ./target-android build \
+            -p wasm_tester --release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aarch64-binaries
+          path: |
+            target-android/arm64-v8a/benchmark_runner
+            target-android/arm64-v8a/wasm_tester
+            target/aarch64-linux-android/release/libnexus_runtime_core.rlib
+          retention-days: 14
