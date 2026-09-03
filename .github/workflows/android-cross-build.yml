@@ -1,14 +1,15 @@
-name: Android Cross-Build (wasmtime crates)
+name: Android Cross-Build (nexus_cli)
 
 on:
   workflow_dispatch:
   push:
-    branches: [dev, main]
+    branches: [dev]
     paths:
-      - 'crates/runtime_core/**'
-      - 'apps/benchmark_runner/**'
-      - 'apps/wasm_tester/**'
+      - 'crates/**'
+      - 'apps/nexus_ast_tool/**'
+      - 'bins/cli/**'
       - 'Cargo.lock'
+      - 'Cargo.toml'
 
 jobs:
   build-android:
@@ -31,33 +32,16 @@ jobs:
           ndk-version: r27
           add-to-path: true
 
-      - name: Build runtime_core
+      - name: Build nexus_cli
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           cargo ndk -t arm64-v8a -o ./target-android build \
-            -p nexus_runtime_core --release
+            -p nexus_cli --release
 
-      - name: Build benchmark_runner
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          cargo ndk -t arm64-v8a -o ./target-android build \
-            -p benchmark_runner --release
-
-      - name: Build wasm_tester
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          cargo ndk -t arm64-v8a -o ./target-android build \
-            -p wasm_tester --release
-
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-aarch64-binaries
-          path: |
-            target-android/arm64-v8a/benchmark_runner
-            target-android/arm64-v8a/wasm_tester
-            target/aarch64-linux-android/release/libnexus_runtime_core.rlib
-          retention-days: 14
+          name: nexus_cli-android-aarch64
+          path: target-android/arm64-v8a/nexus_cli
+          retention-days: 30
