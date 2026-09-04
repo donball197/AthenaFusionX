@@ -1,5 +1,5 @@
 use anyhow::Result;
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), feature = "embeddings"))]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde_json::json;
 
 // 1. Compile-time gated local embedder: Bypasses ONNX runtime linking on Android
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), feature = "embeddings"))]
 static LOCAL_EMBEDDER: Lazy<Mutex<Option<TextEmbedding>>> = Lazy::new(|| {
     let mut options = InitOptions::default();
     options.model_name = EmbeddingModel::AllMiniLML6V2;
@@ -16,16 +16,17 @@ static LOCAL_EMBEDDER: Lazy<Mutex<Option<TextEmbedding>>> = Lazy::new(|| {
     Mutex::new(model)
 });
 
-#[cfg(target_os = "android")]
+#[allow(dead_code)]
+#[cfg(not(all(not(target_os = "android"), feature = "embeddings")))]
 static LOCAL_EMBEDDER: Lazy<Mutex<Option<()>>> = Lazy::new(|| {
     Mutex::new(None)
 });
 
 pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
-    let text_owned = text.to_string();
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), feature = "embeddings"))]
     {
+        let text_owned = text.to_string();
         if let Ok(Some(vector)) = tokio::task::spawn_blocking(move || {
             let mut guard = LOCAL_EMBEDDER.lock();
             if let Some(ref mut model) = *guard {
