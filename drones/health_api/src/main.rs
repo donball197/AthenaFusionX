@@ -5,9 +5,11 @@ use std::net::SocketAddr;
 async fn main() {
     let app = Router::new().route("/health", get(health_check));
     let addr = SocketAddr::from(([0, 0, 0, 0], 7000));
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .expect("Failed to initialize health_api bind address");
     println!("Listening on {}", addr);
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await.expect("Failed to initialize health_api bind address");
 }
 
 async fn health_check() -> &'static str {
@@ -25,9 +27,14 @@ mod tests {
     async fn test_health_endpoint() {
         let app = Router::new().route("/health", get(health_check));
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("Failed to initialize health_api bind address"),
+            )
             .await
-            .unwrap();
+            .expect("Failed to initialize health_api bind address");
         assert_eq!(response.status(), axum::http::StatusCode::OK);
     }
 }

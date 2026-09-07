@@ -15,7 +15,8 @@ pub enum ExecutionResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EvidenceMarker {
-    ReadOk, ReadChunkOk, SearchCodeOk, SearchOk, CacheHit, CmdOk,
+    ReadOk, ReadFunctionOk, ReadChunkOk, SearchCodeOk,
+    SearchOk, SearchMemoryOk, SearchMemoryEmpty, CacheHit, CmdOk,
     WriteOk, WriteNoop, DiffPatchOk, PatchFunctionOk, ReplaceLinesOk,
     VerifyOk, CompileOk, CompileFail, AutoHeal, MutationReverted,
     ActionFailed, ActionGateBlocked, Halt,
@@ -24,9 +25,14 @@ pub enum EvidenceMarker {
 impl EvidenceMarker {
     pub fn as_bracketed(&self) -> &'static str {
         match self {
-            Self::ReadOk => "[READ_OK]", Self::ReadChunkOk => "[READ_CHUNK_OK]",
-            Self::SearchCodeOk => "[SEARCH_CODE_OK]", Self::SearchOk => "[SEARCH_OK]",
-            Self::CacheHit => "[CACHE_HIT]", Self::CmdOk => "[CMD_OK]",
+            Self::ReadOk => "[READ_OK]", Self::ReadFunctionOk => "[READ_FUNCTION_OK]",
+            Self::ReadChunkOk => "[READ_CHUNK_OK]",
+            Self::SearchCodeOk => "[SEARCH_CODE_OK]",
+            Self::SearchOk => "[SEARCH_OK]",
+            Self::SearchMemoryOk => "[SEARCH_MEMORY_OK]",
+            Self::SearchMemoryEmpty => "[SEARCH_MEMORY_EMPTY]",
+            Self::CacheHit => "[CACHE_HIT]",
+            Self::CmdOk => "[CMD_OK]",
             Self::WriteOk => "[WRITE_OK]", Self::WriteNoop => "[WRITE_NOOP]",
             Self::DiffPatchOk => "[DIFF_PATCH_OK]", Self::PatchFunctionOk => "[PATCH_FUNCTION_OK]",
             Self::ReplaceLinesOk => "[REPLACE_LINES_OK]", Self::VerifyOk => "[VERIFY_OK]",
@@ -44,7 +50,18 @@ impl EvidenceMarker {
         matches!(self, Self::MutationReverted | Self::CompileFail | Self::ActionFailed)
     }
     pub fn is_recon(&self) -> bool {
-        matches!(self, Self::ReadOk | Self::ReadChunkOk | Self::SearchCodeOk | Self::SearchOk | Self::CacheHit | Self::CmdOk)
+        matches!(
+            self,
+            Self::ReadOk
+                | Self::ReadFunctionOk
+                | Self::ReadChunkOk
+                | Self::SearchCodeOk
+                | Self::SearchOk
+                | Self::SearchMemoryOk
+                | Self::SearchMemoryEmpty
+                | Self::CacheHit
+                | Self::CmdOk
+        )
     }
 }
 

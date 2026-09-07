@@ -19,9 +19,8 @@ impl ExecutionSandbox {
 
     pub fn validate_intent(&self, action_type: &str) -> Result<(), String> {
         let required_token = match action_type {
-            "read_file" | "read_file_chunk" | "search_code" | "search_memory" | "read_function" => {
-                Capability::ReadSubstrate
-            }
+            "read_file" | "read_file_chunk" | "search_code" | "search_memory" | "scrape_url"
+            | "read_function" => Capability::ReadSubstrate,
             "write_file" | "diff_patch" | "patch_function" | "replace_lines"
             | "lazarus_snapshot" | "export_report" | "synthesize_report" => {
                 Capability::WriteSubstrate

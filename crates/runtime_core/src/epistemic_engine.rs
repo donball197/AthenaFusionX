@@ -52,6 +52,12 @@ impl EpistemicEngine {
         models: &[String],
         payload: &Value,
     ) -> Result<String> {
+        if models.is_empty() {
+            return Err(anyhow!(
+                "No models configured -- check NEXUS_HEAVY_MODEL/NEXUS_HEAVY_CASCADE \
+(or the light/planner equivalents) in .env."
+            ));
+        }
         let mut last_err = anyhow!("No models available in cascade.");
         for model_endpoint in models {
             let resolved = resolve_provider(model_endpoint);
@@ -88,10 +94,22 @@ impl EpistemicEngine {
                                 .iter()
                                 .map(|f| serde_json::json!({"type": "function", "function": f}))
                                 .collect();
+
+
                             p.as_object_mut()
                                 .unwrap()
                                 .insert("tools".to_string(), Value::Array(oai_tools));
                         }
+
+                        // The Cortex action-proposal path may explicitly require
+                        // the selected native strategy tool. This is intentionally
+                        // opt-in so unrelated safe_api_call() callers are unchanged.
+                        if let Some(tool_choice) = payload.get("forced_tool_choice") {
+                            p.as_object_mut()
+                                .unwrap()
+                                .insert("tool_choice".to_string(), tool_choice.clone());
+                        }
+
 
                         if let Some(mime) = payload
                             .pointer("/generationConfig/responseMimeType")
@@ -365,10 +383,35 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
         } else {
             crate::tools::schema::CognitivePhase::Reconnaissance
         };
+        // Strict 2,500 character ceiling to guarantee prompt stays under 3,000 tokens total
+        let bounded_evidence = if evidence_so_far.chars().count() > 2500 {
+            let tail: String = evidence_so_far
+                .chars()
+                .skip(evidence_so_far.chars().count().saturating_sub(2500))
+                .collect();
+            format!("[... EARLIER HISTORY PRUNED FOR 4K CONTEXT BUDGET ...]\n\n{}", tail)
+        } else {
+            evidence_so_far.to_string()
+        };
+
         let prompt = format!(
             r#"You are Athena's Edge Prefrontal Cortex (gemma-4-e4b-it).
-You are the fast local vanguard, supported by your 31B cloud siblings (gemma-4-31b-it and ising).
-Your edge specialty is precision and speed: use read_file_chunk for small windows, search_code for lines, and nexus_ast_tool for security audits.
+PHYSICAL PROFILE & ABILITIES:
+- PLATFORM: Snapdragon 8 Gen 2 Edge Silicon (Local S23).
+- CONTEXT LIMIT: Hard 4,096-token ceiling. You MUST operate with extreme token economy.
+- TOOL ABILITY: NEVER call `read_file` on large files. ALWAYS use `read_file_chunk` (30-50 lines) or `search_code`.
+
+CRITICAL MULTI-PASS RULES FOR LARGE FILES (MANDATORY):
+1. Never declare the analysis complete after reading only one chunk.
+2. Always track progress explicitly in your reasoning:
+   "Lines read so far: X–Y / Total Z. Coverage: XX%"
+3. Continue requesting the next chunk until you have read ≥ 90% of the target file
+   OR you can clearly prove the remaining unread portion is irrelevant.
+4. Only after the above condition is met may you emit a halt / final_answer.
+5. Prefer small chunks (30-50 lines) so context stays clean across turns.
+
+- COMPLETION PROTOCOL: When your analysis or recon is complete, DO NOT output markdown and DO NOT attempt to rewrite the file. You MUST output a JSON `halt` action and place your complete final explanation in the "reasoning" field.
+
 ORIGINAL DIRECTIVE: {}
 STRATEGY: {}
 WORLD CONTEXT: {}
@@ -376,8 +419,31 @@ EVIDENCE GATHERED SO FAR:
 {}
 Propose the exact next step to fulfill the strategy.
 
-CRITICAL RULE 0.5: If the STRATEGY starts with execute_command or names a CLI tool (like nexus_ast_tool, cargo, git), you MUST emit an execute_command action with that exact command string.
-CRITICAL RULE 0: NATIVE TOOLS ONLY (read_file, read_file_chunk, execute_command, patch_function, write_file, replace_lines, diff_patch, search_code, search_memory, run_tests, synthesize_report, halt).
+CRITICAL RULE 0.5: SELECTED STRATEGY IS AUTHORITATIVE.
+The STRATEGY supplied above was selected by the Executive Cortex. You are NOT a second strategy selector.
+Your job is to operationalize the selected strategy into the next executable native action.
+
+If STRATEGY begins with or explicitly names a native action, that action MUST be the next action.
+Examples:
+- read_file:<path> -> emit read_file for that exact path.
+- read_function:<path>:<function> -> emit read_function for that exact path/function.
+- read_file_chunk:<path> -> emit read_file_chunk for that exact path.
+- search_code:<path>:<query> -> emit search_code for that exact path/query.
+- execute_command:<command> -> emit execute_command with that exact command.
+- write_file:<path> -> emit write_file for that exact path.
+- synthesize_report:<path> -> emit the required report action.
+
+Do NOT substitute a different tool merely because another tool appears more useful for the ORIGINAL DIRECTIVE.
+Do NOT independently re-plan the mission while the selected strategy remains viable.
+The ORIGINAL DIRECTIVE describes the overall mission; STRATEGY determines the NEXT ACTION.
+
+You may deviate from the selected strategy ONLY when:
+1. the strategy is physically impossible with the available native tools, OR
+2. current PHYSICAL EVIDENCE proves that the selected strategy is invalid or already satisfied.
+
+If deviation is necessary, explicitly state why in reasoning and choose the smallest valid replacement action.
+
+CRITICAL RULE 0: NATIVE TOOLS ONLY (read_file, read_function, read_file_chunk, execute_command, patch_function, write_file, replace_lines, diff_patch, search_code, search_memory, run_tests, synthesize_report, halt).
 CRITICAL RULE 1: If the EVIDENCE contains an exact file path outputted by a previous command, you MUST use that exact path.
 CRITICAL RULE 2: If EVIDENCE satisfies the strategy, declare HALT.
 CRITICAL RULE 3: There is NO downstream translator. Your proposal is parsed directly for a JSON action array -- natural-language-only descriptions of intent will NOT be executed and will waste a turn. You MUST end your response with a valid JSON array of action object(s) matching the ALLOWED ACTIONS schema (e.g. [{{"type": "read_file", "path": "...", "reasoning": "..."}}]). This applies to ALL actions, not just write_file/replace_lines/diff_patch.
@@ -401,19 +467,39 @@ Think step by step if it helps, but your response MUST end with the exact
 target path and a valid JSON action array. There is no downstream translator --
 your response is parsed directly, so natural-language-only intent will not be
 executed."#,
-            mission, strategy, world_context, evidence_so_far
+            mission, strategy, world_context, bounded_evidence
         );
 
-        let payload = serde_json::json!({
+        let strategy_tools =
+            crate::tools::schema::tool_declarations_for_strategy(phase, strategy);
+
+        let mut payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "tools": [{
-                "functionDeclarations": crate::tools::schema::tool_declarations_for_phase(phase)
+                "functionDeclarations": strategy_tools
+
             }],
             "generationConfig": {
                 "temperature": 0.0,
                 "maxOutputTokens": 8192
             }
         });
+
+        // Explicit native strategies are authoritative. When the strategy
+        // resolves to exactly one native tool, force that tool at the
+        // OpenAI-compatible provider boundary. This prevents the model from
+        // silently substituting another native action.
+        if let Some(expected_tool) =
+            crate::tools::schema::native_tool_name_for_strategy(strategy)
+        {
+            payload["forced_tool_choice"] = serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": expected_tool
+                }
+            });
+        }
+
 
         Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload)
             .await
@@ -456,10 +542,19 @@ gathering is a strict prerequisite to writing."#,
         let grounded_evidence = {
             let chunks: Vec<&str> =
                 evidence_history.split("\n\n").filter(|c| !c.trim().is_empty()).collect();
-            if chunks.len() > K {
+            let base = if chunks.len() > K {
                 chunks[chunks.len() - K..].join("\n\n")
             } else {
                 evidence_history.to_string()
+            };
+            if base.chars().count() > 4000 {
+                let start: String = base.chars().take(2000).collect();
+                let end: String =
+                    base.chars().skip(base.chars().count().saturating_sub(2000)).collect();
+                format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
+            } else {
+                base
+
             }
         };
 
@@ -510,7 +605,8 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
         let text = Self::safe_api_call(
             client,
             api_key,
-            &crate::model_config::get_light_models(),
+            &crate::model_config::get_heavy_models(),
+
             &payload,
         )
         .await?;
@@ -562,6 +658,7 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
 
   - execute_command (needs: 'command')
   - read_file (needs: 'path')
+  - read_function (needs: 'path', 'function_name') — AST-first exact Rust symbol inspection
   - read_file_chunk (needs: 'path', 'start_line', 'max_lines')
   - write_file (needs: 'path', 'content')
   - synthesize_report (needs: 'output_path', 'source_files')

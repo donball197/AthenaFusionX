@@ -181,6 +181,7 @@ impl AthenaSovereignCore {
                     AgentAction::WriteFile { .. }
                     | AgentAction::DiffPatch { .. }
                     | AgentAction::PatchFunction { .. } => Capability::WriteSubstrate,
+                    AgentAction::ScrapeUrl { .. } => Capability::ReadSubstrate,
                     AgentAction::Halt { .. } => Capability::HaltCognition,
                     _ => Capability::ReadSubstrate,
                 };

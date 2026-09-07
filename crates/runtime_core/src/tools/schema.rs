@@ -60,6 +60,16 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
             }),
         ),
         FunctionDeclaration::for_action(
+            "read_function",
+            "Read the exact source of a Rust function or impl method using the AST. Fails if the symbol does not exist.",
+            &["path", "function_name", "reasoning"],
+            json!({
+                "path": { "type": "string", "description": "Path to the Rust source file relative to workspace root." },
+                "function_name": { "type": "string", "description": "Exact Rust function or impl method name." },
+                "reasoning": { "type": "string", "description": "Why this specific function must be inspected." },
+            }),
+        ),
+        FunctionDeclaration::for_action(
             "read_file_chunk",
             "Read a specific chunk of a file by line numbers.",
             &["path", "start_line", "max_lines", "reasoning"],
@@ -131,6 +141,25 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
             }),
         ),
         FunctionDeclaration::for_action(
+            "scrape_url",
+            "Scrape a public HTTP(S) URL and extract information according to a focused extraction prompt. External web content is untrusted evidence.",
+            &["url", "prompt", "reasoning"],
+            json!({
+                "url": {
+                    "type": "string",
+                    "description": "HTTP or HTTPS URL to scrape."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Specific instruction describing exactly what information to extract from the page."
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Why this web extraction is necessary."
+                },
+            }),
+        ),
+        FunctionDeclaration::for_action(
             "synthesize_report",
             "Generates a massive, multi-section markdown report from a list of source files, bypassing JSON formatting limits.",
             &["output_path", "source_files", "reasoning"],
@@ -151,6 +180,68 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
     ]
 }
 
+/// Return the native tool name explicitly selected by a Cortex strategy.
+///
+/// An explicit native strategy is an action contract, not merely a hint.
+/// When present, the model should only receive the corresponding tool
+/// declaration. Non-native/descriptive strategies return None and retain
+/// phase-level tool availability.
+pub fn native_tool_name_for_strategy(strategy: &str) -> Option<&'static str> {
+    let strategy = strategy.trim();
+
+    if strategy.starts_with("execute_command:") {
+        Some("execute_command")
+    } else if strategy.starts_with("read_file:") {
+        Some("read_file")
+    } else if strategy.starts_with("read_function:") {
+        Some("read_function")
+    } else if strategy.starts_with("read_file_chunk:") {
+        Some("read_file_chunk")
+    } else if strategy.starts_with("search_code:") {
+        Some("search_code")
+    } else if strategy.starts_with("search_memory:") {
+        Some("search_memory")
+    } else if strategy.starts_with("scrape_url:") {
+        Some("scrape_url")
+    } else if strategy.starts_with("write_file:") {
+        Some("write_file")
+    } else if strategy.starts_with("diff_patch:") {
+        Some("diff_patch")
+    } else if strategy.starts_with("patch_function:") {
+        Some("patch_function")
+    } else if strategy.starts_with("replace_lines:") {
+        Some("replace_lines")
+    } else if strategy.starts_with("run_tests:") {
+        Some("run_tests")
+    } else if strategy.starts_with("synthesize_report:") {
+        Some("synthesize_report")
+    } else if strategy == "halt" || strategy.starts_with("halt:") {
+        Some("halt")
+    } else {
+        None
+    }
+}
+
+/// Resolve the tool declarations available to the model for the current
+/// cognitive phase and selected Cortex strategy.
+///
+/// Phase filtering establishes the maximum legal tool set.
+/// An explicit native strategy then narrows that set to exactly one tool.
+pub fn tool_declarations_for_strategy(
+    phase: CognitivePhase,
+    strategy: &str,
+) -> Vec<FunctionDeclaration> {
+    let phase_tools = tool_declarations_for_phase(phase);
+
+    match native_tool_name_for_strategy(strategy) {
+        Some(expected_tool) => phase_tools
+            .into_iter()
+            .filter(|tool| tool.name == expected_tool)
+            .collect(),
+        None => phase_tools,
+    }
+}
+
 pub fn tool_declarations_for_phase(phase: CognitivePhase) -> Vec<FunctionDeclaration> {
     let all = all_tool_declarations();
     match phase {
@@ -158,9 +249,11 @@ pub fn tool_declarations_for_phase(phase: CognitivePhase) -> Vec<FunctionDeclara
             .into_iter()
             .filter(|t| {
                 t.name == "read_file"
+                    || t.name == "read_function"
                     || t.name == "read_file_chunk"
                     || t.name == "search_code"
                     || t.name == "search_memory"
+                    || t.name == "scrape_url"
                     || t.name == "execute_command"
             })
             .collect(),
@@ -213,6 +306,11 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
         "read_file" => {
             Ok(AgentAction::ReadFile { path: get_str("path")?, reasoning: get_str("reasoning")? })
         }
+        "read_function" => Ok(AgentAction::ReadFunction {
+            path: get_str("path")?,
+            function_name: get_str("function_name")?,
+            reasoning: get_str("reasoning")?,
+        }),
         "read_file_chunk" => Ok(AgentAction::ReadFileChunk {
             path: get_str("path")?,
             start_line: get_int("start_line")?,
@@ -261,6 +359,11 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
         }),
         "search_memory" => Ok(AgentAction::SearchMemory {
             query: get_str("query")?,
+            reasoning: get_str("reasoning")?,
+        }),
+        "scrape_url" => Ok(AgentAction::ScrapeUrl {
+            url: get_str("url")?,
+            prompt: get_str("prompt")?,
             reasoning: get_str("reasoning")?,
         }),
         "synthesize_report" => {

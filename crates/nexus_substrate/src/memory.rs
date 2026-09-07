@@ -52,10 +52,11 @@ impl MemoryPalace {
     }
 
     async fn hydrate_vault(&self) -> Result<(), sqlx::Error> {
-        let rows =
-            sqlx::query("SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query(
+            "SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL ORDER BY id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         let count = rows.len();
         if count > 0 {
@@ -240,7 +241,7 @@ impl MemoryPalace {
 
         if let Some(vec) = embedding {
             let mut vault = self.vault.lock();
-            if let Err(e) = vault.commit_state(row_id as u64, &vec) {
+if let Err(e) = vault.commit_state(row_id as u64, &vec) {
                 tracing::error!(
                     "[MEMORY PALACE] Vector index commit failed for memory id {}: {}",
                     row_id,
@@ -277,8 +278,40 @@ impl MemoryPalace {
     }
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT n.id, n.origin, n.directive, n.result, n.taint_label, n.timestamp FROM neural_context n JOIN memory_search m ON n.id = m.rowid WHERE memory_search MATCH ? ORDER BY rank LIMIT 10")
-            .bind(query).fetch_all(&self.pool).await?;
+        // FTS5 MATCH interprets tokens containing ':' as query syntax,
+        // including column selectors such as "OBJECTIVE:".
+        //
+        // Missions are natural language, so quote each token before passing
+        // it to MATCH. OR preserves broad lexical retrieval while preventing
+        // mission text from becoming FTS5 control syntax.
+        let fts_query = query
+            .split_whitespace()
+            .filter_map(|token| {
+                let token = token.trim_matches(|c: char| {
+                    !c.is_alphanumeric() && !matches!(c, '_' | '-' | '.' | '/')
+                });
+
+                if token.is_empty() {
+                    return None;
+                }
+
+                let escaped = token.replace('"', "\"\"");
+                Some(format!("\"{}\"", escaped))
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ");
+
+        if fts_query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query(
+            "SELECT n.id, n.origin, n.directive, n.result, n.taint_label, n.timestamp              FROM neural_context n              JOIN memory_search m ON n.id = m.rowid              WHERE memory_search MATCH ?              ORDER BY rank              LIMIT 10",
+        )
+        .bind(&fts_query)
+        .fetch_all(&self.pool)
+        .await?;
+
         Ok(rows
             .into_iter()
             .map(|row| AgentMemory {
@@ -295,16 +328,13 @@ impl MemoryPalace {
     pub async fn semantic_search(
         &self,
         query_vec: &[f32],
-    ) -> Result<Vec<AgentMemory>, sqlx::Error> {
+    ) -> anyhow::Result<Vec<AgentMemory>> {
         let matched_ids = {
             let vault = self.vault.lock();
-            match vault.recall_context(query_vec, 3) {
-                Ok((_scores, ids)) => ids,
-                Err(e) => {
-                    tracing::warn!("[MEMORY PALACE] Vector recall failed: {}", e);
-                    return Ok(vec![]);
-                }
-            }
+            vault
+                .recall_context(query_vec, 3)
+                .map(|(_scores, ids)| ids)
+                .map_err(|e| anyhow::anyhow!("VECTOR_RECALL_FAILED: {}", e))?
         };
 
         if matched_ids.is_empty() {

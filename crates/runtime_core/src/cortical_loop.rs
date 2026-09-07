@@ -44,6 +44,7 @@ enum CortexState {
     Evaluate {
         evidence: String,
         proposal: String,
+        executed_action: String,
         belief: f32,
         is_halt_action: bool,
         mutation_path: Option<String>,
@@ -56,38 +57,6 @@ enum CortexState {
         belief: f32,
         evidence: String,
     },
-}
-
-fn is_terminal_strategy(hypothesis: &str) -> bool {
-    let h = hypothesis.to_lowercase();
-    h.contains("synthesize_report")
-        || h.contains("write_file")
-        || h.contains("write the report")
-        || h.contains("output the report")
-        || h.contains("overwrite")
-        || h.contains("finalize")
-        || h.contains("halt")
-}
-
-fn extract_target_artifact(mission: &str) -> Option<String> {
-    let contract =
-        crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", mission);
-    if let Some(art) = contract.required_artifact_paths.first() {
-        return Some(art.path.clone());
-    }
-    for word in mission.split_whitespace() {
-        let clean =
-            word.trim_matches(|c: char| c == '`' || c == '\'' || c == '"' || c == ',' || c == '.');
-        if (clean.ends_with(".md")
-            || clean.ends_with(".json")
-            || clean.ends_with(".rs")
-            || clean.ends_with(".txt"))
-            && (clean.contains('/') || clean.starts_with("apps") || clean.starts_with("crates"))
-        {
-            return Some(clean.to_string());
-        }
-    }
-    None
 }
 
 pub struct CorticalLoop {
@@ -200,6 +169,44 @@ impl CorticalLoop {
 
         let mut context_chunks = self.world_model.semantic_query(mission).await;
         context_chunks.push(Self::resolve_workspace_paths().await);
+
+        // ============================================================
+        // V5 FUSION: AUTOMATIC EXPERIENCE RECALL
+        // ============================================================
+        //
+        // Prior verified experience is supplied to reasoning as ADVISORY
+        // context. It cannot authorize completion or bypass verification.
+        match self.memory.recall(mission, 6).await {
+            Ok(recall) if !recall.memories.is_empty() => {
+                let mut memory_context = String::from("\n[RECALLED EXPERIENCE — ADVISORY ONLY]\n");
+
+                for memory in recall.memories {
+                    memory_context.push_str(&format!("- [{}] {}\n", memory.source, memory.content));
+                }
+
+                memory_context.push_str("[END RECALLED EXPERIENCE]\n");
+
+                context_chunks.push(memory_context);
+
+                self.log(format!(
+                    "[FUSION] Recalled prior experience; relevance confidence {:.2}",
+                    recall.confidence
+                ));
+            }
+
+            Ok(_) => {
+                self.log("[FUSION] No prior experience relevant to this mission.".to_string());
+            }
+
+            Err(error) => {
+                // Memory is never a hard dependency for execution.
+                self.log(format!(
+                    "[FUSION] Memory recall unavailable; continuing without recalled experience: {}",
+                    error
+                ));
+            }
+        }
+
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
                 context_chunks.push(format!("\n[ANCESTOR NODE EVIDENCE]\n{}", evidence));
@@ -323,6 +330,7 @@ impl CorticalLoop {
                 CortexState::Evaluate {
                     evidence,
                     proposal,
+                    executed_action,
                     belief,
                     is_halt_action,
                     mutation_path,
@@ -332,6 +340,7 @@ impl CorticalLoop {
                         mission,
                         evidence,
                         proposal,
+                        executed_action,
                         belief,
                         is_mutation_task,
                         is_write_task,
@@ -348,6 +357,120 @@ impl CorticalLoop {
                 }
             };
         }
+    }
+
+    /// Deterministically enforce the Cortex strategy/action boundary.
+    ///
+    /// The Cortex selects the active strategy. The LLM Strategist may
+    /// operationalize that strategy, but may not silently substitute a
+    /// different native action.
+    fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
+        let strategy = strategy.trim();
+
+        if let Some(expected_path) = strategy.strip_prefix("read_file:") {
+            return matches!(
+                action,
+                AgentAction::ReadFile { path, .. }
+                    if path.trim() == expected_path.trim()
+            );
+        }
+
+        if let Some(rest) = strategy.strip_prefix("read_function:") {
+            let mut parts = rest.splitn(2, ':');
+            let expected_path = parts.next().unwrap_or("").trim();
+            let expected_function = parts.next().unwrap_or("").trim();
+
+            return matches!(
+                action,
+                AgentAction::ReadFunction {
+                    path,
+                    function_name,
+                    ..
+                } if path.trim() == expected_path
+                    && function_name.trim() == expected_function
+            );
+        }
+
+        if let Some(expected_path) = strategy.strip_prefix("read_file_chunk:") {
+            return matches!(
+                action,
+                AgentAction::ReadFileChunk { path, .. }
+                    if path.trim() == expected_path.trim()
+            );
+        }
+
+        if let Some(rest) = strategy.strip_prefix("search_code:") {
+            let mut parts = rest.splitn(2, ':');
+            let expected_path = parts.next().unwrap_or("").trim();
+            let expected_query = parts.next().unwrap_or("").trim();
+
+            return matches!(
+                action,
+                AgentAction::SearchCode { path, query, .. }
+                    if path.trim() == expected_path
+                    && query.trim() == expected_query
+            );
+        }
+
+        if let Some(expected_command) = strategy.strip_prefix("execute_command:") {
+            return matches!(
+                action,
+                AgentAction::ExecuteCommand { command, .. }
+                    if command.trim() == expected_command.trim()
+            );
+        }
+
+        if let Some(expected_path) = strategy.strip_prefix("write_file:") {
+            return matches!(
+                action,
+                AgentAction::WriteFile { path, .. }
+                    if path.trim() == expected_path.trim()
+            );
+        }
+
+        if let Some(expected_path) = strategy.strip_prefix("replace_lines:") {
+            return matches!(
+                action,
+                AgentAction::ReplaceLines { path, .. }
+                    if path.trim() == expected_path.trim()
+            );
+        }
+
+        if let Some(expected_path) = strategy.strip_prefix("diff_patch:") {
+            return matches!(
+                action,
+                AgentAction::DiffPatch { path, .. }
+                    if path.trim() == expected_path.trim()
+            );
+        }
+
+        if let Some(rest) = strategy.strip_prefix("patch_function:") {
+            let mut parts = rest.splitn(2, ':');
+            let expected_path = parts.next().unwrap_or("").trim();
+            let expected_function = parts.next().unwrap_or("").trim();
+
+            return matches!(
+                action,
+                AgentAction::PatchFunction {
+                    path,
+                    function_name,
+                    ..
+                } if path.trim() == expected_path
+                    && function_name.trim() == expected_function
+            );
+        }
+
+        if let Some(expected_path) = strategy.strip_prefix("synthesize_report:") {
+            return matches!(
+                action,
+                AgentAction::SynthesizeReport { output_path, .. }
+                    if output_path.trim() == expected_path.trim()
+            );
+        }
+
+        // Strategies that are not explicit native actions are reasoning
+        // descriptions. They are not subject to a parameter-level binding.
+        true
     }
 
     async fn handle_strategize(
@@ -379,7 +502,12 @@ impl CorticalLoop {
             current_belief, h_content
         ));
 
-        // 1. Check if contract is already physically satisfied on disk
+        // 1. Evaluate the contract, but NEVER turn artifact existence into
+        // unconditional node completion.
+        //
+        // WRITE_OK means the write action succeeded. The enclosing node may
+        // still require reads, searches, source evidence, analysis, and/or
+        // epistemic verification.
         let status = ContractEvaluator::evaluate(
             is_mutation_task,
             is_write_task,
@@ -387,41 +515,28 @@ impl CorticalLoop {
             current_belief,
             mission,
         );
+
         if status == ContractStatus::Satisfied {
-            self.log("\x1b[1;36m>> [CORTEX OMNI-GUARD] Contract physically satisfied on substrate. Forcing node completion.\x1b[0m".to_string());
-            return Ok(CortexState::Complete {
-                belief: 1.0,
-                evidence: session.collect_evidence(h_id),
-            });
-        }
-
-        // 2. Terminal Strategy Forcing on High Belief
-        if is_terminal_strategy(&h_content) && current_belief >= 0.88 {
-            if let Some(target_path) = extract_target_artifact(mission) {
-                self.log(format!(
-                    "\x1b[1;35m>> [CORTEX] Terminal strategy detected with high belief ({:.2}). Forcing synthesis of `{}`.\x1b[0m",
-                    current_belief, target_path
-                ));
-
-                let forced_action = AgentAction::SynthesizeReport {
-                    output_path: target_path.clone(),
-                    source_files: vec![],
-                    reasoning: "Contract criteria verified. Generating final deliverable."
-                        .to_string(),
-                };
-                return Ok(CortexState::Execute {
-                    actions: vec![forced_action],
-                    proposal: format!("[FORCED SYNTHESIS] -> {}", target_path),
-                    belief: current_belief,
-                });
-            }
+            self.log(
+                "\x1b[1;33m>> [CORTEX] Local contract evidence is satisfied. Continuing through normal completion verification.\x1b[0m"
+                    .to_string(),
+            );
         }
 
         let evidence_history = Self::compress_context(&session.collect_evidence(h_id), 3000);
 
-        // Phase-aware mandate: Force transition from Recon to Write Deliverable
+        // Phase-aware mandate:
+        //
+        // A generic recon marker is NOT sufficient to enter the write phase.
+        // The deterministic contract must prove every non-output condition
+        // first: reads, searches, source evidence, and belief threshold.
+        //
+        // Only after that gate passes may the strategist be encouraged
+        // to produce the required deliverable.
+
         let mission_contract =
             crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", mission);
+
         let unwritten_targets: Vec<&str> = mission_contract
             .required_artifact_paths
             .iter()
@@ -429,12 +544,18 @@ impl CorticalLoop {
             .filter(|p| !crate::evidence_markers::has_artifact_write(&session.local_evidence, p))
             .collect();
 
-        let enhanced_mission = if !unwritten_targets.is_empty()
-            && crate::evidence_markers::has_recon_marker(&session.local_evidence)
-        {
+        let recon_ready =
+            crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
+                &mission_contract,
+                &session.local_evidence,
+                current_belief,
+            );
+
+        let enhanced_mission = if !unwritten_targets.is_empty() && recon_ready {
             format!(
-                "{}\n\n[PHASE MANDATE: RECONNAISSANCE COMPLETE]\nYou have already read the input files. DO NOT search, read, or list directories again. You MUST now write the complete content directly to '{}' using `write_file`.",
-                mission, unwritten_targets[0]
+                "{}\n\n[PHASE MANDATE: RECONNAISSANCE VERIFIED]\nThe deterministic reconnaissance contract has been satisfied. You may now produce the required deliverable at '{}' using `write_file`.",
+                mission,
+                unwritten_targets[0]
             )
         } else {
             mission.to_string()
@@ -488,26 +609,48 @@ impl CorticalLoop {
             return Ok(CortexState::Strategize);
         }
 
-        // 4. Deterministic Halt Gate: If action is Halt and physical evidence exists, complete immediately
-        let has_halt = actions.iter().any(|a| matches!(a, AgentAction::Halt { .. }));
-        if has_halt {
-            let has_recon = crate::evidence_markers::has_recon_marker(&session.local_evidence);
-            let has_mutation =
-                crate::evidence_markers::has_mutation_marker(&session.local_evidence);
-            if status == ContractStatus::Satisfied
-                || has_recon
-                || has_mutation
-                || current_belief >= 0.75
-            {
-                self.log("\x1b[1;36m>> [CORTEX] DETERMINISTIC GUARD: Valid Halt with physical evidence. Task Complete.\x1b[0m".to_string());
-                return Ok(CortexState::Complete {
-                    belief: 1.0,
-                    evidence: session.collect_evidence(h_id),
-                });
+        // HARD CORTEX BOUNDARY:
+        // The first executable action must operationalize the strategy
+        // selected by the Cortex. The Strategist is not allowed to silently
+        // replace the selected strategy with an independently chosen action.
+        if let Some(first_action) = actions.first() {
+            if !Self::action_matches_strategy(&h_content, first_action) {
+                self.log(format!(
+                    "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
+                    h_content,
+                    first_action
+                ));
+
+                // OPERATIONAL FAILURE IS NOT EPISTEMIC CONTRADICTION.
+                //
+                // The Strategist failed to operationalize the selected
+                // strategy. That does NOT prove the underlying hypothesis
+                // false, so preserve its epistemic belief.
+                let violation_obs = format!(
+                    "[STRATEGY_VIOLATION] Selected strategy `{}` \
+                     produced an incompatible action. Proposal rejected; \
+                     underlying hypothesis remains unchanged.",
+                    h_content
+                );
+
+                session.local_evidence.push_str(&violation_obs);
+                session.local_evidence.push('\n');
+
+                self.log(
+                    "[STRATEGY RECOVERY] Operational proposal rejected; \
+                     hypothesis belief preserved. Re-entering Strategize."
+                        .to_string(),
+                );
+
+                return Ok(CortexState::Strategize);
             }
         }
 
-        Ok(CortexState::Critique { actions, proposal: raw_proposal, belief: current_belief })
+        Ok(CortexState::Critique {
+            actions,
+            proposal: raw_proposal,
+            belief: current_belief,
+        })
     }
 
     async fn handle_critic(
@@ -529,12 +672,12 @@ impl CorticalLoop {
             belief,
             mission,
         );
+
         if status == ContractStatus::Satisfied {
-            self.log("\x1b[1;36m>> [SUBGOAL_COMPLETE] Evidence is physically complete. Forcing completion.\x1b[0m".to_string());
-            return Ok(CortexState::Complete {
-                belief: 1.0,
-                evidence: session.collect_evidence(session.best_hypothesis_id.unwrap_or_default()),
-            });
+            self.log(
+                "\x1b[1;33m>> [SUBGOAL_COMPLETE] Non-mutating subgoal satisfied. Mission remains active.\x1b[0m"
+                    .to_string(),
+            );
         }
 
         let h_content = if let Some(h_id) = session.best_hypothesis_id {
@@ -543,10 +686,19 @@ impl CorticalLoop {
             String::new()
         };
 
-        // Check Anti-Loop on actions before calling Critic
-        for action in &actions {
-            let action_key = match action {
+        // Check Anti-Loop on actions before calling Critic.
+        // Filter duplicates individually -- a single stale action in a
+        // multi-action proposal must not discard sibling actions that
+        // have never crossed the execution boundary.
+        let mut filtered_actions: Vec<AgentAction> = Vec::with_capacity(actions.len());
+        let mut vetoed_keys: Vec<String> = Vec::new();
+
+        for action in actions {
+            let action_key = match &action {
                 AgentAction::ReadFile { path, .. } => format!("read_file:{}", path),
+                AgentAction::ReadFunction { path, function_name, .. } => {
+                    format!("read_function:{}:{}", path, function_name)
+                }
                 AgentAction::ReadFileChunk { path, start_line, .. } => {
                     format!("read_file_chunk:{}:{}", path, start_line)
                 }
@@ -568,39 +720,74 @@ impl CorticalLoop {
             };
 
             let attempt_count = session.global_action_attempt_count(&action_key);
-            if attempt_count == 1 {
-                self.log(format!("\x1b[33m>> [NOVELTY] Action [{}] already attempted once. Nudging belief.\x1b[0m", action_key));
-                if let Some(h_id) = session.best_hypothesis_id {
-                    let obs_id = session.graph.add_node(
-                        NodeKind::Observation,
-                        &format!("[LOW_NOVELTY] `{}` already attempted.", action_key),
-                        0.85,
-                        60,
-                    );
-                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.35);
-                    session.graph.propagate_beliefs();
+
+            // STRICT ANTI-LOOP:
+            // An identical action that has already crossed the execution
+            // boundary is not new evidence. Drop it from the batch, but
+            // let never-attempted sibling actions in the same proposal
+            // proceed -- one stale action must not starve the rest.
+            if attempt_count >= 1 {
+                self.log(format!(
+                    "\x1b[1;31m>> [ANTI-LOOP] Duplicate action [{}] filtered from batch.\x1b[0m",
+                    action_key
+                ));
+                vetoed_keys.push(action_key);
+            } else {
+                filtered_actions.push(action);
+            }
+
+            // IMPORTANT:
+            // Do NOT count the action here. This is the critic stage.
+            // The counter will be recorded only after the action passes
+            // the ActionGate and is actually sent to the executor.
+        }
+
+        if filtered_actions.is_empty() {
+            // Every action in the batch was a duplicate. Returning to
+            // Strategize alone does nothing here: belief is normally only
+            // updated after real evidence comes back from execution, so
+            // the current hypothesis would just be re-selected as "best"
+            // again next turn, unchanged. Apply a real belief penalty so
+            // select_best_hypothesis (which requires belief_score >= 0.15)
+            // is eventually forced to promote a different hypothesis.
+            if let Some(h_id) = session.best_hypothesis_id {
+                if let Some(node) = session.graph.nodes.get_mut(&h_id) {
+                    node.belief_score = (node.belief_score - 0.20).max(0.0);
+                    self.log(format!(
+                        "\x1b[1;31m>> [ANTI-LOOP] Repeated stale proposal -- decaying hypothesis belief to {:.2}\x1b[0m",
+                        node.belief_score
+                    ));
                 }
             }
 
-            if attempt_count >= 3 {
-                self.log(format!(
-                    "\x1b[1;31m>> [ANTI-LOOP] Action [{}] attempted 3 times. FORCING PIVOT.\x1b[0m",
-                    action_key
-                ));
-                if let Some(h_id) = session.best_hypothesis_id {
-                    let obs_id = session.graph.add_node(
-                        NodeKind::Observation,
-                        "[LOOP_VETO] Repeated action blocked. Must use different tool.",
-                        1.0,
-                        95,
-                    );
-                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
-                    session.graph.propagate_beliefs();
-                }
-                return Ok(CortexState::Strategize);
-            }
-            session.record_global_action_attempt(&action_key);
+            let loop_obs = format!(
+                "[LOOP_VETO] All proposed actions already attempted: {}. \
+                 Must choose different action(s).",
+                vetoed_keys.join(", ")
+            );
+            session.local_evidence.push_str(&loop_obs);
+            session.local_evidence.push('\n');
+
+            self.log(
+                "[ANTI-LOOP RECOVERY] All actions in batch were duplicates; \
+                 hypothesis belief decayed to force pivot. Re-entering Strategize."
+                    .to_string(),
+            );
+
+            return Ok(CortexState::Strategize);
         }
+
+        if !vetoed_keys.is_empty() {
+            let loop_obs = format!(
+                "[LOOP_VETO] Dropped already-attempted action(s) from batch: {}. \
+                 Proceeding with remaining valid action(s).",
+                vetoed_keys.join(", ")
+            );
+            session.local_evidence.push_str(&loop_obs);
+            session.local_evidence.push('\n');
+        }
+
+        let actions = filtered_actions;
 
         self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
         session.budget.record_call();
@@ -656,6 +843,7 @@ impl CorticalLoop {
     ) -> Result<CortexState> {
         let mut executor = RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
         let mut latest_evidence = String::new();
+        let mut executed_actions: Vec<String> = Vec::new();
         let mut mutation_paths: Vec<String> = Vec::new();
         let mut last_is_halt = false;
         let mut rust_files_mutated = false;
@@ -669,6 +857,9 @@ impl CorticalLoop {
                 | AgentAction::DiffPatch { .. }
                 | AgentAction::PatchFunction { .. }
                 | AgentAction::SynthesizeReport { .. } => Capability::WriteSubstrate,
+                AgentAction::ScrapeUrl { .. } | AgentAction::ReadFunction { .. } => {
+                    Capability::ReadSubstrate
+                }
                 AgentAction::Halt { .. } => Capability::HaltCognition,
                 _ => Capability::ReadSubstrate,
             };
@@ -677,6 +868,25 @@ impl CorticalLoop {
                 for p in patches {
                     mutation_paths.push(p.path.clone());
                     if p.path.ends_with(".rs") {
+                        rust_files_mutated = true;
+                    }
+                }
+            }
+
+            if let AgentAction::ExecuteCommand { command, .. } = &action {
+                // Defensive: an arbitrary shell command (e.g. invoking an external
+                // tool like nexus_ast_tool) can mutate a .rs file without going
+                // through any recognized AgentAction write variant. If the command
+                // string references a .rs path, treat it as a possible Rust
+                // mutation so the compiler-critic gate below still runs -- silent
+                // corruption from an external tool must not skip verification
+                // just because it didn't arrive as a WriteFile/DiffPatch/etc.
+                for token in command.split_whitespace() {
+                    let clean = token.trim_matches(|c: char| {
+                        !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-'
+                    });
+                    if clean.ends_with(".rs") {
+                        mutation_paths.push(clean.to_string());
                         rust_files_mutated = true;
                     }
                 }
@@ -700,6 +910,39 @@ impl CorticalLoop {
                 last_is_halt = true;
             }
 
+            // Serialize the exact AgentAction before MotorCortex::translate()
+            // consumes it. This is the authoritative action record that will
+            // cross the execution/evaluation boundary.
+            let executed_action_json = serde_json::to_string(&action)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize executed AgentAction: {}", e))?;
+
+            // Build the canonical action key before MotorCortex::translate()
+            // consumes the AgentAction.
+            let action_key = match &action {
+                AgentAction::ReadFile { path, .. } => format!("read_file:{}", path),
+                AgentAction::ReadFunction { path, function_name, .. } => {
+                    format!("read_function:{}:{}", path, function_name)
+                }
+                AgentAction::ReadFileChunk { path, start_line, .. } => {
+                    format!("read_file_chunk:{}:{}", path, start_line)
+                }
+                AgentAction::SearchCode { path, query, .. } => {
+                    format!("search_code:{}:{}", path, query)
+                }
+                AgentAction::WriteFile { path, .. } => format!("write_file:{}", path),
+                AgentAction::DiffPatch { path, .. } => format!("diff_patch:{}", path),
+                AgentAction::PatchFunction { path, function_name, .. } => {
+                    format!("patch_function:{}:{}", path, function_name)
+                }
+                AgentAction::SynthesizeReport { output_path, .. } => {
+                    format!("synthesize_report:{}", output_path)
+                }
+                AgentAction::ExecuteCommand { command, .. } => {
+                    format!("execute_command:{}", command.trim())
+                }
+                _ => format!("{:?}", action),
+            };
+
             let motor_cmd =
                 MotorCortex::translate(&intent, None, action, capability, proposal.clone());
 
@@ -717,6 +960,17 @@ impl CorticalLoop {
                 }
                 continue;
             }
+
+            // The ActionGate has approved this exact action.
+            // Record both:
+            //   1. the canonical anti-loop attempt
+            //   2. the exact serialized action crossing the physical boundary
+            //
+            // IMPORTANT: this happens AFTER the gate and immediately before
+            // execution. A blocked action is therefore never presented to the
+            // evaluator as executed.
+            session.record_global_action_attempt(&action_key);
+            executed_actions.push(executed_action_json);
 
             self.log("\x1b[35m>> [MOTOR CORTEX] Emitting authorized MotorCommand to RoboticExecutor...\x1b[0m".to_string());
             let evidence = match executor
@@ -810,6 +1064,7 @@ impl CorticalLoop {
         Ok(CortexState::Evaluate {
             evidence: latest_evidence,
             proposal: proposal.clone(),
+            executed_action: executed_actions.join("\n"),
             belief,
             is_halt_action: last_is_halt,
             mutation_path: mutation_paths.last().cloned(),
@@ -819,9 +1074,10 @@ impl CorticalLoop {
     async fn handle_evaluate(
         &mut self,
         session: &mut EpistemicSession,
-        _mission: &str,
+        mission: &str,
         evidence: String,
-        proposal: String,
+        _proposal: String,
+        executed_action: String,
         belief: f32,
         _is_mutation_task: bool,
         _is_write_task: bool,
@@ -837,16 +1093,23 @@ impl CorticalLoop {
         let h_id = session.best_hypothesis_id.unwrap_or_default();
         let h_content =
             session.graph.nodes.get(&h_id).map(|n| n.content.clone()).unwrap_or_default();
+        // HARD EPISTEMIC BOUNDARY:
+        // The evaluator receives ONLY:
+        //   - the exact action(s) that physically crossed the ActionGate
+        //   - the physical evidence produced by those action(s)
+        //
+        // Historical evidence remains available to the Cortex/session, but
+        // must NOT be mixed into the evaluator's current-turn evidence.
         let eval_evidence_context = format!(
-            "Current Action Output:\n{}\n\nPrior Evidence in Task:\n{}",
-            evidence, session.local_evidence
+            "EXACT ACTION(S) ACTUALLY EXECUTED THIS TURN:\n{}\n\n             PHYSICAL EVIDENCE PRODUCED BY THOSE ACTION(S):\n{}",
+            executed_action, evidence
         );
 
         match EpistemicEngine::evaluate_evidence(
             &self.client,
             &self.api_key,
             &h_content,
-            &proposal,
+            &executed_action,
             &eval_evidence_context,
         )
         .await
@@ -856,10 +1119,13 @@ impl CorticalLoop {
                 Ok(CortexState::Strategize)
             }
             Ok(eval) => {
-                let is_search_like = proposal.to_ascii_lowercase().contains("search_code")
-                    || proposal.to_ascii_lowercase().contains("search_memory");
+                // Search relevance must inspect the action that actually
+                // executed, never the strategist's natural-language proposal.
+                let executed_action_lower = executed_action.to_ascii_lowercase();
+                let is_search_like = executed_action_lower.contains("search_code")
+                    || executed_action_lower.contains("search_memory");
                 if is_search_like {
-                    let query_hint = proposal.chars().take(80).collect::<String>();
+                    let query_hint = executed_action.chars().take(200).collect::<String>();
                     let rel = score_search_relevance(&query_hint, &evidence);
                     if !should_raise_belief(rel, 0.45) {
                         let mut eval = eval;
@@ -876,12 +1142,109 @@ impl CorticalLoop {
                 ));
                 session.record_evidence(&evidence, &eval, h_id);
 
-                if is_halt_action && eval.confidence_modifier >= 0.0 && belief > 0.70 {
-                    self.log("\x1b[1;36m>> [CORTEX TERMINAL] Valid halt executed and verified. Node complete.\x1b[0m".to_string());
-                    return Ok(CortexState::Complete {
-                        belief: belief.max(0.95),
-                        evidence: session.collect_evidence(h_id),
+                let has_unwritten_artifacts =
+                    session.contract.required_artifact_paths.iter().any(|a| {
+                        !crate::evidence_markers::has_artifact_write(
+                            &session.local_evidence,
+                            &a.path,
+                        )
                     });
+
+                if is_halt_action && has_unwritten_artifacts {
+                    self.log(format!("\x1b[1;33m>> [CORTEX] Terminal HALT rejected: Required deliverable(s) {:?} not yet written.\x1b[0m",
+                        session.contract.required_artifact_paths.iter().map(|a| &a.path).collect::<Vec<_>>()));
+                    session.local_evidence.push_str("\n[HALT_REJECTED] You cannot halt. The required output deliverable has not been written yet. You MUST write the final file now.\n");
+                    return Ok(CortexState::Strategize);
+                }
+
+                let deterministic_contract_satisfied =
+                    crate::completion_engine::SubgoalCompletionEngine::evaluate(
+                        &session.contract,
+                        &session.local_evidence,
+                        belief,
+                    );
+
+                if is_halt_action
+                    && eval.confidence_modifier >= 0.0
+                    && belief > 0.70
+                    && deterministic_contract_satisfied
+                {
+                    let strategy_for_verification = format!(
+                        "MISSION OBJECTIVE:\n{}\n\nCURRENT STRATEGY:\n{}",
+                        mission, h_content
+                    );
+
+                    self.log(
+                        "\x1b[1;35m>> [CORTEX] HALT proposed. Running node-level epistemic verification...\x1b[0m"
+                            .to_string(),
+                    );
+
+                    let verification_evidence = format!(
+                        "CURRENT-TURN PHYSICAL EVIDENCE:\n{}\n\n                         HISTORICAL TASK EVIDENCE (CONTEXT ONLY):\n{}",
+                        evidence, session.local_evidence
+                    );
+
+                    match EpistemicEngine::verify_outcome(
+                        &self.client,
+                        &self.api_key,
+                        &strategy_for_verification,
+                        &executed_action,
+                        &verification_evidence,
+                    )
+                    .await
+                    {
+                        Ok(report)
+                            if report.goal_satisfied
+                                && report.independent_check_passed
+                                && report.evidence_confidence >= 0.75 =>
+                        {
+                            self.log(format!(
+                                "\x1b[1;36m>> [CORTEX TERMINAL] DAG node independently verified. Confidence: {:.2}. Node complete.\x1b[0m",
+                                report.evidence_confidence
+                            ));
+
+                            return Ok(CortexState::Complete {
+                                belief: belief.max(report.evidence_confidence).max(0.95),
+                                evidence: session.collect_evidence(h_id),
+                            });
+                        }
+
+                        Ok(report) => {
+                            self.log(format!(
+                                "\x1b[1;33m>> [CORTEX] HALT rejected at mission level. goal_satisfied={} independent_check_passed={} confidence={:.2}. Continuing.\x1b[0m",
+                                report.goal_satisfied,
+                                report.independent_check_passed,
+                                report.evidence_confidence
+                            ));
+
+                            session.local_evidence.push_str(&format!(
+                                "\n[HALT_REJECTED] Mission verification failed: {}\n",
+                                report.rationale
+                            ));
+
+                            return Ok(CortexState::Strategize);
+                        }
+
+                        Err(e) => {
+                            self.log(format!(
+                                "\x1b[1;33m>> [CORTEX] HALT verification unavailable: {}. Continuing mission instead of terminating.\x1b[0m",
+                                e
+                            ));
+
+                            return Ok(CortexState::Strategize);
+                        }
+                    }
+                }
+
+                if is_halt_action && !deterministic_contract_satisfied {
+                    self.log(
+                        "\x1b[1;33m>> [CORTEX] HALT rejected: deterministic completion contract is not satisfied. Continuing mission.\x1b[0m"
+                            .to_string(),
+                    );
+                    session.local_evidence.push_str(
+                        "\n[HALT_REJECTED] Deterministic completion contract not satisfied.\n",
+                    );
+                    return Ok(CortexState::Strategize);
                 }
 
                 if eval.confidence_modifier < 0.0 {

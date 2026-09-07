@@ -4,8 +4,8 @@ use std::env;
 use std::error::Error;
 
 pub async fn dispatch_to_planner(system_prompt: String) -> Result<String, Box<dyn Error>> {
-    let planner_model =
-        env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "gemini-3.1-pro-preview".to_string());
+    let planner_model = env::var("NEXUS_PLANNER_MODEL")
+        .map_err(|_| ">> [FATAL] NEXUS_PLANNER_MODEL not set in .env -- no hardcoded default")?;
 
     println!(">> [NETWORK] Connecting to Nexus Mesh via API...");
     println!(">> [NETWORK] Dispatching payload to Planner: {}", planner_model);

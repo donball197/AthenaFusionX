@@ -16,6 +16,7 @@ pub fn has_mutation_marker(evidence: &str) -> bool {
 pub fn has_recon_marker(evidence: &str) -> bool {
     evidence.lines().any(|l| {
         l.starts_with("[READ_OK]")
+            || l.starts_with("[READ_FUNCTION_OK]")
             || l.starts_with("[READ_CHUNK_OK]")
             || l.starts_with("[SEARCH_CODE_OK]")
             || l.starts_with("[CMD_OK]")

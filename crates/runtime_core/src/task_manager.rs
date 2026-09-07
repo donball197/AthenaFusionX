@@ -81,6 +81,8 @@ pub async fn send_task(
     let plan_id = uuid::Uuid::new_v4().to_string();
     let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted.", plan_id)}).to_string());
 
+    let planned_node_count = order.len();
+    let mut completed_node_count = 0usize;
     let mut task_outputs: HashMap<String, String> = HashMap::new();
     let mut mission_had_failures = false;
     let world_model = Arc::new(WorldModel::new());
@@ -104,9 +106,22 @@ pub async fn send_task(
             }
         }
 
+        let success_contract = if node.success_criteria.is_empty() {
+            "[NO EXPLICIT SUCCESS CRITERIA — NODE MUST NOT BE AUTHORIZED AUTOMATICALLY]".to_string()
+        } else {
+            node.success_criteria
+                .iter()
+                .map(|criterion| format!("- {}", criterion))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
         let combined_mission = format!(
-            "OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nLINEAGE CONTEXT:\n{}",
-            node.objective, node.required_agent, task_context_history
+            "OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nMANDATORY NODE SUCCESS CRITERIA:\n{}\n\nNODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete. Cortex belief alone is never sufficient.\n\nLINEAGE CONTEXT:\n{}",
+            node.objective,
+            node.required_agent,
+            success_contract,
+            task_context_history
         );
 
         let mut loop_cortex = CorticalLoop::new(
@@ -122,6 +137,71 @@ pub async fn send_task(
 
         let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
             Ok(CortexOutcome::CompletionProposed { belief, evidence }) => {
+                // The Cortex/OutcomeVerifier has already authorized this node
+                // completion. Reflection learns from the VERIFIED result;
+                // reflection itself does not authorize completion.
+                let success_outcome = MissionOutcome {
+                    mission_id: uuid::Uuid::parse_str(&task_id)
+                        .unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    success: true,
+                    evidence_summary: evidence.clone(),
+                    failures: vec![],
+                    successful_strategies: vec![node.objective.clone()],
+                    raw_telemetry: String::new(),
+                    failed_strategy_id: None,
+                };
+
+                if let Ok(report) = ctx.reflection_engine.reflect(&success_outcome).await {
+                    for lesson in report.lessons {
+                        let _ = ctx.tx.send(
+                            serde_json::json!({
+                                "type": "LOG_EVENT",
+                                "payload": format!(
+                                    "[REFLECTION SUCCESS] {}",
+                                    lesson
+                                )
+                            })
+                            .to_string(),
+                        );
+
+                        let lesson_text = format!(
+                            "[VERIFIED_SUCCESS_LESSON] Objective: {} | {}",
+                            node.objective, lesson
+                        );
+
+                        let emb = nexus_substrate::vector_bridge::get_embedding(
+                            &ctx.api_key,
+                            &lesson_text,
+                        )
+                        .await
+                        .ok();
+
+                        match ctx
+                            .memory
+                            .store_memory(
+                                "ReflectionEngine",
+                                &node.objective,
+                                &lesson_text,
+                                "Internal",
+                                emb,
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "[FUSION] Stored verified successful experience for future recall."
+                                );
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    "[FUSION] Failed to store successful lesson: {}",
+                                    error
+                                );
+                            }
+                        }
+                    }
+                }
+
                 format!(
                     "[DAG NODE COMPLETE] Objective: {}\nBelief: {:.2}\nEvidence:\n{}",
                     node.objective, belief, evidence
@@ -178,6 +258,64 @@ pub async fn send_task(
         task_outputs.insert(task_id.clone(), execution_evidence.clone());
         world_model.record_node_evidence(&task_id, &node.objective, &execution_evidence);
 
+        // Cortex CompletionProposed is NOT authoritative.
+        // A DAG node becomes Completed only after the deterministic verifier
+        // confirms every explicit success criterion against physical evidence.
+        let node_verification = crate::orchestrator_v2::verifier::Verifier::verify_contract(
+            &task_id,
+            &execution_evidence,
+            &node.success_criteria,
+        );
+
+        match node_verification {
+            crate::orchestrator_v2::verifier::VerificationResult::Success => {
+                completed_node_count += 1;
+
+                if let Some(graph_node) = graph.nodes.get_mut(&task_id) {
+                    graph_node.status = crate::orchestrator_v2::task_graph::TaskStatus::Completed;
+                    graph_node.output_evidence = Some(execution_evidence.clone());
+                }
+
+                let _ = ctx.tx.send(
+                    serde_json::json!({
+                        "type": "LOG_EVENT",
+                        "payload": format!(
+                            "[DAG NODE VERIFIED] {}/{} nodes completed: {}",
+                            completed_node_count,
+                            planned_node_count,
+                            node.objective
+                        )
+                    })
+                    .to_string(),
+                );
+            }
+
+            other => {
+                mission_had_failures = true;
+
+                let reason = format!("{:?}", other);
+
+                if let Some(graph_node) = graph.nodes.get_mut(&task_id) {
+                    graph_node.status = crate::orchestrator_v2::task_graph::TaskStatus::Failed;
+                    graph_node.output_evidence = Some(format!(
+                        "{}\n[NODE VERIFICATION FAILED] {}",
+                        execution_evidence, reason
+                    ));
+                }
+
+                let _ = ctx.tx.send(
+                    serde_json::json!({
+                        "type": "LOG_EVENT",
+                        "payload": format!(
+                            "[NODE VERIFICATION FAILED] {} :: {}",
+                            node.objective, reason
+                        )
+                    })
+                    .to_string(),
+                );
+            }
+        }
+
         // ⚡ FIX: Immediate Hard Abort if a dependency fails or runs out of turns
         if mission_had_failures
             || execution_evidence.contains("[CORTEX INCOMPLETE]")
@@ -189,9 +327,48 @@ pub async fn send_task(
         }
     }
 
-    if mission_had_failures {
-        format!("DAG/GoT Execution FINISHED WITH INCOMPLETE NODES. Plan ID: {}", plan_id)
+    // WHOLE-DAG COMPLETION GATE:
+    // A successful Cortex node is only a subgoal completion.
+    // The overall DAG is complete only when every planned node completed.
+    if mission_had_failures || completed_node_count != planned_node_count {
+        let _ = ctx.tx.send(
+            serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!(
+                    "[DAG INCOMPLETE] Plan {} completed {}/{} nodes.                      Whole mission completion is NOT authorized.",
+                    plan_id,
+                    completed_node_count,
+                    planned_node_count
+                )
+            })
+            .to_string()
+        );
+
+        format!(
+            "DAG/GoT Execution FINISHED WITH INCOMPLETE NODES.              Completed {}/{} nodes. Plan ID: {}",
+            completed_node_count,
+            planned_node_count,
+            plan_id
+        )
     } else {
-        format!("DAG/GoT Hybrid Execution Complete. Plan ID: {}", plan_id)
+        let _ = ctx.tx.send(
+            serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!(
+                    "[DAG COMPLETE] All {}/{} planned nodes completed successfully.                      Whole-DAG completion authorized. Plan ID: {}",
+                    completed_node_count,
+                    planned_node_count,
+                    plan_id
+                )
+            })
+            .to_string()
+        );
+
+        format!(
+            "DAG/GoT Hybrid Execution Complete.              All {}/{} nodes completed. Plan ID: {}",
+            completed_node_count,
+            planned_node_count,
+            plan_id
+        )
     }
 }

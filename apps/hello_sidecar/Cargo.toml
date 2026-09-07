@@ -9,3 +9,6 @@ test = false
 bench = false
 
 [dependencies]
+
+[lints]
+workspace = true

@@ -34,5 +34,6 @@ pub extern "C" fn process_cognitive_task(payload_len: u32) -> i32 {
     }
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 pub extern "C" fn _start() {}

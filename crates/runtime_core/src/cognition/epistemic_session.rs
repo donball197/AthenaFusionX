@@ -1,7 +1,138 @@
+fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
+    let lines: Vec<&str> = raw.lines().collect();
+    if lines.is_empty() {
+        return (raw.to_string(), None);
+    }
+
+    let first = lines[0].trim();
+
+    // 1. Distill [READ_OK]
+    if first.starts_with("[READ_OK]") || first.starts_with("[READ_CHUNK_OK]") {
+        let path = first.split_whitespace().nth(1).unwrap_or("unknown_file");
+        let mut key_symbols = Vec::new();
+        for l in lines.iter().skip(1) {
+            let s = l.trim();
+            if s.starts_with("pub struct ")
+                || s.starts_with("pub enum ")
+                || s.starts_with("pub fn ")
+                || s.starts_with("pub trait ")
+            {
+                let sig = s.split('{').next().unwrap_or(s).trim();
+                key_symbols.push(sig);
+            }
+        }
+        let symbols_summary = if key_symbols.is_empty() {
+            format!("File read ({} lines)", lines.len())
+        } else {
+            key_symbols.join(", ")
+        };
+
+        let tuple = EpistemicTuple::new("AST", path, "DEFINES", &symbols_summary, 1.0);
+        let prop =
+            format!("{}\n[PROPOSITION] {} -> Defined symbols: {}", first, path, symbols_summary);
+        return (prop, Some(tuple));
+    }
+
+    // 2. Distill [SEARCH_CODE_OK]
+    if first.starts_with("[SEARCH_CODE_OK]") {
+        let is_empty = raw.contains("No code matches found");
+        let path = raw.split("Path:").nth(1).and_then(|s| s.split('|').next()).unwrap_or("").trim();
+        let query = raw
+            .split("Query:")
+            .nth(1)
+            .and_then(|s| s.split('\n').next())
+            .unwrap_or("")
+            .trim()
+            .trim_matches('\'');
+
+        if is_empty {
+            let tuple = EpistemicTuple::new("AST", path, "NOT_FOUND", query, 1.0);
+            let prop = format!(
+                "{}\n[PROPOSITION] Refuted: symbol '{}' does not exist in '{}'",
+                first, query, path
+            );
+            return (prop, Some(tuple));
+        } else {
+            let matches: Vec<&str> = lines
+                .iter()
+                .filter(|l| l.contains(':') && !l.starts_with('['))
+                .take(5)
+                .copied()
+                .collect();
+            let summary = matches.join("; ");
+            let tuple = EpistemicTuple::new("AST", path, "MATCHES", &summary, 1.0);
+            let prop =
+                format!("{}\n[PROPOSITION] Verified: matches in '{}' -> {}", first, path, summary);
+            return (prop, Some(tuple));
+        }
+    }
+
+    // 3. Distill semantic-memory recall.
+    //
+    // Memory retrieval is evidence about prior experience, not proof that
+    // the current objective is complete. Keep successful recall and empty
+    // recall explicitly distinguishable so cognition can use both outcomes.
+    if first.starts_with("[SEARCH_MEMORY_OK]") {
+        let summary = lines
+            .iter()
+            .skip(1)
+            .take(8)
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let value = if summary.is_empty() {
+            "Semantic memory returned recalled context.".to_string()
+        } else {
+            summary
+        };
+
+        let tuple =
+            EpistemicTuple::new("MEMORY", "semantic_recall", "SUCCESS", &value, 1.0);
+
+        let prop = format!(
+            "{}\n[PROPOSITION] Recalled prior experience: {}",
+            first, value
+        );
+
+        return (prop, Some(tuple));
+    }
+
+    if first.starts_with("[SEARCH_MEMORY_EMPTY]") {
+        let tuple =
+            EpistemicTuple::new("MEMORY", "semantic_recall", "EMPTY", first, 1.0);
+
+        let prop = format!(
+            "{}\n[PROPOSITION] No relevant prior memory was retrieved.",
+            first
+        );
+
+        return (prop, Some(tuple));
+    }
+
+    // 4. Distill [CMD_OK] / [COMPILE_OK]
+    if first.starts_with("[CMD_OK]") || first.starts_with("[COMPILE_OK]") {
+        let tuple = EpistemicTuple::new("COMMAND", "status", "SUCCESS", first, 1.0);
+        return (first.to_string(), Some(tuple));
+    }
+
+    // 5. Distill [ACTION FAILED]
+    if first.starts_with("[ACTION FAILED]") {
+        let err = lines.get(1).unwrap_or(&first);
+        let tuple = EpistemicTuple::new("OS", "action", "FAILED", err, 0.9);
+        let prop = format!("{}\n[PROPOSITION] Action failed: {}", first, err);
+        return (prop, Some(tuple));
+    }
+
+    (raw.to_string(), None)
+}
+
 use crate::cognition_graph::{CognitiveGraph, EdgeRelation, NodeKind};
 use crate::cognitive_events::CognitiveEvent;
 use crate::completion_engine::{CognitiveBudget, SubgoalCompletionEngine, SubgoalContract};
 use crate::epistemic_engine::CriticResponse;
+use crate::epistemic_tuple::EpistemicTuple;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -20,6 +151,7 @@ pub struct EpistemicSession {
     pub max_observed_belief: f32,
     pub best_hypothesis_id: Option<Uuid>,
     pub consecutive_mutation_vetoes: u32,
+    pub tuples: Vec<EpistemicTuple>,
 }
 
 impl EpistemicSession {
@@ -36,6 +168,7 @@ impl EpistemicSession {
             max_observed_belief: 0.0,
             best_hypothesis_id: None,
             consecutive_mutation_vetoes: 0,
+            tuples: Vec::new(),
         }
     }
 
@@ -48,11 +181,17 @@ impl EpistemicSession {
                 }
             }
             CognitiveEvent::ObservationRecorded { evidence, modifier, .. } => {
-                self.local_evidence.push_str(evidence);
+                let (distilled_prop, maybe_tuple) = distill_to_proposition(evidence);
+                if let Some(t) = maybe_tuple {
+                    self.tuples.push(t);
+                }
+
+                self.local_evidence.push_str(&distilled_prop);
                 self.local_evidence.push('\n');
 
                 if let Some(h_id) = self.best_hypothesis_id {
-                    let obs_id = self.graph.add_node(NodeKind::Observation, evidence, 1.0, 50);
+                    let obs_id =
+                        self.graph.add_node(NodeKind::Observation, &distilled_prop, 1.0, 50);
                     let relation = if *modifier > 0.0 {
                         EdgeRelation::Supports
                     } else {
@@ -104,10 +243,36 @@ impl EpistemicSession {
     }
 
     pub fn is_subgoal_satisfied(&self, current_belief: f32) -> bool {
-        if current_belief < 0.85 {
-            return false;
+        // Belief ranks hypotheses; physical contract evidence authorizes
+        // completion. Never let an epistemic confidence threshold by itself
+        // terminate a subgoal.
+        //
+        // The completion engine still receives the belief value for legacy
+        // compatibility. Its MinBeliefScore condition is inspected separately
+        // before this becomes the authoritative completion path.
+        SubgoalCompletionEngine::evaluate(
+            &self.contract,
+            &self.local_evidence,
+            current_belief,
+        )
+    }
+
+    /// Preserve physical session evidence when cognition terminates
+    /// without a currently selectable hypothesis.
+    ///
+    /// Terminal failure is an epistemic/control-flow outcome. It must
+    /// never erase physical evidence already acquired by execution.
+    pub fn terminal_evidence(&self, reason: &str) -> String {
+        let physical = self.local_evidence.trim();
+
+        if physical.is_empty() {
+            return reason.to_string();
         }
-        SubgoalCompletionEngine::evaluate(&self.contract, &self.local_evidence, current_belief)
+
+        format!(
+            "{}\n\n[PHYSICAL SESSION EVIDENCE]\n{}",
+            reason, physical
+        )
     }
 
     pub fn collect_evidence(&self, h_id: Uuid) -> String {

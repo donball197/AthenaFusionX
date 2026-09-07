@@ -259,6 +259,7 @@ async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse 
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
     let state = Arc::new(NodeState { vmo_registry: Mutex::new(HashMap::new()) });
 

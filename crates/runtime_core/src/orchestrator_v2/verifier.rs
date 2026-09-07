@@ -52,14 +52,24 @@ impl Verifier {
             return diagnosis;
         }
         if criteria.is_empty() {
-            return VerificationResult::Success;
+            return VerificationResult::Escalate("Node has no explicit success criteria.".into());
         }
-        // Default to success; can be extended with LLM later.
-        VerificationResult::Success
+
+        Self::evaluate_contract_criteria(stdout, criteria)
     }
 
-    /// Deterministic contract verification based on node id and evidence.
-    pub fn verify_contract(node_id: &str, evidence: &str) -> VerificationResult {
+    /// Deterministic contract verification based on explicit node criteria.
+    ///
+    /// Explicit success criteria are authoritative. Legacy node-id rules are
+    /// retained only for older persisted DAG nodes that have no criteria.
+    pub fn verify_contract(
+        node_id: &str,
+        evidence: &str,
+        criteria: &[String],
+    ) -> VerificationResult {
+        if !criteria.is_empty() {
+            return Self::evaluate_contract_criteria(evidence, criteria);
+        }
         // Define hard-coded rules per node type.
         // For simplicity, we use node_id prefixes; in production, use a proper rule registry.
         if node_id.starts_with("clone_") || node_id.starts_with("clone_openfang") {
@@ -97,7 +107,51 @@ impl Verifier {
                 return VerificationResult::Retry("Roadmap file not written".to_string());
             }
         }
-        // For unknown nodes, default to success (or retry).
+        // Unknown nodes fail closed. A verifier must never silently
+        // authorize an unrecognized node.
+        VerificationResult::Escalate(format!(
+            "No verification contract exists for node '{}'",
+            node_id
+        ))
+    }
+
+    fn evaluate_contract_criteria(evidence: &str, criteria: &[String]) -> VerificationResult {
+        if criteria.is_empty() {
+            return VerificationResult::Escalate(
+                "Cannot verify node: success criteria are empty.".into(),
+            );
+        }
+
+        for criterion in criteria {
+            let criterion = criterion.trim();
+
+            let satisfied = if criterion == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED" {
+                evidence.contains("[DAG NODE COMPLETE]")
+            } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
+                evidence.contains("[READ_OK]") && evidence.contains(path)
+            } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
+                evidence.contains("[READ_FUNCTION_OK]") && evidence.contains(target)
+            } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
+                evidence.contains("[SEARCH_CODE_OK]") && evidence.contains(target)
+            } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
+                evidence.contains("[WRITE_OK]") && evidence.contains(path)
+            } else if criterion == "CMD_OK" {
+                evidence.contains("[CMD_OK]")
+            } else {
+                return VerificationResult::Escalate(format!(
+                    "Unknown success criterion: {}",
+                    criterion
+                ));
+            };
+
+            if !satisfied {
+                return VerificationResult::Retry(format!(
+                    "Mandatory success criterion not satisfied: {}",
+                    criterion
+                ));
+            }
+        }
+
         VerificationResult::Success
     }
 }

@@ -41,8 +41,9 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
         };
     }
 
-    // 2. Google Cloud (Gemini models AND Cloud Gemma models like gemma-4-31b-it)
-    if model.contains("gemini") || (model.contains("gemma") && !model.contains("google/")) {
+    // 2. Google Cloud (Gemini models, plus the known Cloud Gemma default gemma-4-31b-it).
+    // Bare/unknown Gemma family names must NOT guess Google -- fall through to Nexus default.
+    if model.contains("gemini") || model == "gemma-4-31b-it" {
         let api_key =
             env::var("GEMINI_API_KEY").or_else(|_| env::var("GOOGLE_API_KEY")).unwrap_or_default();
         return ProviderResolved {
@@ -81,39 +82,41 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
 
 pub fn get_light_models() -> Vec<String> {
     let mut out = Vec::new();
-    if let Ok(m) = env::var("NEXUS_LIGHT_MODEL") {
-        if !m.trim().is_empty() {
+    out.extend(collect_cascade("NEXUS_LIGHT_MODEL", "NEXUS_LIGHT_CASCADE"));
+    out
+}
+
+/// Builds a de-duplicated model list from a primary env var plus an optional
+/// comma-separated cascade env var. No hardcoded model defaults: if nothing
+/// is configured, this returns an empty vec, and callers (safe_api_call) must
+/// surface that as a clear config error rather than silently guessing a model.
+fn collect_cascade(primary_var: &str, cascade_var: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Ok(m) = env::var(primary_var) {
+        let m = m.trim().to_string();
+        if !m.is_empty() && seen.insert(m.clone()) {
             out.push(m);
         }
     }
-    if out.is_empty() {
-        out.push("gemma-4-e4b-it".to_string());
+
+    if let Ok(cascade) = env::var(cascade_var) {
+        for entry in cascade.split(',') {
+            let entry = entry.trim().to_string();
+            if !entry.is_empty() && seen.insert(entry.clone()) {
+                out.push(entry);
+            }
+        }
     }
+
     out
 }
 
 pub fn get_heavy_models() -> Vec<String> {
-    let mut out = Vec::new();
-    if let Ok(m) = env::var("NEXUS_HEAVY_MODEL") {
-        if !m.trim().is_empty() {
-            out.push(m);
-        }
-    }
-    if out.is_empty() {
-        out.push("gemini-3.1-pro-preview".to_string());
-    }
-    out
+    collect_cascade("NEXUS_HEAVY_MODEL", "NEXUS_HEAVY_CASCADE")
 }
 
 pub fn get_planner_models() -> Vec<String> {
-    let mut out = Vec::new();
-    if let Ok(m) = env::var("NEXUS_PLANNER_MODEL") {
-        if !m.trim().is_empty() {
-            out.push(m);
-        }
-    }
-    if out.is_empty() {
-        out.push("gemma-4-31b-it".to_string());
-    }
-    out
+    collect_cascade("NEXUS_PLANNER_MODEL", "NEXUS_PLANNER_CASCADE")
 }

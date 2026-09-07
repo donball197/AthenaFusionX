@@ -78,6 +78,7 @@ impl EvidenceClass {
             || t.starts_with("[SEARCH_CODE_OK]")
             || t.starts_with("[CMD_OK]")
             || t.starts_with("[SEARCH_OK]")
+            || t.starts_with("[SEARCH_MEMORY_OK]")
             || t.starts_with("[CACHE_HIT]")
         {
             return EvidenceClass::ReconSuccess;
@@ -101,7 +102,7 @@ impl Default for LikelihoodTable {
             (MutationSuccess, 0.85, 0.08),
             (MutationFailure, 0.12, 0.55),
             (CompileOk, 0.80, 0.15),
-            (CompileFail, 0.10, 0.60),
+            (CompileFail, 0.05, 0.70),
             (TestSuccess, 0.82, 0.12),
             (TestFailure, 0.15, 0.55),
             (ReconSuccess, 0.55, 0.45),
@@ -195,7 +196,11 @@ impl BayesianCalibrator {
             }
             None => 0.0,
         };
-        let llr_total = llr_marker + llr_modifier;
+        let effective_marker =
+            if class == EvidenceClass::ReconSuccess { llr_marker * 0.20 } else { llr_marker };
+        let effective_modifier =
+            if class == EvidenceClass::ReconSuccess { llr_modifier * 0.20 } else { llr_modifier };
+        let llr_total = effective_marker + effective_modifier;
         let mut posterior = sigmoid(logit(prior) + llr_total);
         if self.shrinkage > 0.0 {
             posterior = posterior * (1.0 - self.shrinkage) + 0.5 * self.shrinkage;

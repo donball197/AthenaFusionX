@@ -84,8 +84,18 @@ impl MicroAgent {
         context: ContextPacket,
     ) -> Result<(String, u128)> {
         let start = Instant::now();
-        let default_model = std::env::var("NEXUS_HEAVY_MODEL")
-            .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".to_string());
+        let default_model = std::env::var("NEXUS_HEAVY_CASCADE")
+            .ok()
+            .and_then(|cascade| {
+                cascade
+                    .split(',')
+                    .map(str::trim)
+                    .find(|model| !model.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| std::env::var("NEXUS_HEAVY_MODEL").ok())
+            .unwrap_or_default();
+
         let model = context.model_override.as_deref().unwrap_or(&default_model);
 
         // 1. Build the enriched text first

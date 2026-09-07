@@ -36,6 +36,24 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         });
     }
 
+    if let Some(rest) = action_str.strip_prefix("scrape_url") {
+        let rest = rest.trim();
+
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let url = parts.next().unwrap_or("").trim().trim_matches('`').trim_matches('"').to_string();
+
+        let prompt =
+            parts.next().unwrap_or("").trim().trim_matches('`').trim_matches('"').to_string();
+
+        if !url.is_empty() && !prompt.is_empty() {
+            return Some(AgentAction::ScrapeUrl {
+                url,
+                prompt,
+                reasoning: "Intercepted fallback scrape_url".to_string(),
+            });
+        }
+    }
+
     if let Some(action) = intercept_labeled_proposal(action_str) {
         return Some(action);
     }
@@ -80,6 +98,24 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
             return Some(AgentAction::ReadFile {
                 path,
                 reasoning: "Intercepted labeled read_file".to_string(),
+            });
+        }
+    }
+
+    // scrape_url
+    if lower.contains("scrape_url") {
+        let url = labeled_value(text, &["[URL]:", "[URL]", "[SCRAPE_URL]:", "URL:", "url:"]);
+
+        let prompt = labeled_value(
+            text,
+            &["[PROMPT]:", "[PROMPT]", "[EXTRACT]:", "Prompt:", "prompt:", "Extract:"],
+        );
+
+        if let (Some(url), Some(prompt)) = (url, prompt) {
+            return Some(AgentAction::ScrapeUrl {
+                url,
+                prompt,
+                reasoning: "Intercepted labeled scrape_url".to_string(),
             });
         }
     }

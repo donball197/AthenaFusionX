@@ -14,6 +14,61 @@ impl RefactorAgent {
 
     /// Extract a target symbol's source code lines or block roughly for context
     /// Extract a target symbol's exact source code block for context
+    /// Strict AST-backed source reader for a Rust function or impl method.
+    ///
+    /// Unlike extract_symbol_snippet(), this method:
+    /// - returns the complete declaration/signature plus body
+    /// - supports free functions and impl methods
+    /// - fails explicitly when the requested symbol does not exist
+    /// - never falls back to returning the whole file
+    pub fn read_function_source(file_path: &Path, symbol: &str) -> Result<String> {
+        let source = fs::read_to_string(file_path)
+            .map_err(|e| anyhow!("Failed to read file {}: {e}", file_path.display()))?;
+
+        let file = syn::parse_file(&source)
+            .map_err(|e| anyhow!("Failed to parse Rust file {}: {e}", file_path.display()))?;
+
+        for item in &file.items {
+            if let syn::Item::Fn(function) = item {
+                if function.sig.ident == symbol {
+                    let start = crate::mutation::line_column_to_byte_offset(
+                        &source,
+                        function.span().start(),
+                    );
+                    let end =
+                        crate::mutation::line_column_to_byte_offset(&source, function.span().end());
+
+                    return Ok(source[start..end].to_string());
+                }
+            }
+
+            if let syn::Item::Impl(item_impl) = item {
+                for impl_item in &item_impl.items {
+                    if let syn::ImplItem::Fn(method) = impl_item {
+                        if method.sig.ident == symbol {
+                            let start = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.span().start(),
+                            );
+                            let end = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.span().end(),
+                            );
+
+                            return Ok(source[start..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "Rust function or impl method '{}' not found in {}",
+            symbol,
+            file_path.display()
+        ))
+    }
+
     pub fn extract_symbol_snippet(file_path: &Path, symbol: &str) -> Result<String> {
         let source = fs::read_to_string(file_path)
             .map_err(|e| anyhow!("Failed to read file {}: {e}", file_path.display()))?;
@@ -50,8 +105,11 @@ impl RefactorAgent {
             }
         }
 
-        // Fallback to whole file if symbol isn't found (preserves original behavior)
-        Ok(source)
+        Err(anyhow!(
+            "Rust function or impl method '{}' not found in {}",
+            symbol,
+            file_path.display()
+        ))
     }
 
     pub fn apply_refactoring(
@@ -174,6 +232,14 @@ impl RefactorAgent {
             || text.contains("document this")
         {
             return Ok("InsertComment".into());
+        }
+
+        if text.contains("variable")
+            || text.contains("body")
+            || text.contains("expression")
+            || text.contains("return")
+        {
+            return Ok("ReplaceFunctionBody".into());
         }
 
         if text.contains("rename") {

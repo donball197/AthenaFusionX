@@ -56,6 +56,33 @@ impl ActionGuard for SecurityGuard {
                     }
                 }
             }
+            AgentAction::ScrapeUrl { url, .. } => {
+                let lower = url.to_lowercase();
+                if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                    return Err(GuardVeto {
+                        guard_name: self.name().to_string(),
+                        reason: format!(
+                            "Scrape URL must use http:// or https://: '{}'",
+                            url
+                        ),
+                        severity: VetoSeverity::Pivot,
+                    });
+                }
+
+                let after_scheme = if lower.starts_with("https://") {
+                    &url[8..]
+                } else {
+                    &url[7..]
+                };
+
+                if after_scheme.trim().is_empty() {
+                    return Err(GuardVeto {
+                        guard_name: self.name().to_string(),
+                        reason: "Scrape URL has no host.".to_string(),
+                        severity: VetoSeverity::Pivot,
+                    });
+                }
+            }
             AgentAction::WriteFile { path, .. } | AgentAction::DiffPatch { path, .. } | AgentAction::PatchFunction { path, .. } => {
                 if path.contains("..") {
                     return Err(GuardVeto { guard_name: self.name().to_string(), reason: format!("Path traversal detected: '{}'", path), severity: VetoSeverity::Pivot });
@@ -75,9 +102,11 @@ impl ActionGuard for SecurityGuard {
 fn extract_action_key(action: &AgentAction) -> (String, bool) {
     match action {
         AgentAction::ReadFile { path, .. } => (format!("read_file:{}", path), true),
+        AgentAction::ReadFunction { path, function_name, .. } => (format!("read_function:{}:{}", path, function_name), true),
         AgentAction::ReadFileChunk { path, start_line, .. } => (format!("read_file_chunk:{}:{}", path, start_line), true),
         AgentAction::SearchCode { path, query, .. } => (format!("search_code:{}:{}", path, query), true),
         AgentAction::SearchMemory { query, .. } => (format!("search_memory:{}", query), true),
+        AgentAction::ScrapeUrl { url, .. } => (format!("scrape_url:{}", url), true),
         AgentAction::ExecuteCommand { command, .. } => (format!("execute_command:{}", command), false),
         AgentAction::WriteFile { path, .. } => (format!("write_file:{}", path), false),
         AgentAction::DiffPatch { path, .. } => (format!("diff_patch:{}", path), false),

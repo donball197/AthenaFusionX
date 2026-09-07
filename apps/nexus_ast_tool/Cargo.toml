@@ -27,3 +27,6 @@ tree-sitter-zig = "1.1"
 tree-sitter-php = "=0.23.1"
 serde_yaml = "0.9.34"
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
+
+[lints]
+workspace = true

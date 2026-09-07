@@ -19,3 +19,6 @@ path = "src/main.rs"
 [[bin]]
 name = "wasm_bridge_host"
 path = "src/wasm_bridge_host.rs"
+
+[lints]
+workspace = true

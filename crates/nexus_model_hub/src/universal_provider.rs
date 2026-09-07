@@ -11,21 +11,39 @@ pub enum ProviderKind {
 
 impl ProviderKind {
     pub fn detect(model_or_provider: &str) -> Self {
-        let env_provider = env::var("NEXUS_PROVIDER").unwrap_or_default().to_lowercase();
-        if env_provider == "nvidia" || env_provider == "openai" || env_provider == "ollama" {
+        let model = model_or_provider.to_ascii_lowercase();
+
+        // Explicit provider selection always wins.
+        let env_provider = env::var("NEXUS_PROVIDER").unwrap_or_default().to_ascii_lowercase();
+
+        if env_provider == "nvidia"
+            || env_provider == "openai"
+            || env_provider == "ollama"
+            || env_provider == "nexus"
+            || env_provider == "local"
+        {
             return ProviderKind::OpenAiCompatible;
         }
 
-        if model_or_provider.contains('/')
-            || model_or_provider.contains("llama")
-            || model_or_provider.contains("deepseek")
-            || model_or_provider.contains("nvidia")
-            || model_or_provider.contains("mistral")
-        {
-            ProviderKind::OpenAiCompatible
-        } else {
-            ProviderKind::Google
+        // AthenaFusionX local S23 / LiteRT-LM models are served
+        // through the existing OpenAI-compatible local gateway.
+        if model.contains("e4b") || model.contains("litert") || model == "nexus" {
+            return ProviderKind::OpenAiCompatible;
         }
+
+        // Cloud/OpenAI-compatible model families.
+        if model.contains('/')
+            || model.contains("llama")
+            || model.contains("deepseek")
+            || model.contains("nvidia")
+            || model.contains("mistral")
+            || model.contains("nemotron")
+            || model.contains("meta/")
+        {
+            return ProviderKind::OpenAiCompatible;
+        }
+
+        ProviderKind::Google
     }
 }
 
@@ -75,7 +93,20 @@ impl UniversalProvider {
                 });
 
                 let res = client.post(&url).json(&payload).send().await?;
-                let body: Value = res.json().await.unwrap_or_default();
+                let status = res.status();
+                let raw = res.text().await?;
+
+                let body: Value = serde_json::from_str(&raw).map_err(|e| {
+                    anyhow!("Google API returned HTTP {} with invalid JSON: {}", status, e)
+                })?;
+
+                if !status.is_success() {
+                    let message = body
+                        .pointer("/error/message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown Google API error");
+                    return Err(anyhow!("Google API HTTP {}: {}", status, message));
+                }
 
                 if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
                     return Err(anyhow!("Google API Error: {}", err));
@@ -84,14 +115,18 @@ impl UniversalProvider {
                 let text = body
                     .pointer("/candidates/0/content/parts/0/text")
                     .and_then(|v| v.as_str())
-                    .unwrap_or_default();
+                    .ok_or_else(|| {
+                        anyhow!("Google API HTTP {} returned no candidate text", status)
+                    })?;
 
                 Ok(text.replace("```json", "").replace("```", "").trim().to_string())
             }
 
             ProviderKind::OpenAiCompatible => {
-                let base_url = env::var("NVIDIA_API_GATEWAY")
+                let base_url = env::var("OPENAI_BASE_URL")
                     .or_else(|_| env::var("NEXUS_OPENAI_GATEWAY"))
+                    .or_else(|_| env::var("NEXUS_API_GATEWAY"))
+                    .or_else(|_| env::var("NVIDIA_API_GATEWAY"))
                     .unwrap_or_else(|_| "https://integrate.api.nvidia.com/v1".to_string());
 
                 let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -109,7 +144,10 @@ impl UniversalProvider {
                     "max_tokens": max_tokens
                 });
 
-                let auth_key = env::var("NVIDIA_API_KEY").unwrap_or_else(|_| api_key.to_string());
+                let auth_key = env::var("OPENAI_API_KEY")
+                    .or_else(|_| env::var("NEXUS_AUTH_KEY"))
+                    .or_else(|_| env::var("NVIDIA_API_KEY"))
+                    .unwrap_or_else(|_| api_key.to_string());
 
                 let res = client
                     .post(&url)
@@ -119,16 +157,35 @@ impl UniversalProvider {
                     .send()
                     .await?;
 
-                let body: Value = res.json().await.unwrap_or_default();
+                let status = res.status();
+                let raw = res.text().await?;
+
+                let body: Value = serde_json::from_str(&raw).map_err(|e| {
+                    anyhow!(
+                        "OpenAI-compatible endpoint returned HTTP {} with invalid JSON: {}",
+                        status,
+                        e
+                    )
+                })?;
+
+                if !status.is_success() {
+                    let message = body
+                        .pointer("/error/message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown OpenAI-compatible API error");
+                    return Err(anyhow!("OpenAI-compatible API HTTP {}: {}", status, message));
+                }
 
                 if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
-                    return Err(anyhow!("OpenAI/NIM API Error: {}", err));
+                    return Err(anyhow!("OpenAI-compatible API Error: {}", err));
                 }
 
                 let text = body
                     .pointer("/choices/0/message/content")
                     .and_then(|v| v.as_str())
-                    .unwrap_or_default();
+                    .ok_or_else(|| {
+                        anyhow!("OpenAI-compatible API HTTP {} returned no message content", status)
+                    })?;
 
                 Ok(text.replace("```json", "").replace("```", "").trim().to_string())
             }

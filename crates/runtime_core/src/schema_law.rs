@@ -13,7 +13,7 @@ pub const SYSTEM_JSON_SCHEMA: &str = r#"MANDATORY SCHEMA:
   { "type": "lazarus_snapshot", "path": "...", "tag": "optional", "reasoning": "..." },
   { "type": "export_report", "title": "...", "content": "...", "reasoning": "..." },
   { "type": "fetch_ui_snapshot", "reasoning": "..." },
-  { "type": "scrape_url", "url": "...", "reasoning": "..." },
+  { "type": "scrape_url", "url": "...", "prompt": "...", "reasoning": "..." },
   { "type": "spawn_subagent", "instruction": "...", "tier": "Specialist", "limit": 5, "reasoning": "..." },
   { "type": "delegate_task", "instruction": "...", "tier": "Specialist", "token_limit": 1000, "reasoning": "..." },
   { "type": "git_rollback", "reasoning": "..." },

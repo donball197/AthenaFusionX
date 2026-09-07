@@ -23,6 +23,14 @@ impl PlannerAgent {
             r#"You are the Lead DAG Planner Agent for AthenaFusionX.
 Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.
 CRITICAL RULE [GRANULARITY]: Create exactly as many nodes as necessary. If the directive is to write or generate a single cohesive document, DO NOT split it into multiple nodes; handle it in a single node to maintain context.
+CRITICAL RULE [SUCCESS CONTRACT]: EVERY real work node MUST contain a non-empty 'success_criteria' array. Each criterion MUST be deterministic and physically checkable from execution evidence. Use exact forms such as:
+- "READ_OK:crates/runtime_core/src/router.rs"
+- "READ_FUNCTION_OK:crates/runtime_core/src/router.rs:route"
+- "SEARCH_CODE_OK:model configuration"
+- "WRITE_OK:model_routing_analysis.md"
+- "CMD_OK"
+Never use vague criteria such as "analysis complete", "understand the code", or "agent is satisfied".
+CRITICAL RULE [MULTI-STEP OBJECTIVES]: If a node requires multiple distinct investigations, include one explicit criterion for each required evidence type/path/query. Every criterion must be satisfied before the node can be completed.
 CRITICAL RULE [JSON ESCAPING]: Do NOT use raw newlines inside JSON strings. Use \n.
 CRITICAL RULE [ROUTER LOCATION]: The Executive Cortex router is located at 'crates/runtime_core/src/router.rs'. Always use 'crates/runtime_core/src/router.rs' in task objectives when referring to the router.
 CRITICAL RULE [DEPENDENCY INFERENCE]: If one task reads, parses, or consumes a file or resource that another task generates, writes, or produces, the consuming task's 'deps' array MUST include the producing task's id. Never schedule a read of a path before the task that creates it.
@@ -137,6 +145,14 @@ OUTPUT ONLY VALID JSON with this exact structure:
                     .unwrap_or("CodeAnalyzer")
                     .to_string();
 
+                let success_criteria = item
+                    .get("success_criteria")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().filter_map(|x| x.as_str().map(ToString::to_string)).collect()
+                    })
+                    .unwrap_or_default();
+
                 map.insert(
                     id.clone(),
                     TaskNode {
@@ -145,7 +161,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
                         required_agent: agent,
                         status: TaskStatus::Pending,
                         objective: obj,
-                        success_criteria: vec![],
+                        success_criteria,
                         execution_state: TaskExecutionState::default(),
                         output_evidence: None,
                         priority: idx + 1,

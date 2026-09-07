@@ -8,9 +8,11 @@ pub enum MotorAction {
     ExecuteCommand { command: String },
     WriteFile { path: String, content: String },
     ReadFile { path: String },
+    ReadFunction { path: String, function_name: String },
     ReadFileChunk { path: String, start_line: usize, max_lines: usize },
     SearchCode { path: String, query: String },
     SearchMemory { query: String },
+    ScrapeUrl { url: String, prompt: String },
     ReplaceLines { path: String, start_line: usize, end_line: usize, replacement: String },
     RunTests { test_target: String },
     AtomicPatch { patches: Vec<crate::agent_protocol::FilePatch> },
@@ -47,11 +49,15 @@ impl MotorCortex {
                 MotorAction::WriteFile { path, content }
             }
             AgentAction::ReadFile { path, .. } => MotorAction::ReadFile { path },
+            AgentAction::ReadFunction { path, function_name, .. } => {
+                MotorAction::ReadFunction { path, function_name }
+            }
             AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
                 MotorAction::ReadFileChunk { path, start_line, max_lines }
             }
             AgentAction::SearchCode { path, query, .. } => MotorAction::SearchCode { path, query },
             AgentAction::SearchMemory { query, .. } => MotorAction::SearchMemory { query },
+            AgentAction::ScrapeUrl { url, prompt, .. } => MotorAction::ScrapeUrl { url, prompt },
             AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
                 MotorAction::ReplaceLines { path, start_line, end_line, replacement }
             }

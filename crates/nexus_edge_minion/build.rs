@@ -8,11 +8,16 @@ fn main() {
         .unwrap_or_else(|_| manifest_dir.join("../../lib"));
     let so_path = lib_dir.join("libnexus_loader.so");
 
-    // Pass the absolute library file path directly to the linker.
-    // This overrides --as-needed stripping and search path mismatches.
-    println!("cargo:rustc-link-arg={}", so_path.display());
-
-    // Bake rpath for runtime resolution
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
-    println!("cargo:rerun-if-changed={}", so_path.display());
+    if so_path.exists() {
+        // Library present: link by absolute path and bake rpath for runtime.
+        println!("cargo:rustc-link-arg={}", so_path.display());
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+        println!("cargo:rerun-if-changed={}", so_path.display());
+    } else {
+        // Library missing: warn instead of guaranteeing an ld failure.
+        println!(
+            "cargo:warning=libnexus_loader.so not found at {} -- skipping loader link args",
+            so_path.display()
+        );
+    }
 }

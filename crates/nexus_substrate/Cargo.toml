@@ -22,3 +22,6 @@ bytes = "1.12.1"
 [features]
 default = []
 embeddings = ["fastembed"]
+
+[lints]
+workspace = true

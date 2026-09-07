@@ -27,10 +27,24 @@ fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
     if let Ok(c) = std::fs::canonicalize(p) {
         return Ok(c);
     }
-    let parent = p.parent().ok_or_else(|| anyhow!("no parent directory for {}", p.display()))?;
-    let parent_canon = std::fs::canonicalize(parent)?;
-    let file_name = p.file_name().ok_or_else(|| anyhow!("no file name for {}", p.display()))?;
-    Ok(parent_canon.join(file_name))
+    let mut curr = p.to_path_buf();
+    let mut components = Vec::new();
+    while !curr.exists() {
+        if let Some(file_name) = curr.file_name() {
+            components.push(file_name.to_os_string());
+        }
+        if let Some(parent) = curr.parent() {
+            curr = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    let ancestor_canon = std::fs::canonicalize(&curr)?;
+    let mut safe_path = ancestor_canon;
+    for part in components.into_iter().rev() {
+        safe_path.push(part);
+    }
+    Ok(safe_path)
 }
 
 pub fn sanitize(path: &str) -> Result<PathBuf> {
@@ -274,6 +288,46 @@ impl RoboticExecutor {
 
                 Ok(format!("[READ_OK] {}\nFULL FILE CONTENT:\n{}", path, return_content))
             }
+            MotorAction::ReadFunction { path, function_name } => {
+                let safe_path = sanitize(&path)?;
+
+                let source = nexus_ast_tool::agent::RefactorAgent::read_function_source(
+                    &safe_path,
+                    &function_name,
+                )?;
+
+                let snippet: String = source.chars().take(4000).collect();
+
+                if let Ok(emb) =
+                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await
+                {
+                    let _ = memory
+                        .store_memory(
+                            "ReadFunction",
+                            &format!("{}:{}", path, function_name),
+                            &source,
+                            "Observed",
+                            Some(emb),
+                        )
+                        .await;
+                } else {
+                    let _ = memory
+                        .store_memory(
+                            "ReadFunction",
+                            &format!("{}:{}", path, function_name),
+                            &source,
+                            "Observed",
+                            None,
+                        )
+                        .await;
+                }
+
+                Ok(format!(
+                    "[READ_FUNCTION_OK] File: {} | Function: {}\nEXACT AST SOURCE:\n{}",
+                    path, function_name, source
+                ))
+            }
+
             MotorAction::ReadFileChunk { path, start_line, max_lines } => {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
@@ -453,27 +507,153 @@ impl RoboticExecutor {
                 Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
             }
             MotorAction::SearchMemory { query } => {
+                let emb =
+                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query)
+                        .await
+                        .map_err(|e| {
+                            anyhow!(
+                                "SEMANTIC_SEARCH_EMBEDDING_FAILED: {}",
+                                e
+                            )
+                        })?;
+
+                let results = memory
+                    .semantic_search(&emb)
+                    .await
+                    .map_err(|e| {
+                        anyhow!(
+                            "SEMANTIC_SEARCH_VECTOR_RECALL_FAILED: {}",
+                            e
+                        )
+                    })?;
+
+                if results.is_empty() {
+                    return Ok(format!(
+                        "[SEARCH_MEMORY_EMPTY] Semantic search completed successfully but returned zero matches for: '{}'",
+                        query
+                    ));
+                }
+
                 let mut results_text = String::new();
 
-                if let Ok(emb) =
-                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query).await
-                {
-                    if let Ok(results) = memory.semantic_search(&emb).await {
-                        for r in results {
-                            let snippet: String = r.result.chars().take(1500).collect();
-                            results_text.push_str(&format!(
-                                "Source: {}\nData: {}...\n---\n",
-                                r.directive, snippet
-                            ));
-                        }
-                    }
+                for r in results {
+                    let snippet: String = r.result.chars().take(1500).collect();
+
+                    results_text.push_str(&format!(
+                        "Source: {}\nData: {}...\n---\n",
+                        r.directive, snippet
+                    ));
                 }
 
-                if results_text.is_empty() {
-                    Ok(format!("[SEARCH_OK] Native FastEmbed vector recall queried for: '{}'. VectorVault active.", query))
-                } else {
-                    Ok(format!("[SEARCH_OK] Found semantic context:\n{}", results_text))
+                Ok(format!(
+                    "[SEARCH_MEMORY_OK] Found semantic context:\n{}",
+                    results_text
+                ))
+            }
+            MotorAction::ScrapeUrl { url, prompt } => {
+                let lower = url.to_lowercase();
+
+                if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                    return Err(anyhow!("SCRAPE_URL_REJECTED: URL must use http:// or https://"));
                 }
+
+                let host_part = if lower.starts_with("https://") { &url[8..] } else { &url[7..] };
+
+                if host_part.trim().is_empty() {
+                    return Err(anyhow!("SCRAPE_URL_REJECTED: URL has no host"));
+                }
+
+                if prompt.trim().is_empty() {
+                    return Err(anyhow!("SCRAPE_URL_REJECTED: extraction prompt is empty"));
+                }
+
+                let workspace_root = std::env::current_dir().map_err(|e| {
+                    anyhow!("SCRAPE_EXECUTOR_ERROR: cannot resolve workspace: {}", e)
+                })?;
+
+                let binary = workspace_root.join("target/release/nexus_scrape");
+
+                let metadata = tokio::fs::metadata(&binary).await.map_err(|e| {
+                    anyhow!(
+                        "SCRAPE_EXECUTOR_ERROR: nexus_scrape binary unavailable at {}: {}",
+                        binary.display(),
+                        e
+                    )
+                })?;
+
+                if !metadata.is_file() {
+                    return Err(anyhow!(
+                        "SCRAPE_EXECUTOR_ERROR: nexus_scrape path is not a regular file: {}",
+                        binary.display()
+                    ));
+                }
+
+                let output = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    tokio::process::Command::new(&binary)
+                        .arg(&url)
+                        .arg("--extract")
+                        .arg(&prompt)
+                        .output(),
+                )
+                .await
+                .map_err(|_| {
+                    anyhow!("SCRAPE_TIMEOUT: nexus_scrape exceeded 120 seconds for {}", url)
+                })?
+                .map_err(|e| {
+                    anyhow!("SCRAPE_EXECUTOR_ERROR: failed to launch nexus_scrape: {}", e)
+                })?;
+
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+                if !output.status.success() {
+                    let stderr_tail = {
+                        let count = stderr.chars().count();
+                        if count > 2500 {
+                            stderr.chars().skip(count.saturating_sub(2500)).collect::<String>()
+                        } else {
+                            stderr.clone()
+                        }
+                    };
+
+                    return Err(anyhow!(
+                        "SCRAPE_FAILED: nexus_scrape exited with {}\nSTDERR:\n{}",
+                        output.status,
+                        stderr_tail
+                    ));
+                }
+
+                let extracted = stdout.trim();
+
+                if extracted.is_empty() {
+                    return Err(anyhow!(
+                        "SCRAPE_VALIDATION_FAILED: nexus_scrape returned empty stdout"
+                    ));
+                }
+
+                // Bound persisted external content so a pathological page/extractor
+                // response cannot create unbounded memory or embedding work.
+                let persisted: String = extracted.chars().take(100_000).collect();
+
+                let embedding_text: String = persisted.chars().take(8_000).collect();
+
+                let embedding =
+                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &embedding_text)
+                        .await
+                        .ok();
+
+                memory
+                    .store_memory("WebScrape", &url, &persisted, "Untrusted", embedding)
+                    .await
+                    .map_err(|e| anyhow!("SCRAPE_MEMORY_STORE_FAILED: {}", e))?;
+
+                let evidence: String = persisted.chars().take(5000).collect();
+
+                Ok(format!(
+                    "[SCRAPE_OK] URL: {}\n[SCRAPE_TAINT: Untrusted]\nEXTRACTION:\n{}",
+                    url, evidence
+                ))
             }
             MotorAction::PatchFile { path, target, replacement } => {
                 let safe_path = sanitize(&path)?;

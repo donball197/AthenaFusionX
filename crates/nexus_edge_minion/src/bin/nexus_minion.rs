@@ -91,7 +91,10 @@ async fn main() {
             })
         } else {
             env::var("NEXUS_LIGHT_CASCADE").unwrap_or_else(|_| {
-                env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| "gemini-2.0-flash".to_string())
+                env::var("NEXUS_LIGHT_MODEL").unwrap_or_else(|_| {
+                    env::var("NEXUS_PLANNER_MODEL")
+                        .unwrap_or_else(|_| "gemini-3.5-flash-lite".to_string())
+                })
             })
         };
 

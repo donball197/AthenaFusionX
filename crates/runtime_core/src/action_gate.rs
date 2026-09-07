@@ -75,6 +75,11 @@ impl ActionGate {
                     .validate_intent("read_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
+            MotorAction::ReadFunction { .. } => {
+                self.sandbox
+                    .validate_intent("read_function")
+                    .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+            }
             MotorAction::ReadFileChunk { .. } => {
                 self.sandbox
                     .validate_intent("read_file_chunk")
@@ -119,6 +124,31 @@ impl ActionGate {
             MotorAction::SearchMemory { .. } => {
                 self.sandbox
                     .validate_intent("search_memory")
+                    .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+            }
+            MotorAction::ScrapeUrl { url, prompt } => {
+                let lower = url.to_lowercase();
+                if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Scrape URL must use http:// or https://: '{}'",
+                        url
+                    ));
+                }
+
+                let host = if lower.starts_with("https://") { &url[8..] } else { &url[7..] };
+
+                if host.trim().is_empty() {
+                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Scrape URL has no host."));
+                }
+
+                if prompt.trim().is_empty() {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Scrape extraction prompt cannot be empty."
+                    ));
+                }
+
+                self.sandbox
+                    .validate_intent("scrape_url")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
             MotorAction::SynthesizeReport { .. } => {

@@ -50,14 +50,6 @@ impl CognitiveBudget {
 
 pub struct SubgoalCompletionEngine;
 
-fn has_word(text: &str, word: &str) -> bool {
-    text.split_whitespace().any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == word)
-}
-
-fn any_word(text: &str, words: &[&str]) -> bool {
-    words.iter().any(|w| has_word(text, w))
-}
-
 fn has_word_unnegated(text: &str, word: &str) -> bool {
     let negations = ["not", "never", "no", "cannot", "n't"];
     let tokens: Vec<&str> = text.split_whitespace().collect();
@@ -93,83 +85,81 @@ impl SubgoalCompletionEngine {
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
 
+        // Detect every material intent independently.
+        //
+        // A compound objective such as:
+        //   read X, search Y, analyze findings, write Z
+        //
+        // must produce an AND contract:
+        //   READ + SEARCH + WRITE + evidence threshold
+        //
+        // Previously the write/mutation branch was mutually exclusive with
+        // reconnaissance, causing WRITE_OK to masquerade as full completion.
+
         let has_patch =
             any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate", "mutate"]);
+
         let has_write = any_word_unnegated(
             classify_text,
             &["write", "export", "save", "implement", "integrate", "add", "create", "synthesize"],
         );
 
-        if has_patch || has_write {
-            is_mutation_task = true;
-            if has_patch {
-                conditions.push(CompletionCondition::PatchMarkerAcquired);
-            } else {
-                conditions.push(CompletionCondition::WriteMarkerAcquired);
-            }
-            if any_word(
-                classify_text,
-                &[
-                    "roadmap",
-                    "audit",
-                    "comparison",
-                    "comparative",
-                    "compare",
-                    "comparing",
-                    "compares",
-                    "compared",
-                    "versus",
-                ],
-            ) {
-                conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
-            }
-        } else {
-            let first_word = classify_text.split_whitespace().next().unwrap_or("");
-            let is_recon_intent = [
-                "read",
+        let has_read_intent =
+            any_word_unnegated(classify_text, &["read", "inspect", "examine", "review", "open"]);
+
+        let has_search_intent =
+            any_word_unnegated(classify_text, &["search", "find", "scan", "grep", "locate"]);
+
+        let has_analysis_intent = any_word_unnegated(
+            classify_text,
+            &[
                 "analyze",
-                "inspect",
-                "search",
-                "examine",
-                "locate",
-                "profile",
-                "benchmark",
+                "analyse",
+                "analysis",
+                "investigate",
                 "audit",
-            ]
-            .contains(&first_word);
+                "compare",
+                "comparison",
+                "synthesize",
+                "synthesis",
+            ],
+        );
 
-            let has_read_intent = any_word_unnegated(
-                classify_text,
-                &[
-                    "read",
-                    "examine",
-                    "inspect",
-                    "analyze",
-                    "investigate",
-                    "contrast",
-                    "compare",
-                    "evaluate",
-                ],
-            );
-            let has_search_intent =
-                any_word_unnegated(classify_text, &["search", "find", "locate"]);
+        if has_patch {
+            is_mutation_task = true;
+            conditions.push(CompletionCondition::PatchMarkerAcquired);
+        }
 
-            if is_recon_intent || has_read_intent || has_search_intent {
-                if has_read_intent && has_search_intent {
-                    conditions.push(CompletionCondition::SearchMarkerAcquired);
-                    conditions.push(CompletionCondition::ReadMarkerAcquired);
-                    conditions.push(CompletionCondition::MinBeliefScore(0.80));
-                } else if has_search_intent {
-                    conditions.push(CompletionCondition::SearchMarkerAcquired);
-                    conditions.push(CompletionCondition::MinBeliefScore(0.65));
-                } else {
-                    conditions.push(CompletionCondition::ReadMarkerAcquired);
-                    conditions.push(CompletionCondition::MinBeliefScore(0.65));
-                }
-            } else {
-                conditions.push(CompletionCondition::CommandMarkerAcquired);
-                conditions.push(CompletionCondition::MinBeliefScore(0.85));
-            }
+        if has_write {
+            is_mutation_task = true;
+            conditions.push(CompletionCondition::WriteMarkerAcquired);
+        }
+
+        if has_read_intent {
+            conditions.push(CompletionCondition::ReadMarkerAcquired);
+        }
+
+        if has_search_intent {
+            conditions.push(CompletionCondition::SearchMarkerAcquired);
+        }
+
+        // Analysis/investigation over source code requires actual source
+        // evidence. This is deliberately independent of WRITE_OK.
+        if has_analysis_intent || (has_read_intent && has_search_intent) {
+            conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
+        }
+
+        // Recon-only objectives still need a belief threshold.
+        // Compound mutation/recon objectives also retain a modest threshold
+        // rather than allowing a write marker to manufacture certainty.
+        let has_recon = has_read_intent || has_search_intent || has_analysis_intent;
+
+        if has_recon {
+            let threshold = if has_write || has_patch { 0.75 } else { 0.65 };
+            conditions.push(CompletionCondition::MinBeliefScore(threshold));
+        } else if !has_write && !has_patch {
+            conditions.push(CompletionCondition::CommandMarkerAcquired);
+            conditions.push(CompletionCondition::MinBeliefScore(0.85));
         }
 
         let arts = extract_required_artifact_paths(objective);
@@ -203,12 +193,46 @@ impl SubgoalCompletionEngine {
         );
         matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
     }
+
+    /// Returns true when every non-output condition required for
+    /// reconnaissance has been satisfied.
+    ///
+    /// Write/Patch conditions are deliberately excluded because this
+    /// gate authorizes the transition INTO the output phase.
+    pub fn reconnaissance_complete(
+        contract: &SubgoalContract,
+        local_evidence: &str,
+        belief_score: f32,
+    ) -> bool {
+        let recon_conditions: Vec<CompletionCondition> = contract
+            .conditions
+            .iter()
+            .filter(|condition| {
+                !matches!(
+                    condition,
+                    CompletionCondition::WriteMarkerAcquired
+                        | CompletionCondition::PatchMarkerAcquired
+                )
+            })
+            .cloned()
+            .collect();
+
+        let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(
+            &contract.node_id,
+            local_evidence,
+            belief_score,
+            &recon_conditions,
+        );
+
+        matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
+    }
 }
 
 fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
     let mut out: Vec<ArtifactSpec> = Vec::new();
     let exts = ["md", "json", "rs", "toml", "yaml", "yml", "txt", "py"];
     let tokens: Vec<&str> = objective.split_whitespace().collect();
+    let write_words = ["write", "save", "export", "synthesize"];
 
     for (i, tok) in tokens.iter().enumerate() {
         let clean = tok.trim_matches(|c: char| {
@@ -217,20 +241,27 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
         if exts.iter().any(|ext| clean.ends_with(&format!(".{}", ext)))
             && (clean.contains('/') || clean.contains('.'))
         {
-            // Check context window for read vs write
-            let start = i.saturating_sub(3);
-            let prev = tokens[start..i].join(" ").to_lowercase();
-            let is_read_src = prev.contains("read")
-                || prev.contains("from")
-                || prev.contains("inspect")
-                || prev.contains("cat");
-            let is_write_tgt = prev.contains("to")
-                || prev.contains("write")
-                || prev.contains("save")
-                || prev.contains("export")
-                || prev.contains("synthesize");
+            // Scan back to the start of this file mention's clause (comma boundary,
+            // capped at 30 tokens) rather than a fixed 3-token window -- a "read ... in
+            // X" clause can run long enough that the verb falls outside a small window.
+            let min_start = i.saturating_sub(30);
+            let mut start = i;
+            while start > min_start && !tokens[start - 1].ends_with(',') {
+                start -= 1;
+            }
 
-            if (!is_read_src || is_write_tgt) && !out.iter().any(|a| a.path == clean) {
+            // Match write-verbs as whole words, not substrings: a bare "to" is too
+            // generic (it's the infinitive/preposition in "read ... to understand"),
+            // and naive substring matching lets words like "tools" falsely match "to".
+            let is_write_tgt = tokens[start..i].iter().any(|w| {
+                let wl = w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+                write_words.contains(&wl.as_str())
+            });
+
+            // Only register a required write target on an explicit write-verb match in
+            // this clause. An ambiguous mention with no write signal must NOT default to
+            // "write" -- that risks overwriting a file that was meant to be read only.
+            if is_write_tgt && !out.iter().any(|a| a.path == clean) {
                 out.push(ArtifactSpec {
                     path: clean.to_string(),
                     reason: "output_deliverable".into(),
@@ -238,5 +269,6 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
             }
         }
     }
+
     out
 }

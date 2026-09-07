@@ -147,6 +147,7 @@ pub enum AgentAction {
     #[serde(rename = "scrape_url")]
     ScrapeUrl {
         url: String,
+        prompt: String,
         #[serde(default)]
         reasoning: String,
     },

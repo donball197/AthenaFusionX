@@ -34,14 +34,9 @@ impl ContractEvaluator {
         let has_mutation = has_mutation_marker(local_evidence);
         let has_recon = has_recon_marker(local_evidence);
 
-        // ⚡ FAST EXIT: If specific target artifacts were required and all are verified written, complete immediately!
-        if !mission_contract.required_artifact_paths.is_empty()
-            && missing.is_empty()
-            && has_mutation
-        {
-            return ContractStatus::Satisfied;
-        }
-
+        // IMPORTANT: An artifact write proves only that the mutation/write action
+        // succeeded. It does NOT prove that the enclosing objective is satisfied.
+        // Compound objectives must continue through their full evidence contract.
         if (is_mutation_task || is_write_task) && !has_mutation {
             return if has_recon {
                 ContractStatus::PartialEvidence
@@ -50,56 +45,21 @@ impl ContractEvaluator {
             };
         }
 
-        if Self::is_compound_objective_satisfied(mission, local_evidence) {
-            if current_belief >= 0.90 || (has_mutation && current_belief >= 0.70) {
-                return ContractStatus::Satisfied;
-            }
-            return ContractStatus::PartialEvidence;
+        // The typed completion contract is the sole authority for
+        // mission satisfaction. Mutation/write markers and belief are
+        // evidence, not proof of the enclosing objective.
+        let contract_satisfied = crate::completion_engine::SubgoalCompletionEngine::evaluate(
+            &mission_contract,
+            local_evidence,
+            current_belief,
+        );
+
+        if contract_satisfied {
+            ContractStatus::Satisfied
+        } else if has_mutation || has_recon {
+            ContractStatus::PartialEvidence
+        } else {
+            ContractStatus::NoEvidence
         }
-
-        if has_mutation || has_recon {
-            if current_belief >= 0.95 || (has_mutation && current_belief >= 0.75) {
-                return ContractStatus::Satisfied;
-            } else {
-                return ContractStatus::PartialEvidence;
-            };
-        }
-
-        ContractStatus::NoEvidence
-    }
-
-    fn is_compound_objective_satisfied(mission: &str, evidence: &str) -> bool {
-        let mission_lower = mission.to_lowercase();
-        let objective_part = mission_lower
-            .lines()
-            .find(|line| line.starts_with("objective:"))
-            .unwrap_or(mission_lower.as_str());
-
-        let evidence_lower = evidence.to_lowercase();
-
-        let and_segments: Vec<&str> =
-            objective_part.split(" and ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-
-        if and_segments.is_empty() {
-            return false;
-        }
-
-        and_segments.iter().all(|segment| {
-            let or_parts: Vec<&str> =
-                segment.split(" or ").map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-
-            if or_parts.len() <= 1 {
-                segment
-                    .split_whitespace()
-                    .filter(|w| w.len() > 3)
-                    .any(|w| evidence_lower.contains(w))
-            } else {
-                or_parts.iter().any(|part| {
-                    part.split_whitespace()
-                        .filter(|w| w.len() > 3)
-                        .any(|w| evidence_lower.contains(w))
-                })
-            }
-        })
     }
 }

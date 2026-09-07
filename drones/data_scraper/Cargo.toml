@@ -11,3 +11,6 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 nexus_model_hub = { path = "../../crates/nexus_model_hub" }
 dotenvy = { workspace = true }
+
+[lints]
+workspace = true

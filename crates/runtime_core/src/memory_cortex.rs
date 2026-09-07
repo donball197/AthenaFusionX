@@ -89,7 +89,6 @@ impl MemoryCortex {
             .search_memories(context)
             .await?
             .into_iter()
-            .take(limit)
             .map(|m| crate::memory_types::CognitiveMemory {
                 id: uuid::Uuid::new_v4(),
                 kind: crate::memory_types::MemoryKind::Experience,
@@ -104,9 +103,16 @@ impl MemoryCortex {
                     .unwrap_or_else(|_| chrono::Utc::now().timestamp()),
                 tags: vec![m.origin.clone()],
             })
-            .collect();
+            .collect::<Vec<_>>();
+
         let engine = crate::memory_recall::MemoryRecallEngine::new();
-        Ok(engine.rank(memories, context))
+        let mut result = engine.rank(memories, context);
+
+        // Rank first, then limit. This prevents arbitrary substrate ordering
+        // from deciding which memories reach the Cortex.
+        result.memories.truncate(limit);
+
+        Ok(result)
     }
 
     pub async fn store_belief_update(
