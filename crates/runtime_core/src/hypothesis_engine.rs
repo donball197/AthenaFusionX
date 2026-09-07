@@ -50,15 +50,18 @@ impl HypothesisEngine {
 
         let heavy_models = crate::model_config::get_heavy_models();
         if heavy_models.is_empty() {
-            return Err(anyhow!("No heavy models configured in NEXUS_HEAVY_MODEL or NEXUS_HEAVY_CASCADE"));
+            return Err(anyhow!(
+                "No heavy models configured in NEXUS_HEAVY_MODEL or NEXUS_HEAVY_CASCADE"
+            ));
         }
 
         let text = crate::epistemic_engine::EpistemicEngine::safe_api_call(
             client,
             api_key,
             &heavy_models,
-            &payload
-        ).await?;
+            &payload,
+        )
+        .await?;
 
         let resolution: GoTResolution =
             serde_json::from_str(text.trim()).map_err(|e| anyhow!("GoT Schema Fracture: {}", e))?;

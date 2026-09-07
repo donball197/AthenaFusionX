@@ -1,4 +1,3 @@
-pub mod tools;
 pub mod api_gateway;
 pub mod attention;
 pub mod decoder_layer;
@@ -12,3 +11,4 @@ pub mod rope;
 pub mod safetensors;
 pub mod sandbox;
 pub mod tokenizer;
+pub mod tools;

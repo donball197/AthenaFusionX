@@ -75,7 +75,10 @@ impl AthenaSovereignCore {
     }
 
     pub async fn execute_mission(&mut self, directive: &str) -> Result<SovereignOutcome> {
-        self.log(&format!("\x1b[1;36m>> [SOVEREIGN CORE] Ingesting Directive: {}\x1b[0m", directive));
+        self.log(&format!(
+            "\x1b[1;36m>> [SOVEREIGN CORE] Ingesting Directive: {}\x1b[0m",
+            directive
+        ));
 
         // Step 1: Autonomous Perception & Probabilistic Memory Prior Extraction
         let context_chunks = self.world_model.semantic_query(directive).await;
@@ -91,7 +94,10 @@ impl AthenaSovereignCore {
             ));
             world_context.push_str("\n\n[PROVEN HIGH-FITNESS EXEMPLARS]:\n");
             for p in &positive_priors {
-                world_context.push_str(&format!("- Related Task: {}\n  Proof: {}\n", p.directive, p.evidence));
+                world_context.push_str(&format!(
+                    "- Related Task: {}\n  Proof: {}\n",
+                    p.directive, p.evidence
+                ));
             }
         }
 
@@ -113,7 +119,10 @@ impl AthenaSovereignCore {
 
         while turn < max_turns {
             turn += 1;
-            self.log(&format!("\n\x1b[1;33m>> [SOVEREIGN COGNITION] Atomic Turn {} / {}\x1b[0m", turn, max_turns));
+            self.log(&format!(
+                "\n\x1b[1;33m>> [SOVEREIGN COGNITION] Atomic Turn {} / {}\x1b[0m",
+                turn, max_turns
+            ));
 
             // Step 2: Internalized Dialectic (Proposal Generation)
             let proposal = EpistemicEngine::propose_action(
@@ -140,7 +149,10 @@ impl AthenaSovereignCore {
             )
             .await?;
 
-            self.log(&format!("\x1b[31m>> [INTERNAL CRITIC]:\x1b[0m {} (Modifier: {:.2})", critic.critique, critic.confidence_modifier));
+            self.log(&format!(
+                "\x1b[31m>> [INTERNAL CRITIC]:\x1b[0m {} (Modifier: {:.2})",
+                critic.critique, critic.confidence_modifier
+            ));
 
             if critic.confidence_modifier < -0.25 && turn < 15 {
                 self.log("\x1b[33m>> [DIALECTIC MEMORY] Internal critic vetoed proposal. Piping critique into memory buffer...\x1b[0m");
@@ -166,14 +178,15 @@ impl AthenaSovereignCore {
                 let intent = IntentContract::new(&proposal, current_belief);
                 let capability = match &action {
                     AgentAction::ExecuteCommand { .. } => Capability::ExecuteSystemCall,
-                    AgentAction::WriteFile { .. } | AgentAction::DiffPatch { .. } | AgentAction::PatchFunction { .. } => {
-                        Capability::WriteSubstrate
-                    }
+                    AgentAction::WriteFile { .. }
+                    | AgentAction::DiffPatch { .. }
+                    | AgentAction::PatchFunction { .. } => Capability::WriteSubstrate,
                     AgentAction::Halt { .. } => Capability::HaltCognition,
                     _ => Capability::ReadSubstrate,
                 };
 
-                let motor_cmd = MotorCortex::translate(&intent, None, action, capability, proposal.clone());
+                let motor_cmd =
+                    MotorCortex::translate(&intent, None, action, capability, proposal.clone());
 
                 if let Err(e) = self.action_gate.approve(&motor_cmd) {
                     self.log(&format!("\x1b[31m>> [ACTION GATE BLOCKED]: {}\x1b[0m", e));
@@ -190,7 +203,9 @@ impl AthenaSovereignCore {
                     .await
                     .unwrap_or_else(|err| format!("[ACTION_ERROR] {}", err));
 
-                if ev.contains(".rs") && (ev.contains("[WRITE_OK]") || ev.contains("[PATCH_FUNCTION_OK]")) {
+                if ev.contains(".rs")
+                    && (ev.contains("[WRITE_OK]") || ev.contains("[PATCH_FUNCTION_OK]"))
+                {
                     rust_mutated = true;
                 }
 
@@ -201,10 +216,8 @@ impl AthenaSovereignCore {
             // Step 5: Physical Compiler Gate (Zero Hallucination Anchor)
             if rust_mutated {
                 self.log("\x1b[36m>> [PHYSICAL COMPILER GATE] Running cargo check verification...\x1b[0m");
-                let check_status = tokio::process::Command::new("cargo")
-                    .arg("check")
-                    .output()
-                    .await;
+                let check_status =
+                    tokio::process::Command::new("cargo").arg("check").output().await;
 
                 match check_status {
                     Ok(o) if o.status.success() => {
@@ -212,9 +225,15 @@ impl AthenaSovereignCore {
                         turn_evidence.push_str("\n[COMPILE_OK] Verified clean compilation.");
                     }
                     _ => {
-                        self.log("\x1b[31m>> [COMPILER GATE: FAIL] Reverting changes via git...\x1b[0m");
-                        let _ = tokio::process::Command::new("git").args(["checkout", "--", "."]).output().await;
-                        turn_evidence.push_str("\n[COMPILE_FAIL] Patch failed compiler check. Reverted.");
+                        self.log(
+                            "\x1b[31m>> [COMPILER GATE: FAIL] Reverting changes via git...\x1b[0m",
+                        );
+                        let _ = tokio::process::Command::new("git")
+                            .args(["checkout", "--", "."])
+                            .output()
+                            .await;
+                        turn_evidence
+                            .push_str("\n[COMPILE_FAIL] Patch failed compiler check. Reverted.");
                         current_belief = (current_belief - 0.2).max(0.1);
                         continue;
                     }
@@ -233,7 +252,10 @@ impl AthenaSovereignCore {
             .await?;
 
             current_belief = (current_belief + eval.confidence_modifier).clamp(0.0, 1.0);
-            self.log(&format!("\x1b[1;32m>> [SOVEREIGN STATE] Belief Score: {:.2}\x1b[0m", current_belief));
+            self.log(&format!(
+                "\x1b[1;32m>> [SOVEREIGN STATE] Belief Score: {:.2}\x1b[0m",
+                current_belief
+            ));
 
             if current_belief >= 0.88 {
                 self.log("\x1b[1;36m>> [OMNI-GUARD CONVERGENCE] Epistemic threshold reached (>=0.88). Mission Successful.\x1b[0m");
@@ -250,7 +272,9 @@ impl AthenaSovereignCore {
         };
 
         // Step 7: Automated Learning Commitment into VectorVault
-        let _ = ProbabilisticMemory::commit_learning(&self.memory, &self.api_key, directive, &outcome).await;
+        let _ =
+            ProbabilisticMemory::commit_learning(&self.memory, &self.api_key, directive, &outcome)
+                .await;
 
         Ok(outcome)
     }

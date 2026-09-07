@@ -15,8 +15,7 @@ pub struct DagPlanner;
 
 impl DagPlanner {
     fn resolve_provider() -> (String, String, String) {
-        let model =
-            env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "nexus".to_string());
+        let model = env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "nexus".to_string());
         if let Ok(gateway) = env::var("NEXUS_API_GATEWAY") {
             let api_key = env::var("NEXUS_API_KEY").unwrap_or_else(|_| "local-node".to_string());
             let endpoint = format!("{}/v1/chat/completions", gateway.trim_end_matches("/"));

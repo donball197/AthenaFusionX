@@ -11,11 +11,8 @@ impl DiffEngine {
         }
 
         // 2. Whitespace-normalized line window matching (handles LLM tab/space drift)
-        let search_trimmed_lines: Vec<&str> = search
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty())
-            .collect();
+        let search_trimmed_lines: Vec<&str> =
+            search.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
 
         if search_trimmed_lines.is_empty() {
             return Err(anyhow!("Search block is empty."));
@@ -37,7 +34,7 @@ impl DiffEngine {
                 let mut new_lines = source_lines[..i].to_vec();
                 new_lines.push(replace);
                 new_lines.extend(&source_lines[i + search_trimmed_lines.len()..]);
-                
+
                 let mut res = new_lines.join("\n");
                 if source.ends_with('\n') && !res.ends_with('\n') {
                     res.push('\n');

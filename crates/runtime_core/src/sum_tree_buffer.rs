@@ -17,11 +17,7 @@ impl TextChunk {
         let text = text.into();
         let bytes_count = text.len();
         let lines_count = text.matches('\n').count();
-        Self {
-            text,
-            lines_count,
-            bytes_count,
-        }
+        Self { text, lines_count, bytes_count }
     }
 }
 

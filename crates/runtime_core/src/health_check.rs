@@ -1,1 +1,3 @@
-pub fn is_healthy() -> bool { true }
+pub fn is_healthy() -> bool {
+    true
+}

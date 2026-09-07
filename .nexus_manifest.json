@@ -163,6 +163,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-3.8-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-flash-latest",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
@@ -193,12 +199,6 @@
   },
   {
     "provider": "Google",
-    "name": "gemini-robotics-er-1.6-preview",
-    "context": "131.1K in / 65.5K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Google",
     "name": "gemini-robotics-er-2-preview",
     "context": "131.1K in / 65.5K out",
     "category": "GENERAL"
@@ -226,6 +226,12 @@
     "name": "lyria-3-pro-preview",
     "context": "1.0M in / 65.5K out",
     "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "lyria-3.5",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
   },
   {
     "provider": "Google",
@@ -577,12 +583,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-nano-30b-a3b",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
@@ -674,12 +674,6 @@
   {
     "provider": "Nvidia",
     "name": "nvidia/vila",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "openai/gpt-oss-120b",
     "context": "Unknown",
     "category": "GENERAL"
   },

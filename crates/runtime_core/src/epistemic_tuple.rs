@@ -7,16 +7,22 @@ use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EpistemicTuple {
-    pub namespace: String,   // "AST" | "COMPILER" | "PROOF" | "INTENT"
-    pub subject: String,     // e.g. "router.rs" or "cargo_check"
-    pub predicate: String,   // e.g. "SYNTAX_VALID" | "COMPILE_OK" | "VULNERABILITY_ELIMINATED"
-    pub payload: String,     // Exact content or AST slice
-    pub confidence: f32,     // 0.0 ..= 1.0
+    pub namespace: String, // "AST" | "COMPILER" | "PROOF" | "INTENT"
+    pub subject: String,   // e.g. "router.rs" or "cargo_check"
+    pub predicate: String, // e.g. "SYNTAX_VALID" | "COMPILE_OK" | "VULNERABILITY_ELIMINATED"
+    pub payload: String,   // Exact content or AST slice
+    pub confidence: f32,   // 0.0 ..= 1.0
     pub timestamp: u64,
 }
 
 impl EpistemicTuple {
-    pub fn new(namespace: &str, subject: &str, predicate: &str, payload: &str, confidence: f32) -> Self {
+    pub fn new(
+        namespace: &str,
+        subject: &str,
+        predicate: &str,
+        payload: &str,
+        confidence: f32,
+    ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -39,9 +45,7 @@ pub struct EpistemicBlackboard {
 
 impl EpistemicBlackboard {
     pub fn new() -> Self {
-        Self {
-            tuples: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self { tuples: Arc::new(RwLock::new(HashMap::new())) }
     }
 
     pub async fn post(&self, tuple: EpistemicTuple) {
@@ -66,7 +70,13 @@ impl EpistemicBlackboard {
         let mut out = String::from("=== EPISTEMIC BLACKBOARD FACTS ===\n");
         for (key, list) in map.iter() {
             for t in list {
-                out.push_str(&format!("[{}] {} -> {} (Conf: {:.2})\n", key, t.predicate, t.payload.lines().next().unwrap_or(""), t.confidence));
+                out.push_str(&format!(
+                    "[{}] {} -> {} (Conf: {:.2})\n",
+                    key,
+                    t.predicate,
+                    t.payload.lines().next().unwrap_or(""),
+                    t.confidence
+                ));
             }
         }
         out

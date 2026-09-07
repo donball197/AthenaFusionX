@@ -102,8 +102,10 @@ impl ApiGateway {
                 }
 
                 let req = match resolved.auth {
-                    nexus_runtime_core::provider::AuthStyle::Bearer => ureq::post(&resolved.endpoint)
-                        .set("Authorization", &format!("Bearer {}", resolved.api_key)),
+                    nexus_runtime_core::provider::AuthStyle::Bearer => {
+                        ureq::post(&resolved.endpoint)
+                            .set("Authorization", &format!("Bearer {}", resolved.api_key))
+                    }
                     nexus_runtime_core::provider::AuthStyle::GoogleApiKey => {
                         ureq::post(&resolved.endpoint).set("x-goog-api-key", &resolved.api_key)
                     }
@@ -123,7 +125,8 @@ impl ApiGateway {
                 let response_json: Value = response.into_json()?;
                 let msg = &response_json["choices"][0]["message"];
 
-                tokens_total += response_json["usage"]["total_tokens"].as_u64().unwrap_or(0) as usize;
+                tokens_total +=
+                    response_json["usage"]["total_tokens"].as_u64().unwrap_or(0) as usize;
 
                 let tool_calls = msg["tool_calls"].as_array();
 

@@ -51,8 +51,7 @@ impl CognitiveBudget {
 pub struct SubgoalCompletionEngine;
 
 fn has_word(text: &str, word: &str) -> bool {
-    text.split_whitespace()
-        .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == word)
+    text.split_whitespace().any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == word)
 }
 
 fn any_word(text: &str, words: &[&str]) -> bool {
@@ -94,8 +93,12 @@ impl SubgoalCompletionEngine {
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
 
-        let has_patch = any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate", "mutate"]);
-        let has_write = any_word_unnegated(classify_text, &["write", "export", "save", "implement", "integrate", "add", "create", "synthesize"]);
+        let has_patch =
+            any_word_unnegated(classify_text, &["patch", "apply", "fix", "remediate", "mutate"]);
+        let has_write = any_word_unnegated(
+            classify_text,
+            &["write", "export", "save", "implement", "integrate", "add", "create", "synthesize"],
+        );
 
         if has_patch || has_write {
             is_mutation_task = true;
@@ -104,17 +107,52 @@ impl SubgoalCompletionEngine {
             } else {
                 conditions.push(CompletionCondition::WriteMarkerAcquired);
             }
-            if any_word(classify_text, &["roadmap", "audit", "comparison", "comparative", "compare", "comparing", "compares", "compared", "versus"]) {
+            if any_word(
+                classify_text,
+                &[
+                    "roadmap",
+                    "audit",
+                    "comparison",
+                    "comparative",
+                    "compare",
+                    "comparing",
+                    "compares",
+                    "compared",
+                    "versus",
+                ],
+            ) {
                 conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
             }
         } else {
             let first_word = classify_text.split_whitespace().next().unwrap_or("");
             let is_recon_intent = [
-                "read", "analyze", "inspect", "search", "examine", "locate", "profile", "benchmark", "audit"
-            ].contains(&first_word);
+                "read",
+                "analyze",
+                "inspect",
+                "search",
+                "examine",
+                "locate",
+                "profile",
+                "benchmark",
+                "audit",
+            ]
+            .contains(&first_word);
 
-            let has_read_intent = any_word_unnegated(classify_text, &["read", "examine", "inspect", "analyze", "investigate", "contrast", "compare", "evaluate"]);
-            let has_search_intent = any_word_unnegated(classify_text, &["search", "find", "locate"]);
+            let has_read_intent = any_word_unnegated(
+                classify_text,
+                &[
+                    "read",
+                    "examine",
+                    "inspect",
+                    "analyze",
+                    "investigate",
+                    "contrast",
+                    "compare",
+                    "evaluate",
+                ],
+            );
+            let has_search_intent =
+                any_word_unnegated(classify_text, &["search", "find", "locate"]);
 
             if is_recon_intent || has_read_intent || has_search_intent {
                 if has_read_intent && has_search_intent {
@@ -135,7 +173,15 @@ impl SubgoalCompletionEngine {
         }
 
         let arts = extract_required_artifact_paths(objective);
-        if !arts.is_empty() && !conditions.iter().any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired | CompletionCondition::WriteMarkerAcquired)) {
+        if !arts.is_empty()
+            && !conditions.iter().any(|c| {
+                matches!(
+                    c,
+                    CompletionCondition::PatchMarkerAcquired
+                        | CompletionCondition::WriteMarkerAcquired
+                )
+            })
+        {
             conditions.push(CompletionCondition::WriteMarkerAcquired);
         }
 
@@ -148,16 +194,12 @@ impl SubgoalCompletionEngine {
         }
     }
 
-    pub fn evaluate(
-        contract: &SubgoalContract, 
-        local_evidence: &str, 
-        belief_score: f32
-    ) -> bool {
+    pub fn evaluate(contract: &SubgoalContract, local_evidence: &str, belief_score: f32) -> bool {
         let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(
-            &contract.node_id, 
+            &contract.node_id,
             local_evidence,
             belief_score,
-            &contract.conditions
+            &contract.conditions,
         );
         matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
     }
@@ -169,13 +211,24 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
     let tokens: Vec<&str> = objective.split_whitespace().collect();
 
     for (i, tok) in tokens.iter().enumerate() {
-        let clean = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-');
-        if exts.iter().any(|ext| clean.ends_with(&format!(".{}", ext))) && (clean.contains('/') || clean.contains('.')) {
+        let clean = tok.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-'
+        });
+        if exts.iter().any(|ext| clean.ends_with(&format!(".{}", ext)))
+            && (clean.contains('/') || clean.contains('.'))
+        {
             // Check context window for read vs write
             let start = i.saturating_sub(3);
             let prev = tokens[start..i].join(" ").to_lowercase();
-            let is_read_src = prev.contains("read") || prev.contains("from") || prev.contains("inspect") || prev.contains("cat");
-            let is_write_tgt = prev.contains("to") || prev.contains("write") || prev.contains("save") || prev.contains("export") || prev.contains("synthesize");
+            let is_read_src = prev.contains("read")
+                || prev.contains("from")
+                || prev.contains("inspect")
+                || prev.contains("cat");
+            let is_write_tgt = prev.contains("to")
+                || prev.contains("write")
+                || prev.contains("save")
+                || prev.contains("export")
+                || prev.contains("synthesize");
 
             if (!is_read_src || is_write_tgt) && !out.iter().any(|a| a.path == clean) {
                 out.push(ArtifactSpec {

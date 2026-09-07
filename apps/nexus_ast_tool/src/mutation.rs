@@ -4,7 +4,7 @@
 
 use proc_macro2::LineColumn;
 use syn::spanned::Spanned;
-use syn::{Item, ItemFn, Visibility, parse_file};
+use syn::{parse_file, Item, ItemFn, Visibility};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -65,38 +65,46 @@ impl MutationStrategy for ReplaceFunctionBody {
         self.validate_payload(payload)?;
         let file = parse_file(source)?;
 
-        let target_fn = file.items.iter().find_map(|item| {
-            match item {
+        let target_fn = file
+            .items
+            .iter()
+            .find_map(|item| match item {
                 Item::Fn(ItemFn { sig, block, .. }) if sig.ident == symbol => Some(block.span()),
-                Item::Impl(syn::ItemImpl { items, .. }) => {
-                    items.iter().find_map(|i| {
-                        if let syn::ImplItem::Fn(method) = i {
-                            if method.sig.ident == symbol {
-                                return Some(method.block.span());
-                            }
+                Item::Impl(syn::ItemImpl { items, .. }) => items.iter().find_map(|i| {
+                    if let syn::ImplItem::Fn(method) = i {
+                        if method.sig.ident == symbol {
+                            return Some(method.block.span());
                         }
-                        None
-                    })
-                }
+                    }
+                    None
+                }),
                 _ => None,
-            }
-        }).ok_or_else(|| MutationError::SymbolNotFound { symbol: symbol.to_string() })?;
+            })
+            .ok_or_else(|| MutationError::SymbolNotFound { symbol: symbol.to_string() })?;
 
         let start = line_column_to_byte_offset(source, target_fn.start());
         let end = line_column_to_byte_offset(source, target_fn.end());
 
         let line_start = source[..start].rfind('\n').map_or(0, |pos| pos + 1);
-        let indent = source[line_start..start].chars().take_while(|c| c.is_whitespace()).collect::<String>();
+        let indent =
+            source[line_start..start].chars().take_while(|c| c.is_whitespace()).collect::<String>();
 
         let inner = format!("{}    ", indent);
-        let formatted_payload = payload.lines().map(|l| {
-            if l.trim().is_empty() { "".into() } else { format!("{}{}", inner, l.trim()) }
-        }).collect::<Vec<_>>().join("
-");
+        let formatted_payload = payload
+            .lines()
+            .map(|l| if l.trim().is_empty() { "".into() } else { format!("{}{}", inner, l.trim()) })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
 
-        let new_block_str = format!("{{
+        let new_block_str = format!(
+            "{{
 {}
-{}}}", formatted_payload, indent);
+{}}}",
+            formatted_payload, indent
+        );
 
         let mut new_source = source.to_string();
         new_source.replace_range(start..end, &new_block_str);
@@ -125,8 +133,7 @@ impl MutationStrategy for RenameSymbol {
             if let Item::Fn(ItemFn { sig, .. }) = item {
                 if sig.ident == symbol {
                     let span = sig.ident.span();
-                    let start =
-                        line_column_to_byte_offset(source, span.start());
+                    let start = line_column_to_byte_offset(source, span.start());
                     let end = line_column_to_byte_offset(source, span.end());
                     new_source.replace_range(start..end, payload);
                     found = true;
@@ -221,35 +228,44 @@ impl MutationStrategy for InsertEarlyReturn {
     }
     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
         let file = parse_file(source)?;
-        let target_fn = file.items.iter().find_map(|item| {
-            match item {
+        let target_fn = file
+            .items
+            .iter()
+            .find_map(|item| match item {
                 Item::Fn(ItemFn { sig, block, .. }) if sig.ident == symbol => {
                     Some(block.brace_token.span.open().start())
                 }
-                Item::Impl(syn::ItemImpl { items, .. }) => {
-                    items.iter().find_map(|i| {
-                        if let syn::ImplItem::Fn(method) = i {
-                            if method.sig.ident == symbol {
-                                return Some(method.block.brace_token.span.open().start());
-                            }
+                Item::Impl(syn::ItemImpl { items, .. }) => items.iter().find_map(|i| {
+                    if let syn::ImplItem::Fn(method) = i {
+                        if method.sig.ident == symbol {
+                            return Some(method.block.brace_token.span.open().start());
                         }
-                        None
-                    })
-                }
+                    }
+                    None
+                }),
                 _ => None,
-            }
-        }).ok_or_else(|| MutationError::SymbolNotFound { symbol: symbol.to_string() })?;
+            })
+            .ok_or_else(|| MutationError::SymbolNotFound { symbol: symbol.to_string() })?;
 
         let brace_offset = line_column_to_byte_offset(source, target_fn);
 
         // Dynamically extract indentation based on the brace offset
         let line_start = source[..brace_offset].rfind('\n').map_or(0, |pos| pos + 1);
-        let indent = source[line_start..brace_offset].chars().take_while(|c| c.is_whitespace()).collect::<String>();
-        
+        let indent = source[line_start..brace_offset]
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect::<String>();
+
         let mut new_source = source.to_string();
         // Use extracted indent + 4 spaces for the return statement
-        new_source.insert_str(brace_offset + 1, &format!("
-{}    return {};", indent, payload));
+        new_source.insert_str(
+            brace_offset + 1,
+            &format!(
+                "
+{}    return {};",
+                indent, payload
+            ),
+        );
 
         Ok(new_source)
     }
@@ -265,9 +281,13 @@ impl MutationStrategy for InsertComment {
         if payload.trim().is_empty() {
             return Err(MutationError::InvalidPayload("Comment payload cannot be empty".into()));
         }
-        if payload.contains("
-") {
-            return Err(MutationError::InvalidPayload("Comment payload must be a single line".into()));
+        if payload.contains(
+            "
+",
+        ) {
+            return Err(MutationError::InvalidPayload(
+                "Comment payload must be a single line".into(),
+            ));
         }
         Ok(())
     }
@@ -276,29 +296,30 @@ impl MutationStrategy for InsertComment {
         self.validate_payload(payload)?;
         let file = parse_file(source)?;
 
-        let target_span_start = file.items.iter().find_map(|item| {
-            match item {
+        let target_span_start = file
+            .items
+            .iter()
+            .find_map(|item| match item {
                 Item::Fn(ItemFn { sig, .. }) if sig.ident == symbol => {
                     Some(sig.ident.span().start())
                 }
-                Item::Impl(syn::ItemImpl { items, .. }) => {
-                    items.iter().find_map(|i| {
-                        if let syn::ImplItem::Fn(method) = i {
-                            if method.sig.ident == symbol {
-                                return Some(method.sig.ident.span().start());
-                            }
+                Item::Impl(syn::ItemImpl { items, .. }) => items.iter().find_map(|i| {
+                    if let syn::ImplItem::Fn(method) = i {
+                        if method.sig.ident == symbol {
+                            return Some(method.sig.ident.span().start());
                         }
-                        None
-                    })
-                }
+                    }
+                    None
+                }),
                 _ => None,
-            }
-        }).ok_or_else(|| MutationError::SymbolNotFound { symbol: symbol.to_string() })?;
+            })
+            .ok_or_else(|| MutationError::SymbolNotFound { symbol: symbol.to_string() })?;
 
         let start = line_column_to_byte_offset(source, target_span_start);
         let line_start = source[..start].rfind('\n').map_or(0, |p| p + 1);
 
-        let indent: String = source[line_start..start].chars().take_while(|c| c.is_whitespace()).collect();
+        let indent: String =
+            source[line_start..start].chars().take_while(|c| c.is_whitespace()).collect();
         let comment = format!("{}// {}", indent, payload.trim());
 
         let mut out = String::with_capacity(source.len() + comment.len() + 1);

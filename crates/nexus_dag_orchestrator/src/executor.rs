@@ -27,15 +27,20 @@ impl DagExecutor {
 
     fn execute_grounded_task(description: &str, _evidence_context: &str) -> Option<String> {
         let desc_lower = description.to_lowercase();
-        
+
         // 1. Direct Physical Shell Execution for Compiler & Build Checks
-        if desc_lower.contains("cargo check") || desc_lower.contains("compiler check") || desc_lower.contains("build dry-run") {
-            println!("  -> [PHYSICAL ENGINE] Executing real host command: `cargo check --workspace`");
+        if desc_lower.contains("cargo check")
+            || desc_lower.contains("compiler check")
+            || desc_lower.contains("build dry-run")
+        {
+            println!(
+                "  -> [PHYSICAL ENGINE] Executing real host command: `cargo check --workspace`"
+            );
             let output = Command::new("cargo")
                 .args(["check", "--workspace", "--color", "never"])
                 .output()
                 .ok()?;
-            
+
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
@@ -44,7 +49,9 @@ impl DagExecutor {
         }
 
         // 2. Direct Physical Filesystem Scans
-        if (desc_lower.contains("scan") || desc_lower.contains("list")) && desc_lower.contains("top-level") {
+        if (desc_lower.contains("scan") || desc_lower.contains("list"))
+            && desc_lower.contains("top-level")
+        {
             println!("  -> [PHYSICAL ENGINE] Executing filesystem scan on workspace root");
             if let Ok(entries) = std::fs::read_dir(".") {
                 let mut files = Vec::new();
@@ -59,7 +66,8 @@ impl DagExecutor {
                 }
                 dirs.sort();
                 files.sort();
-                let result = format!("{{\n  \"directories\": {:?},\n  \"files\": {:?}\n}}", dirs, files);
+                let result =
+                    format!("{{\n  \"directories\": {:?},\n  \"files\": {:?}\n}}", dirs, files);
                 return Some(result);
             }
         }
@@ -105,12 +113,17 @@ impl DagExecutor {
             );
             println!("Objective: {}", description);
             if !parent_evidence.is_empty() {
-                println!("[+] Injecting {} bytes of historical DAG evidence.", parent_evidence.len());
+                println!(
+                    "[+] Injecting {} bytes of historical DAG evidence.",
+                    parent_evidence.len()
+                );
             }
             println!("==================================================");
 
             // Check if task can be physically executed directly on host
-            let task_output = if let Some(physical_output) = Self::execute_grounded_task(&description, &parent_evidence) {
+            let task_output = if let Some(physical_output) =
+                Self::execute_grounded_task(&description, &parent_evidence)
+            {
                 println!("\n[+] Physical Result:\n{}", physical_output);
                 Some(physical_output)
             } else {
@@ -118,14 +131,14 @@ impl DagExecutor {
                 let full_prompt = if parent_evidence.is_empty() {
                     description.clone()
                 } else {
-                    format!("{}\n\nBACKGROUND CONTEXT (Results from previous steps):\n{}", description, parent_evidence)
+                    format!(
+                        "{}\n\nBACKGROUND CONTEXT (Results from previous steps):\n{}",
+                        description, parent_evidence
+                    )
                 };
 
-                let output = Command::new(&bin_path)
-                    .arg("--tier")
-                    .arg(&tier)
-                    .arg(&full_prompt)
-                    .output();
+                let output =
+                    Command::new(&bin_path).arg("--tier").arg(&tier).arg(&full_prompt).output();
 
                 match output {
                     Ok(out) if out.status.success() => {
@@ -135,7 +148,10 @@ impl DagExecutor {
                     }
                     Ok(out) => {
                         let err = String::from_utf8_lossy(&out.stderr);
-                        eprintln!("\n[Orchestrator] Task [{}] FAILED with code: {} | {}", task_id, out.status, err);
+                        eprintln!(
+                            "\n[Orchestrator] Task [{}] FAILED with code: {} | {}",
+                            task_id, out.status, err
+                        );
                         None
                     }
                     Err(e) => {

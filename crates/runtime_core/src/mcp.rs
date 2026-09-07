@@ -3,7 +3,7 @@
 //! Exposes AST scanning, triage, memory query, and VirtualFS dry-runs over JSON-RPC 2.0.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -154,15 +154,37 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
 pub fn tool_declarations_for_phase(phase: CognitivePhase) -> Vec<FunctionDeclaration> {
     let all = all_tool_declarations();
     match phase {
-        CognitivePhase::Reconnaissance => all.into_iter().filter(|t| {
-            t.name == "read_file" || t.name == "read_file_chunk" || t.name == "search_code" || t.name == "search_memory" || t.name == "execute_command"
-        }).collect(),
-        CognitivePhase::Execution => all.into_iter().filter(|t| {
-            t.name == "write_file" || t.name == "diff_patch" || t.name == "patch_function" || t.name == "replace_lines" || t.name == "synthesize_report" || t.name == "execute_command" || t.name == "halt"
-        }).collect(),
-        CognitivePhase::Verification => all.into_iter().filter(|t| {
-            t.name == "run_tests" || t.name == "execute_command" || t.name == "read_file" || t.name == "halt"
-        }).collect(),
+        CognitivePhase::Reconnaissance => all
+            .into_iter()
+            .filter(|t| {
+                t.name == "read_file"
+                    || t.name == "read_file_chunk"
+                    || t.name == "search_code"
+                    || t.name == "search_memory"
+                    || t.name == "execute_command"
+            })
+            .collect(),
+        CognitivePhase::Execution => all
+            .into_iter()
+            .filter(|t| {
+                t.name == "write_file"
+                    || t.name == "diff_patch"
+                    || t.name == "patch_function"
+                    || t.name == "replace_lines"
+                    || t.name == "synthesize_report"
+                    || t.name == "execute_command"
+                    || t.name == "halt"
+            })
+            .collect(),
+        CognitivePhase::Verification => all
+            .into_iter()
+            .filter(|t| {
+                t.name == "run_tests"
+                    || t.name == "execute_command"
+                    || t.name == "read_file"
+                    || t.name == "halt"
+            })
+            .collect(),
         CognitivePhase::All => all,
     }
 }
@@ -210,12 +232,17 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
         }),
         "atomic_patch" => {
             let patches_val = args.get("patches").ok_or("Missing patches field".to_string())?;
-            let patches: Vec<crate::agent_protocol::FilePatch> = serde_json::from_value(patches_val.clone()).unwrap_or_default();
+            let patches: Vec<crate::agent_protocol::FilePatch> =
+                serde_json::from_value(patches_val.clone()).unwrap_or_default();
             Ok(AgentAction::AtomicPatch {
                 patches,
-                reasoning: args.get("reasoning").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                reasoning: args
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
             })
-        },
+        }
         "diff_patch" => Ok(AgentAction::DiffPatch {
             path: get_str("path")?,
             search: get_str("search")?,
@@ -241,7 +268,8 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             let arr = args.get("source_files").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
             let source_files =
                 arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-            let out_path = args.get("output_path")
+            let out_path = args
+                .get("output_path")
                 .or_else(|| args.get("target_path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("report.md")
@@ -249,7 +277,11 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             Ok(AgentAction::SynthesizeReport {
                 output_path: out_path,
                 source_files,
-                reasoning: args.get("reasoning").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                reasoning: args
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
             })
         }
         "halt" => Ok(AgentAction::Halt { reasoning: get_str("reasoning")? }),

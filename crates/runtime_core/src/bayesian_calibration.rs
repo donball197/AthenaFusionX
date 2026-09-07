@@ -114,28 +114,15 @@ impl Default for LikelihoodTable {
             p_h.insert(format!("{c:?}"), *a);
             p_nh.insert(format!("{c:?}"), *b);
         }
-        Self {
-            p_e_given_h: p_h,
-            p_e_given_not_h: p_nh,
-        }
+        Self { p_e_given_h: p_h, p_e_given_not_h: p_nh }
     }
 }
 
 impl LikelihoodTable {
     fn lr(&self, class: EvidenceClass) -> f32 {
         let key = format!("{class:?}");
-        let p_h = self
-            .p_e_given_h
-            .get(&key)
-            .copied()
-            .unwrap_or(0.5)
-            .clamp(1e-4, 1.0 - 1e-4);
-        let p_nh = self
-            .p_e_given_not_h
-            .get(&key)
-            .copied()
-            .unwrap_or(0.5)
-            .clamp(1e-4, 1.0 - 1e-4);
+        let p_h = self.p_e_given_h.get(&key).copied().unwrap_or(0.5).clamp(1e-4, 1.0 - 1e-4);
+        let p_nh = self.p_e_given_not_h.get(&key).copied().unwrap_or(0.5).clamp(1e-4, 1.0 - 1e-4);
         p_h / p_nh
     }
 }
@@ -148,10 +135,7 @@ pub struct ModifierConfig {
 
 impl Default for ModifierConfig {
     fn default() -> Self {
-        Self {
-            scale: 2.0,
-            max_abs_llr: 1.5,
-        }
+        Self { scale: 2.0, max_abs_llr: 1.5 }
     }
 }
 
@@ -232,8 +216,7 @@ impl BayesianCalibrator {
         evidence_blob: &str,
         llm_modifier: Option<f32>,
     ) -> f32 {
-        self.calibrate(prior_belief, evidence_blob, llm_modifier)
-            .posterior
+        self.calibrate(prior_belief, evidence_blob, llm_modifier).posterior
     }
 }
 
@@ -262,11 +245,7 @@ mod tests {
     fn recon_is_weak() {
         let cal = BayesianCalibrator::default();
         let r = cal.calibrate(0.5, "[READ_OK] foo.py\nCONTENT...", Some(0.05));
-        assert!(
-            r.posterior > 0.48 && r.posterior < 0.70,
-            "posterior={}",
-            r.posterior
-        );
+        assert!(r.posterior > 0.48 && r.posterior < 0.70, "posterior={}", r.posterior);
     }
 
     #[test]
@@ -274,11 +253,7 @@ mod tests {
         let cal = BayesianCalibrator::default();
         let mut b = 0.5_f32;
         for _ in 0..3 {
-            b = cal.update_belief(
-                b,
-                "[PATCH_FUNCTION_OK] Updated function 'f' in a.rs",
-                Some(0.2),
-            );
+            b = cal.update_belief(b, "[PATCH_FUNCTION_OK] Updated function 'f' in a.rs", Some(0.2));
         }
         assert!(b > 0.85, "belief after 3 patches={}", b);
     }

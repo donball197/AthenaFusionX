@@ -17,15 +17,17 @@ impl RefactorAgent {
     pub fn extract_symbol_snippet(file_path: &Path, symbol: &str) -> Result<String> {
         let source = fs::read_to_string(file_path)
             .map_err(|e| anyhow!("Failed to read file {}: {e}", file_path.display()))?;
-        
+
         let file = syn::parse_file(&source)
             .map_err(|e| anyhow!("Failed to parse file {}: {e}", file_path.display()))?;
 
         for item in &file.items {
             if let syn::Item::Fn(syn::ItemFn { sig, block, .. }) = item {
                 if sig.ident == symbol {
-                    let start = crate::mutation::line_column_to_byte_offset(&source, block.span().start());
-                    let end = crate::mutation::line_column_to_byte_offset(&source, block.span().end());
+                    let start =
+                        crate::mutation::line_column_to_byte_offset(&source, block.span().start());
+                    let end =
+                        crate::mutation::line_column_to_byte_offset(&source, block.span().end());
                     return Ok(source[start..end].to_string());
                 }
             }
@@ -33,15 +35,21 @@ impl RefactorAgent {
                 for impl_item in &item_impl.items {
                     if let syn::ImplItem::Fn(method) = impl_item {
                         if method.sig.ident == symbol {
-                            let start = crate::mutation::line_column_to_byte_offset(&source, method.block.span().start());
-                            let end = crate::mutation::line_column_to_byte_offset(&source, method.block.span().end());
+                            let start = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.block.span().start(),
+                            );
+                            let end = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.block.span().end(),
+                            );
                             return Ok(source[start..end].to_string());
                         }
                     }
                 }
             }
         }
-        
+
         // Fallback to whole file if symbol isn't found (preserves original behavior)
         Ok(source)
     }

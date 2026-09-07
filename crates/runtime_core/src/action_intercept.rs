@@ -48,10 +48,13 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
 
     // search_code (handles [TOOL]: search_code, Tool: search_code, etc.)
     if lower.contains("search_code") {
-        let path = labeled_value(text, &["[PATH]:", "[PATH]", "Target Path:", "target path:", "Path:", "path:"])
-            .unwrap_or_else(|| "apps/warp".to_string());
-        let query = labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"])
-            .unwrap_or_default();
+        let path = labeled_value(
+            text,
+            &["[PATH]:", "[PATH]", "Target Path:", "target path:", "Path:", "path:"],
+        )
+        .unwrap_or_else(|| "apps/warp".to_string());
+        let query =
+            labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"]).unwrap_or_default();
 
         return Some(AgentAction::SearchCode {
             path,
@@ -62,7 +65,18 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
 
     // read_file
     if lower.contains("read_file") {
-        if let Some(path) = labeled_value(text, &["[PATH]:", "[PATH]", "[READ_FILE_TARGET]:", "[READ_FILE]:", "Target Path:", "Path:", "path:"]) {
+        if let Some(path) = labeled_value(
+            text,
+            &[
+                "[PATH]:",
+                "[PATH]",
+                "[READ_FILE_TARGET]:",
+                "[READ_FILE]:",
+                "Target Path:",
+                "Path:",
+                "path:",
+            ],
+        ) {
             return Some(AgentAction::ReadFile {
                 path,
                 reasoning: "Intercepted labeled read_file".to_string(),
@@ -72,7 +86,10 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
 
     // execute_command
     if lower.contains("execute_command") {
-        if let Some(cmd) = labeled_value(text, &["[COMMAND]:", "[COMMAND]", "[EXECUTE_COMMAND]:", "Command:", "command:"]) {
+        if let Some(cmd) = labeled_value(
+            text,
+            &["[COMMAND]:", "[COMMAND]", "[EXECUTE_COMMAND]:", "Command:", "command:"],
+        ) {
             return Some(AgentAction::ExecuteCommand {
                 command: cmd.trim().trim_matches('`').to_string(),
                 reasoning: "Intercepted labeled execute_command".to_string(),
@@ -95,8 +112,13 @@ fn labeled_value(text: &str, markers: &[&str]) -> Option<String> {
     for marker in markers {
         for line in text.lines() {
             let trimmed = line.trim();
-            if trimmed.len() >= marker.len() && trimmed[..marker.len()].eq_ignore_ascii_case(marker) {
-                let rest = trimmed[marker.len()..].trim().trim_matches('`').trim_matches('"').trim_matches(':');
+            if trimmed.len() >= marker.len() && trimmed[..marker.len()].eq_ignore_ascii_case(marker)
+            {
+                let rest = trimmed[marker.len()..]
+                    .trim()
+                    .trim_matches('`')
+                    .trim_matches('"')
+                    .trim_matches(':');
                 return Some(rest.trim().to_string());
             }
         }

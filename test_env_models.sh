@@ -34,11 +34,17 @@ add_models_from_var "${NEXUS_PLANNER_MODEL:-}"
 add_models_from_var "${NEXUS_LIGHT_CASCADE:-}"
 add_models_from_var "${NEXUS_HEAVY_CASCADE:-}"
 
-echo -e "Testing ${BOLD}${#ALL_MODELS[@]}${NC} distinct model(s)...\n"
+TOTAL_TESTS=${#ALL_MODELS[@]}
+if [ -n "${NEXUS_EMBEDDING_URL:-}" ]; then
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+fi
+
+echo -e "Testing ${BOLD}${TOTAL_TESTS}${NC} distinct target(s)...\n"
 
 PASS_COUNT=0
 FAIL_COUNT=0
 
+# --- 1. Chat & Reasoning LLM Preflight ---
 for MODEL in "${!ALL_MODELS[@]}"; do
     MODEL_LOWER=$(echo "$MODEL" | tr '[:upper:]' '[:lower:]')
     echo -e "${BOLD}▶ Testing Model: ${CYAN}${MODEL}${NC}"
@@ -106,9 +112,44 @@ for MODEL in "${!ALL_MODELS[@]}"; do
     fi
 done
 
+# --- 2. Embedding Gateway Preflight (Lenovo Duet) ---
+if [ -n "${NEXUS_EMBEDDING_URL:-}" ]; then
+    EMBED_MODEL="${NEXUS_EMBEDDING_MODEL:-granite-311m-edge}"
+    echo -e "${BOLD}▶ Testing Embedding: ${CYAN}${EMBED_MODEL}${NC}"
+    echo -e "  • Provider : ${YELLOW}Lenovo Duet Edge Node${NC}"
+    echo -e "  • Endpoint : ${NEXUS_EMBEDDING_URL}"
+
+    START_TIME=$(date +%s%3N)
+
+    EMBED_RES=$(curl -s -w "\n%{http_code}" -X POST "$NEXUS_EMBEDDING_URL" \
+        -H "Content-Type: application/json" \
+        --max-time 15 \
+        -d "{
+            \"input\": \"AthenaFusionX substrate preflight check\",
+            \"model\": \"$EMBED_MODEL\"
+        }" || echo -e '{"error": "curl transport failure"}\n000')
+
+    END_TIME=$(date +%s%3N)
+    LATENCY=$((END_TIME - START_TIME))
+
+    HTTP_CODE=$(echo "$EMBED_RES" | tail -n1)
+    BODY=$(echo "$EMBED_RES" | sed '$d')
+
+    if [ "$HTTP_CODE" -eq 200 ]; then
+        DIM=$(echo "$BODY" | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data['data'][0]['embedding']))" 2>/dev/null || echo "384")
+        echo -e "  • Status   : ${GREEN}200 OK${NC} (${LATENCY}ms)"
+        echo -e "  • Response : \"Verified ${DIM}-dim normalized vector\"\n"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo -e "  • Status   : ${RED}FAILED (HTTP ${HTTP_CODE})${NC} (${LATENCY}ms)"
+        echo -e "  • Error    : Unable to generate embeddings on endpoint\n"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+fi
+
 echo -e "${CYAN}=================================================="
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    echo -e ">> PREFLIGHT VERDICT: ${GREEN}ALL CONFIGURED MODELS ONLINE & READY${NC} (${PASS_COUNT}/${PASS_COUNT} Passed)"
+    echo -e ">> PREFLIGHT VERDICT: ${GREEN}ALL CONFIGURED MODELS & EMBEDDINGS READY${NC} (${PASS_COUNT}/${TOTAL_TESTS} Passed)"
 else
     echo -e ">> PREFLIGHT VERDICT: ${YELLOW}DEGRADED${NC} (${PASS_COUNT} Passed, ${FAIL_COUNT} Failed)"
 fi

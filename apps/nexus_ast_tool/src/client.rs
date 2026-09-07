@@ -28,19 +28,30 @@ impl ApiClient {
         let lower = model.to_ascii_lowercase();
 
         // 1. Google Cloud
-        if lower.contains("gemini") || (lower.contains("gemma") && !lower.contains("e4b") && !lower.contains("google/")) {
+        if lower.contains("gemini")
+            || (lower.contains("gemma") && !lower.contains("e4b") && !lower.contains("google/"))
+        {
             let api_key = env::var("GEMINI_API_KEY")
                 .or_else(|_| env::var("GOOGLE_API_KEY"))
-                .map_err(|_| anyhow!("GEMINI_API_KEY or GOOGLE_API_KEY required for Google Cloud models"))?;
+                .map_err(|_| {
+                    anyhow!("GEMINI_API_KEY or GOOGLE_API_KEY required for Google Cloud models")
+                })?;
             return Ok(LlmEndpoint {
                 model,
-                url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
+                url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                    .to_string(),
                 api_key,
             });
         }
 
         // 2. NVIDIA NIM Cloud
-        if lower.contains("nvidia") || lower.contains("nemotron") || lower.contains("deepseek") || lower.contains("meta/") || lower.contains("moonshotai/") || lower.starts_with("google/") {
+        if lower.contains("nvidia")
+            || lower.contains("nemotron")
+            || lower.contains("deepseek")
+            || lower.contains("meta/")
+            || lower.contains("moonshotai/")
+            || lower.starts_with("google/")
+        {
             let api_key = env::var("NVIDIA_API_KEY")
                 .map_err(|_| anyhow!("NVIDIA_API_KEY required for NVIDIA models"))?;
             return Ok(LlmEndpoint {
@@ -56,18 +67,15 @@ impl ApiClient {
             .unwrap_or_else(|_| "http://192.168.4.223:9379/v1".to_string());
 
         let clean = base_url.trim_end_matches('/');
-        let url = if clean.ends_with("/v1/chat/completions") || clean.ends_with("/chat/completions") {
+        let url = if clean.ends_with("/v1/chat/completions") || clean.ends_with("/chat/completions")
+        {
             clean.to_string()
         } else {
             format!("{}/chat/completions", clean)
         };
         let api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "local-s23-device".to_string());
 
-        Ok(LlmEndpoint {
-            model,
-            url,
-            api_key,
-        })
+        Ok(LlmEndpoint { model, url, api_key })
     }
 
     fn call(prompt: &str, temperature: f32) -> Result<String> {
@@ -134,7 +142,9 @@ impl ApiClient {
 
     fn strip_code_fences(raw: &str) -> String {
         let mut t = raw.trim();
-        for lang_tag in &["```php", "```python", "```py", "```javascript", "```js", "```json", "```"] {
+        for lang_tag in
+            &["```php", "```python", "```py", "```javascript", "```js", "```json", "```"]
+        {
             if let Some(rest) = t.strip_prefix(lang_tag) {
                 t = rest;
                 break;
@@ -149,7 +159,10 @@ impl ApiClient {
     fn extract_payload(text: &str) -> Result<String> {
         if let Some(start) = text.find("<payload>") {
             let actual_start = start + "<payload>".len();
-            let end = text[actual_start..].find("</payload>").map(|idx| actual_start + idx).unwrap_or(text.len());
+            let end = text[actual_start..]
+                .find("</payload>")
+                .map(|idx| actual_start + idx)
+                .unwrap_or(text.len());
             let inner = &text[actual_start..end];
             let cleaned = Self::strip_code_fences(inner);
             if !cleaned.trim().is_empty() {
@@ -242,10 +255,13 @@ impl ApiClient {
 
         let is_php = lang.eq_ignore_ascii_case("PHP");
         let is_python = lang.eq_ignore_ascii_case("Python");
-        let is_js = lang.eq_ignore_ascii_case("JavaScript") || lang.eq_ignore_ascii_case("TypeScript");
+        let is_js =
+            lang.eq_ignore_ascii_case("JavaScript") || lang.eq_ignore_ascii_case("TypeScript");
 
         let (rules, exemplar) = if is_php {
-            let is_if_sink = (code_snippet.contains("if (") || code_snippet.contains("if(!") || code_snippet.contains("if (!"))
+            let is_if_sink = (code_snippet.contains("if (")
+                || code_snippet.contains("if(!")
+                || code_snippet.contains("if (!"))
                 && code_snippet.trim_end().ends_with(')');
             let is_secondary_sink = code_snippet.trim().starts_with("$result = mysqli_query")
                 || code_snippet.trim().starts_with("$result=mysqli_query");
@@ -364,10 +380,8 @@ impl ApiClient {
         );
 
         if let Some((validation_error, previous_payload)) = correction {
-            prompt.push_str(&format!(
-                "\nError: {}\nPrev: {}\n",
-                validation_error, previous_payload
-            ));
+            prompt
+                .push_str(&format!("\nError: {}\nPrev: {}\n", validation_error, previous_payload));
         }
 
         let text = Self::call(&prompt, 0.0)?;
@@ -386,20 +400,20 @@ impl ApiClient {
     fn extract_text(response: ureq::Response) -> Result<String> {
         let json: serde_json::Value = response.into_json()?;
         let msg = &json["choices"][0]["message"];
-        
+
         // Handle OpenAI, Nemotron reasoning models, and standard assistant messages
         if let Some(content) = msg["content"].as_str() {
             if !content.trim().is_empty() {
                 return Ok(content.to_string());
             }
         }
-        
+
         if let Some(rc) = msg["reasoning_content"].as_str() {
             if !rc.trim().is_empty() {
                 return Ok(rc.to_string());
             }
         }
-        
+
         Err(anyhow!("Model returned empty content payload"))
     }
 }

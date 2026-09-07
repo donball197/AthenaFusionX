@@ -43,11 +43,11 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
 
     // 2. Google Cloud (Gemini models AND Cloud Gemma models like gemma-4-31b-it)
     if model.contains("gemini") || (model.contains("gemma") && !model.contains("google/")) {
-        let api_key = env::var("GEMINI_API_KEY")
-            .or_else(|_| env::var("GOOGLE_API_KEY"))
-            .unwrap_or_default();
+        let api_key =
+            env::var("GEMINI_API_KEY").or_else(|_| env::var("GOOGLE_API_KEY")).unwrap_or_default();
         return ProviderResolved {
-            endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
+            endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                .to_string(),
             api_key,
             auth: AuthStyle::GoogleApiKey,
             provider_name: "google",
@@ -55,7 +55,12 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
     }
 
     // 3. NVIDIA NIM Cloud (nvidia/*, meta/*, deepseek/*, google/*)
-    if model.contains("nvidia") || model.contains("nemotron") || model.contains("deepseek") || model.contains("meta/") || model.starts_with("google/") {
+    if model.contains("nvidia")
+        || model.contains("nemotron")
+        || model.contains("deepseek")
+        || model.contains("meta/")
+        || model.starts_with("google/")
+    {
         let api_key = env::var("NVIDIA_API_KEY").unwrap_or_default();
         return ProviderResolved {
             endpoint: "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),

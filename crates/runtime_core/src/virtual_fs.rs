@@ -2,10 +2,10 @@
 //!
 //! Provides isolated dry-run environments for AST remediation and agent mutations.
 
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileState {
@@ -23,10 +23,7 @@ pub struct VirtualFS {
 
 impl VirtualFS {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
-        Self {
-            base_dir: base_dir.as_ref().to_path_buf(),
-            overlay: HashMap::new(),
-        }
+        Self { base_dir: base_dir.as_ref().to_path_buf(), overlay: HashMap::new() }
     }
 
     fn normalize_path(&self, path: impl AsRef<Path>) -> PathBuf {
@@ -51,10 +48,12 @@ impl VirtualFS {
         let norm = self.normalize_path(path);
         if let Some(state) = self.overlay.get(&norm) {
             return match state {
-                FileState::Unmodified(bytes) | FileState::Modified(bytes) | FileState::Created(bytes) => {
-                    Ok(bytes.clone())
+                FileState::Unmodified(bytes)
+                | FileState::Modified(bytes)
+                | FileState::Created(bytes) => Ok(bytes.clone()),
+                FileState::Deleted => {
+                    Err(anyhow!("File '{:?}' has been deleted in VFS overlay", norm))
                 }
-                FileState::Deleted => Err(anyhow!("File '{:?}' has been deleted in VFS overlay", norm)),
             };
         }
 

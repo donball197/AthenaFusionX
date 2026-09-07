@@ -1,4 +1,3 @@
-pub mod health_check;
 pub mod agent_protocol;
 pub mod arbiter_agent;
 pub mod cli_utils;
@@ -17,6 +16,7 @@ pub mod evolution_engine;
 pub mod executor;
 pub mod fitness_evaluator;
 pub mod governance;
+pub mod health_check;
 pub mod hypothesis;
 pub mod hypothesis_engine;
 pub mod json_parser;
@@ -42,9 +42,9 @@ pub mod wasm_runtime;
 pub mod world_model;
 
 pub mod action_gate;
-pub mod bayesian_calibration;
 pub mod action_intercept;
 pub mod ast_editor;
+pub mod bayesian_calibration;
 pub mod belief_causality;
 pub mod belief_feedback;
 pub mod belief_policy;
@@ -74,11 +74,11 @@ pub use client::ApiClient;
 pub use config::NexusConfig;
 pub mod anti_loop;
 pub mod contract_status;
-pub mod sovereign_core;
 pub mod epistemic_tuple;
 pub mod probabilistic_memory;
+pub mod sovereign_core;
 
 // Phase 1 Architecture Evolution Modules
-pub mod virtual_fs;
-pub mod sum_tree_buffer;
 pub mod mcp;
+pub mod sum_tree_buffer;
+pub mod virtual_fs;

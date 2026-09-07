@@ -50,16 +50,15 @@ pub fn sanitize_model_patch(raw_response: &str, is_php: bool) -> String {
         }
     }
 
-    let mut result = if cleaned_lines.is_empty() {
-        code_block.to_string()
-    } else {
-        cleaned_lines.join("\n")
-    };
+    let mut result =
+        if cleaned_lines.is_empty() { code_block.to_string() } else { cleaned_lines.join("\n") };
 
     // 3. Structural Control-Flow Normalization:
     // If the patch ends with an `if (...) {` header, trim trailing `{` so it splices cleanly before an existing `{`
     let trimmed_end = result.trim_end();
-    if (trimmed_end.contains("if (") || trimmed_end.contains("if(!") || trimmed_end.contains("if (!"))
+    if (trimmed_end.contains("if (")
+        || trimmed_end.contains("if(!")
+        || trimmed_end.contains("if (!"))
         && trimmed_end.ends_with('{')
     {
         result = trimmed_end.trim_end_matches('{').trim_end().to_string();

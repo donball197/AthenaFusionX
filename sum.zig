@@ -1,15 +1,17 @@
+// Freestanding WebAssembly Cell for AthenaFusionX
 var buffer: [65536]u8 = undefined;
 
-export fn get_buffer_ptr() [*]u8 {
+// 1. Export buffer pointer for zero-copy host memory write
+pub export fn get_buffer_ptr() [*]u8 {
     return &buffer;
 }
 
-export fn sumBytes(len: i32) f32 {
-    var total: u32 = 0;
-    var i: usize = 0;
-    const ulen = @as(usize, @intCast(len));
-    while (i < ulen) : (i += 1) {
-        total += buffer[i];
+// 2. Export kernel execution function (sumBytes)
+pub export fn sumBytes(len: i32) f32 {
+    var sum: f32 = 0.0;
+    const length: usize = @intCast(len);
+    for (buffer[0..length]) |b| {
+        sum += @floatFromInt(b);
     }
-    return @as(f32, @floatFromInt(total));
+    return sum;
 }

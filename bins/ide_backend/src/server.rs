@@ -6,9 +6,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use nexus_runtime_core::mcp::McpServer;
 use nexus_runtime_core::memory_cortex::MemoryCortex;
 use nexus_runtime_core::shared_state::VmoState;
-use nexus_runtime_core::mcp::McpServer;
 use rust_embed::RustEmbed;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -79,10 +79,7 @@ pub async fn unified_gateway(
     (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
 }
 
-pub async fn mcp_handler(
-    State(state): State<Arc<AppState>>,
-    body: String,
-) -> impl IntoResponse {
+pub async fn mcp_handler(State(state): State<Arc<AppState>>, body: String) -> impl IntoResponse {
     let response = state.mcp.handle_request(&body);
     ([(header::CONTENT_TYPE, "application/json")], response)
 }

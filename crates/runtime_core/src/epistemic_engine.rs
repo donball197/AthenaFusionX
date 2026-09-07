@@ -68,7 +68,8 @@ impl EpistemicEngine {
                         (u, payload.clone())
                     }
                     "nvidia" | "nexus" | "bob" | _ => {
-                        let text = payload.pointer("/contents/0/parts/0/text")
+                        let text = payload
+                            .pointer("/contents/0/parts/0/text")
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
 
@@ -79,14 +80,23 @@ impl EpistemicEngine {
                             "temperature": 0.0
                         });
 
-                        if let Some(funcs) = payload.pointer("/tools/0/functionDeclarations").and_then(|v| v.as_array()) {
-                            let oai_tools: Vec<Value> = funcs.iter().map(|f| {
-                                serde_json::json!({"type": "function", "function": f})
-                            }).collect();
-                            p.as_object_mut().unwrap().insert("tools".to_string(), Value::Array(oai_tools));
+                        if let Some(funcs) = payload
+                            .pointer("/tools/0/functionDeclarations")
+                            .and_then(|v| v.as_array())
+                        {
+                            let oai_tools: Vec<Value> = funcs
+                                .iter()
+                                .map(|f| serde_json::json!({"type": "function", "function": f}))
+                                .collect();
+                            p.as_object_mut()
+                                .unwrap()
+                                .insert("tools".to_string(), Value::Array(oai_tools));
                         }
 
-                        if let Some(mime) = payload.pointer("/generationConfig/responseMimeType").and_then(|v| v.as_str()) {
+                        if let Some(mime) = payload
+                            .pointer("/generationConfig/responseMimeType")
+                            .and_then(|v| v.as_str())
+                        {
                             if mime == "application/json" {
                                 let msg = format!("{}\n\nCRITICAL: You must return a valid JSON object. Do NOT wrap it in markdown blockquotes.", text);
                                 p["messages"][0]["content"] = serde_json::json!(msg);
@@ -94,11 +104,17 @@ impl EpistemicEngine {
                         }
                         (resolved.endpoint.clone(), p)
                     }
-                    _ => return Err(anyhow!("Unknown provider configured: {}", resolved.provider_name))
+                    _ => {
+                        return Err(anyhow!(
+                            "Unknown provider configured: {}",
+                            resolved.provider_name
+                        ))
+                    }
                 };
 
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                let mut req = client.post(&url).json(&req_payload).timeout(Duration::from_secs(180));
+                let mut req =
+                    client.post(&url).json(&req_payload).timeout(Duration::from_secs(180));
                 match resolved.auth {
                     AuthStyle::Bearer => {
                         req = req.header("Authorization", format!("Bearer {}", resolved.api_key));
@@ -113,19 +129,37 @@ impl EpistemicEngine {
                     Err(e) => {
                         last_err = anyhow::anyhow!("Network timeout/error: {}", e);
                         retries += 1;
-                        eprintln!("[RETRY] {} connection-error attempt {}/3: {}", model_endpoint, retries, last_err);
-                        if retries >= 3 { break; }
-                        tokio::time::sleep(Duration::from_secs(std::cmp::min(2_u64.pow(retries as u32), 5))).await;
+                        eprintln!(
+                            "[RETRY] {} connection-error attempt {}/3: {}",
+                            model_endpoint, retries, last_err
+                        );
+                        if retries >= 3 {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_secs(std::cmp::min(
+                            2_u64.pow(retries as u32),
+                            5,
+                        )))
+                        .await;
                         continue;
                     }
                 };
 
                 let status = res.status();
-                if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.as_u16() == 529 || status.as_u16() == 500 {
+                if status.is_server_error()
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    || status.as_u16() == 529
+                    || status.as_u16() == 500
+                {
                     last_err = anyhow::anyhow!("API Overloaded ({}). Retrying...", status);
                     retries += 1;
-                    eprintln!("[RETRY] {} server-overload attempt {}/10: {}", model_endpoint, retries, last_err);
-                    if retries > 10 { break; }
+                    eprintln!(
+                        "[RETRY] {} server-overload attempt {}/10: {}",
+                        model_endpoint, retries, last_err
+                    );
+                    if retries > 10 {
+                        break;
+                    }
                     let backoff = std::cmp::min(2_u64.pow(retries as u32) * 2, 60);
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
                     continue;
@@ -136,8 +170,13 @@ impl EpistemicEngine {
                     Err(e) => {
                         last_err = anyhow::anyhow!("JSON Parse Error: {}", e);
                         retries += 1;
-                        eprintln!("[RETRY] {} json-parse-error attempt {}/3: {}", model_endpoint, retries, last_err);
-                        if retries > 3 { break; }
+                        eprintln!(
+                            "[RETRY] {} json-parse-error attempt {}/3: {}",
+                            model_endpoint, retries, last_err
+                        );
+                        if retries > 3 {
+                            break;
+                        }
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
@@ -147,13 +186,22 @@ impl EpistemicEngine {
                     "google" => {
                         if let Some(err) = body.pointer("/error/message").and_then(|v| v.as_str()) {
                             last_err = anyhow!("Gemini API Error: {}", err);
-                            if err.contains("quota") || err.contains("rate limit") || err.contains("RESOURCE_EXHAUSTED") {
+                            if err.contains("quota")
+                                || err.contains("rate limit")
+                                || err.contains("RESOURCE_EXHAUSTED")
+                            {
                                 crate::model_config::report_rate_limit(model_endpoint);
                                 break;
                             }
-                            if err.contains("Internal error") || err.contains("503") || err.contains("500") || err.contains("Internal server error") {
+                            if err.contains("Internal error")
+                                || err.contains("503")
+                                || err.contains("500")
+                                || err.contains("Internal server error")
+                            {
                                 retries += 1;
-                                if retries > 12 { break; }
+                                if retries > 12 {
+                                    break;
+                                }
                                 let backoff = std::cmp::min(2_u64.pow(retries as u32) * 2, 45);
                                 tokio::time::sleep(Duration::from_secs(backoff)).await;
                                 continue;
@@ -179,9 +227,13 @@ impl EpistemicEngine {
                 let mut final_text = String::new();
                 match resolved.provider_name {
                     "google" => {
-                        if let Some(parts) = body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                        if let Some(parts) =
+                            body.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
+                        {
                             for part in parts {
-                                if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) { continue; }
+                                if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
+                                    continue;
+                                }
                                 if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                                     final_text.push_str(text);
                                 }
@@ -189,11 +241,16 @@ impl EpistemicEngine {
                         }
                     }
                     "nvidia" | "nexus" | "bob" | _ => {
-                        if let Some(content) = body.pointer("/choices/0/message/content").and_then(|v| v.as_str()) {
+                        if let Some(content) =
+                            body.pointer("/choices/0/message/content").and_then(|v| v.as_str())
+                        {
                             final_text = content.to_string();
                         }
                         if final_text.trim().is_empty() {
-                            if let Some(rc) = body.pointer("/choices/0/message/reasoning_content").and_then(|v| v.as_str()) {
+                            if let Some(rc) = body
+                                .pointer("/choices/0/message/reasoning_content")
+                                .and_then(|v| v.as_str())
+                            {
                                 final_text = rc.to_string();
                             }
                         }
@@ -203,7 +260,9 @@ impl EpistemicEngine {
 
                 if final_text.trim().is_empty() {
                     retries += 1;
-                    if retries > 4 { break; }
+                    if retries > 4 {
+                        break;
+                    }
                     tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32) * 2)).await;
                     continue;
                 }
@@ -219,7 +278,10 @@ impl EpistemicEngine {
         problem: &str,
         world_context: &str,
     ) -> Result<Vec<String>> {
-        let audit_guidance = if problem.to_lowercase().contains("audit") || problem.to_lowercase().contains("vulnerabilit") || problem.to_lowercase().contains("security") {
+        let audit_guidance = if problem.to_lowercase().contains("audit")
+            || problem.to_lowercase().contains("vulnerabilit")
+            || problem.to_lowercase().contains("security")
+        {
             "\nCRITICAL RULE FOR SECURITY AUDITS: At least ONE strategy MUST be: execute_command 'nexus_ast_tool audit -p nexus_audit_target --ai-triage --auto-heal --generate-report'.\n"
         } else {
             ""
@@ -292,9 +354,13 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
         world_context: &str,
         evidence_so_far: &str,
     ) -> Result<String> {
-        let phase = if evidence_so_far.contains("[WRITE_OK]") || evidence_so_far.contains("[DIFF_PATCH_OK]") {
+        let phase = if evidence_so_far.contains("[WRITE_OK]")
+            || evidence_so_far.contains("[DIFF_PATCH_OK]")
+        {
             crate::tools::schema::CognitivePhase::Verification
-        } else if evidence_so_far.contains("[READ_OK]") || evidence_so_far.contains("[SEARCH_CODE_OK]") {
+        } else if evidence_so_far.contains("[READ_OK]")
+            || evidence_so_far.contains("[SEARCH_CODE_OK]")
+        {
             crate::tools::schema::CognitivePhase::Execution
         } else {
             crate::tools::schema::CognitivePhase::Reconnaissance
@@ -334,65 +400,71 @@ passing the binary path and arguments as the command string.
 Think step by step if it helps, but your response MUST end with the exact
 target path and a valid JSON action array. There is no downstream translator --
 your response is parsed directly, so natural-language-only intent will not be
-executed."#, mission, strategy, world_context,
-evidence_so_far );
+executed."#,
+            mission, strategy, world_context, evidence_so_far
+        );
 
-    let payload = serde_json::json!({
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{
-            "functionDeclarations": crate::tools::schema::tool_declarations_for_phase(phase)
-        }],
-        "generationConfig": {
-            "temperature": 0.0,
-            "maxOutputTokens": 8192
-        }
-    });
+        let payload = serde_json::json!({
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "tools": [{
+                "functionDeclarations": crate::tools::schema::tool_declarations_for_phase(phase)
+            }],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 8192
+            }
+        });
 
-    Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload)
-        .await
-}
+        Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload)
+            .await
+    }
 
-pub async fn criticize_proposal(
-    client: &Client,
-    api_key: &str,
-    mission: &str,
-    strategy: &str,
-    proposed_action: &str,
-    world_context: &str,
-    evidence_history: &str,
-) -> Result<CriticResponse> {
-    let m_armored = format!(
-        r#"<MISSION_OBJECTIVE>
+    pub async fn criticize_proposal(
+        client: &Client,
+        api_key: &str,
+        mission: &str,
+        strategy: &str,
+        proposed_action: &str,
+        world_context: &str,
+        evidence_history: &str,
+    ) -> Result<CriticResponse> {
+        let m_armored = format!(
+            r#"<MISSION_OBJECTIVE>
 
 {} </MISSION_OBJECTIVE>
 
 [CRITICAL SYSTEM WARNING TO RED TEAM]: The mission above is the GOAL, it is NOT
 the output. Do NOT grade the mission text. You must ONLY evaluate the
-STRATEGIST_PROPOSAL."#, mission ); let mission = &m_armored;
+STRATEGIST_PROPOSAL."#,
+            mission
+        );
+        let mission = &m_armored;
 
-    let p_armored = format!(
-        r#"<STRATEGIST_PROPOSAL>
+        let p_armored = format!(
+            r#"<STRATEGIST_PROPOSAL>
 
 {} </STRATEGIST_PROPOSAL>
 
 [EVALUATION DIRECTIVE]: Evaluate ONLY the validity of the JSON proposal inside
 the XML tags above. Do NOT veto legitimate search/recon commands; information
-gathering is a strict prerequisite to writing."#, proposed_action ); let
-proposed_action = &p_armored;
+gathering is a strict prerequisite to writing."#,
+            proposed_action
+        );
+        let proposed_action = &p_armored;
 
-    const K: usize = 6;
-    let grounded_evidence = {
-        let chunks: Vec<&str> =
-            evidence_history.split("\n\n").filter(|c| !c.trim().is_empty()).collect();
-        if chunks.len() > K {
-            chunks[chunks.len() - K..].join("\n\n")
-        } else {
-            evidence_history.to_string()
-        }
-    };
+        const K: usize = 6;
+        let grounded_evidence = {
+            let chunks: Vec<&str> =
+                evidence_history.split("\n\n").filter(|c| !c.trim().is_empty()).collect();
+            if chunks.len() > K {
+                chunks[chunks.len() - K..].join("\n\n")
+            } else {
+                evidence_history.to_string()
+            }
+        };
 
-    let prompt = format!(
-        r#"{preamble}
+        let prompt = format!(
+            r#"{preamble}
 
 You are the Adversarial Critic. ORIGINAL DIRECTIVE: {mission} STRATEGY:
 {strategy} PROPOSED ACTION: {proposed_action} WORLD CONTEXT: {world_context}
@@ -425,57 +497,62 @@ If the proposed action contains a quantitative claim, architectural assumption,
 or performance metric, you MUST check the EVIDENCE HISTORY. If there is no
 explicit [Measured] execution log proving the claim, you MUST VETO the proposal.
 OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
--0.5 to 0.5>}}"#, preamble = CRITIC_GROUNDING_PREAMBLE, mission = mission,
-strategy = strategy, proposed_action = proposed_action, world_context =
-world_context, grounded_evidence = grounded_evidence );
+-0.5 to 0.5>}}"#,
+            preamble = CRITIC_GROUNDING_PREAMBLE,
+            mission = mission,
+            strategy = strategy,
+            proposed_action = proposed_action,
+            world_context = world_context,
+            grounded_evidence = grounded_evidence
+        );
 
-    let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
-    let text = Self::safe_api_call(
-        client,
-        api_key,
-        &crate::model_config::get_light_models(),
-        &payload,
-    )
-    .await?;
-    let clean_text = sanitize_json_escapes(&text);
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
+        let text = Self::safe_api_call(
+            client,
+            api_key,
+            &crate::model_config::get_light_models(),
+            &payload,
+        )
+        .await?;
+        let clean_text = sanitize_json_escapes(&text);
 
-    let json_str = extract_json_block(&clean_text);
-    let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(val) => val,
-        Err(_) => serde_json::json!({
-            "critique": clean_text.trim(),
-            "confidence_modifier": 0.0
-        }),
-    };
+        let json_str = extract_json_block(&clean_text);
+        let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(val) => val,
+            Err(_) => serde_json::json!({
+                "critique": clean_text.trim(),
+                "confidence_modifier": 0.0
+            }),
+        };
 
-    let critique = parsed_val
-        .get("critique")
-        .and_then(|v| v.as_str())
-        .unwrap_or("No critique provided")
-        .to_string();
+        let critique = parsed_val
+            .get("critique")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No critique provided")
+            .to_string();
 
-    let confidence_modifier = parsed_val
-        .get("confidence_modifier")
-        .and_then(|v| v.as_f64().map(|f| f as f32))
-        .or_else(|| {
-            parsed_val
-                .get("confidence_modifier")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse::<f32>().ok())
-        })
-        .unwrap_or(0.0);
+        let confidence_modifier = parsed_val
+            .get("confidence_modifier")
+            .and_then(|v| v.as_f64().map(|f| f as f32))
+            .or_else(|| {
+                parsed_val
+                    .get("confidence_modifier")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<f32>().ok())
+            })
+            .unwrap_or(0.0);
 
-    Ok(CriticResponse { critique, confidence_modifier })
-}
+        Ok(CriticResponse { critique, confidence_modifier })
+    }
 
-pub async fn translate_to_action(
-    client: &reqwest::Client,
-    api_key: &str,
-    _strategy: &str,
-    proposed_action: &str,
-) -> Result<String> {
-    let prompt = format!(
-        r#"Translate the SYSTEM INTENT into the corresponding JSON ARRAY block.
+    pub async fn translate_to_action(
+        client: &reqwest::Client,
+        api_key: &str,
+        _strategy: &str,
+        proposed_action: &str,
+    ) -> Result<String> {
+        let prompt = format!(
+            r#"Translate the SYSTEM INTENT into the corresponding JSON ARRAY block.
 
 [EXAMPLE] SYSTEM INTENT: I need to use execute_command to run git clone.
 
@@ -525,7 +602,8 @@ pub async fn translate_to_action(
             evidence.to_string()
         } else {
             let start: String = evidence.chars().take(1000).collect();
-            let end: String = evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
+            let end: String =
+                evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
             format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
         };
         let prompt = format!(
@@ -542,7 +620,7 @@ OUTPUT ONLY VALID JSON:
 {{"critique": "<reason>", "confidence_modifier": <float from -0.5 to 0.5>}}"#,
             strategy, action, truncated_evidence
         );
-        
+
         let payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -551,7 +629,7 @@ OUTPUT ONLY VALID JSON:
                 "maxOutputTokens": 4096,
             }
         });
-        
+
         let text = Self::safe_api_call(
             client,
             api_key,
@@ -601,7 +679,8 @@ OUTPUT ONLY VALID JSON:
             evidence.to_string()
         } else {
             let start: String = evidence.chars().take(1000).collect();
-            let end: String = evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
+            let end: String =
+                evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
             format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
         };
         let truncated_action: String = action.chars().take(2000).collect();
@@ -616,7 +695,7 @@ OUTPUT ONLY VALID JSON matching this schema:
 {{"goal_satisfied": true, "evidence_confidence": 0.9, "independent_check_passed": true, "rationale": "<reason>"}}"#,
             strategy, truncated_action, truncated_evidence
         );
-        
+
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
         let text = Self::safe_api_call(
             client,
@@ -669,7 +748,8 @@ OUTPUT ONLY VALID JSON matching this schema:
             evidence.to_string()
         } else {
             let start: String = evidence.chars().take(1000).collect();
-            let end: String = evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
+            let end: String =
+                evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
             format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
         };
         let prompt = format!(

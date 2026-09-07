@@ -64,8 +64,30 @@ impl MemoryPalace {
                 let id: i64 = row.get("id");
                 let emb_str: Option<String> = row.get("embedding");
                 if let Some(s) = emb_str {
-                    if let Ok(vec) = serde_json::from_str::<Vec<f32>>(&s) {
-                        let _ = vault_guard.commit_state(id as u64, &vec);
+                    match serde_json::from_str::<Vec<f32>>(&s) {
+                        Ok(vec) if vec.len() == 384 => {
+                            if let Err(e) = vault_guard.commit_state(id as u64, &vec) {
+                                tracing::warn!(
+                                    "[MEMORY PALACE] Failed to hydrate vector id {}: {}",
+                                    id,
+                                    e
+                                );
+                            }
+                        }
+                        Ok(vec) => {
+                            tracing::warn!(
+                                "[MEMORY PALACE] Skipping vector id {}: expected 384 dimensions, got {}",
+                                id,
+                                vec.len()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[MEMORY PALACE] Skipping malformed embedding for id {}: {}",
+                                id,
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -183,6 +205,15 @@ impl MemoryPalace {
             }
         }
 
+        if let Some(ref vec) = embedding {
+            if vec.len() != 384 {
+                return Err(sqlx::Error::Protocol(format!(
+                    "Embedding dimension mismatch: expected 384, got {}",
+                    vec.len()
+                )));
+            }
+        }
+
         let emb_str = embedding.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
         let mut tx = self.pool.begin().await?;
 
@@ -209,7 +240,13 @@ impl MemoryPalace {
 
         if let Some(vec) = embedding {
             let mut vault = self.vault.lock();
-            let _ = vault.commit_state(row_id as u64, &vec);
+            if let Err(e) = vault.commit_state(row_id as u64, &vec) {
+                tracing::error!(
+                    "[MEMORY PALACE] Vector index commit failed for memory id {}: {}",
+                    row_id,
+                    e
+                );
+            }
         }
 
         Ok(())

@@ -20,16 +20,36 @@ pub struct ContextBudget {
 
 impl ContextBudget {
     pub fn minimal() -> Self {
-        Self { max_file_chars: 1_500, max_obs_lines: 2, max_schema_chars: 400, max_output_tokens: 1024 }
+        Self {
+            max_file_chars: 1_500,
+            max_obs_lines: 2,
+            max_schema_chars: 400,
+            max_output_tokens: 1024,
+        }
     }
     pub fn standard() -> Self {
-        Self { max_file_chars: 8_000, max_obs_lines: 6, max_schema_chars: 1_200, max_output_tokens: 4096 }
+        Self {
+            max_file_chars: 8_000,
+            max_obs_lines: 6,
+            max_schema_chars: 1_200,
+            max_output_tokens: 4096,
+        }
     }
     pub fn doctor() -> Self {
-        Self { max_file_chars: 15_000, max_obs_lines: 10, max_schema_chars: 1_500, max_output_tokens: 8192 }
+        Self {
+            max_file_chars: 15_000,
+            max_obs_lines: 10,
+            max_schema_chars: 1_500,
+            max_output_tokens: 8192,
+        }
     }
     pub fn security() -> Self {
-        Self { max_file_chars: 20_000, max_obs_lines: 10, max_schema_chars: 2_000, max_output_tokens: 8192 }
+        Self {
+            max_file_chars: 20_000,
+            max_obs_lines: 10,
+            max_schema_chars: 2_000,
+            max_output_tokens: 8192,
+        }
     }
 }
 
@@ -45,7 +65,10 @@ pub struct IntelligentRouter;
 impl IntelligentRouter {
     pub fn classify(d: &str) -> DirectiveClass {
         let d = d.to_lowercase();
-        if ["audit", "vulnerability", "cve", "taint", "exploit", "sqli", "security"].iter().any(|k| d.contains(k)) {
+        if ["audit", "vulnerability", "cve", "taint", "exploit", "sqli", "security"]
+            .iter()
+            .any(|k| d.contains(k))
+        {
             return DirectiveClass::SecurityAudit;
         }
         if ["wasm", "webassembly", "wat", "zig", "wasm_tester"].iter().any(|k| d.contains(k)) {
@@ -54,13 +77,22 @@ impl IntelligentRouter {
         if ["diagnose", "doctor", "fix repo", "suture", "repair"].iter().any(|k| d.contains(k)) {
             return DirectiveClass::RepoDoctor;
         }
-        if ["what", "why", "how", "explain", "describe", "status", "show", "who"].iter().any(|k| d.starts_with(k) || d.contains(k)) {
+        if ["what", "why", "how", "explain", "describe", "status", "show", "who"]
+            .iter()
+            .any(|k| d.starts_with(k) || d.contains(k))
+        {
             return DirectiveClass::Inquiry;
         }
-        if ["cargo check", "ls ", "find ", "git ", "cat "].iter().any(|k| d.starts_with(k) || d.contains(k)) {
+        if ["cargo check", "ls ", "find ", "git ", "cat "]
+            .iter()
+            .any(|k| d.starts_with(k) || d.contains(k))
+        {
             return DirectiveClass::ShellOp;
         }
-        if ["build", "implement", "create", "add feature", "extend", "generate"].iter().any(|k| d.contains(k)) {
+        if ["build", "implement", "create", "add feature", "extend", "generate"]
+            .iter()
+            .any(|k| d.contains(k))
+        {
             return DirectiveClass::FeatureBuild;
         }
         if ["fix", "patch", "edit", "replace"].iter().any(|k| d.contains(k)) {
@@ -87,22 +119,18 @@ MANDATORY SCHEMA:
 ]"#;
 
         let (primary_model, budget) = match class {
-            DirectiveClass::SecurityAudit => (
-                std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_default(),
-                ContextBudget::security()
-            ),
-            DirectiveClass::RepoDoctor => (
-                std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_default(),
-                ContextBudget::doctor()
-            ),
-            DirectiveClass::Inquiry => (
-                std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_default(),
-                ContextBudget::minimal()
-            ),
-            _ => (
-                std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_default(),
-                ContextBudget::standard()
-            ),
+            DirectiveClass::SecurityAudit => {
+                (std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_default(), ContextBudget::security())
+            }
+            DirectiveClass::RepoDoctor => {
+                (std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_default(), ContextBudget::doctor())
+            }
+            DirectiveClass::Inquiry => {
+                (std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_default(), ContextBudget::minimal())
+            }
+            _ => {
+                (std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_default(), ContextBudget::standard())
+            }
         };
 
         AgentProfile { class, primary_model, max_turns: 8, budget, persona: persona.to_string() }

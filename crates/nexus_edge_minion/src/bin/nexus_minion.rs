@@ -97,9 +97,10 @@ async fn main() {
 
         let cascade: Vec<String> = cascade_env.split(',').map(|s| s.trim().to_string()).collect();
 
-        let workspace_root = env::var("NEXUS_WORKSPACE_ROOT")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+        let workspace_root =
+            env::var("NEXUS_WORKSPACE_ROOT").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+                env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
 
         println!(">> [GATEWAY] Workspace root for tools: {}", workspace_root.display());
 

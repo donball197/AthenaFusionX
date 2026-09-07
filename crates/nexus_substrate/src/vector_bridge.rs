@@ -1,76 +1,54 @@
 use anyhow::Result;
-#[cfg(all(not(target_os = "android"), feature = "embeddings"))]
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use reqwest::Client;
 use serde_json::json;
+use std::env;
 
-// 1. Compile-time gated local embedder: Bypasses ONNX runtime linking on Android
-#[cfg(all(not(target_os = "android"), feature = "embeddings"))]
-static LOCAL_EMBEDDER: Lazy<Mutex<Option<TextEmbedding>>> = Lazy::new(|| {
-    let mut options = InitOptions::default();
-    options.model_name = EmbeddingModel::AllMiniLML6V2;
-    options.show_download_progress = false;
-    let model = TextEmbedding::try_new(options).ok();
-    Mutex::new(model)
-});
+pub async fn get_embedding(_api_key: &str, text: &str) -> Result<Vec<f32>> {
+    // The Edge gateway is the authoritative embedding provider.
+    // Do not silently mix embedding models: all persisted/query vectors
+    // must remain in the same 384-dimensional vector space.
+    let edge_url = env::var("NEXUS_EMBEDDING_URL").or_else(|_| {
+        env::var("NEXUS_EMBEDDING_GATEWAY")
+            .map(|g| format!("{}/embeddings", g.trim_end_matches('/')))
+    })?;
 
-#[allow(dead_code)]
-#[cfg(not(all(not(target_os = "android"), feature = "embeddings")))]
-static LOCAL_EMBEDDER: Lazy<Mutex<Option<()>>> = Lazy::new(|| {
-    Mutex::new(None)
-});
+    let model =
+        env::var("NEXUS_EMBEDDING_MODEL").unwrap_or_else(|_| "granite-311m-edge".to_string());
 
-pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
-
-    #[cfg(all(not(target_os = "android"), feature = "embeddings"))]
-    {
-        let text_owned = text.to_string();
-        if let Ok(Some(vector)) = tokio::task::spawn_blocking(move || {
-            let mut guard = LOCAL_EMBEDDER.lock();
-            if let Some(ref mut model) = *guard {
-                model.embed(vec![text_owned], None).ok().and_then(|mut v| v.pop())
-            } else {
-                None
-            }
-        })
-        .await
-        {
-            return Ok(vector);
-        }
-    }
-
-    // 2. Resilient Cloud Fallback (Android-ready & Dimension-matched)
-    let _ = crate::token_ledger::wait_for_quota("gemini-embedding-2", 500).await;
-
-    let external_client = Client::new();
-    let url =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent";
-
+    let client = Client::new();
     let payload = json!({
-        "model": "models/gemini-embedding-2",
-        "content": { "parts": [{ "text": text }] },
-        "outputDimensionality": 384
+        "input": text,
+        "model": model
     });
 
-    let res = external_client
-        .post(url)
-        .header("x-goog-api-key", api_key.trim())
-        .json(&payload)
-        .send()
-        .await?;
-    let body: serde_json::Value = res.json().await?;
+    let res = client.post(&edge_url).json(&payload).send().await.map_err(|e| {
+        anyhow::anyhow!("Embedding Edge gateway request failed at {}: {}", edge_url, e)
+    })?;
 
-    let mut vector = Vec::with_capacity(384);
-    if let Some(values) = body.pointer("/embedding/values").and_then(|v| v.as_array()) {
-        for v in values {
-            if let Some(f) = v.as_f64() {
-                vector.push(f as f32);
-            }
-        }
-    } else {
-        return Err(anyhow::anyhow!("API REJECTED EMBEDDING. Raw response: {}", body));
+    let status = res.status();
+    let body: serde_json::Value = res.json().await.map_err(|e| {
+        anyhow::anyhow!("Embedding Edge gateway returned invalid JSON (HTTP {}): {}", status, e)
+    })?;
+
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "Embedding Edge gateway rejected request (HTTP {}): {}",
+            status,
+            body
+        ));
+    }
+
+    let arr = body.pointer("/data/0/embedding").and_then(|v| v.as_array()).ok_or_else(|| {
+        anyhow::anyhow!("Embedding Edge gateway response missing data[0].embedding: {}", body)
+    })?;
+
+    let vector: Vec<f32> = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+
+    if vector.len() != 384 {
+        return Err(anyhow::anyhow!(
+            "Embedding dimension mismatch: expected 384, got {}",
+            vector.len()
+        ));
     }
 
     Ok(vector)
@@ -87,17 +65,4 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         return 0.0;
     }
     dot / (norm_a * norm_b)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_vector_bridge_dimensions() {
-        let vector = get_embedding("dummy_key", "test dimension consistency")
-            .await
-            .unwrap_or_else(|_| vec![0.0; 384]);
-        assert_eq!(vector.len(), 384);
-    }
 }

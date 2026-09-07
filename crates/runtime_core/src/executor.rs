@@ -149,8 +149,11 @@ impl RoboticExecutor {
                 let cmd_clone = command.clone();
                 let exec_res = tokio::time::timeout(
                     std::time::Duration::from_secs(60),
-                    tokio::task::spawn_blocking(move || crate::podman::PodmanShield::execute(&cmd_clone))
-                ).await;
+                    tokio::task::spawn_blocking(move || {
+                        crate::podman::PodmanShield::execute(&cmd_clone)
+                    }),
+                )
+                .await;
 
                 let out = match exec_res {
                     Ok(Ok(Ok(output))) => output,
@@ -167,11 +170,13 @@ impl RoboticExecutor {
                 let mut stderr_trunc = stderr;
                 if stdout_trunc.chars().count() > 2500 {
                     let safe_head: String = stdout_trunc.chars().take(2500).collect();
-                    stdout_trunc = format!("{}\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]", safe_head);
+                    stdout_trunc =
+                        format!("{}\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]", safe_head);
                 }
                 if stderr_trunc.chars().count() > 1500 {
                     let total_chars = stderr_trunc.chars().count();
-                    let safe_tail: String = stderr_trunc.chars().skip(total_chars.saturating_sub(1500)).collect();
+                    let safe_tail: String =
+                        stderr_trunc.chars().skip(total_chars.saturating_sub(1500)).collect();
                     stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", safe_tail);
                 }
 
@@ -235,21 +240,28 @@ impl RoboticExecutor {
                 tokio::fs::write(&safe_path, &content).await?;
                 _dist.broadcast_file_shift(&path, "write_file");
                 *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
-                
+
                 let snippet: String = content.chars().take(4000).collect();
-                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await.ok();
+                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet)
+                    .await
+                    .ok();
                 let _ = memory.store_memory("WriteFile", &path, &content, "Mutated", emb).await;
-                
+
                 Ok(format!("[WRITE_OK] {}", path))
             }
             MotorAction::ReadFile { path } => {
                 let safe_path = sanitize(&path)?;
                 let content = tokio::fs::read_to_string(&safe_path).await?;
                 let snippet: String = content.chars().take(4000).collect();
-                if let Ok(emb) = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await {
-                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", Some(emb)).await;
+                if let Ok(emb) =
+                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await
+                {
+                    let _ = memory
+                        .store_memory("ReadFile", &path, &content, "Observed", Some(emb))
+                        .await;
                 } else {
-                    let _ = memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
+                    let _ =
+                        memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
                 }
 
                 let total_lines = content.lines().count();
@@ -382,7 +394,8 @@ impl RoboticExecutor {
 
                 let char_count = combined.chars().count();
                 let trunc = if char_count > 3000 {
-                    let safe_tail: String = combined.chars().skip(char_count.saturating_sub(3000)).collect();
+                    let safe_tail: String =
+                        combined.chars().skip(char_count.saturating_sub(3000)).collect();
                     format!("{}...\n[OUTPUT TRUNCATED]", safe_tail)
                 } else {
                     combined
@@ -402,11 +415,16 @@ impl RoboticExecutor {
                 for patch in patches {
                     let safe_path = sanitize(&patch.path)?;
                     let original = tokio::fs::read_to_string(&safe_path).await?;
-                    let patched = crate::diff::DiffEngine::apply(&original, &patch.search, &patch.replace)?;
+                    let patched =
+                        crate::diff::DiffEngine::apply(&original, &patch.search, &patch.replace)?;
                     tokio::fs::write(&safe_path, patched).await?;
                     patched_files.push(patch.path);
                 }
-                Ok(format!("[ATOMIC_PATCH_OK] Successfully patched {} files: {:?}", patched_files.len(), patched_files))
+                Ok(format!(
+                    "[ATOMIC_PATCH_OK] Successfully patched {} files: {:?}",
+                    patched_files.len(),
+                    patched_files
+                ))
             }
             MotorAction::DiffPatch { path, search, replace } => {
                 let safe_path = sanitize(&path)?;
@@ -415,11 +433,13 @@ impl RoboticExecutor {
                 tokio::fs::write(&safe_path, &patched).await?;
                 _dist.broadcast_file_shift(&path, "diff_patch");
                 *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
-                
+
                 let snippet: String = patched.chars().take(4000).collect();
-                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await.ok();
+                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet)
+                    .await
+                    .ok();
                 let _ = memory.store_memory("DiffPatch", &path, &patched, "Mutated", emb).await;
-                
+
                 Ok(format!("[DIFF_PATCH_OK] Applied changes to {}", path))
             }
             MotorAction::PatchFunction { path, function_name, new_body } => {
@@ -502,7 +522,12 @@ impl RoboticExecutor {
                         let raw_output_path = Path::new(&output_path);
                         let workspace_root = std::env::current_dir()
                             .and_then(std::fs::canonicalize)
-                            .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+                            .map_err(|e| {
+                                anyhow!(
+                                    "PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})",
+                                    e
+                                )
+                            })?;
                         let output_target = if raw_output_path.is_absolute() {
                             raw_output_path.to_path_buf()
                         } else {

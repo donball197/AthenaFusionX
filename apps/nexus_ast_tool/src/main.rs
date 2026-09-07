@@ -82,13 +82,19 @@ fn external_lint(lang_str: &str, source: &str, orig_path: &Path) -> Option<bool>
 }
 
 fn run_project_test_suite(repo_path: &Path) -> Option<bool> {
-    println!("==> [Test Suite Gate] Auto-detecting project test harness in {}...", repo_path.display());
+    println!(
+        "==> [Test Suite Gate] Auto-detecting project test harness in {}...",
+        repo_path.display()
+    );
 
     let (program, args): (&str, Vec<&str>) = if repo_path.join("Cargo.toml").exists() {
         ("cargo", vec!["test", "--color", "never"])
-    } else if repo_path.join("phpunit.xml").exists() || repo_path.join("phpunit.xml.dist").exists() {
+    } else if repo_path.join("phpunit.xml").exists() || repo_path.join("phpunit.xml.dist").exists()
+    {
         ("vendor/bin/phpunit", vec![])
-    } else if repo_path.join("pytest.ini").exists() || (repo_path.join("tests").exists() && repo_path.join("requirements.txt").exists()) {
+    } else if repo_path.join("pytest.ini").exists()
+        || (repo_path.join("tests").exists() && repo_path.join("requirements.txt").exists())
+    {
         ("pytest", vec![])
     } else if repo_path.join("package.json").exists() {
         ("npm", vec!["test", "--", "--passWithNoTests"])
@@ -98,10 +104,7 @@ fn run_project_test_suite(repo_path: &Path) -> Option<bool> {
     };
 
     println!("    [🧪 Running] {} {}", program, args.join(" "));
-    let output = Command::new(program)
-        .args(&args)
-        .current_dir(repo_path)
-        .output();
+    let output = Command::new(program).args(&args).current_dir(repo_path).output();
 
     match output {
         Ok(o) => {
@@ -110,7 +113,10 @@ fn run_project_test_suite(repo_path: &Path) -> Option<bool> {
                 Some(true)
             } else {
                 let err_msg = String::from_utf8_lossy(&o.stderr);
-                println!("    [❌ Test Suite Failed]\n{}", err_msg.lines().take(10).collect::<Vec<_>>().join("\n"));
+                println!(
+                    "    [❌ Test Suite Failed]\n{}",
+                    err_msg.lines().take(10).collect::<Vec<_>>().join("\n")
+                );
                 Some(false)
             }
         }
@@ -256,7 +262,10 @@ fn main() -> Result<()> {
                     .unwrap()
                     .as_secs();
                 branch_name = format!("nexus/security-remediation-{}", ts);
-                println!("==> [Git Automation] Creating isolated remediation branch: {}...", branch_name);
+                println!(
+                    "==> [Git Automation] Creating isolated remediation branch: {}...",
+                    branch_name
+                );
                 let _ = Command::new("git")
                     .args(["checkout", "-b", &branch_name])
                     .current_dir(&scan_path)
@@ -328,7 +337,8 @@ fn main() -> Result<()> {
                             &finding.source_snippet,
                         ) {
                             Ok((state_raw, llm_severity, reason)) => {
-                                let classification = match state_raw.trim().to_uppercase().as_str() {
+                                let classification = match state_raw.trim().to_uppercase().as_str()
+                                {
                                     "EXPLOITABLE" => "EXPLOITABLE",
                                     "SAFE" => "SAFE",
                                     _ => "UNKNOWN",
@@ -346,11 +356,15 @@ fn main() -> Result<()> {
                                         "## 🚨 Vulnerability: {}\n",
                                         finding.pattern_name.to_uppercase()
                                     ));
-                                    report_md
-                                        .push_str(&format!("- **Severity:** {}\n", finding.severity));
+                                    report_md.push_str(&format!(
+                                        "- **Severity:** {}\n",
+                                        finding.severity
+                                    ));
                                     report_md.push_str(&format!(
                                         "- **File:** `{}` (Sink lines {}-{})\n\n",
-                                        file_path_str, finding.sink_start_line, finding.sink_end_line
+                                        file_path_str,
+                                        finding.sink_start_line,
+                                        finding.sink_end_line
                                     ));
                                     report_md.push_str(&format!("### Description\n{}\n\n", reason));
                                     report_md.push_str(&format!(
@@ -373,7 +387,9 @@ fn main() -> Result<()> {
 
                                         let lines: Vec<&str> = file_source.lines().collect();
 
-                                        let Some((live_sink_start, live_sink_end)) = resolve_anchor(&file_source, &finding) else {
+                                        let Some((live_sink_start, live_sink_end)) =
+                                            resolve_anchor(&file_source, &finding)
+                                        else {
                                             println!("        [ℹ️ Already Resolved] Sink lines no longer present. Marked clean.");
                                             already_resolved_count += 1;
                                             continue;
@@ -381,21 +397,26 @@ fn main() -> Result<()> {
 
                                         let live_sink_line = live_sink_start + 1;
 
-                                        let is_secondary_fetch = finding.sink_text.contains("$result = mysqli_query")
+                                        let is_secondary_fetch = finding
+                                            .sink_text
+                                            .contains("$result = mysqli_query")
                                             || finding.sink_text.contains("$result=mysqli_query");
 
-                                        let (cleaned_patch, effective_start, effective_end) = if is_secondary_fetch && file_source.contains("$stmt = $con->prepare") {
-                                            println!("        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement.");
-                                            (
-                                                "$result = $stmt->get_result();".to_string(),
-                                                live_sink_start,
-                                                live_sink_end,
-                                            )
-                                        } else {
-                                            let mut eff_start = live_sink_start;
-                                            let mut eff_end = live_sink_end;
+                                        let (cleaned_patch, effective_start, effective_end) =
+                                            if is_secondary_fetch
+                                                && file_source.contains("$stmt = $con->prepare")
+                                            {
+                                                println!("        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement.");
+                                                (
+                                                    "$result = $stmt->get_result();".to_string(),
+                                                    live_sink_start,
+                                                    live_sink_end,
+                                                )
+                                            } else {
+                                                let mut eff_start = live_sink_start;
+                                                let mut eff_end = live_sink_end;
 
-                                            let taint = extract_query_var(&finding.sink_text).and_then(|var_name| {
+                                                let taint = extract_query_var(&finding.sink_text).and_then(|var_name| {
                                                 nexus_ast_tool::polyglot::find_concat_assignment(
                                                     &file_source,
                                                     &finding.language.tree_sitter_language(),
@@ -405,18 +426,21 @@ fn main() -> Result<()> {
                                                 .map(|(c_start, c_end, _)| (var_name, c_start, c_end))
                                             });
 
-                                            if let Some((ref var_name, c_start, _c_end)) = taint {
-                                                println!(
+                                                if let Some((ref var_name, c_start, _c_end)) = taint
+                                                {
+                                                    println!(
                                                     "        [🔗 Multi-Site Taint] {} built near line {}. Splicing locally to line {}.",
                                                     var_name, c_start, live_sink_line
                                                 );
-                                                eff_start = c_start.saturating_sub(1);
-                                                eff_end = live_sink_end.min(lines.len().saturating_sub(1));
-                                            }
+                                                    eff_start = c_start.saturating_sub(1);
+                                                    eff_end = live_sink_end
+                                                        .min(lines.len().saturating_sub(1));
+                                                }
 
-                                            let effective_snippet = lines[eff_start..=eff_end].join("\n");
+                                                let effective_snippet =
+                                                    lines[eff_start..=eff_end].join("\n");
 
-                                            let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
+                                                let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
                                                 &finding.pattern_name, &effective_snippet, &lang_str,
                                             ) {
                                                 Ok(r) => r,
@@ -427,25 +451,31 @@ fn main() -> Result<()> {
                                                 }
                                             };
 
-                                            let is_php = lang_str.eq_ignore_ascii_case("PHP");
-                                            let raw_cleaned = nexus_ast_tool::sanitizer::sanitize_model_patch(&replacement, is_php);
-                                            let target_first_line = lines[eff_start];
-                                            let indented_patch = format_with_indentation(&raw_cleaned, target_first_line);
+                                                let is_php = lang_str.eq_ignore_ascii_case("PHP");
+                                                let raw_cleaned =
+                                                    nexus_ast_tool::sanitizer::sanitize_model_patch(
+                                                        &replacement,
+                                                        is_php,
+                                                    );
+                                                let target_first_line = lines[eff_start];
+                                                let indented_patch = format_with_indentation(
+                                                    &raw_cleaned,
+                                                    target_first_line,
+                                                );
 
-                                            (
-                                                indented_patch,
-                                                eff_start,
-                                                eff_end,
-                                            )
-                                        };
+                                                (indented_patch, eff_start, eff_end)
+                                            };
 
                                         if cleaned_patch.trim().is_empty() {
-                                            println!("        [❌ Patch Rejected] Empty replacement.");
+                                            println!(
+                                                "        [❌ Patch Rejected] Empty replacement."
+                                            );
                                             failed_fix_count += 1;
                                             continue;
                                         }
 
-                                        let crlf = file_source.matches("\r\n").count() * 2 > file_source.matches('\n').count();
+                                        let crlf = file_source.matches("\r\n").count() * 2
+                                            > file_source.matches('\n').count();
                                         let sep = if crlf { "\r\n" } else { "\n" };
                                         let patch_text = if crlf {
                                             cleaned_patch.replace('\n', "\r\n")
@@ -453,21 +483,32 @@ fn main() -> Result<()> {
                                             cleaned_patch.clone()
                                         };
 
-                                        let mut new_source = String::with_capacity(file_source.len() + patch_text.len());
+                                        let mut new_source = String::with_capacity(
+                                            file_source.len() + patch_text.len(),
+                                        );
                                         new_source.push_str(&lines[..effective_start].join(sep));
-                                        if effective_start > 0 { new_source.push_str(sep); }
+                                        if effective_start > 0 {
+                                            new_source.push_str(sep);
+                                        }
                                         new_source.push_str(&patch_text);
                                         if effective_end + 1 < lines.len() {
                                             new_source.push_str(sep);
-                                            new_source.push_str(&lines[effective_end + 1..].join(sep));
+                                            new_source
+                                                .push_str(&lines[effective_end + 1..].join(sep));
                                         }
-                                        if file_source.ends_with('\n') && !new_source.ends_with('\n') {
+                                        if file_source.ends_with('\n')
+                                            && !new_source.ends_with('\n')
+                                        {
                                             new_source.push_str(sep);
                                         }
 
                                         // Gate 1: Formal Syntax Check
                                         let ts_ok = finding.language.parses_cleanly(&new_source);
-                                        let lint = if ts_ok { external_lint(&lang_str, &new_source, &finding.path) } else { None };
+                                        let lint = if ts_ok {
+                                            external_lint(&lang_str, &new_source, &finding.path)
+                                        } else {
+                                            None
+                                        };
                                         let syntax_ok = ts_ok && lint.unwrap_or(true);
 
                                         // Gate 2: Semantic Integrity Gate
@@ -485,29 +526,43 @@ fn main() -> Result<()> {
                                                     false
                                                 }
                                             }
-                                        } else { false };
+                                        } else {
+                                            false
+                                        };
 
                                         // Gate 3: Strict AST Rescan
                                         let ast_ok = if syntax_ok && semantic_ok {
                                             let new_start = effective_start + 1;
-                                            let new_end = new_start + patch_text.lines().count().saturating_sub(1);
-                                            let residuals = PolyglotScanner::scan_source(&finding.path, &new_source, &rules);
+                                            let new_end = new_start
+                                                + patch_text.lines().count().saturating_sub(1);
+                                            let residuals = PolyglotScanner::scan_source(
+                                                &finding.path,
+                                                &new_source,
+                                                &rules,
+                                            );
                                             !residuals.iter().any(|f| {
                                                 f.pattern_name == finding.pattern_name
                                                     && f.sink_start_line + 2 >= new_start
                                                     && f.sink_end_line <= new_end + 2
                                             })
-                                        } else { false };
+                                        } else {
+                                            false
+                                        };
 
                                         if syntax_ok && semantic_ok && ast_ok {
                                             if let Err(e) = fs::write(&finding.path, &new_source) {
-                                                println!("        [❌ Patch Error] I/O write error: {}", e);
+                                                println!(
+                                                    "        [❌ Patch Error] I/O write error: {}",
+                                                    e
+                                                );
                                                 failed_fix_count += 1;
                                                 continue;
                                             }
                                             fixed_count += 1;
                                             println!("        [✅ Patch Verified] Syntax OK, Semantic checks passed, and AST rescan confirms sink eliminated.");
-                                            report_md.push_str("### Recommended Patch (Auto-Healed, Verified)\n");
+                                            report_md.push_str(
+                                                "### Recommended Patch (Auto-Healed, Verified)\n",
+                                            );
                                             report_md.push_str(&format!(
                                                 "```{}\n{}\n```\n\n---\n\n",
                                                 lang_str.to_lowercase(),
@@ -527,7 +582,10 @@ fn main() -> Result<()> {
                                         };
 
                                         failed_fix_count += 1;
-                                        println!("        [❌ Patch Rejected] {}. Nothing was written.", reject_reason);
+                                        println!(
+                                            "        [❌ Patch Rejected] {}. Nothing was written.",
+                                            reject_reason
+                                        );
                                         report_md.push_str(&format!(
                                             "### Recommended Patch (REJECTED: {} - never written)\n```{}\n{}\n```\n\n---\n\n",
                                             reject_reason, lang_str.to_lowercase(), cleaned_patch));
@@ -553,11 +611,8 @@ fn main() -> Result<()> {
             }
 
             // Always execute test suite if requested, regardless of findings count
-            let tests_passed = if run_tests {
-                run_project_test_suite(&scan_path).unwrap_or(true)
-            } else {
-                true
-            };
+            let tests_passed =
+                if run_tests { run_project_test_suite(&scan_path).unwrap_or(true) } else { true };
 
             let remediation_clean = failed_fix_count == 0
                 && actionable_count == (fixed_count + already_resolved_count)
@@ -568,10 +623,15 @@ fn main() -> Result<()> {
                 report_md.push_str(&format!("- **Actionable findings:** {}\n", actionable_count));
                 report_md.push_str(&format!("- **Verified fixed:** {}\n", fixed_count));
                 report_md.push_str(&format!("- **Remediation failed:** {}\n", failed_fix_count));
-                report_md.push_str(&format!("- **Already resolved:** {}\n", already_resolved_count));
+                report_md
+                    .push_str(&format!("- **Already resolved:** {}\n", already_resolved_count));
                 report_md.push_str(&format!("- **Explicitly safe:** {}\n", safe_count));
-                report_md.push_str(&format!("- **Unknown (needs manual review):** {}\n", unknown_count));
-                report_md.push_str(&format!("- **Test Suite Status:** {}\n", if tests_passed { "PASSED / SKIPPED" } else { "FAILED" }));
+                report_md
+                    .push_str(&format!("- **Unknown (needs manual review):** {}\n", unknown_count));
+                report_md.push_str(&format!(
+                    "- **Test Suite Status:** {}\n",
+                    if tests_passed { "PASSED / SKIPPED" } else { "FAILED" }
+                ));
 
                 if remediation_clean {
                     report_md.push_str("\n## Remediation Integrity\n\n**PASS** — Every actionable finding was verified fixed and passed all gates.\n\n");
@@ -603,7 +663,10 @@ fn main() -> Result<()> {
                     .status();
 
                 if commit_status.map(|s| s.success()).unwrap_or(false) {
-                    println!("    [🚀 Git Commit OK] Branch `{}` is ready for Pull Request creation.", branch_name);
+                    println!(
+                        "    [🚀 Git Commit OK] Branch `{}` is ready for Pull Request creation.",
+                        branch_name
+                    );
                 }
             }
         }

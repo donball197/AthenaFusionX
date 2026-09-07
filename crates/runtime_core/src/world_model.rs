@@ -87,13 +87,15 @@ impl WorldModel {
                     .values()
                     .map(|entry| {
                         let lower = entry.to_lowercase();
-                        let score = mission_words.iter().filter(|w| lower.contains(w.as_str())).count();
+                        let score =
+                            mission_words.iter().filter(|w| lower.contains(w.as_str())).count();
                         (score, entry)
                     })
                     .collect();
                 scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 
-                let mut evidence_block = String::from("[PRIOR MISSION EVIDENCE FROM OTHER NODES (Distilled)]\n");
+                let mut evidence_block =
+                    String::from("[PRIOR MISSION EVIDENCE FROM OTHER NODES (Distilled)]\n");
                 for (_, entry) in scored.into_iter().take(3) {
                     evidence_block.push_str(entry);
                     evidence_block.push_str("\n---\n");

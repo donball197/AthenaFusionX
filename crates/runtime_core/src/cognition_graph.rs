@@ -46,8 +46,7 @@ pub struct GraphEdge {
     pub weight: f32,
 }
 
-#[derive(Debug, Clone, Default)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CognitiveGraph {
     pub nodes: HashMap<Uuid, CognitiveNode>,
     pub edges: Vec<GraphEdge>,

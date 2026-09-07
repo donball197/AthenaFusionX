@@ -1,11 +1,11 @@
 //! Probabilistic Memory & Causal Learning Engine for AthenaFusionX.
 //! Calculates P(Relevance | Task) and maintains Positive Genomes vs Negative Constraints.
 
+use crate::memory_cortex::MemoryCortex;
+use crate::sovereign_core::SovereignOutcome;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::memory_cortex::MemoryCortex;
-use crate::sovereign_core::SovereignOutcome;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryPrior {
@@ -28,17 +28,24 @@ impl ProbabilisticMemory {
         let mut negative_constraints = Vec::new();
 
         // 1. Calculate FastEmbed vector for current directive
-        if let Ok(query_vec) = nexus_substrate::vector_bridge::get_embedding(api_key, current_directive).await {
+        if let Ok(query_vec) =
+            nexus_substrate::vector_bridge::get_embedding(api_key, current_directive).await
+        {
             if let Ok(memories) = memory.semantic_search(&query_vec).await {
                 for m in memories {
-                    if m.result.contains("[HIGH_FITNESS_PATTERN]") || m.result.contains("[COMPILE_OK]") {
+                    if m.result.contains("[HIGH_FITNESS_PATTERN]")
+                        || m.result.contains("[COMPILE_OK]")
+                    {
                         positive_priors.push(MemoryPrior {
                             directive: m.directive.clone(),
                             pattern_type: "POSITIVE_GENOME".to_string(),
                             evidence: m.result.lines().take(8).collect::<Vec<_>>().join("\n"),
                             confidence: 0.95,
                         });
-                    } else if m.result.contains("[COMPILE_FAIL]") || m.result.contains("[ACTION_GATE_BLOCKED]") || m.result.contains("[MUTATION_REVERTED]") {
+                    } else if m.result.contains("[COMPILE_FAIL]")
+                        || m.result.contains("[ACTION_GATE_BLOCKED]")
+                        || m.result.contains("[MUTATION_REVERTED]")
+                    {
                         negative_constraints.push(format!(
                             "NEGATIVE CONSTRAINT (Avoid on '{}'): {}",
                             m.directive,
@@ -59,7 +66,8 @@ impl ProbabilisticMemory {
         directive: &str,
         outcome: &SovereignOutcome,
     ) -> Result<()> {
-        let embedding = nexus_substrate::vector_bridge::get_embedding(api_key, directive).await.ok();
+        let embedding =
+            nexus_substrate::vector_bridge::get_embedding(api_key, directive).await.ok();
 
         if outcome.is_successful && outcome.belief_score >= 0.85 {
             let genome_payload = format!(
@@ -68,13 +76,7 @@ impl ProbabilisticMemory {
             );
 
             memory
-                .store_memory(
-                    "SovereignGenome",
-                    directive,
-                    &genome_payload,
-                    "Internal",
-                    embedding,
-                )
+                .store_memory("SovereignGenome", directive, &genome_payload, "Internal", embedding)
                 .await?;
 
             tracing::info!(

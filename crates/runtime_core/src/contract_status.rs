@@ -35,7 +35,10 @@ impl ContractEvaluator {
         let has_recon = has_recon_marker(local_evidence);
 
         // ⚡ FAST EXIT: If specific target artifacts were required and all are verified written, complete immediately!
-        if !mission_contract.required_artifact_paths.is_empty() && missing.is_empty() && has_mutation {
+        if !mission_contract.required_artifact_paths.is_empty()
+            && missing.is_empty()
+            && has_mutation
+        {
             return ContractStatus::Satisfied;
         }
 

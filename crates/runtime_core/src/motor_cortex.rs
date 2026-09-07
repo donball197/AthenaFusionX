@@ -43,17 +43,29 @@ impl MotorCortex {
     ) -> MotorCommand {
         let motor_action = match action {
             AgentAction::ExecuteCommand { command, .. } => MotorAction::ExecuteCommand { command },
-            AgentAction::WriteFile { path, content, .. } => MotorAction::WriteFile { path, content },
+            AgentAction::WriteFile { path, content, .. } => {
+                MotorAction::WriteFile { path, content }
+            }
             AgentAction::ReadFile { path, .. } => MotorAction::ReadFile { path },
-            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => MotorAction::ReadFileChunk { path, start_line, max_lines },
+            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+                MotorAction::ReadFileChunk { path, start_line, max_lines }
+            }
             AgentAction::SearchCode { path, query, .. } => MotorAction::SearchCode { path, query },
             AgentAction::SearchMemory { query, .. } => MotorAction::SearchMemory { query },
-            AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => MotorAction::ReplaceLines { path, start_line, end_line, replacement },
+            AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
+                MotorAction::ReplaceLines { path, start_line, end_line, replacement }
+            }
             AgentAction::RunTests { test_target, .. } => MotorAction::RunTests { test_target },
             AgentAction::AtomicPatch { patches, .. } => MotorAction::AtomicPatch { patches },
-            AgentAction::DiffPatch { path, search, replace, .. } => MotorAction::DiffPatch { path, search, replace },
-            AgentAction::PatchFunction { path, function_name, new_body, .. } => MotorAction::PatchFunction { path, function_name, new_body },
-            AgentAction::SynthesizeReport { output_path, source_files, .. } => MotorAction::SynthesizeReport { output_path, source_files },
+            AgentAction::DiffPatch { path, search, replace, .. } => {
+                MotorAction::DiffPatch { path, search, replace }
+            }
+            AgentAction::PatchFunction { path, function_name, new_body, .. } => {
+                MotorAction::PatchFunction { path, function_name, new_body }
+            }
+            AgentAction::SynthesizeReport { output_path, source_files, .. } => {
+                MotorAction::SynthesizeReport { output_path, source_files }
+            }
             AgentAction::Halt { reasoning, .. } => MotorAction::Halt { reasoning },
             _ => MotorAction::Halt { reasoning: "Unmapped reflex action".to_string() },
         };

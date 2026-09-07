@@ -8,24 +8,23 @@ pub struct ActionGate {
 
 impl ActionGate {
     pub fn new() -> Self {
-        Self {
-            sandbox: ExecutionSandbox::strict_lockdown(),
-        }
+        Self { sandbox: ExecutionSandbox::strict_lockdown() }
     }
 
     pub fn with_capabilities(caps: Vec<crate::policy::Capability>) -> Self {
-        Self {
-            sandbox: ExecutionSandbox { active_capabilities: caps },
-        }
+        Self { sandbox: ExecutionSandbox { active_capabilities: caps } }
     }
 
     pub fn approve(&self, command: &MotorCommand) -> Result<()> {
         match &command.action {
             MotorAction::PolyglotAstPatch { path, .. } => {
                 if path.contains("..") {
-                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal denied in AST patch."));
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Path traversal denied in AST patch."
+                    ));
                 }
-                self.sandbox.validate_intent("patch_function")
+                self.sandbox
+                    .validate_intent("patch_function")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
             MotorAction::PatchFile { .. } => {
@@ -35,11 +34,23 @@ impl ActionGate {
             }
             MotorAction::ExecuteCommand { command: cmd_str } => {
                 let cmd_lower = cmd_str.to_lowercase();
-                if cmd_lower.contains("rm -rf /") || cmd_lower.contains("rm -rf ~") || cmd_lower.contains("mkfs") {
-                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Destructive command blocked: '{}'", cmd_str));
+                if cmd_lower.contains("rm -rf /")
+                    || cmd_lower.contains("rm -rf ~")
+                    || cmd_lower.contains("mkfs")
+                {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Destructive command blocked: '{}'",
+                        cmd_str
+                    ));
                 }
-                if cmd_lower.contains("cat .env") || cmd_lower.contains("env |") || cmd_lower.contains("printenv") {
-                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Secret inspection command blocked: '{}'", cmd_str));
+                if cmd_lower.contains("cat .env")
+                    || cmd_lower.contains("env |")
+                    || cmd_lower.contains("printenv")
+                {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Secret inspection command blocked: '{}'",
+                        cmd_str
+                    ));
                 }
                 self.sandbox
                     .validate_intent("execute_command")
@@ -47,7 +58,10 @@ impl ActionGate {
             }
             MotorAction::WriteFile { path, content } => {
                 if path.contains("..") {
-                    return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal detected: '{}'", path));
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Path traversal detected: '{}'",
+                        path
+                    ));
                 }
                 if content.contains("GEMINI_API_KEY=") || content.contains("NVIDIA_API_KEY=") {
                     return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Plaintext API key leak blocked in WriteFile."));
@@ -88,7 +102,9 @@ impl ActionGate {
                         return Err(anyhow::anyhow!("ACTION_GATE_SECURITY_VIOLATION: Path traversal denied via .. in AtomicPatch"));
                     }
                 }
-                self.sandbox.validate_intent("write_file").map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
+                self.sandbox
+                    .validate_intent("write_file")
+                    .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
             MotorAction::DiffPatch { .. } => {
                 self.sandbox

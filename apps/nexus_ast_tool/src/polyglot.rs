@@ -10,7 +10,15 @@ use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportedLanguage {
-    Rust, Zig, Python, JavaScript, TypeScript, C, Cpp, Go, PHP,
+    Rust,
+    Zig,
+    Python,
+    JavaScript,
+    TypeScript,
+    C,
+    Cpp,
+    Go,
+    PHP,
 }
 
 impl SupportedLanguage {
@@ -206,7 +214,11 @@ impl PolyglotScanner {
                     if let Ok(content) = std::fs::read_to_string(path) {
                         match serde_yaml::from_str::<SecurityRule>(&content) {
                             Ok(rule) => rules.push(rule),
-                            Err(e) => eprintln!("==> [Warning] Failed to parse YAML rule file {}: {}", path.display(), e),
+                            Err(e) => eprintln!(
+                                "==> [Warning] Failed to parse YAML rule file {}: {}",
+                                path.display(),
+                                e
+                            ),
                         }
                     }
                 }
@@ -230,12 +242,20 @@ impl PolyglotScanner {
         symbols
     }
 
-    fn parse_symbols(path: &Path, source: &str, lang: SupportedLanguage) -> Result<Vec<PolyglotSymbol>> {
+    fn parse_symbols(
+        path: &Path,
+        source: &str,
+        lang: SupportedLanguage,
+    ) -> Result<Vec<PolyglotSymbol>> {
         let mut parser = Parser::new();
         let ts_lang = lang.tree_sitter_language();
-        parser.set_language(&ts_lang).map_err(|e| anyhow!("Failed setting parser language: {e}"))?;
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow!("Tree-sitter parse failure"))?;
-        let query = Query::new(&ts_lang, lang.symbol_query()).map_err(|e| anyhow!("Failed to compile query: {e}"))?;
+        parser
+            .set_language(&ts_lang)
+            .map_err(|e| anyhow!("Failed setting parser language: {e}"))?;
+        let tree =
+            parser.parse(source, None).ok_or_else(|| anyhow!("Tree-sitter parse failure"))?;
+        let query = Query::new(&ts_lang, lang.symbol_query())
+            .map_err(|e| anyhow!("Failed to compile query: {e}"))?;
         let mut cursor = QueryCursor::new();
         let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
@@ -245,8 +265,11 @@ impl PolyglotScanner {
                 if let Ok(name) = capture.node.utf8_text(source.as_bytes()) {
                     let range = capture.node.range();
                     results.push(PolyglotSymbol {
-                        language: lang, name: name.to_string(), path: path.to_path_buf(),
-                        start_line: range.start_point.row + 1, end_line: range.end_point.row + 1,
+                        language: lang,
+                        name: name.to_string(),
+                        path: path.to_path_buf(),
+                        start_line: range.start_point.row + 1,
+                        end_line: range.end_point.row + 1,
                     });
                 }
             }
@@ -254,7 +277,10 @@ impl PolyglotScanner {
         Ok(results)
     }
 
-    pub fn scan_security_vulnerabilities<P: AsRef<Path>>(root: P, rules: &[SecurityRule]) -> Vec<SecurityFinding> {
+    pub fn scan_security_vulnerabilities<P: AsRef<Path>>(
+        root: P,
+        rules: &[SecurityRule],
+    ) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
 
         for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
@@ -263,8 +289,20 @@ impl PolyglotScanner {
                 if let Ok(content) = fs::read_to_string(path) {
                     for rule in rules {
                         if SupportedLanguage::from_string(&rule.language) == Some(file_lang) {
-                            let Ok(query) = Query::new(&file_lang.tree_sitter_language(), &rule.tree_sitter_query) else { continue };
-                            if let Ok(mut discovered) = Self::parse_security(path, &content, file_lang, &query, &rule.id, &rule.severity) {
+                            let Ok(query) = Query::new(
+                                &file_lang.tree_sitter_language(),
+                                &rule.tree_sitter_query,
+                            ) else {
+                                continue;
+                            };
+                            if let Ok(mut discovered) = Self::parse_security(
+                                path,
+                                &content,
+                                file_lang,
+                                &query,
+                                &rule.id,
+                                &rule.severity,
+                            ) {
                                 findings.append(&mut discovered);
                             }
                         }
@@ -274,8 +312,11 @@ impl PolyglotScanner {
         }
 
         findings.sort_by(|a, b| {
-            (a.path.as_path(), a.start_line, a.pattern_name.as_str())
-                .cmp(&(b.path.as_path(), b.start_line, b.pattern_name.as_str()))
+            (a.path.as_path(), a.start_line, a.pattern_name.as_str()).cmp(&(
+                b.path.as_path(),
+                b.start_line,
+                b.pattern_name.as_str(),
+            ))
         });
         findings.dedup_by(|a, b| {
             a.path == b.path && a.start_line == b.start_line && a.pattern_name == b.pattern_name
@@ -291,19 +332,33 @@ impl PolyglotScanner {
             if SupportedLanguage::from_string(&rule.language) != Some(file_lang) {
                 continue;
             }
-            let Ok(query) = Query::new(&file_lang.tree_sitter_language(), &rule.tree_sitter_query) else { continue };
-            if let Ok(mut discovered) = Self::parse_security(path, source, file_lang, &query, &rule.id, &rule.severity) {
+            let Ok(query) = Query::new(&file_lang.tree_sitter_language(), &rule.tree_sitter_query)
+            else {
+                continue;
+            };
+            if let Ok(mut discovered) =
+                Self::parse_security(path, source, file_lang, &query, &rule.id, &rule.severity)
+            {
                 findings.append(&mut discovered);
             }
         }
         findings
     }
 
-    fn parse_security(path: &Path, source: &str, lang: SupportedLanguage, query: &Query, rule_id: &str, severity: &str) -> Result<Vec<SecurityFinding>> {
+    fn parse_security(
+        path: &Path,
+        source: &str,
+        lang: SupportedLanguage,
+        query: &Query,
+        rule_id: &str,
+        severity: &str,
+    ) -> Result<Vec<SecurityFinding>> {
         let mut parser = Parser::new();
         let ts_lang = lang.tree_sitter_language();
         parser.set_language(&ts_lang)?;
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow!("Tree-sitter parse failure for {:?}", path))?;
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow!("Tree-sitter parse failure for {:?}", path))?;
 
         let mut cursor = QueryCursor::new();
         let matches = cursor.matches(query, tree.root_node(), source.as_bytes());
@@ -314,28 +369,34 @@ impl PolyglotScanner {
         for m in matches {
             for capture in m.captures {
                 let capture_name = query.capture_names()[capture.index as usize];
-                if !capture_name.starts_with("danger") { continue; }
+                if !capture_name.starts_with("danger") {
+                    continue;
+                }
 
                 let range = capture.node.range();
                 let sink_start = range.start_point.row;
                 let sink_end = range.end_point.row;
-                
+
                 let context_start = sink_start.saturating_sub(6);
                 let context_end = (sink_end + 2).min(source_lines.len().saturating_sub(1));
-                
+
                 let snippet = if sink_start < source_lines.len() {
                     source_lines[context_start..=context_end].join("\n")
-                } else { String::new() };
+                } else {
+                    String::new()
+                };
 
                 let patch_snippet = if sink_end < source_lines.len() {
                     source_lines[sink_start..=sink_end].join("\n")
-                } else { String::new() };
+                } else {
+                    String::new()
+                };
 
                 let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
 
                 results.push(SecurityFinding {
                     language: lang,
-                    pattern_name: rule_id.to_string(), 
+                    pattern_name: rule_id.to_string(),
                     severity: severity.to_string(),
                     path: path.to_path_buf(),
                     start_line: context_start + 1,
@@ -361,7 +422,9 @@ impl PolyglotScanner {
     ) -> Result<(), String> {
         match finding_type {
             "SQL_INJECTION" => Self::verify_sqli_patch(lang, source, patch_snippet),
-            "PHP_COMMAND_INJECTION" | "OS_COMMAND" => Self::verify_cmdi_patch(lang, source, patch_snippet),
+            "PHP_COMMAND_INJECTION" | "OS_COMMAND" => {
+                Self::verify_cmdi_patch(lang, source, patch_snippet)
+            }
             _ => Ok(()),
         }
     }
@@ -369,14 +432,22 @@ impl PolyglotScanner {
     fn verify_sqli_patch(lang: SupportedLanguage, source: &str, patch: &str) -> Result<(), String> {
         match lang {
             SupportedLanguage::PHP => {
-                let has_var_prepare = patch.contains("->prepare($") || patch.contains("mysqli_prepare($con, $");
+                let has_var_prepare =
+                    patch.contains("->prepare($") || patch.contains("mysqli_prepare($con, $");
                 if has_var_prepare && !patch.contains('?') {
                     return Err("SECURITY THEATER REJECTED: prepare() called with raw variable without parameterized template".into());
                 }
 
                 if patch.contains("->prepare(") || patch.contains("mysqli_prepare(") {
                     let placeholder_count = patch.matches('?').count();
-                    if placeholder_count == 0 && (patch.contains("WHERE") || patch.contains("where") || patch.contains("VALUES") || patch.contains("values") || patch.contains("SET") || patch.contains("set")) {
+                    if placeholder_count == 0
+                        && (patch.contains("WHERE")
+                            || patch.contains("where")
+                            || patch.contains("VALUES")
+                            || patch.contains("values")
+                            || patch.contains("SET")
+                            || patch.contains("set"))
+                    {
                         return Err("MISSING PLACEHOLDERS: SQL query inside prepare() contains 0 '?' parameter markers".into());
                     }
 
@@ -388,7 +459,9 @@ impl PolyglotScanner {
                     while let Some(pos) = patch[start_idx..].find('$') {
                         let abs_pos = start_idx + pos;
                         let var_part = &patch[abs_pos..];
-                        let end_pos = var_part.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(var_part.len());
+                        let end_pos = var_part
+                            .find(|c: char| !c.is_alphanumeric() && c != '_')
+                            .unwrap_or(var_part.len());
                         let var_name = &var_part[..end_pos];
                         start_idx = abs_pos + var_name.len().max(1);
 
@@ -411,10 +484,15 @@ impl PolyglotScanner {
                 }
             }
             SupportedLanguage::Python => {
-                if patch.contains("execute(f\"") || patch.contains("execute(f'") || (patch.contains("execute(\"\"\"") && patch.contains('{')) {
+                if patch.contains("execute(f\"")
+                    || patch.contains("execute(f'")
+                    || (patch.contains("execute(\"\"\"") && patch.contains('{'))
+                {
                     return Err("UNSAFE PYTHON SQL: execute() uses f-string interpolation instead of parameter tuple".into());
                 }
-                if patch.contains("execute(") && (patch.contains(" % ") || patch.contains(".format(")) {
+                if patch.contains("execute(")
+                    && (patch.contains(" % ") || patch.contains(".format("))
+                {
                     return Err("UNSAFE PYTHON SQL: execute() uses string formatting instead of parameter tuple".into());
                 }
             }
@@ -429,7 +507,11 @@ impl PolyglotScanner {
         Ok(())
     }
 
-    fn verify_cmdi_patch(lang: SupportedLanguage, _source: &str, patch: &str) -> Result<(), String> {
+    fn verify_cmdi_patch(
+        lang: SupportedLanguage,
+        _source: &str,
+        patch: &str,
+    ) -> Result<(), String> {
         match lang {
             SupportedLanguage::PHP
                 if (patch.contains("shell_exec(")

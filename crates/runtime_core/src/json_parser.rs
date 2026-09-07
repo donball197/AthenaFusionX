@@ -36,7 +36,8 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         if let Some(target_start) = text.find("[WRITE_FILE_TARGET]:") {
             let path_start = target_start + 20;
             if let Some(path_end) = text[path_start..].find('\n') {
-                let path = text[path_start..path_start + path_end].trim().trim_matches('`').to_string();
+                let path =
+                    text[path_start..path_start + path_end].trim().trim_matches('`').to_string();
                 if let Some(content_start) = text.find("[WRITE_FILE_CONTENT]:") {
                     let raw_content = &text[content_start + 21..];
 
@@ -84,14 +85,17 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     // 3. Strict JSON boundary discovery (Do NOT match pseudo-text like [TOOL]:)
     let json_str = if let (Some(s), Some(e)) = (
-        extracted.find("[{").or_else(|| extracted.find("[\n")).or_else(|| extracted.find("[\"")).or_else(|| extracted.find("[ \"")),
+        extracted
+            .find("[{")
+            .or_else(|| extracted.find("[\n"))
+            .or_else(|| extracted.find("[\""))
+            .or_else(|| extracted.find("[ \"")),
         extracted.rfind(']'),
     ) {
         &extracted[s..=e]
-    } else if let (Some(s), Some(e)) = (
-        extracted.find("{\"").or_else(|| extracted.find("{\n")),
-        extracted.rfind('}'),
-    ) {
+    } else if let (Some(s), Some(e)) =
+        (extracted.find("{\"").or_else(|| extracted.find("{\n")), extracted.rfind('}'))
+    {
         &extracted[s..=e]
     } else {
         return Err(anyhow::anyhow!("No JSON boundaries found in model output."));
