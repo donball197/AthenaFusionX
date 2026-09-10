@@ -277,6 +277,7 @@ impl EpistemicSession {
 
     pub fn collect_evidence(&self, h_id: Uuid) -> String {
         let mut history = String::new();
+
         for edge in &self.graph.edges {
             if edge.target == h_id
                 && (edge.relation == EdgeRelation::Supports
@@ -287,10 +288,25 @@ impl EpistemicSession {
                 }
             }
         }
-        if history.is_empty() {
-            "No evidence recorded.".to_string()
-        } else {
-            history
+
+        let physical = self.local_evidence.trim();
+
+        match (history.trim().is_empty(), physical.is_empty()) {
+            (true, true) => "No evidence recorded.".to_string(),
+
+            (true, false) => {
+                format!("[PHYSICAL SESSION EVIDENCE]\n{}", physical)
+            }
+
+            (false, true) => history,
+
+            (false, false) => {
+                format!(
+                    "{}\n[PHYSICAL SESSION EVIDENCE]\n{}",
+                    history.trim_end(),
+                    physical
+                )
+            }
         }
     }
 

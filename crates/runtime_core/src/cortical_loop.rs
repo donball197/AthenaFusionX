@@ -1142,12 +1142,27 @@ impl CorticalLoop {
                 ));
                 session.record_evidence(&evidence, &eval, h_id);
 
+<<<<<<< HEAD
                 let has_unwritten_artifacts =
                     session.contract.required_artifact_paths.iter().any(|a| {
                         !crate::evidence_markers::has_artifact_write(
                             &session.local_evidence,
                             &a.path,
                         )
+=======
+                self.log(format!(
+                    "[CORTEX HALT DEBUG] is_halt_action={} eval_confidence_modifier={:.3} belief={:.3} halt_predicate={}",
+                    is_halt_action,
+                    eval.confidence_modifier,
+                    belief,
+                    is_halt_action && eval.confidence_modifier >= 0.0 && belief > 0.70,
+                ));
+                if is_halt_action && eval.confidence_modifier >= 0.0 && belief > 0.70 {
+                    self.log("\x1b[1;36m>> [CORTEX TERMINAL] Valid halt executed and verified. Node complete.\x1b[0m".to_string());
+                    return Ok(CortexState::Complete {
+                        belief: belief.max(0.95),
+                        evidence: session.collect_evidence(h_id),
+>>>>>>> 01ad5fff (refactor: streamline epistemic sessions and cortical loop execution)
                     });
 
                 if is_halt_action && has_unwritten_artifacts {
