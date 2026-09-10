@@ -14,14 +14,14 @@ impl DagExecutor {
 
     fn get_minion_binary_path() -> PathBuf {
         let mut path =
-            env::current_exe().unwrap_or_else(|_| PathBuf::from("target/debug/nexus_minion"));
+            env::current_exe().unwrap_or_else(|_| PathBuf::from("target/debug/nexus-minion"));
         path.pop();
 
         let bin_path = path.join("nexus_minion");
         if bin_path.exists() {
             bin_path
         } else {
-            PathBuf::from("target/debug/nexus_minion")
+            PathBuf::from("target/debug/nexus-minion")
         }
     }
 

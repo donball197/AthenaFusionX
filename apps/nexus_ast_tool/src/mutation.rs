@@ -25,6 +25,66 @@ pub enum MutationError {
 
 pub type MutationResult<T> = std::result::Result<T, MutationError>;
 
+/// Reject payloads that pull in crates not already present in the original source.
+/// Cheap textual pre-filter; cargo check remains the authoritative gate.
+pub fn payload_introduces_unknown_crate(original: &str, payload: &str) -> Option<String> {
+    use std::collections::HashSet;
+
+    let known: HashSet<&str> = original
+        .lines()
+        .filter_map(|line| {
+            let t = line.trim();
+            if t.starts_with("use ") || t.starts_with("pub use ") {
+                t.trim_start_matches("pub ")
+                    .trim_start_matches("use ")
+                    .split("::")
+                    .next()
+                    .map(|s| s.trim())
+            } else {
+                None
+            }
+        })
+        .filter(|s| {
+            !s.is_empty()
+                && *s != "std"
+                && *s != "core"
+                && *s != "alloc"
+                && *s != "self"
+                && *s != "crate"
+                && *s != "super"
+        })
+        .collect();
+
+    for line in payload.lines() {
+        let t = line.trim();
+        if !(t.starts_with("use ") || t.starts_with("pub use ")) {
+            continue;
+        }
+        if let Some(crate_name) = t
+            .trim_start_matches("pub ")
+            .trim_start_matches("use ")
+            .split("::")
+            .next()
+            .map(|s| s.trim())
+        {
+            if matches!(
+                crate_name,
+                "std" | "core" | "alloc" | "self" | "crate" | "super"
+            ) {
+                continue;
+            }
+            if !known.contains(crate_name) {
+                return Some(format!(
+                    "Payload introduces unknown crate `{}` that is not present in the original source",
+                    crate_name
+                ));
+            }
+        }
+    }
+    None
+}
+
+
 pub trait MutationStrategy: Send + Sync {
     fn name(&self) -> &'static str;
     fn validate_payload(&self, payload: &str) -> MutationResult<()>;
@@ -123,10 +183,20 @@ impl MutationStrategy for ReplaceFunctionBody {
     }
 
     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
-        self.validate_payload(payload)?;
+        let trimmed = payload.trim();
+        // If model output includes `fn <symbol> ... { body }`, extract the inner statements:
+        let clean_payload = if (trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ") || trimmed.starts_with("async fn ")) && trimmed.contains('{') && trimmed.ends_with('}') {
+            let start = trimmed.find('{').map_or(0, |i| i + 1);
+            let end = trimmed.rfind('}').unwrap_or(trimmed.len());
+            trimmed[start..end].trim()
+        } else {
+            trimmed
+        };
+
+        self.validate_payload(clean_payload)?;
         let file = parse_file(source)?;
         let target_fn = find_function_block_span(&file, symbol)?;
-        replace_block_body(source, target_fn, payload)
+        replace_block_body(source, target_fn, clean_payload)
     }
 }
 

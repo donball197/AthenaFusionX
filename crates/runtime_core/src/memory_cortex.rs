@@ -32,8 +32,12 @@ impl MemoryCortex {
         Ok(result)
     }
 
-    pub async fn semantic_search(&self, embedding: &[f32]) -> Result<Vec<AgentMemory>> {
-        let result = self.palace.semantic_search(embedding).await?;
+    pub async fn semantic_search(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<AgentMemory>> {
+        let result = self.palace.semantic_search(embedding, limit).await?;
         Ok(result)
     }
 
@@ -193,6 +197,42 @@ impl MemoryCortex {
     ) -> anyhow::Result<Vec<nexus_substrate::memory::AgentMemory>> {
         self.search_memories(category).await
     }
+    pub async fn recall_semantic_context(
+        &self,
+        embedding: &[f32],
+        context: &str,
+        limit: usize,
+    ) -> anyhow::Result<crate::memory_recall::RecallResult> {
+        let memories = self
+            .semantic_search(embedding, limit)
+            .await?
+            .into_iter()
+            .map(|m| crate::memory_types::CognitiveMemory {
+                id: uuid::Uuid::new_v4(),
+                kind: crate::memory_types::MemoryKind::Experience,
+                key: m.directive.clone(),
+                content: m.result.clone(),
+                source: m.origin.clone(),
+                confidence: 0.5,
+                importance: 0.5,
+                created_at: m
+                    .timestamp
+                    .parse::<i64>()
+                    .unwrap_or_else(|_| chrono::Utc::now().timestamp()),
+                tags: vec![m.origin.clone()],
+            })
+            .collect::<Vec<_>>();
+
+        let engine = crate::memory_recall::MemoryRecallEngine::new();
+        let mut result = engine.rank(memories, context);
+
+        // Rank first, then limit, preserving the same deterministic
+        // secondary-ordering contract used by lexical recall.
+        result.memories.truncate(limit);
+
+        Ok(result)
+    }
+
 }
 
 impl MemoryCortex {

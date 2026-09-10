@@ -1,0 +1,8 @@
+id: "CPP_UNSAFE_MEMORY"
+language: "cpp"
+severity: "High"
+description: "Dangerous memory functions (strcpy, gets, sprintf) or raw pointer arithmetic."
+tree_sitter_query: |
+  (call_expression
+    function: (identifier) @func_name (#match? @func_name "^(strcpy|strcat|gets|sprintf|vsprintf|scanf|sscanf|memcpy|memset|malloc|free)$")
+  ) @danger.unsafe_memory

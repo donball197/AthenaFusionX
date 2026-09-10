@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "health_api"
 edition.workspace = true
 version.workspace = true
@@ -9,6 +10,10 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[[bin]]
+name = "health-api"
+path = "src/main.rs"
 
 [lints]
 workspace = true

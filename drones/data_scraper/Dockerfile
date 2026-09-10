@@ -9,6 +9,6 @@ FROM docker.io/library/alpine:latest
 # We need openssl in the final image too for it to run
 RUN apk add --no-cache openssl
 WORKDIR /
-COPY --from=builder /app/target/release/data_scraper /data_scraper
+COPY --from=builder /app/target/release/data-scraper /data_scraper
 EXPOSE 5000
 CMD ["/data_scraper"]

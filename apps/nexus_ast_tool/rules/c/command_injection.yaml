@@ -1,0 +1,8 @@
+id: "C_COMMAND_INJECTION"
+language: "c"
+severity: "High"
+description: "Unsanitized system() or popen() call with user-controlled input."
+tree_sitter_query: |
+  (call_expression
+    function: (identifier) @func_name (#match? @func_name "^(system|popen|execl|execle|execlp|execv|execve|execvp)$")
+  ) @danger.command_injection

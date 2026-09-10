@@ -84,6 +84,13 @@ impl CognitiveGraph {
     }
 
     pub fn propagate_beliefs(&mut self) {
+        // TEMP DIAGNOSTIC: trace every propagation pass without changing behavior.
+        eprintln!(
+            "[BELIEF TRACE] propagate start nodes={} edges={}",
+            self.nodes.len(),
+            self.edges.len()
+        );
+
         // Accumulate signed impacts first so multiple edges targeting the same
         // hypothesis are combined instead of overwriting each other.
         let mut delta: HashMap<Uuid, f32> = HashMap::new();
@@ -105,11 +112,21 @@ impl CognitiveGraph {
 
         for (id, d) in delta {
             if let Some(node) = self.nodes.get_mut(&id) {
+                let before = node.belief_score;
                 let candidate = (0.5 + d).clamp(0.0, 1.0);
                 // Keep a fraction of the previous score (PageRank-style damping)
                 node.belief_score = DAMPING * candidate + (1.0 - DAMPING) * node.belief_score;
+
+                if matches!(node.kind, NodeKind::Hypothesis) {
+                    eprintln!(
+                        "[BELIEF TRACE] hypothesis={} before={:.4} delta={:.4} after={:.4}",
+                        id, before, d, node.belief_score
+                    );
+                }
             }
         }
+
+        eprintln!("[BELIEF TRACE] propagate end");
     }
 
     pub fn select_best_hypothesis(&self) -> Option<&CognitiveNode> {

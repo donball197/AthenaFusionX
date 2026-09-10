@@ -66,23 +66,42 @@ async fn main() -> anyhow::Result<()> {
     let client = Client::new();
     let stdin = io::stdin();
 
+    // If a directive is supplied through argv, dispatch it directly.
+    // With no argv directive, preserve the existing interactive EOF workflow.
+    let argv_directive = std::env::args().skip(1).collect::<Vec<_>>();
+    let single_shot = !argv_directive.is_empty();
+    let mut pending_directive = if argv_directive.is_empty() {
+        None
+    } else {
+        Some(argv_directive.join(" "))
+    };
+
     loop {
-        print!("\n\x1b[1;32mnexus>\x1b[0m (Type prompt, then 'EOF' on a new line to submit)\n> ");
-        io::stdout().flush()?;
+        let directive = if let Some(arg_directive) = pending_directive.take() {
+            arg_directive
+        } else {
+            print!("\n\x1b[1;32mnexus>\x1b[0m (Type prompt, then 'EOF' on a new line to submit)\n> ");
+            io::stdout().flush()?;
 
-        let mut input = String::new();
-        loop {
-            let mut line = String::new();
-            let bytes_read = stdin.read_line(&mut line)?;
-            if bytes_read == 0 || line.trim() == "EOF" {
-                break;
+            let mut input = String::new();
+            loop {
+                let mut line = String::new();
+                let bytes_read = stdin.read_line(&mut line)?;
+                if bytes_read == 0 || line.trim() == "EOF" {
+                    break;
+                }
+                input.push_str(&line);
             }
-            input.push_str(&line);
-        }
 
-        let directive = input.trim();
+            input.trim().to_string()
+        };
+
+        let directive = directive.trim();
         if directive.is_empty() {
-            continue;
+            if argv_directive.is_empty() {
+                continue;
+            }
+            break;
         }
         if directive == "/exit" || directive == "/quit" {
             break;
@@ -199,6 +218,10 @@ async fn main() -> anyhow::Result<()> {
                             target_func
                         );
                     }
+
+                    if single_shot {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -226,6 +249,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             Err(e) => println!("\x1b[31m>> [ERROR] Failed to contact Daemon: {}\x1b[0m", e),
+        }
+
+        // argv invocation is single-shot; interactive mode remains persistent.
+        if single_shot {
+            break;
         }
     }
     Ok(())

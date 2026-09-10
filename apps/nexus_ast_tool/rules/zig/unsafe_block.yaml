@@ -1,0 +1,6 @@
+id: "ZIG_UNSAFE_BLOCK"
+language: "zig"
+severity: "Medium"
+description: "Unsafe block in Zig — manual memory operations require verification."
+tree_sitter_query: |
+  (unsafe_block) @danger.unsafe_block

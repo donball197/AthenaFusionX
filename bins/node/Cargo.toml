@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "nexus_node"
 version = "0.1.0"
 edition = "2021"
@@ -14,6 +15,10 @@ base64 = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dotenvy = { workspace = true }
+
+[[bin]]
+name = "nexus-node"
+path = "src/main.rs"
 
 [lints]
 workspace = true

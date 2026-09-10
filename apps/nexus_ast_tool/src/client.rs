@@ -88,7 +88,7 @@ impl ApiClient {
         });
 
         let req = ureq::post(&ep.url)
-            .timeout(Duration::from_secs(45))
+            .timeout(Duration::from_secs(180))
             .set("Content-Type", "application/json")
             .set("Authorization", &format!("Bearer {}", ep.api_key));
 
@@ -202,7 +202,8 @@ impl ApiClient {
              Directives:\n\
              - If untrusted input reaches a dangerous sink without sanitization or parameterization: return EXPLOITABLE.\n\
              - If safe, hardcoded, or properly parameterized: return SAFE.\n\
-             - Otherwise: return UNKNOWN.\n\
+             - If the snippet does not show a dangerous sink being reached at all (e.g. no query execution, no shell/process call, no HTTP request), return UNKNOWN, not EXPLOITABLE.\n\
+             - CONSISTENCY REQUIREMENT: \"state\" must agree with \"reason\". If your reason says no sink is visible, or that you cannot confirm exploitability, state MUST be UNKNOWN or SAFE, never EXPLOITABLE. If severity is \"Low\" or \"None\", state MUST NOT be EXPLOITABLE.\n\
              Output ONLY a JSON object inside <payload></payload> tags:\n\
              <payload>{{\"state\": \"EXPLOITABLE\", \"severity\": \"High\", \"reason\": \"Vulnerable sink detected\"}}</payload>"
         );
@@ -220,12 +221,12 @@ impl ApiClient {
         let sanitized = Self::sanitize_json(&json_str);
 
         let parsed: serde_json::Value = serde_json::from_str(&sanitized)
-            .unwrap_or_else(|_| serde_json::json!({"state": "EXPLOITABLE", "severity": "High", "reason": "Tainted input reaching dangerous sink."}));
+            .unwrap_or_else(|_| serde_json::json!({"state": "UNKNOWN", "severity": "Unknown", "reason": "Triage response failed to parse - model output was not valid JSON."}));
 
         let state = match parsed["state"].as_str().unwrap_or("").trim().to_uppercase().as_str() {
             "EXPLOITABLE" => "EXPLOITABLE",
             "SAFE" => "SAFE",
-            _ => "EXPLOITABLE",
+            _ => "UNKNOWN",
         };
 
         Ok((
@@ -257,6 +258,7 @@ impl ApiClient {
         let is_python = lang.eq_ignore_ascii_case("Python");
         let is_js =
             lang.eq_ignore_ascii_case("JavaScript") || lang.eq_ignore_ascii_case("TypeScript");
+        let is_rust = lang.eq_ignore_ascii_case("Rust");
 
         let (rules, exemplar) = if is_php {
             let is_if_sink = (code_snippet.contains("if (")
@@ -284,6 +286,10 @@ impl ApiClient {
             let rule = "MANDATORY: If fixing SQLi, use parameterized queries (e.g. db.query('SELECT * FROM users WHERE id = $1', [id])). If fixing command injection, use child_process.execFile('cmd', [args]) instead of exec(string).";
             let ex = "[EXAMPLE INPUT]:\ndb.query(`SELECT * FROM users WHERE id = ${id}`);\n[EXAMPLE OUTPUT]:\n<payload>db.query('SELECT * FROM users WHERE id = $1', [id]);</payload>";
             (rule, ex)
+        } else if is_rust {
+            let rule = "MANDATORY: For SQL injection, use sqlx::query!() or sqlx::query() with bind() parameters. For command injection, use Command::new(...).args(...), never shell execution such as sh -c with an interpolated command string.";
+            let ex = "[EXAMPLE INPUT]:\nlet query = format!(\"SELECT * FROM users WHERE id = {}\", id);\nsqlx::query(&query).execute(&pool).await?;\n[EXAMPLE OUTPUT]:\n<payload>sqlx::query(\"SELECT * FROM users WHERE id = ?\").bind(id).execute(&pool).await?;</payload>";
+            (rule, ex)
         } else {
             ("MANDATORY: Replace unsafe dynamic construction with secure parameterized API.", "")
         };
@@ -307,10 +313,51 @@ impl ApiClient {
     }
 
     pub fn generate_optimization(symbol: &str, code_snippet: &str) -> Result<String> {
+        // Constrain the model to crates already visible in the snippet.
+        let existing_uses: Vec<&str> = code_snippet
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                t.starts_with("use ") || t.starts_with("pub use ")
+            })
+            .collect();
+
+        let allowed_crates_hint = if existing_uses.is_empty() {
+            "No external crates are visible in this snippet. Prefer pure `std` only. Do NOT invent crates.".to_string()
+        } else {
+            format!(
+                "Only these imports are already present in the snippet:\n{}\nYou may reuse them. Do NOT introduce any other crate.",
+                existing_uses.join("\n")
+            )
+        };
+
         let prompt = format!(
-            "Optimize Rust function '{}':\n```rust\n{}\n```\nOutput body inside <payload></payload>.",
-            symbol, code_snippet
+            "Role: Conservative Rust optimization engine.\n\
+             Task: Produce a replacement BODY for the function `{symbol}`.\n\
+             \n\
+             HARD CONSTRAINTS (any violation = invalid payload):\n\
+             1. Output ONLY the raw Rust statements that belong inside the function body.\n\
+             2. Wrap the entire answer in <payload></payload> tags. Nothing else outside the tags.\n\
+             3. Do NOT emit a full `fn ... {{ ... }}` declaration — body statements only.\n\
+             4. Do NOT introduce any new external crate. No new `use some_crate::...` for crates not already visible.\n\
+             5. Prefer pure `std` when the original implementation is std-only.\n\
+             6. Keep the same function signature semantics (return type, error style, async-ness).\n\
+             7. No comments, no markdown fences, no explanation text.\n\
+             8. If you cannot improve the body without new dependencies, return the original body unchanged.\n\
+             \n\
+             {allowed_crates_hint}\n\
+             \n\
+             Original function (context only — emit BODY only):\n\
+             ```rust\n\
+             {code_snippet}\n\
+             ```\n\
+             \n\
+             Replacement body:",
+            symbol = symbol,
+            allowed_crates_hint = allowed_crates_hint,
+            code_snippet = code_snippet,
         );
+
         let text = Self::with_retry_transient(|| Self::call(&prompt, 0.0), 3)?;
         Self::extract_payload(&text)
     }

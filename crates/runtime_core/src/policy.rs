@@ -50,7 +50,7 @@ pub struct ToolContract {
 pub const TOOL_CONTRACTS: &[ToolContract] = &[
     ToolContract {
         name: "nexus_scrape",
-        binary_path: "target/release/nexus_scrape",
+        binary_path: "target/release/nexus-scrape",
         flags: &["url", "--extract"],
         usage_pattern: "nexus_scrape <URL> --extract \"<prompt>\" (Scrapes a website and uses an LLM to extract specific data as instructed by the prompt. Always outputs to stdout)",
     },
@@ -116,25 +116,25 @@ pub const TOOL_CONTRACTS: &[ToolContract] = &[
     },
     ToolContract {
         name: "benchmark_runner",
-        binary_path: "target/release/benchmark_runner",
+        binary_path: "target/release/benchmark-runner",
         flags: &["--target", "--output", "--iterations"],
         usage_pattern: "benchmark_runner --target <symbol> --output /tmp/benchmark.json OR benchmark_runner <target> --output /tmp/benchmark.json",
     },
     ToolContract {
         name: "impact_analyzer",
-        binary_path: "target/release/impact_analyzer",
+        binary_path: "target/release/impact-analyzer",
         flags: &["--target", "--symbol-graph", "--mutation-map", "--output"],
         usage_pattern: "impact_analyzer --target <symbol> --output /tmp/impact.json OR impact_analyzer <target> --output /tmp/impact.json",
     },
     ToolContract {
         name: "execution_auditor",
-        binary_path: "target/release/execution_auditor",
+        binary_path: "target/release/execution-auditor",
         flags: &["--trace-file", "--file", "-f", "--output"],
         usage_pattern: "execution_auditor --trace-file <log_path> --output /tmp/audit.json OR execution_auditor <log_path>",
     },
     ToolContract {
         name: "mutation_ranker",
-        binary_path: "target/release/mutation_ranker",
+        binary_path: "target/release/mutation-ranker",
         flags: &["--candidate", "--impact-report", "--health-report", "--output"],
         usage_pattern: "mutation_ranker --candidate <target> --impact-report /tmp/impact.json --health-report /tmp/audit.json --output /tmp/verdict.json",
     },

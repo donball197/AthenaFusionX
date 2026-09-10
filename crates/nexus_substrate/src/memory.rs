@@ -241,7 +241,7 @@ impl MemoryPalace {
 
         if let Some(vec) = embedding {
             let mut vault = self.vault.lock();
-if let Err(e) = vault.commit_state(row_id as u64, &vec) {
+            if let Err(e) = vault.commit_state(row_id as u64, &vec) {
                 tracing::error!(
                     "[MEMORY PALACE] Vector index commit failed for memory id {}: {}",
                     row_id,
@@ -328,11 +328,12 @@ if let Err(e) = vault.commit_state(row_id as u64, &vec) {
     pub async fn semantic_search(
         &self,
         query_vec: &[f32],
+        limit: usize,
     ) -> anyhow::Result<Vec<AgentMemory>> {
         let matched_ids = {
             let vault = self.vault.lock();
             vault
-                .recall_context(query_vec, 3)
+                .recall_context(query_vec, limit)
                 .map(|(_scores, ids)| ids)
                 .map_err(|e| anyhow::anyhow!("VECTOR_RECALL_FAILED: {}", e))?
         };

@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "nexus_scrape"
 version = "0.1.0"
 edition = "2021"
@@ -8,6 +9,10 @@ clap = { version = "4.4", features = ["derive"] }
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["full"] }
 serde_json = { workspace = true }
+
+[[bin]]
+name = "nexus-scrape"
+path = "src/main.rs"
 
 [lints]
 workspace = true

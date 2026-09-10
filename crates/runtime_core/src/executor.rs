@@ -507,25 +507,14 @@ impl RoboticExecutor {
                 Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
             }
             MotorAction::SearchMemory { query } => {
-                let emb =
-                    nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query)
-                        .await
-                        .map_err(|e| {
-                            anyhow!(
-                                "SEMANTIC_SEARCH_EMBEDDING_FAILED: {}",
-                                e
-                            )
-                        })?;
+                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query)
+                    .await
+                    .map_err(|e| anyhow!("SEMANTIC_SEARCH_EMBEDDING_FAILED: {}", e))?;
 
                 let results = memory
-                    .semantic_search(&emb)
+                    .semantic_search(&emb, 3)
                     .await
-                    .map_err(|e| {
-                        anyhow!(
-                            "SEMANTIC_SEARCH_VECTOR_RECALL_FAILED: {}",
-                            e
-                        )
-                    })?;
+                    .map_err(|e| anyhow!("SEMANTIC_SEARCH_VECTOR_RECALL_FAILED: {}", e))?;
 
                 if results.is_empty() {
                     return Ok(format!(
@@ -534,21 +523,89 @@ impl RoboticExecutor {
                     ));
                 }
 
+                // Semantic retrieval supplies the candidates. Apply a lightweight,
+                // intent-aware rerank so factual host-observation queries prefer
+                // actual metric observations over reflection/failure memories.
+                let query_lower = query.to_lowercase();
+                let host_terms = [
+                    "uptime",
+                    "disk",
+                    "filesystem",
+                    "available",
+                    "memory",
+                    "ram",
+                    "load average",
+                ];
+
+                let host_term_hits = host_terms
+                    .iter()
+                    .filter(|term| query_lower.contains(**term))
+                    .count();
+
+                let host_observation_query = host_term_hits >= 2;
+
+                let mut ranked_results: Vec<_> =
+                    results
+                        .into_iter()
+                        .enumerate()
+                        .map(|(original_order, r)| {
+                            let score = if !host_observation_query {
+                                0
+                            } else {
+                                let content = format!(
+                                    "{} {}",
+                                    r.directive.to_lowercase(),
+                                    r.result.to_lowercase()
+                                );
+
+                                let term_hits = host_terms
+                                    .iter()
+                                    .filter(|term| content.contains(**term))
+                                    .count();
+
+                                let factual_origin = matches!(
+                                    r.origin.to_lowercase().as_str(),
+                                    "readfile" | "executecommand" | "execute_command"
+                                );
+
+                                let reflection_memory =
+                                    r.origin.eq_ignore_ascii_case("ReflectionEngine");
+
+                                let actual_metric_output = [
+                                    "filesystem",
+                                    "mem:",
+                                    "load average",
+                                    "total used free",
+                                    " up ",
+                                ]
+                                .iter()
+                                .any(|marker| content.contains(marker));
+
+                                (term_hits as i32 * 2)
+                                    + if factual_origin { 3 } else { 0 }
+                                    + if actual_metric_output { 3 } else { 0 }
+                                    - if reflection_memory { 5 } else { 0 }
+                            };
+
+                            (score, original_order, r)
+                        })
+                        .collect();
+
+                ranked_results.sort_by(|a, b| {
+                    b.0.cmp(&a.0)
+                        .then_with(|| a.1.cmp(&b.1))
+                });
+
                 let mut results_text = String::new();
 
-                for r in results {
+                for (_, _, r) in ranked_results.into_iter().take(3) {
                     let snippet: String = r.result.chars().take(1500).collect();
 
-                    results_text.push_str(&format!(
-                        "Source: {}\nData: {}...\n---\n",
-                        r.directive, snippet
-                    ));
+                    results_text
+                        .push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
                 }
 
-                Ok(format!(
-                    "[SEARCH_MEMORY_OK] Found semantic context:\n{}",
-                    results_text
-                ))
+                Ok(format!("[SEARCH_MEMORY_OK] Found semantic context:\n{}", results_text))
             }
             MotorAction::ScrapeUrl { url, prompt } => {
                 let lower = url.to_lowercase();
@@ -571,7 +628,7 @@ impl RoboticExecutor {
                     anyhow!("SCRAPE_EXECUTOR_ERROR: cannot resolve workspace: {}", e)
                 })?;
 
-                let binary = workspace_root.join("target/release/nexus_scrape");
+                let binary = workspace_root.join("target/release/nexus-scrape");
 
                 let metadata = tokio::fs::metadata(&binary).await.map_err(|e| {
                     anyhow!(

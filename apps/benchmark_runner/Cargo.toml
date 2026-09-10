@@ -1,5 +1,5 @@
 [package]
-name = "benchmark_runner"
+name = "benchmark-runner"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,11 +13,11 @@ wasmtime = "45.0.2"
 wasmtime-wasi = "45.0.2"
 
 [[bin]]
-name = "benchmark_runner"
+name = "benchmark-runner"
 path = "src/main.rs"
 
 [[bin]]
-name = "wasm_bridge_host"
+name = "wasm-bridge-host"
 path = "src/wasm_bridge_host.rs"
 
 [lints]

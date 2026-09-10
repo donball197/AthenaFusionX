@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "nexus_cli"
 version = "0.1.0"
 edition = "2021"
@@ -11,6 +12,10 @@ reqwest = { workspace = true }
 serde_json = { workspace = true }
 tokio-tungstenite = "0.21.0"
 futures-util = { workspace = true }
+
+[[bin]]
+name = "nexus-cli"
+path = "src/main.rs"
 
 [lints]
 workspace = true

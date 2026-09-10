@@ -1,0 +1,13 @@
+id: "GO_SQL_INJECTION"
+language: "go"
+severity: "High"
+description: "SQL query with string concatenation or fmt.Sprintf."
+tree_sitter_query: |
+  (call_expression
+    function: (selector_expression
+      field: (field_identifier) @method (#match? @method "^(Query|Exec|QueryRow|Prepare)$")
+    )
+    arguments: (call_expression
+      function: (identifier) @func (#eq? @func "Sprintf")
+    ) @danger.sql_injection
+  )

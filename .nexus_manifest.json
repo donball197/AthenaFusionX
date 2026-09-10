@@ -427,12 +427,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "minimaxai/minimax-m3",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "mistralai/codestral-22b-instruct-v0.1",
     "context": "32K in / 4K out",
     "category": "MISTRAL"

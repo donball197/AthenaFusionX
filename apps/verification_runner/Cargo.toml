@@ -1,9 +1,14 @@
 [package]
+autobins = false
 name = "verification_runner"
 edition.workspace = true
 version.workspace = true
 
 [dependencies]
+
+[[bin]]
+name = "verification-runner"
+path = "src/main.rs"
 
 [lints]
 workspace = true

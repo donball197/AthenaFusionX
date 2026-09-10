@@ -35,11 +35,9 @@ fn get_config_var(key: &str) -> Option<String> {
 
 /// Fallback to generic system model defined in .env
 fn get_global_model() -> String {
-    get_config_var("NEXUS_MODEL")
-        .or_else(|| get_config_var("MODEL"))
-        .unwrap_or_else(|| {
-            panic!("FATAL: No model configured. Define NEXUS_MODEL in .env or create .active_model")
-        })
+    get_config_var("NEXUS_MODEL").or_else(|| get_config_var("MODEL")).unwrap_or_else(|| {
+        panic!("FATAL: No model configured. Define NEXUS_MODEL in .env or create .active_model")
+    })
 }
 
 /// Parse comma-delimited cascade lists dynamically
@@ -90,13 +88,7 @@ impl AgentFactory {
 
         let max_light_turns: usize = get_config_var("NEXUS_LIGHT_MAX_TURNS")
             .and_then(|v| v.parse().ok())
-            .unwrap_or_else(|| {
-                if light_cascade.is_empty() {
-                    1
-                } else {
-                    light_cascade.len()
-                }
-            });
+            .unwrap_or(if light_cascade.is_empty() { 1 } else { light_cascade.len() });
 
         // Error or threshold exceeded -> Heavy Cascade
         if error_count > 0 || turn >= max_light_turns {

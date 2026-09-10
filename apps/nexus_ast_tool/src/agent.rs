@@ -224,6 +224,7 @@ impl RefactorAgent {
     /// Deterministic policy layer for natural-language refactoring requests.
     ///
     /// The model is deliberately NOT allowed to select the mutation strategy.
+    // AST_TEST_ONLY
     fn classify_instruction(instruction: &str) -> Result<String> {
         let text = instruction.to_ascii_lowercase();
 
@@ -232,6 +233,12 @@ impl RefactorAgent {
             || text.contains("document this")
         {
             return Ok("InsertComment".into());
+        }
+
+        // More specific mutation intents must be checked before the
+        // generic "return" / "body" matcher below.
+        if text.contains("early return") || text.contains("return early") {
+            return Ok("InsertEarlyReturn".into());
         }
 
         if text.contains("variable")
@@ -251,10 +258,6 @@ impl RefactorAgent {
             || text.contains("export")
         {
             return Ok("MakePublic".into());
-        }
-
-        if text.contains("early return") || text.contains("return early") {
-            return Ok("InsertEarlyReturn".into());
         }
 
         if text.contains("replace function body") || text.contains("replace the function body") {

@@ -21,6 +21,20 @@ pub enum SupportedLanguage {
     PHP,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeSitterParseStatus {
+    Clean,
+    TreeSitterError,
+    ParserUnavailable,
+    NoParseTree,
+}
+
+impl TreeSitterParseStatus {
+    pub fn is_clean(self) -> bool {
+        matches!(self, Self::Clean)
+    }
+}
+
 impl SupportedLanguage {
     pub fn from_path(path: &Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?;
@@ -81,15 +95,37 @@ impl SupportedLanguage {
         }
     }
 
-    pub fn parses_cleanly(&self, source: &str) -> bool {
+    pub fn tree_sitter_parse_status(&self, source: &str) -> TreeSitterParseStatus {
         let mut parser = Parser::new();
-        if parser.set_language(&self.tree_sitter_language()).is_err() {
-            return false;
+        let language = self.tree_sitter_language();
+
+        if parser.set_language(&language).is_err() {
+            return TreeSitterParseStatus::ParserUnavailable;
         }
+
         match parser.parse(source, None) {
-            Some(tree) => !tree.root_node().has_error(),
-            None => false,
+            Some(tree) if !tree.root_node().has_error() => TreeSitterParseStatus::Clean,
+            Some(tree) => {
+                fn find_err(node: tree_sitter::Node, src: &str) {
+                    if node.is_error() || node.is_missing() {
+                        let pos = node.start_position();
+                        let text = node.utf8_text(src.as_bytes()).unwrap_or("<utf8>");
+                        eprintln!("==> [AST ERROR] Line {}, Col {}: '{}' (node: {})", pos.row + 1, pos.column + 1, text, node.kind());
+                    }
+                    let mut cursor = node.walk();
+                    for child in node.children(&mut cursor) {
+                        find_err(child, src);
+                    }
+                }
+                find_err(tree.root_node(), source);
+                TreeSitterParseStatus::TreeSitterError
+            }
+            None => TreeSitterParseStatus::NoParseTree,
         }
+    }
+
+    pub fn parses_cleanly(&self, source: &str) -> bool {
+        self.tree_sitter_parse_status(source).is_clean()
     }
 }
 
@@ -394,6 +430,17 @@ impl PolyglotScanner {
 
                 let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
 
+                // Check for inline suppression comment on the sink line or preceding line
+                let check_start = sink_start.saturating_sub(1);
+                let is_suppressed = source_lines[check_start..=sink_start].iter().any(|line| {
+                    (line.contains("nexus-ignore") || line.contains("nosemgrep") || line.contains("#[allow("))
+                        && (line.contains(rule_id) || line.contains("all"))
+                });
+
+                if is_suppressed {
+                    continue;
+                }
+
                 results.push(SecurityFinding {
                     language: lang,
                     pattern_name: rule_id.to_string(),
@@ -452,7 +499,10 @@ impl PolyglotScanner {
                     }
 
                     if placeholder_count > 0 && !patch.contains("bind_param") {
-                        return Err(format!("UNBOUND PLACEHOLDERS: Query contains {} '?' placeholder(s) but bind_param was omitted", placeholder_count));
+                        return Err(format!(
+                            "UNBOUND PLACEHOLDERS: Query contains {} '?' placeholder(s) but bind_param was omitted",
+                            placeholder_count
+                        ));
                     }
 
                     let mut start_idx = 0;
@@ -478,7 +528,10 @@ impl PolyglotScanner {
                         }
 
                         if !source.contains(var_name) {
-                            return Err(format!("HALLUCINATED SYMBOL REJECTED: Variable '{}' does not exist in the source file", var_name));
+                            return Err(format!(
+                                "HALLUCINATED SYMBOL REJECTED: Variable '{}' does not exist in the source file",
+                                var_name
+                            ));
                         }
                     }
                 }

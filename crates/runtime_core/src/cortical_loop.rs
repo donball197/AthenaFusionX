@@ -167,8 +167,19 @@ impl CorticalLoop {
     ) -> Result<CortexOutcome> {
         self.log("\x1b[1;36m>> [CORTEX] Igniting Epistemic Reasoning Session\x1b[0m".to_string());
 
+        let stage_start = std::time::Instant::now();
         let mut context_chunks = self.world_model.semantic_query(mission).await;
+        self.log(format!(
+            "[TIMING] WORLD_MODEL semantic_query={}ms",
+            stage_start.elapsed().as_millis()
+        ));
+
+        let stage_start = std::time::Instant::now();
         context_chunks.push(Self::resolve_workspace_paths().await);
+        self.log(format!(
+            "[TIMING] WORKSPACE_PATHS cargo_metadata={}ms",
+            stage_start.elapsed().as_millis()
+        ));
 
         // ============================================================
         // V5 FUSION: AUTOMATIC EXPERIENCE RECALL
@@ -176,32 +187,66 @@ impl CorticalLoop {
         //
         // Prior verified experience is supplied to reasoning as ADVISORY
         // context. It cannot authorize completion or bypass verification.
-        match self.memory.recall(mission, 6).await {
-            Ok(recall) if !recall.memories.is_empty() => {
-                let mut memory_context = String::from("\n[RECALLED EXPERIENCE — ADVISORY ONLY]\n");
+        let stage_start = std::time::Instant::now();
+        self.log("[TIMING] MEMORY_RECALL start".to_string());
 
-                for memory in recall.memories {
-                    memory_context.push_str(&format!("- [{}] {}\n", memory.source, memory.content));
+        match nexus_substrate::vector_bridge::get_embedding(&self.api_key, mission).await {
+            Ok(query_embedding) => {
+                match self
+                    .memory
+                    .recall_semantic_context(&query_embedding, mission, 6)
+                    .await
+                {
+                    Ok(recall) if !recall.memories.is_empty() => {
+                        let mut memory_context =
+                            String::from("\n[RECALLED EXPERIENCE — ADVISORY ONLY]\n");
+
+                        for memory in recall.memories {
+                            memory_context.push_str(&format!(
+                                "- [{}] {}\n",
+                                memory.source, memory.content
+                            ));
+                        }
+
+                        memory_context.push_str("[END RECALLED EXPERIENCE]\n");
+
+                        context_chunks.push(memory_context);
+
+                        self.log(format!(
+                            "[FUSION] Recalled prior experience; relevance confidence {:.2}",
+                            recall.confidence
+                        ));
+                    }
+
+                    Ok(_) => {
+                        self.log(
+                            "[FUSION] No prior experience relevant to this mission.".to_string()
+                        );
+                    }
+
+                    Err(error) => {
+                        self.log(format!(
+                            "[TIMING] MEMORY_RECALL failed after {}ms",
+                            stage_start.elapsed().as_millis()
+                        ));
+
+                        // Memory is never a hard dependency for execution.
+                        self.log(format!(
+                            "[FUSION] Memory recall unavailable; continuing without recalled experience: {}",
+                            error
+                        ));
+                    }
                 }
 
-                memory_context.push_str("[END RECALLED EXPERIENCE]\n");
-
-                context_chunks.push(memory_context);
-
                 self.log(format!(
-                    "[FUSION] Recalled prior experience; relevance confidence {:.2}",
-                    recall.confidence
+                    "[TIMING] MEMORY_RECALL completed in {}ms",
+                    stage_start.elapsed().as_millis()
                 ));
             }
 
-            Ok(_) => {
-                self.log("[FUSION] No prior experience relevant to this mission.".to_string());
-            }
-
             Err(error) => {
-                // Memory is never a hard dependency for execution.
                 self.log(format!(
-                    "[FUSION] Memory recall unavailable; continuing without recalled experience: {}",
+                    "[FUSION] Memory query embedding unavailable; continuing without recalled experience: {}",
                     error
                 ));
             }
@@ -517,6 +562,24 @@ impl CorticalLoop {
         );
 
         if status == ContractStatus::Satisfied {
+            let command_only_contract = session.contract.conditions.len() == 1
+                && matches!(
+                    session.contract.conditions.first(),
+                    Some(crate::completion_engine::CompletionCondition::CommandMarkerAcquired)
+                );
+
+            if command_only_contract {
+                self.log(
+                    "\x1b[1;36m>> [CORTEX TERMINAL] Pure command contract satisfied by physical CMD_OK evidence. No additional model turn required. Node complete.\x1b[0m"
+                        .to_string(),
+                );
+
+                return Ok(CortexState::Complete {
+                    belief: current_belief.max(0.95),
+                    evidence: session.collect_evidence(h_id),
+                });
+            }
+
             self.log(
                 "\x1b[1;33m>> [CORTEX] Local contract evidence is satisfied. Continuing through normal completion verification.\x1b[0m"
                     .to_string(),
@@ -551,9 +614,39 @@ impl CorticalLoop {
                 current_belief,
             );
 
-        let enhanced_mission = if !unwritten_targets.is_empty() && recon_ready {
+        // An outstanding artifact may enter the write phase only after the
+        // deterministic reconnaissance contract is actually satisfied.
+        // A single successful command is evidence for that command only; it
+        // must never bypass the remaining reconnaissance conditions.
+        let write_phase_ready = !unwritten_targets.is_empty() && recon_ready;
+
+        // DETERMINISTIC PHASE TRANSITION:
+        //
+        // Once reconnaissance is complete, an outstanding artifact must be
+        // produced through the native write boundary. Do not merely tell the
+        // Strategist that write_file is available while continuing to pass
+        // the old execute_command hypothesis as the authoritative strategy.
+        //
+        // This is intentionally upstream of EpistemicEngine::propose_action().
+        // That function already force-selects the native tool for explicit
+        // strategies, so the Cortex must supply the correct strategy here.
+        let active_strategy = if write_phase_ready {
+            let target = unwritten_targets[0];
+            let strategy = format!("write_file:{}", target);
+
+            self.log(format!(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Reconnaissance verified; forcing native deliverable strategy `{}`.",
+                strategy
+            ));
+
+            strategy
+        } else {
+            h_content.clone()
+        };
+
+        let enhanced_mission = if write_phase_ready {
             format!(
-                "{}\n\n[PHASE MANDATE: RECONNAISSANCE VERIFIED]\nThe deterministic reconnaissance contract has been satisfied. You may now produce the required deliverable at '{}' using `write_file`.",
+                "{}\n\n[PHASE MANDATE: RECONNAISSANCE VERIFIED]\nThe deterministic reconnaissance contract has been satisfied. The required deliverable MUST now be produced at '{}' using the native `write_file` action.",
                 mission,
                 unwritten_targets[0]
             )
@@ -566,7 +659,7 @@ impl CorticalLoop {
             &self.client,
             &self.api_key,
             &enhanced_mission,
-            &h_content,
+            &active_strategy,
             world_context,
             &evidence_history,
         )
@@ -646,11 +739,7 @@ impl CorticalLoop {
             }
         }
 
-        Ok(CortexState::Critique {
-            actions,
-            proposal: raw_proposal,
-            belief: current_belief,
-        })
+        Ok(CortexState::Critique { actions, proposal: raw_proposal, belief: current_belief })
     }
 
     async fn handle_critic(
@@ -705,7 +794,12 @@ impl CorticalLoop {
                 AgentAction::SearchCode { path, query, .. } => {
                     format!("search_code:{}:{}", path, query)
                 }
-                AgentAction::WriteFile { path, .. } => format!("write_file:{}", path),
+                AgentAction::WriteFile { path, content, .. } => {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    content.hash(&mut hasher);
+                    format!("write_file:{}:{:016x}", path, hasher.finish())
+                }
                 AgentAction::DiffPatch { path, .. } => format!("diff_patch:{}", path),
                 AgentAction::PatchFunction { path, function_name, .. } => {
                     format!("patch_function:{}:{}", path, function_name)
@@ -929,7 +1023,12 @@ impl CorticalLoop {
                 AgentAction::SearchCode { path, query, .. } => {
                     format!("search_code:{}:{}", path, query)
                 }
-                AgentAction::WriteFile { path, .. } => format!("write_file:{}", path),
+                AgentAction::WriteFile { path, content, .. } => {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    content.hash(&mut hasher);
+                    format!("write_file:{}:{:016x}", path, hasher.finish())
+                }
                 AgentAction::DiffPatch { path, .. } => format!("diff_patch:{}", path),
                 AgentAction::PatchFunction { path, function_name, .. } => {
                     format!("patch_function:{}:{}", path, function_name)
@@ -1179,10 +1278,28 @@ impl CorticalLoop {
                         belief,
                     );
 
+                let command_only_contract = session.contract.conditions.len() == 1
+                    && matches!(
+                        session.contract.conditions.first(),
+                        Some(crate::completion_engine::CompletionCondition::CommandMarkerAcquired)
+                    );
+
+                if is_halt_action && deterministic_contract_satisfied && command_only_contract {
+                    self.log(
+                        "\x1b[1;36m>> [CORTEX TERMINAL] Deterministic command contract satisfied by physical CMD_OK evidence. No additional model verification required. Node complete.\x1b[0m"
+                            .to_string(),
+                    );
+
+                    return Ok(CortexState::Complete {
+                        belief: belief.max(0.95),
+                        evidence: session.collect_evidence(h_id),
+                    });
+                }
+
                 if is_halt_action
+                    && deterministic_contract_satisfied
                     && eval.confidence_modifier >= 0.0
                     && belief > 0.70
-                    && deterministic_contract_satisfied
                 {
                     let strategy_for_verification = format!(
                         "MISSION OBJECTIVE:\n{}\n\nCURRENT STRATEGY:\n{}",

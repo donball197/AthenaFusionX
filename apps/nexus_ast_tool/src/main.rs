@@ -4,6 +4,7 @@ use nexus_ast_tool::polyglot::{PolyglotScanner, SecurityFinding};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use serde_json;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -50,9 +51,68 @@ enum Commands {
         #[arg(long)]
         instruction: Option<String>,
     },
+    Study {
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+
+        #[arg(
+            long,
+            default_value = "nexus_study_report",
+            help = "Directory for the generated study report"
+        )]
+        output: PathBuf,
+    },
+    Approve {
+        #[arg(long)]
+        candidate_id: String,
+
+        #[arg(long)]
+        report_identity: String,
+
+        #[arg(
+            long,
+            help = "Required explicit human authorization token"
+        )]
+        confirm: String,
+
+        #[arg(
+            long,
+            default_value = ".nexus/evolution/approvals",
+            help = "Directory where the approval artifact is persisted"
+        )]
+        output: PathBuf,
+    },
     Optimize {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
+
+        #[arg(
+            long,
+            default_value = "/tmp/nexus_evolution_reports",
+            help = "Directory where the immutable optimization report is persisted"
+        )]
+        output: PathBuf,
+    },
+
+    DryRun {
+        #[arg(
+            long,
+            help = "Persisted optimization_report.json from the report-only phase"
+        )]
+        report: PathBuf,
+
+        #[arg(
+            long,
+            help = "Human Approval #1 artifact authorizing this exact report/candidate"
+        )]
+        approval: PathBuf,
+
+        #[arg(
+            long,
+            default_value = "/tmp/nexus_evolution_dry_run",
+            help = "External directory used for the isolated dry-run workspace and report"
+        )]
+        output: PathBuf,
     },
 }
 
@@ -99,7 +159,9 @@ fn run_project_test_suite(repo_path: &Path) -> Option<bool> {
     } else if repo_path.join("package.json").exists() {
         ("npm", vec!["test", "--", "--passWithNoTests"])
     } else {
-        println!("    [ℹ️ Test Harness] No standard test harness detected (Cargo, PHPUnit, PyTest, Jest). Skipping.");
+        println!(
+            "    [ℹ️ Test Harness] No standard test harness detected (Cargo, PHPUnit, PyTest, Jest). Skipping."
+        );
         return None;
     };
 
@@ -254,7 +316,9 @@ fn main() -> Result<()> {
                     .unwrap_or_default();
 
                 if !status_out.is_empty() {
-                    println!("==> [Git Automation Warning] Working directory contains uncommitted changes. Branching will include dirty state.");
+                    println!(
+                        "==> [Git Automation Warning] Working directory contains uncommitted changes. Branching will include dirty state."
+                    );
                 }
 
                 let ts = std::time::SystemTime::now()
@@ -298,7 +362,9 @@ fn main() -> Result<()> {
             let mut _triage_error_count = 0;
 
             if findings.is_empty() {
-                println!("==> [Security Auditor] No obvious dangerous sinks found. Codebase looks clean!");
+                println!(
+                    "==> [Security Auditor] No obvious dangerous sinks found. Codebase looks clean!"
+                );
             } else {
                 println!(
                     "==> [Security Auditor] WARNING: Discovered {} potential vulnerabilities.",
@@ -374,12 +440,17 @@ fn main() -> Result<()> {
                                     ));
 
                                     if auto_heal {
-                                        println!("        [🛠️ Auto-Heal] Generating secure anchor-based patch...");
+                                        println!(
+                                            "        [🛠️ Auto-Heal] Generating secure anchor-based patch..."
+                                        );
 
                                         let file_source = match fs::read_to_string(&finding.path) {
                                             Ok(src) => src,
                                             Err(e) => {
-                                                println!("        [❌ Patch Error] Fail-closed read failure: {}", e);
+                                                println!(
+                                                    "        [❌ Patch Error] Fail-closed read failure: {}",
+                                                    e
+                                                );
                                                 failed_fix_count += 1;
                                                 continue;
                                             }
@@ -390,7 +461,9 @@ fn main() -> Result<()> {
                                         let Some((live_sink_start, live_sink_end)) =
                                             resolve_anchor(&file_source, &finding)
                                         else {
-                                            println!("        [ℹ️ Already Resolved] Sink lines no longer present. Marked clean.");
+                                            println!(
+                                                "        [ℹ️ Already Resolved] Sink lines no longer present. Marked clean."
+                                            );
                                             already_resolved_count += 1;
                                             continue;
                                         };
@@ -406,7 +479,9 @@ fn main() -> Result<()> {
                                             if is_secondary_fetch
                                                 && file_source.contains("$stmt = $con->prepare")
                                             {
-                                                println!("        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement.");
+                                                println!(
+                                                    "        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement."
+                                                );
                                                 (
                                                     "$result = $stmt->get_result();".to_string(),
                                                     live_sink_start,
@@ -429,9 +504,9 @@ fn main() -> Result<()> {
                                                 if let Some((ref var_name, c_start, _c_end)) = taint
                                                 {
                                                     println!(
-                                                    "        [🔗 Multi-Site Taint] {} built near line {}. Splicing locally to line {}.",
-                                                    var_name, c_start, live_sink_line
-                                                );
+                                                        "        [🔗 Multi-Site Taint] {} built near line {}. Splicing locally to line {}.",
+                                                        var_name, c_start, live_sink_line
+                                                    );
                                                     eff_start = c_start.saturating_sub(1);
                                                     eff_end = live_sink_end
                                                         .min(lines.len().saturating_sub(1));
@@ -559,7 +634,9 @@ fn main() -> Result<()> {
                                                 continue;
                                             }
                                             fixed_count += 1;
-                                            println!("        [✅ Patch Verified] Syntax OK, Semantic checks passed, and AST rescan confirms sink eliminated.");
+                                            println!(
+                                                "        [✅ Patch Verified] Syntax OK, Semantic checks passed, and AST rescan confirms sink eliminated."
+                                            );
                                             report_md.push_str(
                                                 "### Recommended Patch (Auto-Healed, Verified)\n",
                                             );
@@ -598,7 +675,9 @@ fn main() -> Result<()> {
                                     println!("        [🟢 SAFE] Explicitly classified safe.");
                                 } else {
                                     unknown_count += 1;
-                                    println!("        [🟡 UNKNOWN] Security state cannot be established without assumptions.");
+                                    println!(
+                                        "        [🟡 UNKNOWN] Security state cannot be established without assumptions."
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -656,7 +735,10 @@ fn main() -> Result<()> {
             if branch_fix && fixed_count > 0 && remediation_clean {
                 println!("\n==> [Git Automation] Staging verified fixes & creating commit...");
                 let _ = Command::new("git").args(["add", "."]).current_dir(&scan_path).output();
-                let commit_msg = format!("chore(security): automated remediation of {} vulnerabilities via AthenaFusionX", fixed_count);
+                let commit_msg = format!(
+                    "chore(security): automated remediation of {} vulnerabilities via AthenaFusionX",
+                    fixed_count
+                );
                 let commit_status = Command::new("git")
                     .args(["commit", "-m", &commit_msg])
                     .current_dir(&scan_path)
@@ -681,8 +763,66 @@ fn main() -> Result<()> {
                 return Err(anyhow::anyhow!("Refactor requires either --instruction or --payload"));
             }
         }
-        Commands::Optimize { path } => {
-            nexus_ast_tool::supervisor::Supervisor::self_optimize(&path)?;
+        Commands::Study { path, output } => {
+            nexus_ast_tool::study::run_study(&path, &output)?;
+        }
+        Commands::Approve {
+            candidate_id,
+            report_identity,
+            confirm,
+            output,
+        } => {
+            let approval = nexus_ast_tool::evolution::HumanApproval::authorize(
+                &candidate_id,
+                &report_identity,
+                &confirm,
+            )?;
+
+            fs::create_dir_all(&output)?;
+
+            let safe_name = format!(
+                "{}.json",
+                approval
+                    .approval_id
+                    .replace(':', "_")
+                    .replace('|', "_")
+                    .replace('=', "_")
+                    .replace('/', "_")
+                    .replace(' ', "_")
+            );
+
+            let approval_path = output.join(safe_name);
+            let serialized = serde_json::to_string_pretty(&approval)?;
+
+            fs::write(&approval_path, serialized)?;
+
+            println!("==> [Human Approval #1] EXPLICITLY AUTHORIZED");
+            println!("    Candidate: {}", approval.candidate_id);
+            println!("    Report: {}", approval.report_identity);
+            println!("    Approval: {}", approval.approval_id);
+            println!("    Artifact: {}", approval_path.display());
+            println!("    Dry run authorized: YES");
+            println!("    Dry run executed: NO");
+            println!("    Promotion performed: NO");
+        }
+
+        Commands::Optimize { path, output } => {
+            nexus_ast_tool::supervisor::Supervisor::self_optimize(
+                &path,
+                &output,
+            )?;
+        }
+
+        Commands::DryRun {
+            report,
+            approval,
+            output,
+        } => {
+            nexus_ast_tool::supervisor::Supervisor::isolated_dry_run(
+                &report,
+                &approval,
+                &output,
+            )?;
         }
     }
     Ok(())

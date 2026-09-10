@@ -37,8 +37,7 @@ impl Critic {
             || observations.contains("[READ_CHUNK_OK]")
             || observations.contains("[READ_FUNCTION_OK]");
 
-        let has_cmd = observations.contains("[CMD_OK]")
-            || observations.contains("[EXEC_OK]");
+        let has_cmd = observations.contains("[CMD_OK]") || observations.contains("[EXEC_OK]");
 
         let has_search = observations.contains("[SEARCH_OK]")
             || observations.contains("[SEARCH_CODE_OK]")
@@ -56,7 +55,10 @@ impl Critic {
                 "Missing concrete success indicators (Read/Write/Cmd/Search).".into()
             },
             suggested_recovery: if !approved {
-                Some("Perform a read, write, search, or command execution to gather evidence.".into())
+                Some(
+                    "Perform a read, write, search, or command execution to gather evidence."
+                        .into(),
+                )
             } else {
                 None
             },

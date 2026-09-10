@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "data_scraper"
 version = "0.1.0"
 edition = "2021"
@@ -11,6 +12,10 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 nexus_model_hub = { path = "../../crates/nexus_model_hub" }
 dotenvy = { workspace = true }
+
+[[bin]]
+name = "data-scraper"
+path = "src/main.rs"
 
 [lints]
 workspace = true

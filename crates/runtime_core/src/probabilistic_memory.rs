@@ -31,7 +31,7 @@ impl ProbabilisticMemory {
         if let Ok(query_vec) =
             nexus_substrate::vector_bridge::get_embedding(api_key, current_directive).await
         {
-            if let Ok(memories) = memory.semantic_search(&query_vec).await {
+            if let Ok(memories) = memory.semantic_search(&query_vec, 3).await {
                 for m in memories {
                     if m.result.contains("[HIGH_FITNESS_PATTERN]")
                         || m.result.contains("[COMPILE_OK]")

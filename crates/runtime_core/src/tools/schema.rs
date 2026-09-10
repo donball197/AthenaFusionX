@@ -234,10 +234,9 @@ pub fn tool_declarations_for_strategy(
     let phase_tools = tool_declarations_for_phase(phase);
 
     match native_tool_name_for_strategy(strategy) {
-        Some(expected_tool) => phase_tools
-            .into_iter()
-            .filter(|tool| tool.name == expected_tool)
-            .collect(),
+        Some(expected_tool) => {
+            phase_tools.into_iter().filter(|tool| tool.name == expected_tool).collect()
+        }
         None => phase_tools,
     }
 }

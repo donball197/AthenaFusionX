@@ -85,6 +85,3 @@ opt-level = "z"
 
 [workspace.lints.clippy]
 needless_question_mark = "allow"
-
-[workspace.lints.cargo]
-non_kebab_case_bins = "allow"

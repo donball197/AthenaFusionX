@@ -32,7 +32,7 @@ export RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--threads=1 -C link-a
 
 # --- 3. Pre-Flight Cleanup ---
 rm -f target/.cargo-lock target/debug/.cargo-lock target/release/.cargo-lock 2>/dev/null || true
-pkill -f nexus_ide_backend 2>/dev/null || true
+pkill -f nexus-ide-backend 2>/dev/null || true
 sleep 0.3
 
 # --- 4. Smooth Spinner Function ---
@@ -59,7 +59,7 @@ spinner() {
 # --- 5. Quiet Compilation with Live Animation ---
 echo -e "\x1b[36m[1/3] Compiling binaries (${BUILD_PROFILE})...\x1b[0m"
 
-cargo ${CARGO_TOOLCHAIN} build ${RELEASE_FLAG} --bin nexus_ide_backend --bin nexus_cli > /tmp/nexus_build.log 2>&1 &
+cargo ${CARGO_TOOLCHAIN} build ${RELEASE_FLAG} --bin nexus-ide-backend --bin nexus-cli > /tmp/nexus_build.log 2>&1 &
 BUILD_PID=$!
 
 # Run the animated spinner while cargo compiles in background
@@ -75,14 +75,14 @@ fi
 echo -e "\x1b[32m[✓] Binaries compiled successfully (${BUILD_PROFILE}).\x1b[0m"
 
 # Ensure binaries exist
-if [[ ! -f "${TARGET_DIR}/nexus_ide_backend" || ! -f "${TARGET_DIR}/nexus_cli" ]]; then
+if [[ ! -f "${TARGET_DIR}/nexus-ide-backend" || ! -f "${TARGET_DIR}/nexus-cli" ]]; then
     echo -e "\x1b[31m>> [FATAL] Expected binaries not found in ${TARGET_DIR}.\x1b[0m"
     exit 1
 fi
 
 # --- 6. Start Background Daemon ---
 echo -e "\x1b[36m[2/3] Initializing Background Daemon (Port 3000)...\x1b[0m"
-"${TARGET_DIR}/nexus_ide_backend" > daemon.log 2>&1 &
+"${TARGET_DIR}/nexus-ide-backend" > daemon.log 2>&1 &
 DAEMON_PID=$!
 
 # Trap signals so daemon always terminates cleanly on exit
@@ -114,4 +114,4 @@ fi
 
 # --- 8. Launch Interactive CLI Client ---
 echo -e "\x1b[36m[3/3] Launching Interactive CLI Client...\x1b[0m"
-"${TARGET_DIR}/nexus_cli"
+"${TARGET_DIR}/nexus-cli"

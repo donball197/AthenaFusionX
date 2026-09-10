@@ -88,25 +88,17 @@ fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
             summary
         };
 
-        let tuple =
-            EpistemicTuple::new("MEMORY", "semantic_recall", "SUCCESS", &value, 1.0);
+        let tuple = EpistemicTuple::new("MEMORY", "semantic_recall", "SUCCESS", &value, 1.0);
 
-        let prop = format!(
-            "{}\n[PROPOSITION] Recalled prior experience: {}",
-            first, value
-        );
+        let prop = format!("{}\n[PROPOSITION] Recalled prior experience: {}", first, value);
 
         return (prop, Some(tuple));
     }
 
     if first.starts_with("[SEARCH_MEMORY_EMPTY]") {
-        let tuple =
-            EpistemicTuple::new("MEMORY", "semantic_recall", "EMPTY", first, 1.0);
+        let tuple = EpistemicTuple::new("MEMORY", "semantic_recall", "EMPTY", first, 1.0);
 
-        let prop = format!(
-            "{}\n[PROPOSITION] No relevant prior memory was retrieved.",
-            first
-        );
+        let prop = format!("{}\n[PROPOSITION] No relevant prior memory was retrieved.", first);
 
         return (prop, Some(tuple));
     }
@@ -250,11 +242,7 @@ impl EpistemicSession {
         // The completion engine still receives the belief value for legacy
         // compatibility. Its MinBeliefScore condition is inspected separately
         // before this becomes the authoritative completion path.
-        SubgoalCompletionEngine::evaluate(
-            &self.contract,
-            &self.local_evidence,
-            current_belief,
-        )
+        SubgoalCompletionEngine::evaluate(&self.contract, &self.local_evidence, current_belief)
     }
 
     /// Preserve physical session evidence when cognition terminates
@@ -269,10 +257,7 @@ impl EpistemicSession {
             return reason.to_string();
         }
 
-        format!(
-            "{}\n\n[PHYSICAL SESSION EVIDENCE]\n{}",
-            reason, physical
-        )
+        format!("{}\n\n[PHYSICAL SESSION EVIDENCE]\n{}", reason, physical)
     }
 
     pub fn collect_evidence(&self, h_id: Uuid) -> String {
@@ -301,11 +286,15 @@ impl EpistemicSession {
             (false, true) => history,
 
             (false, false) => {
+<<<<<<< HEAD
                 format!(
                     "{}\n[PHYSICAL SESSION EVIDENCE]\n{}",
                     history.trim_end(),
                     physical
                 )
+=======
+                format!("{}\n[PHYSICAL SESSION EVIDENCE]\n{}", history.trim_end(), physical)
+>>>>>>> bcc09ff4 (chore(motorola): sync latest micro-agent modules and manifest updates)
             }
         }
     }

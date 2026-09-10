@@ -52,6 +52,8 @@ impl EpistemicEngine {
         models: &[String],
         payload: &Value,
     ) -> Result<String> {
+        eprintln!("[MODEL TRACE] safe_api_call models={:?}", models);
+
         if models.is_empty() {
             return Err(anyhow!(
                 "No models configured -- check NEXUS_HEAVY_MODEL/NEXUS_HEAVY_CASCADE \
@@ -95,7 +97,6 @@ impl EpistemicEngine {
                                 .map(|f| serde_json::json!({"type": "function", "function": f}))
                                 .collect();
 
-
                             p.as_object_mut()
                                 .unwrap()
                                 .insert("tools".to_string(), Value::Array(oai_tools));
@@ -109,7 +110,6 @@ impl EpistemicEngine {
                                 .unwrap()
                                 .insert("tool_choice".to_string(), tool_choice.clone());
                         }
-
 
                         if let Some(mime) = payload
                             .pointer("/generationConfig/responseMimeType")
@@ -372,7 +372,18 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
         world_context: &str,
         evidence_so_far: &str,
     ) -> Result<String> {
-        let phase = if evidence_so_far.contains("[WRITE_OK]")
+        // An explicit native write strategy is an execution operation even
+        // when prior evidence has already advanced the session into the
+        // verification phase. Verification must not perform mutations, and
+        // therefore write_file must be selected from the Execution phase.
+        let phase = if strategy.starts_with("write_file:")
+            || strategy.starts_with("diff_patch:")
+            || strategy.starts_with("patch_function:")
+            || strategy.starts_with("replace_lines:")
+            || strategy.starts_with("synthesize_report:")
+        {
+            crate::tools::schema::CognitivePhase::Execution
+        } else if evidence_so_far.contains("[WRITE_OK]")
             || evidence_so_far.contains("[DIFF_PATCH_OK]")
         {
             crate::tools::schema::CognitivePhase::Verification
@@ -470,8 +481,7 @@ executed."#,
             mission, strategy, world_context, bounded_evidence
         );
 
-        let strategy_tools =
-            crate::tools::schema::tool_declarations_for_strategy(phase, strategy);
+        let strategy_tools = crate::tools::schema::tool_declarations_for_strategy(phase, strategy);
 
         let mut payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -489,9 +499,7 @@ executed."#,
         // resolves to exactly one native tool, force that tool at the
         // OpenAI-compatible provider boundary. This prevents the model from
         // silently substituting another native action.
-        if let Some(expected_tool) =
-            crate::tools::schema::native_tool_name_for_strategy(strategy)
-        {
+        if let Some(expected_tool) = crate::tools::schema::native_tool_name_for_strategy(strategy) {
             payload["forced_tool_choice"] = serde_json::json!({
                 "type": "function",
                 "function": {
@@ -499,7 +507,6 @@ executed."#,
                 }
             });
         }
-
 
         Self::safe_api_call(client, api_key, &crate::model_config::get_heavy_models(), &payload)
             .await
@@ -554,7 +561,6 @@ gathering is a strict prerequisite to writing."#,
                 format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
             } else {
                 base
-
             }
         };
 
@@ -606,7 +612,6 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
             client,
             api_key,
             &crate::model_config::get_heavy_models(),
-
             &payload,
         )
         .await?;

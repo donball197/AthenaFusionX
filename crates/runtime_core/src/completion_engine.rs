@@ -158,8 +158,11 @@ impl SubgoalCompletionEngine {
             let threshold = if has_write || has_patch { 0.75 } else { 0.65 };
             conditions.push(CompletionCondition::MinBeliefScore(threshold));
         } else if !has_write && !has_patch {
+            // Pure command objectives are physically verified by CMD_OK.
+            // Do not require a cognitive belief threshold here: anti-loop
+            // recovery may reduce belief even after the command has already
+            // succeeded. Physical command evidence is authoritative.
             conditions.push(CompletionCondition::CommandMarkerAcquired);
-            conditions.push(CompletionCondition::MinBeliefScore(0.85));
         }
 
         let arts = extract_required_artifact_paths(objective);
@@ -235,9 +238,17 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
     let write_words = ["write", "save", "export", "synthesize"];
 
     for (i, tok) in tokens.iter().enumerate() {
-        let clean = tok.trim_matches(|c: char| {
+        // Completion criteria such as `WRITE_OK:host_report.md` are
+        // evidence tokens, not artifact paths. Never allow a marker prefix
+        // to contaminate ArtifactSpec.path.
+        let trimmed = tok.trim_matches(|c: char| {
             !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-'
         });
+        let clean = trimmed
+            .strip_prefix("WRITE_OK:")
+            .or_else(|| trimmed.strip_prefix("DIFF_PATCH_OK:"))
+            .unwrap_or(trimmed);
+
         if exts.iter().any(|ext| clean.ends_with(&format!(".{}", ext)))
             && (clean.contains('/') || clean.contains('.'))
         {

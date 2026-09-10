@@ -20,7 +20,7 @@ dotenvy.workspace = true
 tokenizers = "0.20"
 
 [[bin]]
-name = "nexus_minion"
+name = "nexus-minion"
 path = "src/bin/nexus_minion.rs"
 
 [lints]
