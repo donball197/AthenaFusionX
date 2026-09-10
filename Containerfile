@@ -4,6 +4,6 @@ COPY . .
 RUN cargo build --release -p nexus_node
 
 FROM debian:bookworm-slim
-COPY --from=builder /app/target/release/nexus_node /usr/local/bin/node
+COPY --from=builder /app/target/release/nexus-node /usr/local/bin/node
 EXPOSE 8080
 CMD ["node"]
