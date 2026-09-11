@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 pub const EVOLUTION_SCHEMA_VERSION: u32 = 1;
 
-    
 /// A persisted candidate produced during the report-only optimization phase.
 ///
 /// This is descriptive evidence only. It does not authorize execution.
@@ -69,9 +68,7 @@ impl OptimizationReport {
     }
 
     pub fn find_candidate(&self, candidate_id: &str) -> Option<&OptimizationCandidate> {
-        self.candidates
-            .iter()
-            .find(|candidate| candidate.candidate_id == candidate_id)
+        self.candidates.iter().find(|candidate| candidate.candidate_id == candidate_id)
     }
 }
 
@@ -191,21 +188,15 @@ impl HumanApproval {
         let report_identity = report_identity.into();
 
         if candidate_id.trim().is_empty() {
-            return Err(anyhow::anyhow!(
-                "Human approval requires a non-empty candidate identity."
-            ));
+            return Err(anyhow::anyhow!("Human approval requires a non-empty candidate identity."));
         }
 
         if report_identity.trim().is_empty() {
-            return Err(anyhow::anyhow!(
-                "Human approval requires a non-empty report identity."
-            ));
+            return Err(anyhow::anyhow!("Human approval requires a non-empty report identity."));
         }
 
-        let approval_id = format!(
-            "approval:v1|candidate={}|report={}",
-            candidate_id, report_identity
-        );
+        let approval_id =
+            format!("approval:v1|candidate={}|report={}", candidate_id, report_identity);
 
         Ok(Self {
             schema_version: EVOLUTION_SCHEMA_VERSION,
@@ -219,11 +210,7 @@ impl HumanApproval {
 
     /// Verify that this artifact authorizes exactly the requested candidate
     /// and report. A valid artifact can later be consumed by the dry-run gate.
-    pub fn authorizes(
-        &self,
-        candidate_id: &str,
-        report_identity: &str,
-    ) -> bool {
+    pub fn authorizes(&self, candidate_id: &str, report_identity: &str) -> bool {
         self.schema_version == EVOLUTION_SCHEMA_VERSION
             && self.approved
             && self.candidate_id == candidate_id
@@ -249,17 +236,16 @@ pub struct StudyEvidenceSnapshot {
 impl StudyEvidenceSnapshot {
     /// Adapt the already-canonical deterministic study evidence into the
     /// evolution contract. No repository metrics are recalculated here.
-    pub fn from_evidence(
-        evidence: &crate::evidence::EvidencePacketSet,
-    ) -> Self {
+    pub fn from_evidence(evidence: &crate::evidence::EvidencePacketSet) -> Self {
         Self {
             source_files: evidence.overview.source_files,
             function_count: evidence.overview.functions,
             entity_count: evidence.overview.structural_entities,
             dependency_count: evidence.dependencies.total_dependencies,
             workspace_dependency_count: evidence.dependencies.workspace_dependencies,
-            resolved_workspace_dependency_count:
-                evidence.dependencies.resolved_workspace_dependencies,
+            resolved_workspace_dependency_count: evidence
+                .dependencies
+                .resolved_workspace_dependencies,
             parse_health_percent: evidence.parse_health.parse_health_percent,
             clean_files: evidence.parse_health.clean_files,
             read_failures: evidence.parse_health.read_failures,
@@ -276,17 +262,11 @@ pub struct StudyComparison {
 }
 
 impl StudyComparison {
-    pub fn between(
-        baseline: StudyEvidenceSnapshot,
-        candidate: StudyEvidenceSnapshot,
-    ) -> Self {
+    pub fn between(baseline: StudyEvidenceSnapshot, candidate: StudyEvidenceSnapshot) -> Self {
         let delta = StructuralDelta {
-            source_files_delta: candidate.source_files as i64
-                - baseline.source_files as i64,
-            function_count_delta: candidate.function_count as i64
-                - baseline.function_count as i64,
-            entity_count_delta: candidate.entity_count as i64
-                - baseline.entity_count as i64,
+            source_files_delta: candidate.source_files as i64 - baseline.source_files as i64,
+            function_count_delta: candidate.function_count as i64 - baseline.function_count as i64,
+            entity_count_delta: candidate.entity_count as i64 - baseline.entity_count as i64,
             dependency_count_delta: candidate.dependency_count as i64
                 - baseline.dependency_count as i64,
             parse_health_improved: Some(
@@ -294,23 +274,16 @@ impl StudyComparison {
             ),
         };
 
-        Self {
-            baseline,
-            candidate,
-            delta,
-        }
+        Self { baseline, candidate, delta }
     }
 }
 
 /// Convert a complete study report into the evolution layer's canonical
 /// structural snapshot.
-pub fn study_snapshot(
-    report: &crate::study::StudyReport,
-) -> StudyEvidenceSnapshot {
+pub fn study_snapshot(report: &crate::study::StudyReport) -> StudyEvidenceSnapshot {
     let evidence = crate::evidence::build_evidence_packets(report);
     StudyEvidenceSnapshot::from_evidence(&evidence)
 }
-
 
 /// Conservative read-only security comparison for Evolution V1.
 ///
@@ -354,7 +327,6 @@ pub fn compare_security_findings(
         audit_identity,
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BuildIdentity {
@@ -495,9 +467,7 @@ pub fn evaluate_v1(
     }
 
     if !functional.build_passed {
-        return EvolutionDecision::Reject {
-            reason: "Candidate failed build validation.".into(),
-        };
+        return EvolutionDecision::Reject { reason: "Candidate failed build validation.".into() };
     }
 
     if functional.tests_passed == Some(false) {
@@ -512,9 +482,7 @@ pub fn evaluate_v1(
         };
     }
 
-    if comparison.capability.evidence_identity.is_none()
-        || comparison.capability.source.is_none()
-    {
+    if comparison.capability.evidence_identity.is_none() || comparison.capability.source.is_none() {
         return EvolutionDecision::Abstain {
             reason: "Capability improvement lacks sufficient evidence provenance.".into(),
         };
@@ -522,8 +490,7 @@ pub fn evaluate_v1(
 
     if functional.tests_passed != Some(true)
         || functional.test_identity.is_none()
-        || comparison.capability.evidence_identity
-            != functional.test_identity
+        || comparison.capability.evidence_identity != functional.test_identity
     {
         return EvolutionDecision::Abstain {
             reason: "Capability evidence is not bound to successful functional validation.".into(),
@@ -571,11 +538,8 @@ mod tests {
 
     #[test]
     fn human_approval_requires_explicit_confirmation() {
-        let result = HumanApproval::authorize(
-            "candidate:v1|symbol=test|index=0",
-            "report:v1|test",
-            "yes",
-        );
+        let result =
+            HumanApproval::authorize("candidate:v1|symbol=test|index=0", "report:v1|test", "yes");
 
         assert!(result.is_err());
     }
@@ -590,20 +554,11 @@ mod tests {
         .expect("explicit approval should succeed");
 
         assert!(approval.approved);
-        assert!(approval.authorizes(
-            "candidate:v1|symbol=test|index=0",
-            "report:v1|test",
-        ));
+        assert!(approval.authorizes("candidate:v1|symbol=test|index=0", "report:v1|test",));
 
-        assert!(!approval.authorizes(
-            "candidate:v1|symbol=other|index=0",
-            "report:v1|test",
-        ));
+        assert!(!approval.authorizes("candidate:v1|symbol=other|index=0", "report:v1|test",));
 
-        assert!(!approval.authorizes(
-            "candidate:v1|symbol=test|index=0",
-            "report:v1|other",
-        ));
+        assert!(!approval.authorizes("candidate:v1|symbol=test|index=0", "report:v1|other",));
     }
 
     #[test]
@@ -611,11 +566,7 @@ mod tests {
         let mut security = security_ok();
         security.regression = true;
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security,
-            &comparison_ok(),
-        );
+        let decision = evaluate_v1(&functional_ok(), &security, &comparison_ok());
 
         assert!(matches!(decision, EvolutionDecision::Reject { .. }));
     }
@@ -625,11 +576,7 @@ mod tests {
         let mut security = security_ok();
         security.status = SecurityStatus::Unknown;
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security,
-            &comparison_ok(),
-        );
+        let decision = evaluate_v1(&functional_ok(), &security, &comparison_ok());
 
         assert!(matches!(decision, EvolutionDecision::Abstain { .. }));
     }
@@ -639,11 +586,7 @@ mod tests {
         let mut functional = functional_ok();
         functional.build_passed = false;
 
-        let decision = evaluate_v1(
-            &functional,
-            &security_ok(),
-            &comparison_ok(),
-        );
+        let decision = evaluate_v1(&functional, &security_ok(), &comparison_ok());
 
         assert!(matches!(decision, EvolutionDecision::Reject { .. }));
     }
@@ -653,11 +596,7 @@ mod tests {
         let mut functional = functional_ok();
         functional.tests_passed = Some(false);
 
-        let decision = evaluate_v1(
-            &functional,
-            &security_ok(),
-            &comparison_ok(),
-        );
+        let decision = evaluate_v1(&functional, &security_ok(), &comparison_ok());
 
         assert!(matches!(decision, EvolutionDecision::Reject { .. }));
     }
@@ -667,11 +606,7 @@ mod tests {
         let mut comparison = comparison_ok();
         comparison.capability.measurable_improvement = false;
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security_ok(),
-            &comparison,
-        );
+        let decision = evaluate_v1(&functional_ok(), &security_ok(), &comparison);
 
         assert!(matches!(decision, EvolutionDecision::Reject { .. }));
     }
@@ -681,11 +616,7 @@ mod tests {
         let mut comparison = comparison_ok();
         comparison.capability.evidence_identity = None;
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security_ok(),
-            &comparison,
-        );
+        let decision = evaluate_v1(&functional_ok(), &security_ok(), &comparison);
 
         assert!(matches!(decision, EvolutionDecision::Abstain { .. }));
     }
@@ -695,11 +626,7 @@ mod tests {
         let mut comparison = comparison_ok();
         comparison.capability.source = None;
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security_ok(),
-            &comparison,
-        );
+        let decision = evaluate_v1(&functional_ok(), &security_ok(), &comparison);
 
         assert!(matches!(decision, EvolutionDecision::Abstain { .. }));
     }
@@ -716,11 +643,7 @@ mod tests {
             },
         };
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security_ok(),
-            &comparison,
-        );
+        let decision = evaluate_v1(&functional_ok(), &security_ok(), &comparison);
 
         assert!(matches!(decision, EvolutionDecision::Abstain { .. }));
     }
@@ -728,25 +651,16 @@ mod tests {
     #[test]
     fn capability_evidence_must_match_functional_test_identity() {
         let mut comparison = comparison_ok();
-        comparison.capability.evidence_identity =
-            Some("different-test-digest".into());
+        comparison.capability.evidence_identity = Some("different-test-digest".into());
 
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security_ok(),
-            &comparison,
-        );
+        let decision = evaluate_v1(&functional_ok(), &security_ok(), &comparison);
 
         assert!(matches!(decision, EvolutionDecision::Abstain { .. }));
     }
 
     #[test]
     fn valid_candidate_is_accepted() {
-        let decision = evaluate_v1(
-            &functional_ok(),
-            &security_ok(),
-            &comparison_ok(),
-        );
+        let decision = evaluate_v1(&functional_ok(), &security_ok(), &comparison_ok());
 
         assert!(matches!(decision, EvolutionDecision::Accept { .. }));
     }
@@ -812,7 +726,6 @@ mod tests {
         assert_eq!(comparison.delta.dependency_count_delta, 0);
     }
 
-
     #[test]
     fn evolution_record_uses_schema_version_one() {
         let record = EvolutionRecord::new(
@@ -836,9 +749,7 @@ mod tests {
             functional_ok(),
             security_ok(),
             comparison_ok(),
-            EvolutionDecision::Accept {
-                rationale: "test".into(),
-            },
+            EvolutionDecision::Accept { rationale: "test".into() },
         );
 
         assert_eq!(record.schema_version, EVOLUTION_SCHEMA_VERSION);

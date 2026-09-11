@@ -70,17 +70,16 @@ async fn main() -> anyhow::Result<()> {
     // With no argv directive, preserve the existing interactive EOF workflow.
     let argv_directive = std::env::args().skip(1).collect::<Vec<_>>();
     let single_shot = !argv_directive.is_empty();
-    let mut pending_directive = if argv_directive.is_empty() {
-        None
-    } else {
-        Some(argv_directive.join(" "))
-    };
+    let mut pending_directive =
+        if argv_directive.is_empty() { None } else { Some(argv_directive.join(" ")) };
 
     loop {
         let directive = if let Some(arg_directive) = pending_directive.take() {
             arg_directive
         } else {
-            print!("\n\x1b[1;32mnexus>\x1b[0m (Type prompt, then 'EOF' on a new line to submit)\n> ");
+            print!(
+                "\n\x1b[1;32mnexus>\x1b[0m (Type prompt, then 'EOF' on a new line to submit)\n> "
+            );
             io::stdout().flush()?;
 
             let mut input = String::new();

@@ -4,7 +4,6 @@ use nexus_ast_tool::polyglot::{PolyglotScanner, SecurityFinding};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use serde_json;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -69,10 +68,7 @@ enum Commands {
         #[arg(long)]
         report_identity: String,
 
-        #[arg(
-            long,
-            help = "Required explicit human authorization token"
-        )]
+        #[arg(long, help = "Required explicit human authorization token")]
         confirm: String,
 
         #[arg(
@@ -95,16 +91,10 @@ enum Commands {
     },
 
     DryRun {
-        #[arg(
-            long,
-            help = "Persisted optimization_report.json from the report-only phase"
-        )]
+        #[arg(long, help = "Persisted optimization_report.json from the report-only phase")]
         report: PathBuf,
 
-        #[arg(
-            long,
-            help = "Human Approval #1 artifact authorizing this exact report/candidate"
-        )]
+        #[arg(long, help = "Human Approval #1 artifact authorizing this exact report/candidate")]
         approval: PathBuf,
 
         #[arg(
@@ -766,12 +756,7 @@ fn main() -> Result<()> {
         Commands::Study { path, output } => {
             nexus_ast_tool::study::run_study(&path, &output)?;
         }
-        Commands::Approve {
-            candidate_id,
-            report_identity,
-            confirm,
-            output,
-        } => {
+        Commands::Approve { candidate_id, report_identity, confirm, output } => {
             let approval = nexus_ast_tool::evolution::HumanApproval::authorize(
                 &candidate_id,
                 &report_identity,
@@ -780,16 +765,8 @@ fn main() -> Result<()> {
 
             fs::create_dir_all(&output)?;
 
-            let safe_name = format!(
-                "{}.json",
-                approval
-                    .approval_id
-                    .replace(':', "_")
-                    .replace('|', "_")
-                    .replace('=', "_")
-                    .replace('/', "_")
-                    .replace(' ', "_")
-            );
+            let safe_name =
+                format!("{}.json", approval.approval_id.replace([':', '|', '=', '/', ' '], "_"));
 
             let approval_path = output.join(safe_name);
             let serialized = serde_json::to_string_pretty(&approval)?;
@@ -807,22 +784,11 @@ fn main() -> Result<()> {
         }
 
         Commands::Optimize { path, output } => {
-            nexus_ast_tool::supervisor::Supervisor::self_optimize(
-                &path,
-                &output,
-            )?;
+            nexus_ast_tool::supervisor::Supervisor::self_optimize(&path, &output)?;
         }
 
-        Commands::DryRun {
-            report,
-            approval,
-            output,
-        } => {
-            nexus_ast_tool::supervisor::Supervisor::isolated_dry_run(
-                &report,
-                &approval,
-                &output,
-            )?;
+        Commands::DryRun { report, approval, output } => {
+            nexus_ast_tool::supervisor::Supervisor::isolated_dry_run(&report, &approval, &output)?;
         }
     }
     Ok(())

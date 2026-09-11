@@ -286,15 +286,7 @@ impl EpistemicSession {
             (false, true) => history,
 
             (false, false) => {
-<<<<<<< HEAD
-                format!(
-                    "{}\n[PHYSICAL SESSION EVIDENCE]\n{}",
-                    history.trim_end(),
-                    physical
-                )
-=======
                 format!("{}\n[PHYSICAL SESSION EVIDENCE]\n{}", history.trim_end(), physical)
->>>>>>> bcc09ff4 (chore(motorola): sync latest micro-agent modules and manifest updates)
             }
         }
     }

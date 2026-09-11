@@ -1,21 +1,9 @@
 use crate::agent::RefactorAgent;
 use crate::evolution::{
-    compare_security_findings,
-    evaluate_v1,
-    source_fingerprint,
-    stable_fingerprint,
-    study_snapshot,
-    BuildIdentity,
-    CandidateIdentity,
-    CapabilityEvidence,
-    Comparison,
-    DryRunReport,
-    EvolutionRecord,
-    FunctionalEvidence,
-    Hypothesis,
-    OptimizationCandidate,
+    compare_security_findings, evaluate_v1, source_fingerprint, stable_fingerprint, study_snapshot,
+    BuildIdentity, CandidateIdentity, CapabilityEvidence, Comparison, DryRunReport,
+    EvolutionRecord, FunctionalEvidence, HumanApproval, Hypothesis, OptimizationCandidate,
     OptimizationReport,
-    HumanApproval,
 };
 use crate::polyglot::PolyglotScanner;
 use anyhow::{anyhow, Context};
@@ -46,9 +34,7 @@ impl BuildProfile {
         let start = if target.is_dir() {
             target
         } else {
-            target
-                .parent()
-                .ok_or_else(|| anyhow!("Target has no parent directory"))?
+            target.parent().ok_or_else(|| anyhow!("Target has no parent directory"))?
         };
 
         let manifest_path = find_nearest_manifest(start)
@@ -58,10 +44,7 @@ impl BuildProfile {
         // Member crates that use `workspace = true` cannot be built in isolation.
         let workspace_root = find_workspace_root(&manifest_path);
 
-        Ok(Self {
-            workspace_root,
-            manifest_path,
-        })
+        Ok(Self { workspace_root, manifest_path })
     }
 
     /// Run the target-aware build validation.
@@ -77,10 +60,7 @@ impl BuildProfile {
             .current_dir(&self.workspace_root)
             .output()
             .with_context(|| {
-                format!(
-                    "Failed to execute cargo check for {}",
-                    self.manifest_path.display()
-                )
+                format!("Failed to execute cargo check for {}", self.manifest_path.display())
             })?;
 
         Ok(BuildValidation {
@@ -104,10 +84,7 @@ impl BuildProfile {
             .current_dir(&self.workspace_root)
             .output()
             .with_context(|| {
-                format!(
-                    "Failed to execute cargo test for {}",
-                    self.manifest_path.display()
-                )
+                format!("Failed to execute cargo test for {}", self.manifest_path.display())
             })?;
 
         Ok(BuildValidation {
@@ -168,10 +145,8 @@ fn find_nearest_manifest(start: &Path) -> Option<PathBuf> {
 /// This is required for isolation: member crates that inherit dependencies
 /// via `workspace = true` cannot be built without the workspace root.
 fn find_workspace_root(manifest_path: &Path) -> PathBuf {
-    let package_dir = manifest_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let package_dir =
+        manifest_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
 
     let mut current = package_dir.clone();
 
@@ -213,27 +188,17 @@ impl Supervisor {
         let path = target_file.as_ref().canonicalize()?;
         let output = output.as_ref();
 
-        println!(
-            "==> [Supervisor] REPORT-ONLY Candidate Analysis: {}",
-            path.display()
-        );
+        println!("==> [Supervisor] REPORT-ONLY Candidate Analysis: {}", path.display());
 
         let profile = BuildProfile::discover(&path)?;
 
-        println!(
-            "    [BuildProfile] Workspace: {}",
-            profile.workspace_root.display()
-        );
-        println!(
-            "    [BuildProfile] Manifest: {}",
-            profile.manifest_path.display()
-        );
+        println!("    [BuildProfile] Workspace: {}", profile.workspace_root.display());
+        println!("    [BuildProfile] Manifest: {}", profile.manifest_path.display());
 
         let baseline_code = fs::read_to_string(&path)?;
         let baseline_fingerprint = source_fingerprint(&baseline_code);
 
-        let baseline_report =
-            crate::study::run_study_report(&profile.workspace_root)?;
+        let baseline_report = crate::study::run_study_report(&profile.workspace_root)?;
         let baseline_snapshot = study_snapshot(&baseline_report);
 
         println!(
@@ -248,15 +213,9 @@ impl Supervisor {
         let rules_dir = profile.workspace_root.join("rules");
         let rules = PolyglotScanner::load_rules(&rules_dir);
         let baseline_security_findings =
-            PolyglotScanner::scan_security_vulnerabilities(
-                &profile.workspace_root,
-                &rules,
-            );
+            PolyglotScanner::scan_security_vulnerabilities(&profile.workspace_root, &rules);
 
-        println!(
-            "    [Baseline] Security findings: {}",
-            baseline_security_findings.len()
-        );
+        println!("    [Baseline] Security findings: {}", baseline_security_findings.len());
 
         let symbols = PolyglotScanner::scan_path(&path);
         let mut processed_symbols = HashSet::new();
@@ -288,10 +247,7 @@ impl Supervisor {
             );
 
             let optimized_body =
-                match crate::client::ApiClient::generate_optimization(
-                    &sym.name,
-                    &snippet,
-                ) {
+                match crate::client::ApiClient::generate_optimization(&sym.name, &snippet) {
                     Ok(body) => {
                         println!("        [🧠] Candidate optimization generated.");
                         body
@@ -332,10 +288,7 @@ impl Supervisor {
             };
 
             let candidate_identity = CandidateIdentity {
-                candidate_id: format!(
-                    "candidate:v1|symbol={}|index={}",
-                    sym.name, candidate_index
-                ),
+                candidate_id: format!("candidate:v1|symbol={}|index={}", sym.name, candidate_index),
                 baseline_id: format!(
                     "baseline:v1|manifest={}|source={}",
                     profile.manifest_path.display(),
@@ -343,16 +296,11 @@ impl Supervisor {
                 ),
             };
 
-            let functional = FunctionalEvidence {
-                build_passed: false,
-                tests_passed: None,
-                test_identity: None,
-            };
+            let functional =
+                FunctionalEvidence { build_passed: false, tests_passed: None, test_identity: None };
 
-            let security = compare_security_findings(
-                &baseline_security_findings,
-                &baseline_security_findings,
-            );
+            let security =
+                compare_security_findings(&baseline_security_findings, &baseline_security_findings);
 
             let comparison = Comparison {
                 structural: crate::evolution::StructuralDelta::default(),
@@ -366,8 +314,7 @@ impl Supervisor {
                 },
             };
 
-            let decision =
-                evaluate_v1(&functional, &security, &comparison);
+            let decision = evaluate_v1(&functional, &security, &comparison);
 
             let record = EvolutionRecord::new(
                 BuildIdentity {
@@ -392,10 +339,7 @@ impl Supervisor {
                 evolution: record,
             });
 
-            println!(
-                "        [🧾] Proposal recorded: {}",
-                candidate_identity.candidate_id
-            );
+            println!("        [🧾] Proposal recorded: {}", candidate_identity.candidate_id);
         }
 
         let baseline_after = fs::read_to_string(&path)?;
@@ -443,11 +387,7 @@ impl Supervisor {
     ///
     /// The authoritative checkout is never mutated.
     /// No promotion is performed.
-    pub fn isolated_dry_run<
-        R: AsRef<Path>,
-        A: AsRef<Path>,
-        O: AsRef<Path>,
-    >(
+    pub fn isolated_dry_run<R: AsRef<Path>, A: AsRef<Path>, O: AsRef<Path>>(
         report_path: R,
         approval_path: A,
         output: O,
@@ -458,8 +398,7 @@ impl Supervisor {
 
         println!("==> [Gate 11.8] ISOLATED DRY RUN");
 
-        let report: OptimizationReport =
-            serde_json::from_str(&fs::read_to_string(&report_path)?)?;
+        let report: OptimizationReport = serde_json::from_str(&fs::read_to_string(&report_path)?)?;
 
         if report.schema_version != crate::evolution::EVOLUTION_SCHEMA_VERSION {
             return Err(anyhow!(
@@ -474,8 +413,7 @@ impl Supervisor {
             ));
         }
 
-        let approval: HumanApproval =
-            serde_json::from_str(&fs::read_to_string(&approval_path)?)?;
+        let approval: HumanApproval = serde_json::from_str(&fs::read_to_string(&approval_path)?)?;
 
         let candidate_id = &approval.candidate_id;
 
@@ -486,38 +424,29 @@ impl Supervisor {
         }
 
         if approval.report_identity != report.report_identity {
-            return Err(anyhow!(
-                "Human Approval #1 does not authorize this optimization report."
-            ));
+            return Err(anyhow!("Human Approval #1 does not authorize this optimization report."));
         }
 
-        let candidate = report
-            .find_candidate(candidate_id)
-            .ok_or_else(|| anyhow!(
+        let candidate = report.find_candidate(candidate_id).ok_or_else(|| {
+            anyhow!(
                 "Approved candidate '{}' does not exist in the optimization report.",
                 candidate_id
-            ))?;
+            )
+        })?;
 
-        let authoritative_target =
-            PathBuf::from(&candidate.target).canonicalize()?;
+        let authoritative_target = PathBuf::from(&candidate.target).canonicalize()?;
 
-        let authoritative_source =
-            fs::read_to_string(&authoritative_target)?;
+        let authoritative_source = fs::read_to_string(&authoritative_target)?;
 
-        let authoritative_fingerprint =
-            source_fingerprint(&authoritative_source);
+        let authoritative_fingerprint = source_fingerprint(&authoritative_source);
 
-        if authoritative_fingerprint
-            != report.baseline.source_fingerprint
-        {
+        if authoritative_fingerprint != report.baseline.source_fingerprint {
             return Err(anyhow!(
                 "AUTHORITATIVE SOURCE DRIFT: source fingerprint no longer matches report baseline."
             ));
         }
 
-        if candidate.evolution.baseline.source_fingerprint
-            != authoritative_fingerprint
-        {
+        if candidate.evolution.baseline.source_fingerprint != authoritative_fingerprint {
             return Err(anyhow!(
                 "CANDIDATE BASELINE MISMATCH: candidate was not generated from the current authoritative source."
             ));
@@ -525,9 +454,7 @@ impl Supervisor {
 
         // Output must not be inside the authoritative workspace.
         let authoritative_workspace =
-            BuildProfile::discover(&authoritative_target)?
-                .workspace_root
-                .canonicalize()?;
+            BuildProfile::discover(&authoritative_target)?.workspace_root.canonicalize()?;
 
         let output_abs = if output.is_absolute() {
             output.to_path_buf()
@@ -546,46 +473,23 @@ impl Supervisor {
         fs::create_dir_all(&output_abs)?;
 
         let isolated_workspace =
-            output_abs.join(format!(
-                "workspace_{}",
-                stable_fingerprint(
-                    candidate_id.as_bytes()
-                )
-            ));
+            output_abs.join(format!("workspace_{}", stable_fingerprint(candidate_id.as_bytes())));
 
         if isolated_workspace.exists() {
             fs::remove_dir_all(&isolated_workspace)?;
         }
 
-        copy_tree(
-            &authoritative_workspace,
-            &isolated_workspace,
-        )?;
+        copy_tree(&authoritative_workspace, &isolated_workspace)?;
 
-        let relative_target =
-            authoritative_target
-                .strip_prefix(&authoritative_workspace)
-                .map_err(|_| {
-                    anyhow!(
-                        "Target is not inside discovered authoritative workspace."
-                    )
-                })?;
+        let relative_target = authoritative_target
+            .strip_prefix(&authoritative_workspace)
+            .map_err(|_| anyhow!("Target is not inside discovered authoritative workspace."))?;
 
-        let isolated_target =
-            isolated_workspace.join(relative_target);
+        let isolated_target = isolated_workspace.join(relative_target);
 
-        println!(
-            "    [Isolation] Authoritative workspace: {}",
-            authoritative_workspace.display()
-        );
-        println!(
-            "    [Isolation] Candidate workspace: {}",
-            isolated_workspace.display()
-        );
-        println!(
-            "    [Isolation] Target: {}",
-            isolated_target.display()
-        );
+        println!("    [Isolation] Authoritative workspace: {}", authoritative_workspace.display());
+        println!("    [Isolation] Candidate workspace: {}", isolated_workspace.display());
+        println!("    [Isolation] Target: {}", isolated_target.display());
 
         let agent = crate::agent::RefactorAgent::new();
 
@@ -596,103 +500,71 @@ impl Supervisor {
             &candidate.proposed_payload,
         )?;
 
-        let isolated_profile =
-            BuildProfile::discover(&isolated_target)?;
+        let isolated_profile = BuildProfile::discover(&isolated_target)?;
 
         let build = isolated_profile.check()?;
 
-        println!(
-            "    [Build] cargo check: {}",
-            if build.success { "PASS" } else { "FAIL" }
-        );
+        println!("    [Build] cargo check: {}", if build.success { "PASS" } else { "FAIL" });
 
-        let build_identity =
-            build.identity(&isolated_profile.manifest_path, "cargo check");
+        let build_identity = build.identity(&isolated_profile.manifest_path, "cargo check");
 
-        let tests = if build.success {
-            Some(isolated_profile.test()?)
-        } else {
-            None
-        };
+        let tests = if build.success { Some(isolated_profile.test()?) } else { None };
 
         let tests_passed = tests.as_ref().map(|v| v.success);
 
-        let test_identity = tests.as_ref().map(|v| {
-            v.identity(&isolated_profile.manifest_path, "cargo test")
-        });
+        let test_identity =
+            tests.as_ref().map(|v| v.identity(&isolated_profile.manifest_path, "cargo test"));
 
         if let Some(test) = &tests {
-            println!(
-                "    [Tests] cargo test: {}",
-                if test.success { "PASS" } else { "FAIL" }
-            );
+            println!("    [Tests] cargo test: {}", if test.success { "PASS" } else { "FAIL" });
         } else {
             println!("    [Tests] Not executed because build failed.");
         }
 
         let isolated_rules_dir = isolated_workspace.join("rules");
-        let isolated_rules =
-            PolyglotScanner::load_rules(&isolated_rules_dir);
+        let isolated_rules = PolyglotScanner::load_rules(&isolated_rules_dir);
 
         let candidate_security_findings =
-            PolyglotScanner::scan_security_vulnerabilities(
-                &isolated_workspace,
-                &isolated_rules,
-            );
+            PolyglotScanner::scan_security_vulnerabilities(&isolated_workspace, &isolated_rules);
 
         // Re-scan the authoritative workspace read-only at dry-run time.
-        let authoritative_rules_dir =
-            authoritative_workspace.join("rules");
+        let authoritative_rules_dir = authoritative_workspace.join("rules");
 
-        let authoritative_rules =
-            PolyglotScanner::load_rules(&authoritative_rules_dir);
+        let authoritative_rules = PolyglotScanner::load_rules(&authoritative_rules_dir);
 
-        let authoritative_security_findings =
-            PolyglotScanner::scan_security_vulnerabilities(
-                &authoritative_workspace,
-                &authoritative_rules,
-            );
+        let authoritative_security_findings = PolyglotScanner::scan_security_vulnerabilities(
+            &authoritative_workspace,
+            &authoritative_rules,
+        );
 
         let security = compare_security_findings(
             &authoritative_security_findings,
             &candidate_security_findings,
         );
 
-        if matches!(
-            security.status,
-            crate::evolution::SecurityStatus::Fail
-        ) {
+        if matches!(security.status, crate::evolution::SecurityStatus::Fail) {
             println!("    [Security] FAIL — regression detected.");
-        } else if matches!(
-            security.status,
-            crate::evolution::SecurityStatus::Unknown
-        ) {
+        } else if matches!(security.status, crate::evolution::SecurityStatus::Unknown) {
             println!("    [Security] UNKNOWN — insufficient evidence.");
         } else {
             println!("    [Security] PASS");
         }
 
-        let final_authoritative_source =
-            fs::read_to_string(&authoritative_target)?;
+        let final_authoritative_source = fs::read_to_string(&authoritative_target)?;
 
         let authoritative_source_unchanged =
-            source_fingerprint(&final_authoritative_source)
-                == report.baseline.source_fingerprint;
+            source_fingerprint(&final_authoritative_source) == report.baseline.source_fingerprint;
 
         if !authoritative_source_unchanged {
-            return Err(anyhow!(
-                "AUTHORITATIVE CHECKOUT CHANGED DURING DRY RUN."
-            ));
+            return Err(anyhow!("AUTHORITATIVE CHECKOUT CHANGED DURING DRY RUN."));
         }
 
         // The isolated candidate MUST differ from the authoritative target
         // when the mutation actually changed source. If it does not, that is
         // still useful evidence, but it is not promotion.
-        let isolated_source =
-            fs::read_to_string(&isolated_target)?;
+        let isolated_source = fs::read_to_string(&isolated_target)?;
 
-        let target_mutated =
-            isolated_source != authoritative_source;
+        let target_mutated = isolated_source != authoritative_source;
 
         let dry_run = DryRunReport::new(
             report.report_identity.clone(),
@@ -711,29 +583,18 @@ impl Supervisor {
             false,
         );
 
-        let dry_run_path =
-            output_abs.join("dry_run_report.json");
+        let dry_run_path = output_abs.join("dry_run_report.json");
 
-        fs::write(
-            &dry_run_path,
-            serde_json::to_string_pretty(&dry_run)?,
-        )?;
+        fs::write(&dry_run_path, serde_json::to_string_pretty(&dry_run)?)?;
 
         println!("\n==> [Gate 11.8] ISOLATED DRY RUN COMPLETE");
         println!("    Dry-run report: {}", dry_run_path.display());
         println!("    Candidate: {}", candidate_id);
         println!(
             "    Authoritative source unchanged: {}",
-            if authoritative_source_unchanged {
-                "YES"
-            } else {
-                "NO"
-            }
+            if authoritative_source_unchanged { "YES" } else { "NO" }
         );
-        println!(
-            "    Isolated target mutated: {}",
-            if target_mutated { "YES" } else { "NO" }
-        );
+        println!("    Isolated target mutated: {}", if target_mutated { "YES" } else { "NO" });
         println!("    Promotion performed: NO");
         println!("    Human approval #2 required before promotion: YES");
 

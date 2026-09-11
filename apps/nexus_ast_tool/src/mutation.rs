@@ -67,10 +67,7 @@ pub fn payload_introduces_unknown_crate(original: &str, payload: &str) -> Option
             .next()
             .map(|s| s.trim())
         {
-            if matches!(
-                crate_name,
-                "std" | "core" | "alloc" | "self" | "crate" | "super"
-            ) {
+            if matches!(crate_name, "std" | "core" | "alloc" | "self" | "crate" | "super") {
                 continue;
             }
             if !known.contains(crate_name) {
@@ -83,7 +80,6 @@ pub fn payload_introduces_unknown_crate(original: &str, payload: &str) -> Option
     }
     None
 }
-
 
 pub trait MutationStrategy: Send + Sync {
     fn name(&self) -> &'static str;
@@ -185,7 +181,13 @@ impl MutationStrategy for ReplaceFunctionBody {
     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
         let trimmed = payload.trim();
         // If model output includes `fn <symbol> ... { body }`, extract the inner statements:
-        let clean_payload = if (trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ") || trimmed.starts_with("async fn ")) && trimmed.contains('{') && trimmed.ends_with('}') {
+        let clean_payload = if (trimmed.starts_with("fn ")
+            || trimmed.starts_with("pub fn ")
+            || trimmed.starts_with("pub async fn ")
+            || trimmed.starts_with("async fn "))
+            && trimmed.contains('{')
+            && trimmed.ends_with('}')
+        {
             let start = trimmed.find('{').map_or(0, |i| i + 1);
             let end = trimmed.rfind('}').unwrap_or(trimmed.len());
             trimmed[start..end].trim()

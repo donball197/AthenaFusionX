@@ -232,7 +232,6 @@ impl MemoryCortex {
 
         Ok(result)
     }
-
 }
 
 impl MemoryCortex {

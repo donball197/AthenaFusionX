@@ -22,12 +22,9 @@ async fn main() -> Result<()> {
     println!("==================================================");
     println!("DB: {}", db_path);
 
-    let palace = MemoryPalace::new(db_path)
-        .await
-        .context("failed to initialize MemoryPalace")?;
+    let palace = MemoryPalace::new(db_path).await.context("failed to initialize MemoryPalace")?;
 
-    let query =
-        "machine uptime disk capacity available memory recent system observations";
+    let query = "machine uptime disk capacity available memory recent system observations";
 
     println!("QUERY: {}", query);
 
@@ -48,26 +45,17 @@ async fn main() -> Result<()> {
         .await
         .context("invalid embedding gateway response")?;
 
-    let embedding = response
-        .data
-        .first()
-        .context("embedding response contained no vectors")?
-        .embedding
-        .clone();
+    let embedding =
+        response.data.first().context("embedding response contained no vectors")?.embedding.clone();
 
     println!("QUERY EMBEDDING DIMENSIONS: {}", embedding.len());
 
     if embedding.len() != 384 {
-        anyhow::bail!(
-            "expected 384-dimensional embedding, got {}",
-            embedding.len()
-        );
+        anyhow::bail!("expected 384-dimensional embedding, got {}", embedding.len());
     }
 
-    let memories = palace
-        .semantic_search(&embedding, 3)
-        .await
-        .context("production semantic_search failed")?;
+    let memories =
+        palace.semantic_search(&embedding, 3).await.context("production semantic_search failed")?;
 
     println!();
     println!("==================================================");

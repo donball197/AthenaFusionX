@@ -120,7 +120,7 @@ pub fn run_study_report(root: &Path) -> Result<StudyReport> {
 }
 
 fn build_study_report(root: &Path) -> Result<StudyReport> {
-    let workspace_dependencies = load_workspace_dependencies(&root);
+    let workspace_dependencies = load_workspace_dependencies(root);
 
     let mut report = StudyReport {
         schema_version: 1,
@@ -135,8 +135,7 @@ fn build_study_report(root: &Path) -> Result<StudyReport> {
         manifest_details: Vec::new(),
     };
 
-    for entry in WalkDir::new(&root).follow_links(false).into_iter().filter_map(|entry| entry.ok())
-    {
+    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(|entry| entry.ok()) {
         let path = entry.path();
 
         if !path.is_file() {
@@ -148,7 +147,7 @@ fn build_study_report(root: &Path) -> Result<StudyReport> {
         }
 
         if is_manifest(path) {
-            let relative = relative_path(&root, path);
+            let relative = relative_path(root, path);
             report.manifests.push(relative.clone());
 
             if path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml") {
@@ -178,7 +177,7 @@ fn build_study_report(root: &Path) -> Result<StudyReport> {
             Ok(source) => source,
             Err(error) => {
                 report.read_failures.push(ReadFailure {
-                    path: relative_path(&root, path),
+                    path: relative_path(root, path),
                     error: error.to_string(),
                 });
                 continue;
@@ -194,14 +193,14 @@ fn build_study_report(root: &Path) -> Result<StudyReport> {
 
         if !matches!(parse_status, ParseStatus::Clean) {
             report.tree_sitter_diagnostics.push(TreeSitterDiagnostic {
-                path: relative_path(&root, path),
+                path: relative_path(root, path),
                 language: language_name.clone(),
             });
         }
 
         *report.language_counts.entry(language_name.clone()).or_insert(0) += 1;
 
-        let relative = relative_path(&root, path);
+        let relative = relative_path(root, path);
 
         if matches!(parse_status, ParseStatus::Clean) {
             report.functions.extend(discover_functions(&source, language, &relative));

@@ -120,6 +120,42 @@ pub fn sanitize(path: &str) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+/// Best-effort detection of a shell command's write target for `>`/`>>` file
+/// redirection (including heredoc forms like `cat > path << 'EOF'`). Used to
+/// synthesize a [WRITE_OK] marker for ExecuteCommand actions that mutate the
+/// filesystem via shell redirection instead of a native WriteFile action --
+/// previously these produced only [CMD_OK], which the deterministic
+/// completion contract (outcome_verifier.rs) never recognizes as satisfying
+/// a WriteMarkerAcquired condition, causing correct writes to loop forever
+/// on rejected HALT proposals.
+///
+/// Heuristic and conservative: only fires on a literal `>`/`>>` token with a
+/// following non-empty, non-fd-duplication target that `sanitize()` confirms
+/// actually exists inside the workspace root. Call this only after the
+/// command has already executed successfully, since sanitize() requires the
+/// path to exist.
+pub fn detect_shell_write_target(command: &str) -> Option<String> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    for (i, tok) in tokens.iter().enumerate() {
+        if *tok == ">" || *tok == ">>" {
+            let Some(target) = tokens.get(i + 1) else {
+                continue;
+            };
+            if target.starts_with('&') {
+                continue;
+            }
+            let cleaned = target.trim_matches('\\').trim_matches('"');
+            if cleaned.is_empty() {
+                continue;
+            }
+            if sanitize(cleaned).is_ok() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    None
+}
+
 impl RoboticExecutor {
     pub fn new(api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
         Self {
@@ -194,7 +230,8 @@ impl RoboticExecutor {
                     stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", safe_tail);
                 }
 
-                let mut res = format!("[CMD_OK] Status: {}\n", out.status);
+                let mut res =
+                    format!("[CMD_OK] Command: {}\nStatus: {}\n", command.trim(), out.status);
                 if !stdout_trunc.trim().is_empty() {
                     res.push_str("STDOUT:\n");
                     res.push_str(&stdout_trunc);
@@ -207,6 +244,20 @@ impl RoboticExecutor {
                 }
                 if stdout_trunc.trim().is_empty() && stderr_trunc.trim().is_empty() {
                     res.push_str("(Command produced no output)\n");
+                }
+
+                // A shell command that redirects into a file (`>`/`>>`, including a
+                // heredoc like `cat > path << 'EOF'`) mutates the filesystem exactly
+                // like a native WriteFile action, but previously never emitted the
+                // [WRITE_OK] marker that OutcomeVerifier/completion_engine's
+                // deterministic contract checks require -- causing a correct write
+                // to loop forever on rejected HALT proposals. Detect the common
+                // redirect forms and synthesize the same marker on success.
+                if out.status.success() {
+                    if let Some(write_target) = crate::executor::detect_shell_write_target(&command)
+                    {
+                        res.push_str(&format!("[WRITE_OK] {}\n", write_target));
+                    }
                 }
 
                 {
@@ -498,12 +549,30 @@ impl RoboticExecutor {
             }
             MotorAction::PatchFunction { path, function_name, new_body } => {
                 let safe_path = sanitize(&path)?;
-                let patched = crate::ast_editor::AstEditor::update_function(
-                    safe_path.to_str().unwrap_or(&path),
-                    &function_name,
-                    &new_body,
-                )?;
-                tokio::fs::write(&safe_path, patched).await?;
+
+                // Use the real nexus_ast_tool mutation strategy rather than
+                // the legacy AstEditor stub. Transform first; write only after
+                // validation and function lookup succeed.
+                let source = tokio::fs::read_to_string(&safe_path).await?;
+                let strategy = nexus_ast_tool::mutation::get_strategy("ReplaceFunctionBody")
+                    .ok_or_else(|| {
+                        anyhow!("ReplaceFunctionBody mutation strategy is unavailable")
+                    })?;
+
+                let patched = strategy
+                    .apply(&source, &function_name, &new_body)
+                    .map_err(|e| anyhow!("PatchFunction failed for '{}': {}", function_name, e))?;
+
+                tokio::fs::write(&safe_path, &patched).await?;
+                _dist.broadcast_file_shift(&path, "patch_function");
+                *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
+
+                let snippet: String = patched.chars().take(4000).collect();
+                let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet)
+                    .await
+                    .ok();
+                let _ = memory.store_memory("PatchFunction", &path, &patched, "Mutated", emb).await;
+
                 Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
             }
             MotorAction::SearchMemory { query } => {
@@ -512,7 +581,7 @@ impl RoboticExecutor {
                     .map_err(|e| anyhow!("SEMANTIC_SEARCH_EMBEDDING_FAILED: {}", e))?;
 
                 let results = memory
-                    .semantic_search(&emb, 3)
+                    .semantic_search(&emb, 12)
                     .await
                     .map_err(|e| anyhow!("SEMANTIC_SEARCH_VECTOR_RECALL_FAILED: {}", e))?;
 
@@ -527,74 +596,54 @@ impl RoboticExecutor {
                 // intent-aware rerank so factual host-observation queries prefer
                 // actual metric observations over reflection/failure memories.
                 let query_lower = query.to_lowercase();
-                let host_terms = [
-                    "uptime",
-                    "disk",
-                    "filesystem",
-                    "available",
-                    "memory",
-                    "ram",
-                    "load average",
-                ];
+                let host_terms =
+                    ["uptime", "disk", "filesystem", "available", "memory", "ram", "load average"];
 
-                let host_term_hits = host_terms
-                    .iter()
-                    .filter(|term| query_lower.contains(**term))
-                    .count();
+                let host_term_hits =
+                    host_terms.iter().filter(|term| query_lower.contains(**term)).count();
 
                 let host_observation_query = host_term_hits >= 2;
 
-                let mut ranked_results: Vec<_> =
-                    results
-                        .into_iter()
-                        .enumerate()
-                        .map(|(original_order, r)| {
-                            let score = if !host_observation_query {
-                                0
-                            } else {
-                                let content = format!(
-                                    "{} {}",
-                                    r.directive.to_lowercase(),
-                                    r.result.to_lowercase()
-                                );
+                let mut ranked_results: Vec<_> = results
+                    .into_iter()
+                    .enumerate()
+                    .map(|(original_order, r)| {
+                        let score = if !host_observation_query {
+                            0
+                        } else {
+                            let content = format!(
+                                "{} {}",
+                                r.directive.to_lowercase(),
+                                r.result.to_lowercase()
+                            );
 
-                                let term_hits = host_terms
+                            let term_hits =
+                                host_terms.iter().filter(|term| content.contains(**term)).count();
+
+                            let factual_origin = matches!(
+                                r.origin.to_lowercase().as_str(),
+                                "readfile" | "executecommand" | "execute_command"
+                            );
+
+                            let reflection_memory =
+                                r.origin.eq_ignore_ascii_case("ReflectionEngine");
+
+                            let actual_metric_output =
+                                ["filesystem", "mem:", "load average", "total used free", " up "]
                                     .iter()
-                                    .filter(|term| content.contains(**term))
-                                    .count();
+                                    .any(|marker| content.contains(marker));
 
-                                let factual_origin = matches!(
-                                    r.origin.to_lowercase().as_str(),
-                                    "readfile" | "executecommand" | "execute_command"
-                                );
+                            (term_hits as i32 * 2)
+                                + if factual_origin { 3 } else { 0 }
+                                + if actual_metric_output { 3 } else { 0 }
+                                - if reflection_memory { 5 } else { 0 }
+                        };
 
-                                let reflection_memory =
-                                    r.origin.eq_ignore_ascii_case("ReflectionEngine");
+                        (score, original_order, r)
+                    })
+                    .collect();
 
-                                let actual_metric_output = [
-                                    "filesystem",
-                                    "mem:",
-                                    "load average",
-                                    "total used free",
-                                    " up ",
-                                ]
-                                .iter()
-                                .any(|marker| content.contains(marker));
-
-                                (term_hits as i32 * 2)
-                                    + if factual_origin { 3 } else { 0 }
-                                    + if actual_metric_output { 3 } else { 0 }
-                                    - if reflection_memory { 5 } else { 0 }
-                            };
-
-                            (score, original_order, r)
-                        })
-                        .collect();
-
-                ranked_results.sort_by(|a, b| {
-                    b.0.cmp(&a.0)
-                        .then_with(|| a.1.cmp(&b.1))
-                });
+                ranked_results.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
                 let mut results_text = String::new();
 

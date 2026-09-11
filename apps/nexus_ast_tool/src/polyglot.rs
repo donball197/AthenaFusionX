@@ -110,7 +110,13 @@ impl SupportedLanguage {
                     if node.is_error() || node.is_missing() {
                         let pos = node.start_position();
                         let text = node.utf8_text(src.as_bytes()).unwrap_or("<utf8>");
-                        eprintln!("==> [AST ERROR] Line {}, Col {}: '{}' (node: {})", pos.row + 1, pos.column + 1, text, node.kind());
+                        eprintln!(
+                            "==> [AST ERROR] Line {}, Col {}: '{}' (node: {})",
+                            pos.row + 1,
+                            pos.column + 1,
+                            text,
+                            node.kind()
+                        );
                     }
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
@@ -433,7 +439,9 @@ impl PolyglotScanner {
                 // Check for inline suppression comment on the sink line or preceding line
                 let check_start = sink_start.saturating_sub(1);
                 let is_suppressed = source_lines[check_start..=sink_start].iter().any(|line| {
-                    (line.contains("nexus-ignore") || line.contains("nosemgrep") || line.contains("#[allow("))
+                    (line.contains("nexus-ignore")
+                        || line.contains("nosemgrep")
+                        || line.contains("#[allow("))
                         && (line.contains(rule_id) || line.contains("all"))
                 });
 
