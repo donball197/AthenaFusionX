@@ -133,10 +133,15 @@ impl Verifier {
                 evidence.contains("[READ_FUNCTION_OK]") && evidence.contains(target)
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 evidence.contains("[SEARCH_CODE_OK]") && evidence.contains(target)
+            } else if criterion == "SEARCH_MEMORY_OK" {
+                evidence.contains("[SEARCH_MEMORY_OK]")
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
                 evidence.contains("[WRITE_OK]") && evidence.contains(path)
             } else if criterion == "CMD_OK" {
                 evidence.contains("[CMD_OK]")
+            } else if criterion == "DAG_LINEAGE_OK" {
+                evidence.contains("[DAG LINEAGE INHERITED EVIDENCE]")
+                    && evidence.contains("[DAG LINEAGE COMPLETE]")
             } else {
                 return VerificationResult::Escalate(format!(
                     "Unknown success criterion: {}",
@@ -153,5 +158,33 @@ impl Verifier {
         }
 
         VerificationResult::Success
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VerificationResult, Verifier};
+
+    #[test]
+    fn search_memory_ok_requires_physical_evidence() {
+        let criteria = vec!["SEARCH_MEMORY_OK".to_string()];
+
+        let success = Verifier::verify_contract(
+            "task_1",
+            "[SEARCH_MEMORY_OK] Found semantic context: host observations involving uptime, filesystem, available memory, and load average",
+            &criteria,
+        );
+        assert_eq!(success, VerificationResult::Success);
+
+        let empty = Verifier::verify_contract(
+            "task_1",
+            "[SEARCH_MEMORY_EMPTY] Semantic search completed successfully but returned zero matches",
+            &criteria,
+        );
+        assert!(matches!(empty, VerificationResult::Retry(_)));
+
+        let unrelated =
+            Verifier::verify_contract("task_1", "[SEARCH_CODE_OK] host observations", &criteria);
+        assert!(matches!(unrelated, VerificationResult::Retry(_)));
     }
 }

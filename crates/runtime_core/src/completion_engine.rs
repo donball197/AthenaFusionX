@@ -15,6 +15,7 @@ pub enum CompletionCondition {
     PatchMarkerAcquired,
     CommandMarkerAcquired,
     CommandExecutionVerified { command: String },
+    LineageEvidenceAcquired,
     SourceCodeEvidenceRequired,
     MinBeliefScore(f32),
 }
@@ -83,8 +84,35 @@ pub(crate) fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
 /// These observations are physical runtime state, not source-code analysis.
 /// Keep this intentionally conjunctive so ordinary mentions of one metric
 /// do not force shell execution.
+/// Recognize a node whose objective explicitly requires inherited DAG
+/// evidence instead of independently re-querying the source state.
+pub(crate) fn is_lineage_inherit_only_objective(objective: &str) -> bool {
+    let text = objective.to_lowercase();
+
+    let has_dependency = text.contains("depend on")
+        || text.contains("depends on")
+        || text.contains("parent")
+        || text.contains("dag lineage");
+
+    let has_inherited_result = text.contains("execution result")
+        || text.contains("inherited")
+        || text.contains("received through");
+
+    let forbids_rediscovery = text.contains("do not independently rediscover")
+        || text.contains("do not independently re-query")
+        || text.contains("do not independently requery")
+        || text.contains("without re-querying")
+        || text.contains("without requerying");
+
+    has_dependency && has_inherited_result && forbids_rediscovery
+}
+
 pub(crate) fn is_host_observation_objective(objective: &str) -> bool {
     let text = objective.to_lowercase();
+
+    if is_lineage_inherit_only_objective(objective) || text.contains("lineage mode: inherit_only") {
+        return false;
+    }
 
     let has_uptime = any_word_unnegated(&text, &["uptime"]);
     let has_filesystem = any_word_unnegated(&text, &["filesystem", "disk", "storage", "capacity"]);
@@ -155,6 +183,19 @@ impl SubgoalCompletionEngine {
 
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
+
+        if objective.contains("LINEAGE MODE: INHERIT_ONLY")
+            || classify_text.contains("lineage mode: inherit_only")
+            || is_lineage_inherit_only_objective(classify_text)
+        {
+            return SubgoalContract {
+                node_id: node_id.to_string(),
+                objective: objective.to_string(),
+                conditions: vec![CompletionCondition::LineageEvidenceAcquired],
+                is_mutation_task: false,
+                required_artifact_paths: Vec::new(),
+            };
+        }
 
         // Native host observation is a physical execution contract.
         // It must take precedence over generic "inspect/investigate" source

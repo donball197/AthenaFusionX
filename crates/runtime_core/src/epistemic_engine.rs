@@ -349,6 +349,14 @@ impl EpistemicEngine {
             return Ok(vec![format!("search_memory:{}", problem.trim())]);
         }
 
+        if crate::completion_engine::is_lineage_inherit_only_objective(problem)
+            || problem.to_lowercase().contains("lineage mode: inherit_only")
+        {
+            return Ok(
+                vec!["halt:report inherited host observations from DAG lineage".to_string()],
+            );
+        }
+
         // Live host observations are deterministic physical operations.
         // Resolve them before generic "investigate/analyze" guidance can cause
         // the model to wander into source-code inspection.

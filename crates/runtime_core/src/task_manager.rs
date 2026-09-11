@@ -92,32 +92,54 @@ pub async fn send_task(
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[SCHEDULER] Dispatching DAG Node: {}\nvia Subagent: {}", node.objective, node.required_agent)}).to_string());
 
         let mut task_context_history = String::new();
-        for dep in &node.deps {
-            if let Some(out) = task_outputs.get(dep) {
-                let bounded_out = if out.len() > 1500 {
-                    format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", &out[..1500])
+
+        if node.deps.is_empty() {
+            task_context_history.push_str("[ROOT NODE - NO PREDECESSOR LINEAGE]\n");
+        } else {
+            for dep in &node.deps {
+                if let Some(out) = task_outputs.get(dep) {
+                    let bounded_out = if out.len() > 1500 {
+                        format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", &out[..1500])
+                    } else {
+                        out.clone()
+                    };
+                    task_context_history.push_str(&format!(
+                        "---\n[DEPENDENCY LINEAGE FROM {}]:\n{}\n---\n",
+                        dep, bounded_out
+                    ));
                 } else {
-                    out.clone()
-                };
-                task_context_history.push_str(&format!(
-                    "---\n[DEPENDENCY FOCUS FROM {}]:\n{}\n---\n",
-                    dep, bounded_out
-                ));
+                    task_context_history.push_str(&format!(
+                        "---\n[DEPENDENCY LINEAGE FROM {}]:\n[NO COMPLETED OUTPUT AVAILABLE]\n---\n",
+                        dep
+                    ));
+                }
             }
         }
 
-        let success_contract = if node.success_criteria.is_empty() {
+        let lineage_inherit_only = !node.deps.is_empty()
+            && crate::completion_engine::is_lineage_inherit_only_objective(&node.objective);
+
+        let effective_success_contract = if lineage_inherit_only {
+            vec!["DAG_LINEAGE_OK".to_string()]
+        } else {
+            node.success_criteria.clone()
+        };
+
+        let success_contract = if effective_success_contract.is_empty() {
             "[NO EXPLICIT SUCCESS CRITERIA — NODE MUST NOT BE AUTHORIZED AUTOMATICALLY]".to_string()
         } else {
-            node.success_criteria
+            effective_success_contract
                 .iter()
                 .map(|criterion| format!("- {}", criterion))
                 .collect::<Vec<_>>()
                 .join("\n")
         };
 
+        let lineage_mode = if lineage_inherit_only { "LINEAGE MODE: INHERIT_ONLY\n" } else { "" };
+
         let combined_mission = format!(
-            "OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nMANDATORY NODE SUCCESS CRITERIA:\n{}\n\nNODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete. Cortex belief alone is never sufficient.\n\nLINEAGE CONTEXT:\n{}",
+            "{}OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nMANDATORY NODE SUCCESS CRITERIA:\n{}\n\nNODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete. Cortex belief alone is never sufficient.\n\nLINEAGE CONTEXT:\n{}",
+            lineage_mode,
             node.objective,
             node.required_agent,
             success_contract,
@@ -135,7 +157,24 @@ pub async fn send_task(
 
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting Epistemic Session for Node {}", task_id)}).to_string());
 
-        let execution_evidence = match loop_cortex.ignite(&combined_mission).await {
+        let ancestor_evidence = if !node.deps.is_empty() {
+            node.deps
+                .iter()
+                .filter_map(|dep| task_outputs.get(dep))
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            String::new()
+        };
+
+        let execution_evidence = match loop_cortex
+            .ignite_with_evidence(
+                &combined_mission,
+                if ancestor_evidence.is_empty() { None } else { Some(ancestor_evidence.as_str()) },
+            )
+            .await
+        {
             Ok(CortexOutcome::CompletionProposed { belief, evidence }) => {
                 // The Cortex/OutcomeVerifier has already authorized this node
                 // completion. Reflection learns from the VERIFIED result;
@@ -208,7 +247,9 @@ pub async fn send_task(
                 )
             }
             Ok(CortexOutcome::TurnsExhausted { best_belief, evidence }) => {
-                mission_had_failures = true;
+                // Cortex budget exhaustion is diagnostic telemetry only.
+                // The deterministic DAG verifier remains authoritative:
+                // physical success evidence may still prove this node complete.
                 let outcome = MissionOutcome {
                     mission_id: uuid::Uuid::parse_str(&task_id)
                         .unwrap_or_else(|_| uuid::Uuid::new_v4()),
@@ -261,10 +302,21 @@ pub async fn send_task(
         // Cortex CompletionProposed is NOT authoritative.
         // A DAG node becomes Completed only after the deterministic verifier
         // confirms every explicit success criterion against physical evidence.
+        let verification_criteria = if lineage_inherit_only {
+            vec!["DAG_LINEAGE_OK".to_string()]
+        } else {
+            node.success_criteria.clone()
+        };
+
         let node_verification = crate::orchestrator_v2::verifier::Verifier::verify_contract(
             &task_id,
             &execution_evidence,
-            &node.success_criteria,
+            &verification_criteria,
+        );
+
+        let node_verification_succeeded = matches!(
+            node_verification,
+            crate::orchestrator_v2::verifier::VerificationResult::Success
         );
 
         match node_verification {
@@ -316,13 +368,21 @@ pub async fn send_task(
             }
         }
 
-        // ⚡ FIX: Immediate Hard Abort if a dependency fails or runs out of turns
-        if mission_had_failures
-            || execution_evidence.contains("[CORTEX INCOMPLETE]")
-            || execution_evidence.contains("[DAG NODE FAILED]")
-            || execution_evidence.contains("[DAG NODE INCOMPLETE]")
-        {
-            let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[DAG HALT] Aborting downstream execution. Dependency '{}' failed to complete.", task_id)}).to_string());
+        // Deterministic verifier authority:
+        // Cortex exhaustion/incomplete markers are diagnostic telemetry.
+        // A physically evidenced node is allowed to complete when the
+        // deterministic success contract has been satisfied.
+        if !node_verification_succeeded {
+            let _ = ctx.tx.send(
+                serde_json::json!({
+                    "type": "LOG_EVENT",
+                    "payload": format!(
+                        "[DAG HALT] Aborting downstream execution. Dependency '{}' failed deterministic verification.",
+                        task_id
+                    )
+                })
+                .to_string()
+            );
             break;
         }
     }

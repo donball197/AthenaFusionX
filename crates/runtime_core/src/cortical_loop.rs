@@ -192,20 +192,14 @@ impl CorticalLoop {
 
         match nexus_substrate::vector_bridge::get_embedding(&self.api_key, mission).await {
             Ok(query_embedding) => {
-                match self
-                    .memory
-                    .recall_semantic_context(&query_embedding, mission, 6)
-                    .await
-                {
+                match self.memory.recall_semantic_context(&query_embedding, mission, 6).await {
                     Ok(recall) if !recall.memories.is_empty() => {
                         let mut memory_context =
                             String::from("\n[RECALLED EXPERIENCE — ADVISORY ONLY]\n");
 
                         for memory in recall.memories {
-                            memory_context.push_str(&format!(
-                                "- [{}] {}\n",
-                                memory.source, memory.content
-                            ));
+                            memory_context
+                                .push_str(&format!("- [{}] {}\n", memory.source, memory.content));
                         }
 
                         memory_context.push_str("[END RECALLED EXPERIENCE]\n");
@@ -220,7 +214,7 @@ impl CorticalLoop {
 
                     Ok(_) => {
                         self.log(
-                            "[FUSION] No prior experience relevant to this mission.".to_string()
+                            "[FUSION] No prior experience relevant to this mission.".to_string(),
                         );
                     }
 
@@ -260,6 +254,14 @@ impl CorticalLoop {
         let world_context = Self::compress_context(&context_chunks.join("\n"), 2500);
 
         let mut session = EpistemicSession::new(mission);
+
+        if let Some(evidence) = ancestor_evidence {
+            if !evidence.trim().is_empty() {
+                session.local_evidence.push_str("\n[DAG LINEAGE INHERITED EVIDENCE]\n");
+                session.local_evidence.push_str(evidence.trim());
+                session.local_evidence.push_str("\n[DAG LINEAGE COMPLETE]\n");
+            }
+        }
 
         self.log("\x1b[36m>> [CORTEX] Generating competing strategies...\x1b[0m".to_string());
         session.budget.record_call();
@@ -320,6 +322,29 @@ impl CorticalLoop {
 
             if let Some(best_node) = session.graph.select_best_hypothesis().cloned() {
                 let current_belief = best_node.belief_score;
+
+                // Deterministic physical evidence is authoritative.
+                // Check the completion contract before allowing the cognitive
+                // budget guard to terminate an already-completed subgoal.
+                let deterministic_contract_satisfied =
+                    crate::completion_engine::SubgoalCompletionEngine::evaluate(
+                        &session.contract,
+                        &session.local_evidence,
+                        current_belief,
+                    );
+
+                if deterministic_contract_satisfied {
+                    self.log(
+                        "\x1b[1;36m>> [CORTEX TERMINAL] Physical success contract already satisfied. No additional cognitive turn required.\x1b[0m"
+                            .to_string(),
+                    );
+
+                    return Ok(CortexOutcome::CompletionProposed {
+                        belief: current_belief.max(0.95),
+                        evidence: session.collect_evidence(best_node.id),
+                    });
+                }
+
                 if session.budget.is_exhausted(turn) {
                     if current_belief >= 0.80
                         && session.consecutive_mutation_vetoes < 2
@@ -457,6 +482,19 @@ impl CorticalLoop {
             );
         }
 
+        if strategy.strip_prefix("search_memory:").is_some() {
+            // NOTE: search_memory strategies carry the full authoritative
+            // directive text (see EpistemicEngine::generate_hypotheses),
+            // not a literal query contract like search_code's path/query
+            // or patch_function's path/function_name. Requiring exact
+            // string equality here is unsatisfiable by construction --
+            // no model reproduces the full node prompt verbatim as its
+            // query -- and previously caused permanent STRATEGY VIOLATION
+            // loops on every legitimate SearchMemory proposal. Only the
+            // action *type* is authoritative; the query text is free-form.
+            return matches!(action, AgentAction::SearchMemory { .. });
+        }
+
         if let Some(expected_command) = strategy.strip_prefix("execute_command:") {
             return matches!(
                 action,
@@ -565,7 +603,9 @@ impl CorticalLoop {
             let command_only_contract = session.contract.conditions.len() == 1
                 && matches!(
                     session.contract.conditions.first(),
-                    Some(crate::completion_engine::CompletionCondition::CommandMarkerAcquired)
+                    Some(
+                        crate::completion_engine::CompletionCondition::CommandExecutionVerified { .. }
+                    )
                 );
 
             if command_only_contract {
@@ -706,6 +746,28 @@ impl CorticalLoop {
         // The first executable action must operationalize the strategy
         // selected by the Cortex. The Strategist is not allowed to silently
         // replace the selected strategy with an independently chosen action.
+        //
+        // EXPLICIT SEARCHMEMORY CONTRACT:
+        // When the original directive explicitly names SearchMemory and
+        // contains a semantic target introduced by "recall prior memory
+        // specifically about", that target is user-authoritative. The
+        // Strategist may choose the native action and provide reasoning,
+        // but it must not compress the requested semantic query into a
+        // generic substitute such as "host metrics".
+        if h_content.starts_with("search_memory:") {
+            if let Some(authoritative_query) = Self::extract_explicit_search_memory_query(mission) {
+                if let Some(AgentAction::SearchMemory { query, .. }) = actions.first_mut() {
+                    if query.trim() != authoritative_query {
+                        self.log(format!(
+                            "[CORTEX] Preserving authoritative SearchMemory query: {}",
+                            authoritative_query
+                        ));
+                        *query = authoritative_query;
+                    }
+                }
+            }
+        }
+
         if let Some(first_action) = actions.first() {
             if !Self::action_matches_strategy(&h_content, first_action) {
                 self.log(format!(
@@ -740,6 +802,29 @@ impl CorticalLoop {
         }
 
         Ok(CortexState::Critique { actions, proposal: raw_proposal, belief: current_belief })
+    }
+
+    fn extract_explicit_search_memory_query(mission: &str) -> Option<String> {
+        let lower = mission.to_lowercase();
+
+        let marker = "recall prior memory specifically about";
+        let start = lower.find(marker)? + marker.len();
+
+        let remainder = mission.get(start..)?.trim_start();
+
+        let query = remainder
+            .split_once('.')
+            .map(|(q, _)| q)
+            .unwrap_or(remainder)
+            .trim()
+            .trim_end_matches(':')
+            .trim();
+
+        if query.is_empty() {
+            None
+        } else {
+            Some(query.to_string())
+        }
     }
 
     async fn handle_critic(
@@ -793,6 +878,9 @@ impl CorticalLoop {
                 }
                 AgentAction::SearchCode { path, query, .. } => {
                     format!("search_code:{}:{}", path, query)
+                }
+                AgentAction::SearchMemory { query, .. } => {
+                    format!("search_memory:{}", query)
                 }
                 AgentAction::WriteFile { path, content, .. } => {
                     use std::hash::{Hash, Hasher};
@@ -1094,8 +1182,27 @@ impl CorticalLoop {
             self.log(format!("\x1b[32m>> [EVIDENCE ACQUIRED]\x1b[0m\n{}", preview));
         }
 
-        // If an action failed with PATH_NOT_FOUND, prevent re-attempting that path
-        if latest_evidence.contains("PATH_NOT_FOUND") {
+        // If an action failed with PATH_NOT_FOUND, prevent re-attempting that path.
+        //
+        // GUARD: this must not fire on evidence that IS a successful recon
+        // result (e.g. SearchMemory/SearchCode/Read _OK] markers). Retrieved
+        // document content can legitimately contain the literal string
+        // "PATH_NOT_FOUND" as prose (e.g. an audit doc describing this
+        // codebase's own error markers) without the action itself having
+        // failed. Confirmed root cause of a false -0.90 Contradicts edge
+        // permanently poisoning belief on a genuinely successful
+        // SearchMemory hit (see BELIEF TRACE: edges=3->4, delta -0.85).
+        let starts_with_success_marker = {
+            let trimmed = latest_evidence.trim_start();
+            trimmed.starts_with('[')
+                && trimmed
+                    .split(']')
+                    .next()
+                    .map(|m| m.trim_start_matches('[').ends_with("_OK"))
+                    .unwrap_or(false)
+        };
+
+        if latest_evidence.contains("PATH_NOT_FOUND") && !starts_with_success_marker {
             if let Some(h_id) = session.best_hypothesis_id {
                 let obs_id = session.graph.add_node(
                     NodeKind::Observation,
@@ -1199,16 +1306,21 @@ impl CorticalLoop {
         //
         // Historical evidence remains available to the Cortex/session, but
         // must NOT be mixed into the evaluator's current-turn evidence.
-        let eval_evidence_context = format!(
-            "EXACT ACTION(S) ACTUALLY EXECUTED THIS TURN:\n{}\n\n             PHYSICAL EVIDENCE PRODUCED BY THOSE ACTION(S):\n{}",
-            executed_action, evidence
-        );
+        // Keep the authoritative full action in the execution/audit record,
+        // but bound the representation sent to the LLM evaluator. Large
+        // write_file payloads must not consume the light-model context window.
+        let evaluator_action: String = executed_action.chars().take(2000).collect();
+
+        // The action is supplied separately as ACTION TAKEN. Do not duplicate
+        // it inside the physical-evidence context.
+        let eval_evidence_context =
+            format!("PHYSICAL EVIDENCE PRODUCED BY THOSE ACTION(S):\\n{}", evidence);
 
         match EpistemicEngine::evaluate_evidence(
             &self.client,
             &self.api_key,
             &h_content,
-            &executed_action,
+            &evaluator_action,
             &eval_evidence_context,
         )
         .await
@@ -1241,27 +1353,12 @@ impl CorticalLoop {
                 ));
                 session.record_evidence(&evidence, &eval, h_id);
 
-<<<<<<< HEAD
                 let has_unwritten_artifacts =
                     session.contract.required_artifact_paths.iter().any(|a| {
                         !crate::evidence_markers::has_artifact_write(
                             &session.local_evidence,
                             &a.path,
                         )
-=======
-                self.log(format!(
-                    "[CORTEX HALT DEBUG] is_halt_action={} eval_confidence_modifier={:.3} belief={:.3} halt_predicate={}",
-                    is_halt_action,
-                    eval.confidence_modifier,
-                    belief,
-                    is_halt_action && eval.confidence_modifier >= 0.0 && belief > 0.70,
-                ));
-                if is_halt_action && eval.confidence_modifier >= 0.0 && belief > 0.70 {
-                    self.log("\x1b[1;36m>> [CORTEX TERMINAL] Valid halt executed and verified. Node complete.\x1b[0m".to_string());
-                    return Ok(CortexState::Complete {
-                        belief: belief.max(0.95),
-                        evidence: session.collect_evidence(h_id),
->>>>>>> 01ad5fff (refactor: streamline epistemic sessions and cortical loop execution)
                     });
 
                 if is_halt_action && has_unwritten_artifacts {
@@ -1281,7 +1378,7 @@ impl CorticalLoop {
                 let command_only_contract = session.contract.conditions.len() == 1
                     && matches!(
                         session.contract.conditions.first(),
-                        Some(crate::completion_engine::CompletionCondition::CommandMarkerAcquired)
+                        Some(crate::completion_engine::CompletionCondition::CommandExecutionVerified { .. })
                     );
 
                 if is_halt_action && deterministic_contract_satisfied && command_only_contract {
@@ -1398,5 +1495,31 @@ impl CorticalLoop {
                 Ok(CortexState::Strategize)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CorticalLoop;
+    use crate::agent_protocol::AgentAction;
+
+    #[test]
+    fn search_memory_strategy_requires_matching_search_memory_action() {
+        let query =
+            "host observations involving uptime, filesystem, available memory, and load average";
+        let strategy = format!("search_memory:{}", query);
+
+        let matching = AgentAction::SearchMemory {
+            query: query.to_string(),
+            reasoning: "regression test".to_string(),
+        };
+
+        let wrong_action = AgentAction::ReadFile {
+            path: query.to_string(),
+            reasoning: "regression test".to_string(),
+        };
+
+        assert!(CorticalLoop::action_matches_strategy(&strategy, &matching));
+        assert!(!CorticalLoop::action_matches_strategy(&strategy, &wrong_action));
     }
 }

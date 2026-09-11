@@ -60,6 +60,9 @@ impl OutcomeVerifier {
                 CompletionCondition::SearchMarkerAcquired => {
                     local_evidence.contains("[SEARCH_CODE_OK]")
                 }
+                CompletionCondition::SearchMemoryMarkerAcquired => {
+                    local_evidence.contains("[SEARCH_MEMORY_OK]")
+                }
                 CompletionCondition::WriteMarkerAcquired => local_evidence.contains("[WRITE_OK]"),
                 CompletionCondition::PatchMarkerAcquired => {
                     local_evidence.contains("[PATCH_FUNCTION_OK]")
@@ -67,6 +70,24 @@ impl OutcomeVerifier {
                         || local_evidence.contains("[REPLACE_LINES_OK]")
                 }
                 CompletionCondition::CommandMarkerAcquired => local_evidence.contains("[CMD_OK]"),
+                CompletionCondition::LineageEvidenceAcquired => {
+                    local_evidence.contains("[DAG LINEAGE INHERITED EVIDENCE]")
+                        && local_evidence.contains("[DAG LINEAGE COMPLETE]")
+                }
+                CompletionCondition::CommandExecutionVerified { command } => {
+                    let expected = command.trim();
+
+                    local_evidence.lines().any(|line| {
+                        let Some(actual) = line.strip_prefix("[CMD_OK] Command:") else {
+                            return false;
+                        };
+
+                        actual.trim() == expected
+                            && local_evidence
+                                .lines()
+                                .any(|status_line| status_line.trim() == "Status: exit status: 0")
+                    })
+                }
                 CompletionCondition::SourceCodeEvidenceRequired => {
                     // Was more than one distinct file/path actually examined? A comparative
                     // or audit-style mission naming multiple subjects should not be satisfiable
@@ -127,4 +148,70 @@ fn extract_telemetry(_local_evidence: &str) -> Option<TelemetryArtifact> {
     // Assumed to exist in the original file or cognitive_events
     // If missing, returns None and skips telemetry check
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompletionStatus, OutcomeVerifier};
+    use crate::completion_engine::CompletionCondition;
+
+    fn verify(command: &str, evidence: &str) -> CompletionStatus {
+        let condition =
+            CompletionCondition::CommandExecutionVerified { command: command.to_string() };
+
+        OutcomeVerifier::verify("test_node", evidence, 1.0, &[condition])
+    }
+
+    #[test]
+    fn exact_command_is_required_for_command_completion() {
+        let wrong_command = concat!(
+            "[CMD_OK] Command: uptime\n",
+            "Status: exit status: 0\n",
+            "STDOUT:\n",
+            "up 6 days\n",
+        );
+
+        let exact_command = concat!(
+            "[CMD_OK] Command: uptime; df -h /; free -m\n",
+            "Status: exit status: 0\n",
+            "STDOUT:\n",
+            "up 6 days\n",
+        );
+
+        assert!(matches!(
+            verify("uptime; df -h /; free -m", wrong_command),
+            CompletionStatus::Rejected(_)
+        ));
+
+        assert_eq!(verify("uptime; df -h /; free -m", exact_command), CompletionStatus::Approved);
+    }
+
+    #[test]
+    fn successful_command_requires_zero_exit_status() {
+        let failed_command = concat!("[CMD_OK] Command: uptime\n", "Status: exit status: 1\n",);
+
+        let missing_status = "[CMD_OK] Command: uptime\n";
+
+        let successful_command = concat!("[CMD_OK] Command: uptime\n", "Status: exit status: 0\n",);
+
+        assert!(matches!(verify("uptime", failed_command), CompletionStatus::Rejected(_)));
+
+        assert!(matches!(verify("uptime", missing_status), CompletionStatus::Rejected(_)));
+
+        assert_eq!(verify("uptime", successful_command), CompletionStatus::Approved);
+    }
+
+    #[test]
+    fn generic_cmd_ok_remains_legacy_compatible() {
+        let condition = CompletionCondition::CommandMarkerAcquired;
+
+        let result = OutcomeVerifier::verify(
+            "test_node",
+            "[CMD_OK] Status: exit status: 0\n",
+            1.0,
+            &[condition],
+        );
+
+        assert_eq!(result, CompletionStatus::Approved);
+    }
 }
