@@ -257,9 +257,13 @@ impl CorticalLoop {
 
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
-                session.local_evidence.push_str("\n[DAG LINEAGE INHERITED EVIDENCE]\n");
-                session.local_evidence.push_str(evidence.trim());
-                session.local_evidence.push_str("\n[DAG LINEAGE COMPLETE]\n");
+                use sha2::{Digest, Sha256};
+                let trimmed = evidence.trim();
+                let digest = format!("{:x}", Sha256::digest(trimmed.as_bytes()));
+                session.local_evidence.push_str(&format!(
+                    "\n[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]\n",
+                    digest, trimmed, digest
+                ));
             }
         }
 

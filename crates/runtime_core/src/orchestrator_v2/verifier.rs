@@ -140,8 +140,7 @@ impl Verifier {
             } else if criterion == "CMD_OK" {
                 evidence.contains("[CMD_OK]")
             } else if criterion == "DAG_LINEAGE_OK" {
-                evidence.contains("[DAG LINEAGE INHERITED EVIDENCE]")
-                    && evidence.contains("[DAG LINEAGE COMPLETE]")
+                crate::outcome_verifier::verify_lineage_provenance(evidence)
             } else {
                 return VerificationResult::Escalate(format!(
                     "Unknown success criterion: {}",
