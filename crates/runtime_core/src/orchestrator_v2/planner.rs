@@ -19,6 +19,19 @@ impl PlannerAgent {
         api_key: &str,
         directive: &str,
     ) -> Result<TaskGraph> {
+        // EXPLICIT NATIVE TOOL CONTRACT:
+        // An explicit SearchMemory directive must never be reinterpreted
+        // by the planner model as SearchCode, ReadFile, or filesystem work.
+        let search_memory_explicit =
+            crate::completion_engine::any_word_unnegated(directive, &["searchmemory"])
+                || crate::completion_engine::any_word_unnegated(directive, &["search_memory"])
+                || (crate::completion_engine::any_word_unnegated(directive, &["search"])
+                    && crate::completion_engine::any_word_unnegated(directive, &["memory"]));
+
+        if search_memory_explicit {
+            return Ok(Self::create_search_memory_graph(directive));
+        }
+
         let prompt = format!(
             r#"You are the Lead DAG Planner Agent for AthenaFusionX.
 Decompose the user DIRECTIVE into a TaskGraph JSON object with a 'nodes' map.
@@ -45,7 +58,8 @@ OUTPUT ONLY VALID JSON with this exact structure:
       "id": "task_1",
       "deps": [],
       "required_agent": "CodeAnalyzer",
-      "objective": "..."
+      "objective": "...",
+      "success_criteria": ["CMD_OK"]
     }}
   }}
 }}"#,
@@ -80,6 +94,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         if let Ok(mut graph) = serde_json::from_str::<TaskGraph>(&clean) {
             Self::strip_terminal_nodes(&mut graph);
             if !graph.nodes.is_empty() {
+                Self::validate_success_contracts(&graph)?;
                 return Ok(graph);
             }
         }
@@ -90,6 +105,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
                 if let Ok(mut graph) = serde_json::from_str::<TaskGraph>(slice) {
                     Self::strip_terminal_nodes(&mut graph);
                     if !graph.nodes.is_empty() {
+                        Self::validate_success_contracts(&graph)?;
                         return Ok(graph);
                     }
                 }
@@ -169,11 +185,33 @@ OUTPUT ONLY VALID JSON with this exact structure:
                 );
             }
             if !map.is_empty() {
-                return Ok(TaskGraph { nodes: map });
+                let graph = TaskGraph { nodes: map };
+                Self::validate_success_contracts(&graph)?;
+                return Ok(graph);
             }
         }
 
         Ok(Self::create_fallback_graph(directive))
+    }
+
+    fn validate_success_contracts(graph: &TaskGraph) -> Result<()> {
+        for node in graph.nodes.values() {
+            if node.success_criteria.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Planner produced real work node '{}' without success criteria.",
+                    node.id
+                ));
+            }
+
+            if node.success_criteria.iter().any(|criterion| criterion.trim().is_empty()) {
+                return Err(anyhow::anyhow!(
+                    "Planner produced real work node '{}' with an empty success criterion.",
+                    node.id
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     fn strip_terminal_nodes(graph: &mut TaskGraph) {
@@ -202,7 +240,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         }
     }
 
-    fn create_fallback_graph(directive: &str) -> TaskGraph {
+    fn create_search_memory_graph(directive: &str) -> TaskGraph {
         let mut nodes = HashMap::new();
 
         nodes.insert(
@@ -213,7 +251,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
                 required_agent: "CodeAnalyzer".to_string(),
                 status: TaskStatus::Pending,
                 objective: directive.to_string(),
-                success_criteria: vec![],
+                success_criteria: vec!["SEARCH_MEMORY_OK".to_string()],
                 execution_state: TaskExecutionState::default(),
                 output_evidence: None,
                 priority: 1,
@@ -221,5 +259,255 @@ OUTPUT ONLY VALID JSON with this exact structure:
         );
 
         TaskGraph { nodes }
+    }
+
+    fn fallback_success_criteria(directive: &str) -> Result<Vec<String>> {
+        let lower = directive.to_lowercase();
+
+        // Live host observations require physical command evidence.
+        // Keep this aligned with SubgoalCompletionEngine so the DAG planner
+        // and Cortex cannot assign contradictory completion contracts.
+        if crate::completion_engine::is_host_observation_objective(directive) {
+            return Ok(vec!["CMD_OK".to_string()]);
+        }
+
+        if lower.contains("command") || lower.contains("execute ") || lower.starts_with("run ") {
+            return Ok(vec!["CMD_OK".to_string()]);
+        }
+
+        for marker in ["write ", "save ", "export ", "create "] {
+            if let Some(pos) = lower.find(marker) {
+                let remainder = directive[pos + marker.len()..].trim();
+                if let Some(path) = remainder
+                    .split_whitespace()
+                    .find(|token| token.contains('.') && !token.starts_with("the"))
+                {
+                    return Ok(vec![format!("WRITE_OK:{}", path.trim_matches('`'))]);
+                }
+            }
+        }
+
+        for marker in ["read ", "inspect "] {
+            if let Some(pos) = lower.find(marker) {
+                let remainder = directive[pos + marker.len()..].trim();
+                if let Some(path) = remainder
+                    .split_whitespace()
+                    .find(|token| token.contains('/') || token.ends_with(".rs"))
+                {
+                    return Ok(vec![format!("READ_OK:{}", path.trim_matches('`'))]);
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Cannot construct a deterministic fallback success contract for directive."
+        ))
+    }
+
+    fn create_fallback_graph(directive: &str) -> TaskGraph {
+        let mut nodes = HashMap::new();
+
+        let success_criteria = match Self::fallback_success_criteria(directive) {
+            Ok(criteria) => criteria,
+            Err(error) => {
+                tracing::warn!(
+                    "Fallback planner cannot construct deterministic success contract: {}",
+                    error
+                );
+                return TaskGraph { nodes };
+            }
+        };
+
+        nodes.insert(
+            "task_1".to_string(),
+            TaskNode {
+                id: "task_1".to_string(),
+                deps: vec![],
+                required_agent: "CodeAnalyzer".to_string(),
+                status: TaskStatus::Pending,
+                objective: directive.to_string(),
+                success_criteria,
+                execution_state: TaskExecutionState::default(),
+                output_evidence: None,
+                priority: 1,
+            },
+        );
+
+        TaskGraph { nodes }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_observation_fallback_requires_cmd_ok() {
+        let directive = "Perform a read-only investigation and report the current host uptime, filesystem capacity for /, available memory/RAM, and load average. Do not use SearchMemory.";
+
+        assert_eq!(
+            PlannerAgent::fallback_success_criteria(directive).unwrap(),
+            vec!["CMD_OK".to_string()]
+        );
+    }
+
+    fn parse(json: &str) -> Result<TaskGraph> {
+        PlannerAgent::parse_task_graph(json, "test directive")
+    }
+
+    #[test]
+    fn explicit_search_memory_directive_creates_native_memory_node() {
+        let directive = "Use the SearchMemory tool to recall prior memory about host observations.";
+
+        let graph = PlannerAgent::create_search_memory_graph(directive);
+
+        assert_eq!(graph.nodes.len(), 1);
+
+        let node = &graph.nodes["task_1"];
+
+        assert_eq!(node.required_agent, "CodeAnalyzer");
+        assert_eq!(node.objective, directive);
+        assert_eq!(node.success_criteria, vec!["SEARCH_MEMORY_OK".to_string()]);
+
+        assert!(!node.success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")));
+    }
+
+    #[test]
+    fn explicit_search_memory_directive_is_detected_before_model_planning() {
+        let source = include_str!("planner.rs");
+
+        let marker = "EXPLICIT NATIVE TOOL CONTRACT:";
+        let start =
+            source.find(marker).expect("deterministic SearchMemory planner guard must exist");
+
+        let region = &source[start..];
+
+        assert!(region.contains("searchmemory"));
+        assert!(region.contains("search memory"));
+        assert!(region.contains("search_memory"));
+        assert!(region.contains("create_search_memory_graph"));
+    }
+
+    #[test]
+    fn explicit_success_criteria_are_preserved() {
+        let graph = parse(
+            r#"{
+                "nodes": {
+                    "task_1": {
+                        "id": "task_1",
+                        "deps": [],
+                        "required_agent": "CodeAnalyzer",
+                        "objective": "Read router.rs",
+                        "success_criteria": ["READ_OK:crates/runtime_core/src/router.rs"]
+                    }
+                }
+            }"#,
+        )
+        .expect("valid graph should parse");
+
+        assert_eq!(
+            graph.nodes["task_1"].success_criteria,
+            vec!["READ_OK:crates/runtime_core/src/router.rs"]
+        );
+    }
+
+    #[test]
+    fn missing_success_criteria_are_rejected_for_real_nodes() {
+        let result = parse(
+            r#"{
+                "nodes": {
+                    "task_1": {
+                        "id": "task_1",
+                        "deps": [],
+                        "required_agent": "CodeAnalyzer",
+                        "objective": "Read router.rs"
+                    }
+                }
+            }"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn empty_success_criteria_are_rejected_for_real_nodes() {
+        let result = parse(
+            r#"{
+                "nodes": {
+                    "task_1": {
+                        "id": "task_1",
+                        "deps": [],
+                        "required_agent": "CodeAnalyzer",
+                        "objective": "Read router.rs",
+                        "success_criteria": []
+                    }
+                }
+            }"#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fallback_command_gets_cmd_contract() {
+        let criteria =
+            PlannerAgent::fallback_success_criteria("execute command `uptime; df -h /; free -m`")
+                .expect("command fallback should produce a contract");
+
+        assert_eq!(criteria, vec!["CMD_OK"]);
+    }
+
+    #[test]
+    fn fallback_write_gets_write_contract() {
+        let criteria = PlannerAgent::fallback_success_criteria("write model_routing_analysis.md")
+            .expect("write fallback should produce a contract");
+
+        assert_eq!(criteria, vec!["WRITE_OK:model_routing_analysis.md"]);
+    }
+
+    #[test]
+    fn fallback_read_gets_read_contract() {
+        let criteria =
+            PlannerAgent::fallback_success_criteria("read crates/runtime_core/src/router.rs")
+                .expect("read fallback should produce a contract");
+
+        assert_eq!(criteria, vec!["READ_OK:crates/runtime_core/src/router.rs"]);
+    }
+
+    #[test]
+    fn fallback_rejects_ambiguous_directive() {
+        let result = PlannerAgent::fallback_success_criteria(
+            "analyze the architecture and provide recommendations",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn terminal_nodes_are_removed_before_contract_validation() {
+        let graph = parse(
+            r#"{
+                "nodes": {
+                    "task_1": {
+                        "id": "task_1",
+                        "deps": [],
+                        "required_agent": "CodeAnalyzer",
+                        "objective": "halt"
+                    },
+                    "task_2": {
+                        "id": "task_2",
+                        "deps": [],
+                        "required_agent": "CodeAnalyzer",
+                        "objective": "Read router.rs",
+                        "success_criteria": ["READ_OK:crates/runtime_core/src/router.rs"]
+                    }
+                }
+            }"#,
+        )
+        .expect("terminal node should be stripped");
+
+        assert_eq!(graph.nodes.len(), 1);
+        assert!(graph.nodes.contains_key("task_2"));
+        assert!(!graph.nodes.contains_key("task_1"));
     }
 }

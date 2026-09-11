@@ -10,9 +10,11 @@ pub struct ArtifactSpec {
 pub enum CompletionCondition {
     ReadMarkerAcquired,
     SearchMarkerAcquired,
+    SearchMemoryMarkerAcquired,
     WriteMarkerAcquired,
     PatchMarkerAcquired,
     CommandMarkerAcquired,
+    CommandExecutionVerified { command: String },
     SourceCodeEvidenceRequired,
     MinBeliefScore(f32),
 }
@@ -55,7 +57,10 @@ fn has_word_unnegated(text: &str, word: &str) -> bool {
     let tokens: Vec<&str> = text.split_whitespace().collect();
     for (i, tok) in tokens.iter().enumerate() {
         let clean = tok.trim_matches(|c: char| !c.is_alphanumeric());
-        if clean == word {
+        let matches_word = clean.eq_ignore_ascii_case(word)
+            || tok.split(|c: char| !c.is_alphanumeric()).any(|sub| sub.eq_ignore_ascii_case(word));
+
+        if matches_word {
             let start = i.saturating_sub(3);
             let negated = tokens[start..i].iter().any(|w| {
                 let wl = w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
@@ -69,8 +74,74 @@ fn has_word_unnegated(text: &str, word: &str) -> bool {
     false
 }
 
-fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
+pub(crate) fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
     words.iter().any(|w| has_word_unnegated(text, w))
+}
+
+/// Recognize a read-only request for actual host metrics.
+///
+/// These observations are physical runtime state, not source-code analysis.
+/// Keep this intentionally conjunctive so ordinary mentions of one metric
+/// do not force shell execution.
+pub(crate) fn is_host_observation_objective(objective: &str) -> bool {
+    let text = objective.to_lowercase();
+
+    let has_uptime = any_word_unnegated(&text, &["uptime"]);
+    let has_filesystem = any_word_unnegated(&text, &["filesystem", "disk", "storage", "capacity"]);
+    let has_memory = any_word_unnegated(&text, &["memory", "ram"]);
+    let has_load = any_word_unnegated(&text, &["load"]);
+    let explicit_search_memory = any_word_unnegated(&text, &["searchmemory", "search_memory"]);
+
+    has_uptime && has_filesystem && has_memory && has_load && !explicit_search_memory
+}
+
+fn extract_required_command(objective: &str) -> Option<String> {
+    let lower = objective.to_lowercase();
+
+    // Prefer an explicit command following "command", enclosed in backticks.
+    if let Some(command_pos) = lower.find("command") {
+        let after = &objective[command_pos + "command".len()..];
+
+        if let Some(start) = after.find('`') {
+            let remainder = &after[start + 1..];
+            if let Some(end) = remainder.find('`') {
+                let command = remainder[..end].trim();
+                if !command.is_empty() {
+                    return Some(command.to_string());
+                }
+            }
+        }
+
+        // Also accept a command introduced by a simple quoted string.
+        for quote in ['"', '\''] {
+            if let Some(start) = after.find(quote) {
+                let remainder = &after[start + quote.len_utf8()..];
+                if let Some(end) = remainder.find(quote) {
+                    let command = remainder[..end].trim();
+                    if !command.is_empty() {
+                        return Some(command.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Accept common direct forms such as:
+    // Run `uptime; df -h /; free -m`
+    // Execute `uptime`
+    for marker in ["run `", "execute `"] {
+        if let Some(start) = lower.find(marker) {
+            let remainder = &objective[start + marker.len()..];
+            if let Some(end) = remainder.find('`') {
+                let command = remainder[..end].trim();
+                if !command.is_empty() {
+                    return Some(command.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 impl SubgoalCompletionEngine {
@@ -84,6 +155,21 @@ impl SubgoalCompletionEngine {
 
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
+
+        // Native host observation is a physical execution contract.
+        // It must take precedence over generic "inspect/investigate" source
+        // analysis because the requested facts exist only in live host state.
+        if is_host_observation_objective(classify_text) {
+            return SubgoalContract {
+                node_id: node_id.to_string(),
+                objective: objective.to_string(),
+                conditions: vec![CompletionCondition::CommandExecutionVerified {
+                    command: "uptime; df -h /; free -m".to_string(),
+                }],
+                is_mutation_task: false,
+                required_artifact_paths: Vec::new(),
+            };
+        }
 
         // Detect every material intent independently.
         //
@@ -107,8 +193,15 @@ impl SubgoalCompletionEngine {
         let has_read_intent =
             any_word_unnegated(classify_text, &["read", "inspect", "examine", "review", "open"]);
 
+        let has_search_memory_intent =
+            any_word_unnegated(classify_text, &["searchmemory", "search_memory"])
+                || (any_word_unnegated(classify_text, &["search"])
+                    && any_word_unnegated(classify_text, &["memory"])
+                    && !is_host_observation_objective(classify_text));
+
         let has_search_intent =
-            any_word_unnegated(classify_text, &["search", "find", "scan", "grep", "locate"]);
+            any_word_unnegated(classify_text, &["search", "find", "scan", "grep", "locate"])
+                && !has_search_memory_intent;
 
         let has_analysis_intent = any_word_unnegated(
             classify_text,
@@ -124,6 +217,20 @@ impl SubgoalCompletionEngine {
                 "synthesis",
             ],
         );
+
+        // EXPLICIT NATIVE TOOL CONTRACT:
+        // SearchMemory is authoritative when explicitly requested. Do not
+        // reinterpret the directive as filesystem search, source analysis,
+        // command execution, or a generic belief-threshold task.
+        if has_search_memory_intent {
+            return SubgoalContract {
+                node_id: node_id.to_string(),
+                objective: objective.to_string(),
+                conditions: vec![CompletionCondition::SearchMemoryMarkerAcquired],
+                is_mutation_task: false,
+                required_artifact_paths: Vec::new(),
+            };
+        }
 
         if has_patch {
             is_mutation_task = true;
@@ -158,11 +265,16 @@ impl SubgoalCompletionEngine {
             let threshold = if has_write || has_patch { 0.75 } else { 0.65 };
             conditions.push(CompletionCondition::MinBeliefScore(threshold));
         } else if !has_write && !has_patch {
-            // Pure command objectives are physically verified by CMD_OK.
-            // Do not require a cognitive belief threshold here: anti-loop
-            // recovery may reduce belief even after the command has already
-            // succeeded. Physical command evidence is authoritative.
-            conditions.push(CompletionCondition::CommandMarkerAcquired);
+            // Pure command objectives require physical evidence for the
+            // exact requested command. A generic [CMD_OK] only proves that
+            // some command succeeded and is therefore insufficient.
+            if let Some(command) = extract_required_command(objective) {
+                conditions.push(CompletionCondition::CommandExecutionVerified { command });
+            } else {
+                // Preserve the legacy contract only when the objective does
+                // not expose a command string that can be bound deterministically.
+                conditions.push(CompletionCondition::CommandMarkerAcquired);
+            }
         }
 
         let arts = extract_required_artifact_paths(objective);
@@ -202,6 +314,7 @@ impl SubgoalCompletionEngine {
     ///
     /// Write/Patch conditions are deliberately excluded because this
     /// gate authorizes the transition INTO the output phase.
+
     pub fn reconnaissance_complete(
         contract: &SubgoalContract,
         local_evidence: &str,
@@ -231,11 +344,57 @@ impl SubgoalCompletionEngine {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{CompletionCondition, SubgoalCompletionEngine};
+
+    #[test]
+    fn host_observation_directive_creates_exact_command_contract() {
+        let directive = "Perform a read-only investigation and report the current host uptime, filesystem capacity for /, available memory/RAM, and load average. Do not use SearchMemory.";
+
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", directive);
+
+        assert_eq!(
+            contract.conditions,
+            vec![CompletionCondition::CommandExecutionVerified {
+                command: "uptime; df -h /; free -m".to_string(),
+            }]
+        );
+        assert!(!contract.is_mutation_task);
+        assert!(contract.required_artifact_paths.is_empty());
+    }
+
+    #[test]
+    fn explicit_search_memory_directive_creates_marker_only_contract() {
+        let directive = "READ-ONLY MEMORY TEST. Do not modify, create, delete, or write any files. Do not execute shell commands. Use the SearchMemory tool to recall prior memory specifically about host observations involving uptime, filesystem or disk capacity, available memory/RAM, and load average. This is a semantic-memory recall test only. After SearchMemory returns, report exactly what memory was retrieved and whether it contained actual host-metric observations.";
+
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", directive);
+
+        assert_eq!(contract.conditions, vec![CompletionCondition::SearchMemoryMarkerAcquired]);
+        assert!(!contract.is_mutation_task);
+        assert!(contract.required_artifact_paths.is_empty());
+    }
+
+    #[test]
+    fn search_memory_evidence_satisfies_native_contract() {
+        let directive = "Use the SearchMemory tool to recall prior host observations.";
+
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", directive);
+
+        assert!(SubgoalCompletionEngine::evaluate(
+            &contract,
+            "[SEARCH_MEMORY_OK] Found semantic context: host_report.md",
+            0.10,
+        ));
+    }
+}
+
 fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
     let mut out: Vec<ArtifactSpec> = Vec::new();
     let exts = ["md", "json", "rs", "toml", "yaml", "yml", "txt", "py"];
     let tokens: Vec<&str> = objective.split_whitespace().collect();
-    let write_words = ["write", "save", "export", "synthesize"];
+    let write_words =
+        ["write", "save", "export", "synthesize", "create", "implement", "integrate", "add"];
 
     for (i, tok) in tokens.iter().enumerate() {
         // Completion criteria such as `WRITE_OK:host_report.md` are

@@ -81,10 +81,15 @@ impl EpistemicEngine {
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
 
+                        let requested_max_tokens = payload
+                            .pointer("/generationConfig/maxOutputTokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(4096);
+
                         let mut p = serde_json::json!({
                             "model": model_endpoint,
                             "messages": [{"role": "user", "content": text}],
-                            "max_tokens": 4096,
+                            "max_tokens": requested_max_tokens,
                             "temperature": 0.0
                         });
 
@@ -276,6 +281,38 @@ impl EpistemicEngine {
                     _ => {}
                 }
 
+                let finish_reason = match resolved.provider_name {
+                    "google" => body
+                        .pointer("/candidates/0/finishReason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    _ => body
+                        .pointer("/choices/0/finish_reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                };
+
+                if finish_reason == "MAX_TOKENS" || finish_reason == "length" {
+                    last_err = anyhow!(
+                        "{} response truncated ({}) after {} chars -- retrying",
+                        model_endpoint,
+                        finish_reason,
+                        final_text.len()
+                    );
+                    retries += 1;
+                    eprintln!(
+                        "[RETRY] {} truncated-response attempt {}/4: {}",
+                        model_endpoint, retries, last_err
+                    );
+                    if retries > 4 {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32) * 2)).await;
+                    continue;
+                }
+
                 if final_text.trim().is_empty() {
                     retries += 1;
                     if retries > 4 {
@@ -296,7 +333,30 @@ impl EpistemicEngine {
         problem: &str,
         world_context: &str,
     ) -> Result<Vec<String>> {
-        let audit_guidance = if problem.to_lowercase().contains("audit")
+        // EXPLICIT NATIVE TOOL CONTRACT:
+        // If the original directive explicitly names SearchMemory, the
+        // Executive Cortex must not reinterpret the mission as filesystem
+        // exploration, code search, or host observation. Preserve the
+        // directive's requested native operation as the authoritative strategy.
+        let problem_lower = problem.to_lowercase();
+        let search_memory_explicit =
+            crate::completion_engine::any_word_unnegated(&problem_lower, &["searchmemory"])
+                || crate::completion_engine::any_word_unnegated(&problem_lower, &["search_memory"])
+                || (crate::completion_engine::any_word_unnegated(&problem_lower, &["search"])
+                    && crate::completion_engine::any_word_unnegated(&problem_lower, &["memory"]));
+
+        if search_memory_explicit {
+            return Ok(vec![format!("search_memory:{}", problem.trim())]);
+        }
+
+        // Live host observations are deterministic physical operations.
+        // Resolve them before generic "investigate/analyze" guidance can cause
+        // the model to wander into source-code inspection.
+        if crate::completion_engine::is_host_observation_objective(problem) {
+            return Ok(vec!["execute_command:uptime; df -h /; free -m".to_string()]);
+        }
+
+        let audit_guidance = if problem_lower.contains("audit")
             || problem.to_lowercase().contains("vulnerabilit")
             || problem.to_lowercase().contains("security")
         {
@@ -458,26 +518,27 @@ CRITICAL RULE 0: NATIVE TOOLS ONLY (read_file, read_function, read_file_chunk, e
 CRITICAL RULE 1: If the EVIDENCE contains an exact file path outputted by a previous command, you MUST use that exact path.
 CRITICAL RULE 2: If EVIDENCE satisfies the strategy, declare HALT.
 CRITICAL RULE 3: There is NO downstream translator. Your proposal is parsed directly for a JSON action array -- natural-language-only descriptions of intent will NOT be executed and will waste a turn. You MUST end your response with a valid JSON array of action object(s) matching the ALLOWED ACTIONS schema (e.g. [{{"type": "read_file", "path": "...", "reasoning": "..."}}]). This applies to ALL actions, not just write_file/replace_lines/diff_patch.
-CRITICAL RULE 4: JSON string escaping breaks on large documents. DO NOT USE JSON for write_file. If you need to write a file, you MUST use this exact plaintext format:
-
-[WRITE_FILE_TARGET]: <path>
-[WRITE_FILE_CONTENT]:
+CRITICAL RULE 4: NATIVE WRITE PROTOCOL. For write_file, use ONLY the native
+write_file function supplied in the tool schema. Its arguments are exactly:
+"path", "content", and "reasoning". The "content" field MUST contain only the
+actual requested file content. Do NOT include system prompts, protocol
+instructions, planning, hidden reasoning, JSON-format instructions, or
+tool-use discussion in the content.
 
 CRITICAL RULE 5: SYNTHESIZE_REPORT USAGE. If you are instructed to generate,
-synthesize, or output a final report based on gathered evidence, you MUST NOT
-attempt to use bash or execute_command to write the report. You MUST use the
-native write_file tool directly to write the final markdown output. Format it
-exactly as required in RULE 4.
+synthesize, or output a final report based on gathered evidence, use the native
+write_file tool directly. The write_file "content" field must contain only the
+final requested report content.
 
 CRITICAL RULE 6: [ATHENA OMNISCIENCE] You are aware of several external compiled
 sub-agents (WORKSPACE TOOL CONTRACTS like impact_analyzer, benchmark_runner,
 mutation_ranker). To use them, you MUST use the execute_command native tool,
 passing the binary path and arguments as the command string.
 
-Think step by step if it helps, but your response MUST end with the exact
-target path and a valid JSON action array. There is no downstream translator --
-your response is parsed directly, so natural-language-only intent will not be
-executed."#,
+Do not expose or reproduce your internal reasoning or tool-protocol
+deliberation in any action argument. For write_file, the "content" argument
+must contain only the requested artifact. The native tool call is the
+authoritative action representation."#,
             mission, strategy, world_context, bounded_evidence
         );
 
@@ -876,3 +937,21 @@ You are the Adversarial Critic for the CURRENT mission only.
 - Do NOT invent quantitative claims. If the Strategist makes a quantitative claim that is not backed by a [Measured] line in EVIDENCE, veto it.
 - Prefer constructive vetoes that name the exact next tool call.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::EpistemicEngine;
+    use reqwest::Client;
+
+    #[tokio::test]
+    async fn explicit_search_memory_directive_is_authoritative() {
+        let directive = "Use the SearchMemory tool to recall prior memory specifically about host observations involving uptime, filesystem or disk capacity, available memory/RAM, and load average.";
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("explicit SearchMemory directive should produce a deterministic strategy");
+
+        assert_eq!(strategies.len(), 1);
+        assert_eq!(strategies[0], format!("search_memory:{}", directive));
+    }
+}
