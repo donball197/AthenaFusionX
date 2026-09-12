@@ -349,6 +349,15 @@ impl EpistemicEngine {
             return Ok(vec![format!("search_memory:{}", problem.trim())]);
         }
 
+        if let Some(pos) = problem.find("READ_FUNCTION_OK:") {
+            let remainder = &problem[pos + "READ_FUNCTION_OK:".len()..];
+            let target =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !target.is_empty() && target.contains(':') {
+                return Ok(vec![format!("read_function:{}", target)]);
+            }
+        }
+
         if crate::completion_engine::is_lineage_inherit_only_objective(problem)
             || problem.to_lowercase().contains("lineage mode: inherit_only")
         {

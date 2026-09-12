@@ -374,8 +374,8 @@ impl RoboticExecutor {
                 }
 
                 Ok(format!(
-                    "[READ_FUNCTION_OK] File: {} | Function: {}\nEXACT AST SOURCE:\n{}",
-                    path, function_name, source
+                    "[READ_FUNCTION_OK] {}:{}\nFile: {} | Function: {}\nEXACT AST SOURCE:\n{}",
+                    path, function_name, path, function_name, source
                 ))
             }
 
@@ -551,7 +551,7 @@ impl RoboticExecutor {
                 let safe_path = sanitize(&path)?;
 
                 // Use the real nexus_ast_tool mutation strategy rather than
-                // the legacy AstEditor stub. Transform first; write only after
+                // the legacy AstEditor wrapper. Transform first; write only after
                 // validation and function lookup succeed.
                 let source = tokio::fs::read_to_string(&safe_path).await?;
                 let strategy = nexus_ast_tool::mutation::get_strategy("ReplaceFunctionBody")

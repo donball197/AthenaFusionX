@@ -73,6 +73,12 @@ impl OutcomeVerifier {
                 CompletionCondition::LineageEvidenceAcquired => {
                     verify_lineage_provenance(local_evidence)
                 }
+                CompletionCondition::ReadFunctionMarkerAcquired { path, function_name } => {
+                    local_evidence.contains("[READ_FUNCTION_OK]")
+                        && (local_evidence.contains(&format!("{}:{}", path, function_name))
+                            || (local_evidence.contains(path.as_str())
+                                && local_evidence.contains(function_name.as_str())))
+                }
                 CompletionCondition::CommandExecutionVerified { command } => {
                     let expected = command.trim();
 

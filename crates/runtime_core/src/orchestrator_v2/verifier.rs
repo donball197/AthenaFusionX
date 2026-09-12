@@ -130,7 +130,12 @@ impl Verifier {
             } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
                 evidence.contains("[READ_OK]") && evidence.contains(path)
             } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
-                evidence.contains("[READ_FUNCTION_OK]") && evidence.contains(target)
+                let mut parts = target.splitn(2, ':');
+                let path = parts.next().unwrap_or("").trim();
+                let func = parts.next().unwrap_or("").trim();
+                evidence.contains("[READ_FUNCTION_OK]")
+                    && (evidence.contains(target)
+                        || (evidence.contains(path) && evidence.contains(func)))
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 evidence.contains("[SEARCH_CODE_OK]") && evidence.contains(target)
             } else if criterion == "SEARCH_MEMORY_OK" {
@@ -139,6 +144,18 @@ impl Verifier {
                 evidence.contains("[WRITE_OK]") && evidence.contains(path)
             } else if criterion == "CMD_OK" {
                 evidence.contains("[CMD_OK]")
+            } else if criterion == "PATCH_FUNCTION_OK" {
+                evidence.contains("[PATCH_FUNCTION_OK]")
+            } else if let Some(func) = criterion.strip_prefix("PATCH_FUNCTION_OK:") {
+                evidence.contains("[PATCH_FUNCTION_OK]") && evidence.contains(func)
+            } else if criterion == "DIFF_PATCH_OK" {
+                evidence.contains("[DIFF_PATCH_OK]")
+            } else if let Some(path) = criterion.strip_prefix("DIFF_PATCH_OK:") {
+                evidence.contains("[DIFF_PATCH_OK]") && evidence.contains(path)
+            } else if criterion == "REPLACE_LINES_OK" {
+                evidence.contains("[REPLACE_LINES_OK]")
+            } else if let Some(path) = criterion.strip_prefix("REPLACE_LINES_OK:") {
+                evidence.contains("[REPLACE_LINES_OK]") && evidence.contains(path)
             } else if criterion == "DAG_LINEAGE_OK" {
                 crate::outcome_verifier::verify_lineage_provenance(evidence)
             } else {
@@ -185,5 +202,54 @@ mod tests {
         let unrelated =
             Verifier::verify_contract("task_1", "[SEARCH_CODE_OK] host observations", &criteria);
         assert!(matches!(unrelated, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn patch_function_ok_verifies_successfully() {
+        let criteria = vec!["PATCH_FUNCTION_OK:calculate_total".to_string()];
+        let evidence = "[PATCH_FUNCTION_OK] Updated function 'calculate_total' in src/math.rs";
+
+        let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+
+        let wrong_func_criteria = vec!["PATCH_FUNCTION_OK:calculate_discount".to_string()];
+        let failed = Verifier::verify_contract("task_mutate", evidence, &wrong_func_criteria);
+        assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn diff_patch_ok_verifies_successfully() {
+        let criteria = vec!["DIFF_PATCH_OK:src/lib.rs".to_string()];
+        let evidence = "[DIFF_PATCH_OK] Applied changes to src/lib.rs";
+
+        let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+
+        let wrong_path_criteria = vec!["DIFF_PATCH_OK:src/main.rs".to_string()];
+        let failed = Verifier::verify_contract("task_mutate", evidence, &wrong_path_criteria);
+        assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn dag_lineage_ok_verifies_with_content_hash() {
+        use sha2::{Digest, Sha256};
+
+        let criteria = vec!["DAG_LINEAGE_OK".to_string()];
+        let payload = "[PATCH_FUNCTION_OK] Updated function 'route' in router.rs";
+        let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+        let evidence = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]",
+            digest, payload, digest
+        );
+
+        let result = Verifier::verify_contract("task_verify", &evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+
+        let tampered = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{} modified\n[DAG LINEAGE COMPLETE sha256:{}]",
+            digest, payload, digest
+        );
+        let failed = Verifier::verify_contract("task_verify", &tampered, &criteria);
+        assert!(matches!(failed, VerificationResult::Retry(_)));
     }
 }

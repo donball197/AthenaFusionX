@@ -16,6 +16,7 @@ pub enum CompletionCondition {
     CommandMarkerAcquired,
     CommandExecutionVerified { command: String },
     LineageEvidenceAcquired,
+    ReadFunctionMarkerAcquired { path: String, function_name: String },
     SourceCodeEvidenceRequired,
     MinBeliefScore(f32),
 }
@@ -183,6 +184,28 @@ impl SubgoalCompletionEngine {
 
         let mut conditions = Vec::new();
         let mut is_mutation_task = false;
+
+        // Explicit READ_FUNCTION_OK contract:
+        if let Some(pos) = objective.find("READ_FUNCTION_OK:") {
+            let remainder = &objective[pos + "READ_FUNCTION_OK:".len()..];
+            let target =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            let mut parts = target.splitn(2, ':');
+            let path = parts.next().unwrap_or("").trim().to_string();
+            let func = parts.next().unwrap_or("").trim().to_string();
+            if !path.is_empty() && !func.is_empty() {
+                return SubgoalContract {
+                    node_id: node_id.to_string(),
+                    objective: objective.to_string(),
+                    conditions: vec![CompletionCondition::ReadFunctionMarkerAcquired {
+                        path,
+                        function_name: func,
+                    }],
+                    is_mutation_task: false,
+                    required_artifact_paths: Vec::new(),
+                };
+            }
+        }
 
         if objective.contains("LINEAGE MODE: INHERIT_ONLY")
             || classify_text.contains("lineage mode: inherit_only")
