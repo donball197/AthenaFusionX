@@ -10,6 +10,20 @@ pub enum VerificationResult {
 
 pub struct Verifier;
 
+fn read_evidence_matches_path(evidence: &str, expected_path: &str) -> bool {
+    evidence.lines().any(|line| {
+        if let Some(path) = line.strip_prefix("[READ_OK]") {
+            return path.trim() == expected_path;
+        }
+
+        if let Some(rest) = line.strip_prefix("[READ_CHUNK_OK] File: ") {
+            return rest.split(" | ").next().map(str::trim) == Some(expected_path);
+        }
+
+        false
+    })
+}
+
 impl Verifier {
     /// LocalDiagnosis Layer: Cheap, deterministic heuristic matching.
     pub fn diagnose_output(stderr: &str, stdout: &str) -> VerificationResult {
@@ -128,7 +142,7 @@ impl Verifier {
             let satisfied = if criterion == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED" {
                 evidence.contains("[DAG NODE COMPLETE]")
             } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
-                evidence.contains("[READ_OK]") && evidence.contains(path)
+                read_evidence_matches_path(evidence, path.trim())
             } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
                 let mut parts = target.splitn(2, ':');
                 let path = parts.next().unwrap_or("").trim();
@@ -146,8 +160,19 @@ impl Verifier {
                 evidence.contains("[CMD_OK]")
             } else if criterion == "PATCH_FUNCTION_OK" {
                 evidence.contains("[PATCH_FUNCTION_OK]")
+                    || evidence.contains("[PATCH_IDEMPOTENT_OK]")
             } else if let Some(func) = criterion.strip_prefix("PATCH_FUNCTION_OK:") {
-                evidence.contains("[PATCH_FUNCTION_OK]") && evidence.contains(func)
+                let mut parts = func.splitn(2, ':');
+                let path = parts.next().unwrap_or("").trim();
+                let name = parts.next().unwrap_or("").trim();
+                (evidence.contains("[PATCH_FUNCTION_OK]")
+                    || evidence.contains("[PATCH_IDEMPOTENT_OK]"))
+                    && (evidence.contains(func)
+                        || (!path.is_empty()
+                            && !name.is_empty()
+                            && evidence.contains(path)
+                            && evidence.contains(name))
+                        || (!name.is_empty() && evidence.contains(name)))
             } else if criterion == "DIFF_PATCH_OK" {
                 evidence.contains("[DIFF_PATCH_OK]")
             } else if let Some(path) = criterion.strip_prefix("DIFF_PATCH_OK:") {
@@ -205,6 +230,15 @@ mod tests {
     }
 
     #[test]
+    fn idempotent_patch_satisfies_node_verifier() {
+        let criteria = vec!["PATCH_FUNCTION_OK:calculate_total".to_string()];
+        let evidence = "[PATCH_IDEMPOTENT_OK] src/math.rs:calculate_total\nPatchFunction already satisfied; source unchanged.";
+
+        let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+    }
+
+    #[test]
     fn patch_function_ok_verifies_successfully() {
         let criteria = vec!["PATCH_FUNCTION_OK:calculate_total".to_string()];
         let evidence = "[PATCH_FUNCTION_OK] Updated function 'calculate_total' in src/math.rs";
@@ -251,5 +285,69 @@ mod tests {
         );
         let failed = Verifier::verify_contract("task_verify", &tampered, &criteria);
         assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+}
+
+#[cfg(test)]
+mod read_chunk_verifier_tests {
+    use super::{VerificationResult, Verifier};
+
+    fn criterion() -> Vec<String> {
+        vec!["READ_OK:crates/runtime_core/src/cortical_loop.rs".to_string()]
+    }
+
+    #[test]
+    fn read_ok_accepts_exact_whole_file_marker() {
+        let evidence = "[READ_OK] crates/runtime_core/src/cortical_loop.rs\n";
+
+        assert!(matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_accepts_exact_chunk_marker() {
+        let evidence =
+            "[READ_CHUNK_OK] File: crates/runtime_core/src/cortical_loop.rs | Lines 1-100 of 500\n";
+
+        assert!(matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_rejects_chunk_for_different_file() {
+        let evidence =
+            "[READ_CHUNK_OK] File: crates/runtime_core/src/other.rs | Lines 1-100 of 500\n";
+
+        assert!(!matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_rejects_whole_file_marker_for_different_file() {
+        let evidence = "[READ_OK] crates/runtime_core/src/other.rs\n";
+
+        assert!(!matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_rejects_marker_and_path_from_different_records() {
+        let evidence = concat!(
+            "[READ_CHUNK_OK] File: crates/runtime_core/src/other.rs | Lines 1-100 of 500\n",
+            "Observed reference to crates/runtime_core/src/cortical_loop.rs\n",
+        );
+
+        assert!(!matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
     }
 }
