@@ -98,3 +98,5 @@ daemon.log
 /tmp/
 .cargo/config.toml
 nexus_audit_target/
+server.log
+*.log
