@@ -10,12 +10,6 @@ pub struct OutcomeAssessment {
     pub lessons: Vec<String>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum CompletionStatus {
-    Approved,
-    Rejected(String),
-}
-
 pub struct OutcomeVerifier;
 
 impl OutcomeVerifier {
@@ -231,19 +225,6 @@ impl OutcomeVerifier {
         Ok(())
     }
 
-    /// Compatibility adapter for existing callers.
-    pub fn verify(
-        _node_id: &str,
-        local_evidence: &str,
-        belief_score: f32,
-        conditions: &[CompletionCondition],
-    ) -> CompletionStatus {
-        match Self::evaluate_contract(local_evidence, belief_score, conditions) {
-            Ok(()) => CompletionStatus::Approved,
-            Err(reason) => CompletionStatus::Rejected(reason),
-        }
-    }
-
     /// Single boolean completion-authorization boundary.
     pub fn mission_completion_authorized(
         local_evidence: &str,
@@ -306,26 +287,28 @@ pub fn verify_lineage_provenance(evidence: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompletionStatus, OutcomeVerifier};
+    use super::OutcomeVerifier;
     use crate::completion_engine::CompletionCondition;
 
-    fn verify(command: &str, evidence: &str) -> CompletionStatus {
+    fn verify(command: &str, evidence: &str) -> bool {
         let condition =
             CompletionCondition::CommandExecutionVerified { command: command.to_string() };
 
-        OutcomeVerifier::verify("test_node", evidence, 1.0, &[condition])
+        OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition])
     }
 
     #[test]
     fn case_8_read_path_acquired_rejects_wrong_path() {
         let conditions = vec![CompletionCondition::ReadPathAcquired { path: "wanted.rs".into() }];
-        assert!(matches!(
-            OutcomeVerifier::verify("t", "[READ_OK] other.rs\n", 1.0, &conditions),
-            CompletionStatus::Rejected(_)
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            "[READ_OK] other.rs\n",
+            1.0,
+            &conditions
         ));
-        assert!(matches!(
-            OutcomeVerifier::verify("t", "[READ_OK] wanted.rs\n", 1.0, &conditions),
-            CompletionStatus::Approved
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            "[READ_OK] wanted.rs\n",
+            1.0,
+            &conditions
         ));
     }
 
@@ -335,41 +318,30 @@ mod tests {
         // wrote report to <path>`, not the bare `[WRITE_OK] <path>` form
         // produced by WriteFile. The path-bound condition must accept both.
         let conditions = vec![CompletionCondition::WritePathAcquired { path: "report.md".into() }];
-        assert!(matches!(
-            OutcomeVerifier::verify("t", "[WRITE_OK] report.md\n", 1.0, &conditions),
-            CompletionStatus::Approved
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            "[WRITE_OK] report.md\n",
+            1.0,
+            &conditions
         ));
-        assert!(matches!(
-            OutcomeVerifier::verify(
-                "t",
-                "[WRITE_OK] Successfully synthesized and wrote report to report.md\n",
-                1.0,
-                &conditions
-            ),
-            CompletionStatus::Approved
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            "[WRITE_OK] Successfully synthesized and wrote report to report.md\n",
+            1.0,
+            &conditions
         ));
-        assert!(matches!(
-            OutcomeVerifier::verify(
-                "t",
-                "[WRITE_OK] Successfully synthesized and wrote report to other.md\n",
-                1.0,
-                &conditions
-            ),
-            CompletionStatus::Rejected(_)
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            "[WRITE_OK] Successfully synthesized and wrote report to other.md\n",
+            1.0,
+            &conditions
         ));
     }
 
     #[test]
     fn read_path_acquired_accepts_chunk_marker() {
         let conditions = vec![CompletionCondition::ReadPathAcquired { path: "big.rs".into() }];
-        assert!(matches!(
-            OutcomeVerifier::verify(
-                "t",
-                "[READ_CHUNK_OK] File: big.rs | Lines 1-50 of 2711\n",
-                1.0,
-                &conditions
-            ),
-            CompletionStatus::Approved
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            "[READ_CHUNK_OK] File: big.rs | Lines 1-50 of 2711\n",
+            1.0,
+            &conditions
         ));
     }
 
@@ -389,12 +361,9 @@ mod tests {
             "up 6 days\n",
         );
 
-        assert!(matches!(
-            verify("uptime; df -h /; free -m", wrong_command),
-            CompletionStatus::Rejected(_)
-        ));
+        assert!(!verify("uptime; df -h /; free -m", wrong_command));
 
-        assert_eq!(verify("uptime; df -h /; free -m", exact_command), CompletionStatus::Approved);
+        assert!(verify("uptime; df -h /; free -m", exact_command));
     }
 
     #[test]
@@ -405,53 +374,44 @@ mod tests {
 
         let successful_command = concat!("[CMD_OK] Command: uptime\n", "Status: exit status: 0\n",);
 
-        assert!(matches!(verify("uptime", failed_command), CompletionStatus::Rejected(_)));
+        assert!(!verify("uptime", failed_command));
 
-        assert!(matches!(verify("uptime", missing_status), CompletionStatus::Rejected(_)));
+        assert!(!verify("uptime", missing_status));
 
-        assert_eq!(verify("uptime", successful_command), CompletionStatus::Approved);
+        assert!(verify("uptime", successful_command));
     }
 
     #[test]
     fn patch_idempotent_marker_satisfies_patch_contract() {
         let condition = CompletionCondition::PatchMarkerAcquired;
 
-        let result = OutcomeVerifier::verify(
-            "test_node",
+        assert!(OutcomeVerifier::mission_completion_authorized(
             "[PATCH_IDEMPOTENT_OK] crates/runtime_core/src/example.rs:target\n",
             1.0,
             &[condition],
-        );
-
-        assert_eq!(result, CompletionStatus::Approved);
+        ));
     }
 
     #[test]
     fn unrelated_evidence_does_not_satisfy_patch_contract() {
         let condition = CompletionCondition::PatchMarkerAcquired;
 
-        let result = OutcomeVerifier::verify(
-            "test_node",
+        assert!(!OutcomeVerifier::mission_completion_authorized(
             "[READ_OK] crates/runtime_core/src/example.rs\n",
             1.0,
             &[condition],
-        );
-
-        assert!(matches!(result, CompletionStatus::Rejected(_)));
+        ));
     }
 
     #[test]
     fn generic_cmd_ok_remains_legacy_compatible() {
         let condition = CompletionCondition::CommandMarkerAcquired;
 
-        let result = OutcomeVerifier::verify(
-            "test_node",
+        assert!(OutcomeVerifier::mission_completion_authorized(
             "[CMD_OK] Status: exit status: 0\n",
             1.0,
             &[condition],
-        );
-
-        assert_eq!(result, CompletionStatus::Approved);
+        ));
     }
 
     #[test]
@@ -466,8 +426,11 @@ mod tests {
         );
 
         let condition = CompletionCondition::LineageEvidenceAcquired;
-        let result = OutcomeVerifier::verify("test_node", &evidence, 1.0, &[condition]);
-        assert_eq!(result, CompletionStatus::Approved);
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            &evidence,
+            1.0,
+            &[condition]
+        ));
     }
 
     #[test]
@@ -485,8 +448,11 @@ mod tests {
         );
 
         let condition = CompletionCondition::LineageEvidenceAcquired;
-        let result = OutcomeVerifier::verify("test_node", &evidence, 1.0, &[condition]);
-        assert!(matches!(result, CompletionStatus::Rejected(_)));
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            &evidence,
+            1.0,
+            &[condition]
+        ));
     }
 
     #[test]
@@ -498,8 +464,11 @@ mod tests {
         );
 
         let condition = CompletionCondition::LineageEvidenceAcquired;
-        let result = OutcomeVerifier::verify("test_node", evidence, 1.0, &[condition]);
-        assert!(matches!(result, CompletionStatus::Rejected(_)));
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[condition]
+        ));
     }
 }
 
@@ -511,11 +480,6 @@ mod extraction_guards {
     fn mission_completion_authorized_mirrors_approved_contract() {
         let conditions = vec![CompletionCondition::ReadMarkerAcquired];
         let evidence = "[READ_OK] crates/runtime_core/src/lib.rs";
-
-        assert!(matches!(
-            OutcomeVerifier::verify("node", evidence, 1.0, &conditions),
-            CompletionStatus::Approved
-        ));
 
         assert!(OutcomeVerifier::mission_completion_authorized(
             evidence,
