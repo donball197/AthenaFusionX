@@ -42,6 +42,8 @@ CRITICAL RULE [SUCCESS CONTRACT]: EVERY real work node MUST contain a non-empty 
 - "SEARCH_CODE_OK:model configuration"
 - "WRITE_OK:model_routing_analysis.md"
 - "CMD_OK"
+- "PATCH_FUNCTION_OK:path/to/file.rs:function_name"
+- "DIFF_PATCH_OK:path/to/file.rs"
 Never use vague criteria such as "analysis complete", "understand the code", or "agent is satisfied".
 CRITICAL RULE [MULTI-STEP OBJECTIVES]: If a node requires multiple distinct investigations, include one explicit criterion for each required evidence type/path/query. Every criterion must be satisfied before the node can be completed.
 CRITICAL RULE [JSON ESCAPING]: Do NOT use raw newlines inside JSON strings. Use \n.
@@ -68,7 +70,13 @@ OUTPUT ONLY VALID JSON with this exact structure:
 
         let payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 2048 }
+            // Deterministic decomposition: the same directive must produce
+            // the same DAG shape across runs. Confirmed source of the
+            // 12-node/1-node divergence on identical audit prompts. The
+            // cortex handles narrow nodes well and monolithic missions
+            // poorly, so making the plan stable is a correctness property,
+            // not a stylistic preference.
+            "generationConfig": { "temperature": 0.0, "maxOutputTokens": 2048 }
         });
 
         let text_res = crate::epistemic_engine::EpistemicEngine::safe_api_call(

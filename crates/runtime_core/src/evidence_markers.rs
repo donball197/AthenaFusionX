@@ -23,6 +23,19 @@ pub fn has_recon_marker(evidence: &str) -> bool {
     })
 }
 
+/// Returns true when a PATCH_FUNCTION contract has been physically satisfied.
+///
+/// PATCH_IDEMPOTENT_OK means the requested transformation was already present,
+/// so it satisfies the patch contract without representing a new mutation.
+pub fn has_patch_satisfied_marker(evidence: &str) -> bool {
+    evidence.lines().any(|l| {
+        l.starts_with("[PATCH_FUNCTION_OK]")
+            || l.starts_with("[PATCH_IDEMPOTENT_OK]")
+            || l.starts_with("[DIFF_PATCH_OK]")
+            || l.starts_with("[REPLACE_LINES_OK]")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,6 +53,20 @@ mod tests {
         assert!(has_recon_marker("[SEARCH_CODE_OK] Path: crates | Query: 'x'\n"));
         assert!(has_recon_marker("[CMD_OK] Status: 0\n"));
         assert!(!has_recon_marker("[WRITE_OK] a\n"));
+    }
+
+    #[test]
+    fn patch_satisfied_detects_mutation_and_idempotent_markers() {
+        assert!(has_patch_satisfied_marker("[PATCH_FUNCTION_OK] Updated function 'x' in a.rs\n"));
+        assert!(has_patch_satisfied_marker("[PATCH_IDEMPOTENT_OK] a.rs:x\n"));
+        assert!(has_patch_satisfied_marker("[DIFF_PATCH_OK] a.rs\n"));
+        assert!(has_patch_satisfied_marker("[REPLACE_LINES_OK] a.rs\n"));
+        assert!(!has_patch_satisfied_marker("[READ_OK] a.rs\n"));
+    }
+
+    #[test]
+    fn idempotent_marker_is_not_generic_mutation() {
+        assert!(!has_mutation_marker("[PATCH_IDEMPOTENT_OK] a.rs:x\n"));
     }
 }
 

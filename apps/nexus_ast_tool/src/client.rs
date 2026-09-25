@@ -412,7 +412,9 @@ impl ApiClient {
 
         let strategy_contract = match strategy {
             "RenameSymbol" => "Payload must be a single valid Rust identifier.",
-            "ReplaceFunctionBody" => "Payload must be statements replacing function body.",
+            "ReplaceFunctionBody" => {
+                "Payload must replace the target function body. Use a complete body block for brace-delimited languages; use statements for Python."
+            },
             "MakePublic" => "Payload must be empty.",
             _ => "Minimal payload.",
         };

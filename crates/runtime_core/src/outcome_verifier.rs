@@ -65,9 +65,7 @@ impl OutcomeVerifier {
                 }
                 CompletionCondition::WriteMarkerAcquired => local_evidence.contains("[WRITE_OK]"),
                 CompletionCondition::PatchMarkerAcquired => {
-                    local_evidence.contains("[PATCH_FUNCTION_OK]")
-                        || local_evidence.contains("[DIFF_PATCH_OK]")
-                        || local_evidence.contains("[REPLACE_LINES_OK]")
+                    crate::evidence_markers::has_patch_satisfied_marker(local_evidence)
                 }
                 CompletionCondition::CommandMarkerAcquired => local_evidence.contains("[CMD_OK]"),
                 CompletionCondition::LineageEvidenceAcquired => {
@@ -94,18 +92,41 @@ impl OutcomeVerifier {
                     })
                 }
                 CompletionCondition::SourceCodeEvidenceRequired => {
-                    // Was more than one distinct file/path actually examined? A comparative
-                    // or audit-style mission naming multiple subjects should not be satisfiable
-                    // by evidence for a single path -- previously this also hardcoded a ".rs"
-                    // extension requirement, which made it both too narrow (rejected valid
-                    // README/doc-based comparisons) and too weak (a single .rs read/search was
-                    // enough). This checks distinct-path count instead of file type.
+                    // Has at least one distinct source path actually been examined?
+                    //
+                    // Counts every evidence form that names a physical path:
+                    //
+                    //   [READ_OK] <path>
+                    //   [READ_CHUNK_OK] File: <path> | Lines N-M of T
+                    //   [SEARCH_CODE_OK] Path: <path> | Query: ...
+                    //
+                    // [READ_CHUNK_OK] must be counted: a file large enough to
+                    // require chunked reads (e.g. a 2300-line source file)
+                    // can only produce [READ_CHUNK_OK] markers, never a bare
+                    // [READ_OK]. Excluding it made this condition unreachable
+                    // for any single-file audit.
+                    //
+                    // Threshold is >= 1, not >= 2. Multi-file comparative
+                    // missions are already enforced by required_artifact_paths
+                    // and the mission-contract inference in completion_engine;
+                    // the >= 2 check only made single-file missions
+                    // unsatisfiable by construction. Confirmed root cause of
+                    // the 1-node audit abort: 15 chunks of one file counted
+                    // as 1 path, recon_ready stayed false, write_phase_ready
+                    // stayed false for all 60 turns.
                     let mut seen_paths = std::collections::HashSet::new();
                     for l in local_evidence.lines() {
                         if let Some(path) = l.strip_prefix("[READ_OK]") {
                             let path = path.trim();
                             if !path.is_empty() {
                                 seen_paths.insert(path.to_string());
+                            }
+                        } else if let Some(rest) = l.strip_prefix("[READ_CHUNK_OK] File: ") {
+                            if let Some(path) = rest.split(" | ").next() {
+                                let path = path.trim();
+                                if !path.is_empty() {
+                                    seen_paths.insert(path.to_string());
+                                }
                             }
                         } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
                             if let Some(path) = rest.split(" | ").next() {
@@ -116,7 +137,7 @@ impl OutcomeVerifier {
                             }
                         }
                     }
-                    seen_paths.len() >= 2
+                    !seen_paths.is_empty()
                 }
                 CompletionCondition::MinBeliefScore(min_score) => belief_score >= *min_score,
             };
@@ -247,6 +268,34 @@ mod tests {
         assert!(matches!(verify("uptime", missing_status), CompletionStatus::Rejected(_)));
 
         assert_eq!(verify("uptime", successful_command), CompletionStatus::Approved);
+    }
+
+    #[test]
+    fn patch_idempotent_marker_satisfies_patch_contract() {
+        let condition = CompletionCondition::PatchMarkerAcquired;
+
+        let result = OutcomeVerifier::verify(
+            "test_node",
+            "[PATCH_IDEMPOTENT_OK] crates/runtime_core/src/example.rs:target\n",
+            1.0,
+            &[condition],
+        );
+
+        assert_eq!(result, CompletionStatus::Approved);
+    }
+
+    #[test]
+    fn unrelated_evidence_does_not_satisfy_patch_contract() {
+        let condition = CompletionCondition::PatchMarkerAcquired;
+
+        let result = OutcomeVerifier::verify(
+            "test_node",
+            "[READ_OK] crates/runtime_core/src/example.rs\n",
+            1.0,
+            &[condition],
+        );
+
+        assert!(matches!(result, CompletionStatus::Rejected(_)));
     }
 
     #[test]

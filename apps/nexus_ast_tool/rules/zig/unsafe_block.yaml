@@ -1,6 +1,8 @@
 id: "ZIG_UNSAFE_BLOCK"
 language: "zig"
 severity: "Medium"
-description: "Unsafe block in Zig — manual memory operations require verification."
+description: "Pointer-cast/reinterpretation builtins that bypass Zig's normal type/memory safety checks and require manual verification (Zig has no 'unsafe' block; this is the closest analog)."
 tree_sitter_query: |
-  (unsafe_block) @danger.unsafe_block
+  (builtin_function
+    (builtin_identifier) @builtin (#match? @builtin "^@(ptrCast|alignCast|intFromPtr|ptrFromInt|truncate|bitCast)$")
+  ) @danger.unsafe_block

@@ -7,7 +7,9 @@ tree_sitter_query: |
     function: (selector_expression
       field: (field_identifier) @method (#match? @method "^(Query|Exec|QueryRow|Prepare)$")
     )
-    arguments: (call_expression
-      function: (identifier) @func (#eq? @func "Sprintf")
-    ) @danger.sql_injection
+    arguments: (argument_list
+      (call_expression
+        function: (selector_expression field: (field_identifier) @func (#eq? @func "Sprintf"))
+      ) @danger.sql_injection
+    )
   )

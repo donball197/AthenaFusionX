@@ -54,6 +54,7 @@ pub mod belief_validation;
 pub mod causal_recall;
 pub mod client;
 pub mod cognitive_events;
+pub mod compile_remediation;
 pub mod completion_engine;
 pub mod config;
 pub mod evidence;

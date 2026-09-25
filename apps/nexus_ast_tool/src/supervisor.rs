@@ -619,6 +619,11 @@ fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
 
         // Skip heavy / non-source directories that would bloat the isolated
         // workspace and are irrelevant for the dry-run contract.
+        //
+        // Keep this list aligned with the executor's SearchCode exclusion
+        // set (crates/runtime_core/src/executor.rs) so the isolated
+        // workspace does not inherit codebase-specific state directories
+        // such as the surgical patch backups or the Nexus runtime state.
         if name == "target"
             || name == ".git"
             || name == "node_modules"
@@ -627,6 +632,9 @@ fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
             || name == "__pycache__"
             || name == "dist"
             || name == "build"
+            || name == ".surgical_backup"
+            || name == ".nexus"
+            || name == ".lazarus"
         {
             continue;
         }

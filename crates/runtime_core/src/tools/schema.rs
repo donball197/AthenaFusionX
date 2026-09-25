@@ -244,18 +244,31 @@ pub fn tool_declarations_for_strategy(
 pub fn tool_declarations_for_phase(phase: CognitivePhase) -> Vec<FunctionDeclaration> {
     let all = all_tool_declarations();
     match phase {
-        CognitivePhase::Reconnaissance => all
-            .into_iter()
-            .filter(|t| {
-                t.name == "read_file"
-                    || t.name == "read_function"
-                    || t.name == "read_file_chunk"
-                    || t.name == "search_code"
-                    || t.name == "search_memory"
-                    || t.name == "scrape_url"
-                    || t.name == "execute_command"
-            })
-            .collect(),
+        CognitivePhase::Reconnaissance => {
+            // Reconnaissance precedence: cheapest/most-targeted first,
+            // whole-file/side-effecting last.
+            //
+            //   search_memory   -- one embedding call, no filesystem scan;
+            //                      can short-circuit on prior lessons.
+            //   read_function   -- AST-precise when the symbol is known.
+            //   search_code     -- locates a region without reading the file.
+            //   read_file_chunk -- targeted range read.
+            //   read_file       -- whole-file; last resort for large files.
+            //   scrape_url, execute_command -- side-effecting; opt-in only.
+            const RECON_ORDER: &[&str] = &[
+                "search_memory",
+                "read_function",
+                "search_code",
+                "read_file_chunk",
+                "read_file",
+                "scrape_url",
+                "execute_command",
+            ];
+            RECON_ORDER
+                .iter()
+                .filter_map(|name| all.iter().find(|t| t.name == *name).cloned())
+                .collect()
+        }
         CognitivePhase::Execution => all
             .into_iter()
             .filter(|t| {

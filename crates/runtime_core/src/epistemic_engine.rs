@@ -73,7 +73,29 @@ impl EpistemicEngine {
                             model_endpoint.replace("models/", ""),
                             resolved.api_key
                         );
-                        (u, payload.clone())
+
+                        // Gemini's generateContent endpoint rejects unknown
+                        // top-level fields with 400 INVALID_ARGUMENT. The
+                        // forced_tool_choice hint is an OpenAI-shaped extension
+                        // consumed only by the NVIDIA/Nexus branch below; it
+                        // must not leak into the Gemini payload.
+                        //
+                        // The strategist prompt already names the selected
+                        // native tool, and the response parser
+                        // (extract_tool_call_from_response) accepts Gemini's
+                        // native functionCall shape, so the hint is advisory
+                        // on this provider and can be dropped.
+                        //
+                        // If Gemini ever needs a hard constraint, translate
+                        // instead to:
+                        //   tool_config.function_calling_config.mode = "ANY"
+                        //   tool_config.function_calling_config.allowed_function_names = [name]
+                        // That is a behavioral change and is NOT done here.
+                        let mut p = payload.clone();
+                        if let Some(obj) = p.as_object_mut() {
+                            obj.remove("forced_tool_choice");
+                        }
+                        (u, p)
                     }
                     "nvidia" | "nexus" | "bob" | _ => {
                         let text = payload
@@ -339,11 +361,32 @@ impl EpistemicEngine {
         // exploration, code search, or host observation. Preserve the
         // directive's requested native operation as the authoritative strategy.
         let problem_lower = problem.to_lowercase();
-        let search_memory_explicit =
-            crate::completion_engine::any_word_unnegated(&problem_lower, &["searchmemory"])
-                || crate::completion_engine::any_word_unnegated(&problem_lower, &["search_memory"])
+
+        // A mission's MANDATORY NODE SUCCESS CRITERIA block can carry the
+        // literal marker `SEARCH_MEMORY_OK:<term>`. That marker tokenizes
+        // to [SEARCH, MEMORY, OK, ...] under has_word_unnegated's
+        // non-alphanumeric split, which satisfies the `search && memory`
+        // disjunct below even though the mission never asked for the
+        // SearchMemory tool -- it just declared a memory success
+        // criterion. If that disjunct fires, the early return below
+        // captures the whole directive as the query and every
+        // criteria-specific branch (READ_FUNCTION_OK, READ_OK compound,
+        // SEARCH_CODE_OK, SEARCH_MEMORY_OK) becomes unreachable.
+        //
+        // Suppress the explicit-directive path whenever the mission
+        // carries a SEARCH_MEMORY_OK: criterion, so those branches run.
+        // Missions that genuinely ask for SearchMemory without declaring
+        // a criterion are unaffected.
+        let has_explicit_memory_criterion = problem_lower.contains("search_memory_ok:");
+
+        let search_memory_explicit = !has_explicit_memory_criterion
+            && (crate::completion_engine::any_word_unnegated(&problem_lower, &["searchmemory"])
+                || crate::completion_engine::any_word_unnegated(
+                    &problem_lower,
+                    &["search_memory"],
+                )
                 || (crate::completion_engine::any_word_unnegated(&problem_lower, &["search"])
-                    && crate::completion_engine::any_word_unnegated(&problem_lower, &["memory"]));
+                    && crate::completion_engine::any_word_unnegated(&problem_lower, &["memory"])));
 
         if search_memory_explicit {
             return Ok(vec![format!("search_memory:{}", problem.trim())]);
@@ -355,6 +398,264 @@ impl EpistemicEngine {
                 remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
             if !target.is_empty() && target.contains(':') {
                 return Ok(vec![format!("read_function:{}", target)]);
+            }
+        }
+
+        // Deterministic READ_OK: binding.
+        //
+        // task_manager::run_dag_execution embeds the node's mandatory success
+        // criteria into the mission under "MANDATORY NODE SUCCESS CRITERIA:".
+        // When a criterion is `READ_OK:<path>`, the only physically
+        // satisfiable strategy is reading that exact file. Without this
+        // branch the mission falls through to model-based hypothesis
+        // generation, which then reuses whatever file the memory recall
+        // happened to surface -- producing strategies about unrelated
+        // fixtures (e.g. math_utils/src/lib.rs) and spinning until the turn
+        // budget is exhausted without satisfying the node's own criterion.
+        //
+        // READ_OK is strictly less specific than READ_FUNCTION_OK, so this
+        // runs AFTER it: a mission that names a specific function still
+        // binds to the function.
+        if let Some(pos) = problem.find("READ_OK:") {
+            let remainder = &problem[pos + "READ_OK:".len()..];
+            let target =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !target.is_empty() {
+                // Strategy precedence: cheapest/most-targeted first.
+                //
+                // A node's MANDATORY NODE SUCCESS CRITERIA block can list
+                // READ_OK alongside SEARCH_MEMORY_OK and/or SEARCH_CODE_OK
+                // as independent, non-hierarchical criteria. Every listed
+                // criterion must be physically evidenced before the DAG
+                // verifier will mark the node complete, so the cortex must
+                // eventually execute an action for each. Ordering here
+                // decides which one runs FIRST -- and therefore which one
+                // the strategist sees while its hypothesis belief is still
+                // high.
+                //
+                //   search_memory:<term>       -- one embedding call; can
+                //                                 short-circuit the node
+                //                                 if a prior mission
+                //                                 already answered it.
+                //   search_code:<path>:<term>  -- locate without reading.
+                //   read_file:<path>           -- whole-file, last resort.
+                //
+                // The graph's anti-loop belief decay naturally promotes
+                // the next hypothesis once the current one's action key
+                // has been attempted (handle_critic's LOOP_VETO path), so
+                // listing every matching action here is sufficient; no
+                // separate pivot logic is needed.
+                let mut hyps: Vec<String> = Vec::new();
+
+                if let Some(mem_pos) = problem.find("SEARCH_MEMORY_OK:") {
+                    let mem_remainder = &problem[mem_pos + "SEARCH_MEMORY_OK:".len()..];
+                    let mem_term = mem_remainder
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .trim_matches('`')
+                        .trim_matches('"');
+                    if !mem_term.is_empty() {
+                        hyps.push(format!("search_memory:{}", mem_term));
+                    }
+                }
+
+                if let Some(search_pos) = problem.find("SEARCH_CODE_OK:") {
+                    let search_remainder = &problem[search_pos + "SEARCH_CODE_OK:".len()..];
+                    let query = search_remainder
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .trim_matches('`')
+                        .trim_matches('"');
+                    if !query.is_empty() {
+                        let search_path = std::path::Path::new(target)
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .filter(|p| !p.is_empty())
+                            .unwrap_or_else(|| ".".to_string());
+                        hyps.push(format!("search_code:{}:{}", search_path, query));
+                    }
+                }
+
+                // READ_OK is always part of this branch, so read_file is
+                // always appended -- but only after any search criterion.
+                hyps.push(format!("read_file:{}", target));
+
+                return Ok(hyps);
+            }
+        }
+
+        // Deterministic standalone SEARCH_CODE_OK: binding.
+        //
+        // A node's MANDATORY NODE SUCCESS CRITERIA can list SEARCH_CODE_OK:<term>
+        // with no co-occurring READ_OK: criterion (the compound-hypothesis fix
+        // above only fires when both are present in the same mission). Without
+        // this branch, the mission falls through to model-based hypothesis
+        // generation, which then guesses a query from natural-language phrasing
+        // of the objective -- confirmed root cause of a node that burned all 60
+        // turns and 4 competing wrong-vocabulary search_code hypotheses
+        // (cargo check / rollback / checkout) because none matched the literal
+        // criterion term ("compiler_critic"), which never appeared anywhere in
+        // the node's own directive text for the model to guess.
+        if let Some(pos) = problem.find("SEARCH_CODE_OK:") {
+            let remainder = &problem[pos + "SEARCH_CODE_OK:".len()..];
+            let term =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !term.is_empty() {
+                return Ok(vec![format!("search_code:crates/runtime_core/src:{}", term)]);
+            }
+        }
+
+        // Deterministic standalone SEARCH_MEMORY_OK: binding.
+        //
+        // Mirrors the SEARCH_CODE_OK: branch above. A node whose mandatory
+        // success criteria include SEARCH_MEMORY_OK must be able to bind
+        // that strategy deterministically, without relying on the model to
+        // guess a matching query from the natural-language objective.
+        // Without this branch, memory-recall nodes fall through to LLM
+        // hypothesis generation and invent their own vocabulary, which
+        // then fails the verifier even when the recall itself would have
+        // succeeded -- same failure family as the SEARCH_CODE_OK: bug
+        // described above.
+        if let Some(pos) = problem.find("SEARCH_MEMORY_OK:") {
+            let remainder = &problem[pos + "SEARCH_MEMORY_OK:".len()..];
+            let term =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !term.is_empty() {
+                return Ok(vec![format!("search_memory:{}", term)]);
+            }
+        }
+
+        // Deterministic standalone WRITE_OK: binding.
+        //
+        // A synthesizer node whose only mandatory success criterion is
+        // WRITE_OK:<path> has exactly one legitimate strategy: produce
+        // that artifact via write_file. Without this branch the mission
+        // falls through to LLM hypothesis generation, which may produce
+        // unrelated strategies from ancestor evidence (for example
+        // `execute_command:[COMPILE_OK]` when the mission text mentions
+        // that marker). The cortex then binds the unrelated strategy,
+        // every write_file proposal is rejected as a STRATEGY VIOLATION,
+        // and the DAG verifier fails on WRITE_OK:<path>. Confirmed root
+        // cause of the 11/12 abort: task_12 (Synthesizer) exhausted all
+        // 60 turns without writing iterative_compiler_audit_report.md.
+        //
+        // Placement note: this runs AFTER the READ_OK / SEARCH_CODE_OK /
+        // SEARCH_MEMORY_OK branches, so compound missions that also have
+        // recon criteria still start with reconnaissance and rely on the
+        // write phase transition in handle_strategize() to write the
+        // artifact after recon completes. Only pure-WRITE_OK missions
+        // (the synthesizer shape) reach this branch.
+        if let Some(pos) = problem.find("WRITE_OK:") {
+            let remainder = &problem[pos + "WRITE_OK:".len()..];
+            let target =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !target.is_empty() {
+                return Ok(vec![format!("write_file:{}", target)]);
+            }
+        }
+
+        // Deterministic imperative patch-target extraction.
+        //
+        // Compound missions can name both a mutation and its required
+        // verification command. Bind the mutation first so the Executive
+        // Cortex cannot collapse the mission into the verification command
+        // before the required PATCH_FUNCTION_OK evidence exists.
+        if let Some((patch_path, patch_func)) = Self::extract_patch_target(problem, &problem_lower)
+        {
+            return Ok(vec![format!("patch_function:{}:{}", patch_path, patch_func)]);
+        }
+
+        // Deterministic command extraction: When the directive explicitly specifies an
+        // executable command (e.g. `cargo check -p math_utils`), bind it immediately.
+        if let Some(cmd) = crate::completion_engine::extract_required_command(problem) {
+            return Ok(vec![format!("execute_command:{}", cmd)]);
+        }
+
+        // Deterministic PATCH_FUNCTION_OK and patch_function strategy generation
+        if let Some(pos) = problem.find("PATCH_FUNCTION_OK:") {
+            let remainder = &problem[pos + "PATCH_FUNCTION_OK:".len()..];
+            let target =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !target.is_empty() {
+                if target.contains(':') {
+                    return Ok(vec![format!("patch_function:{}", target)]);
+                } else {
+                    let path = problem
+                        .split_whitespace()
+                        .map(|tok| {
+                            tok.trim_matches(|c: char| {
+                                !c.is_alphanumeric() && c != '/' && c != '.' && c != '_'
+                            })
+                        })
+                        .find(|tok| {
+                            tok.contains('/')
+                                && (tok.ends_with(".rs")
+                                    || tok.ends_with(".py")
+                                    || tok.ends_with(".js")
+                                    || tok.ends_with(".ts")
+                                    || tok.ends_with(".php"))
+                        })
+                        .unwrap_or("");
+                    if !path.is_empty() {
+                        return Ok(vec![format!("patch_function:{}:{}", path, target)]);
+                    }
+                }
+            }
+        }
+
+        if problem_lower.contains("patch_function") {
+            let path = problem
+                .split_whitespace()
+                .map(|tok| {
+                    tok.trim_matches(|c: char| {
+                        !c.is_alphanumeric() && c != '/' && c != '.' && c != '_'
+                    })
+                })
+                .find(|tok| {
+                    tok.contains('/')
+                        && (tok.ends_with(".rs")
+                            || tok.ends_with(".py")
+                            || tok.ends_with(".js")
+                            || tok.ends_with(".ts")
+                            || tok.ends_with(".php"))
+                })
+                .unwrap_or("");
+            if !path.is_empty() {
+                let words: Vec<&str> = problem.split_whitespace().collect();
+                let mut func = "";
+                for (i, w) in words.iter().enumerate() {
+                    let wl = w.to_lowercase();
+                    if (wl == "update" || wl == "function" || wl == "patch") && i + 1 < words.len()
+                    {
+                        let candidate =
+                            words[i + 1].trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+                        if !candidate.is_empty()
+                            && candidate != "so"
+                            && candidate != "to"
+                            && candidate != "the"
+                            && !candidate.contains('/')
+                        {
+                            func = candidate;
+                            break;
+                        }
+                    }
+                }
+                if !func.is_empty() {
+                    return Ok(vec![format!("patch_function:{}:{}", path, func)]);
+                }
+            }
+        }
+
+        if let Some(pos) = problem.find("DIFF_PATCH_OK:") {
+            let remainder = &problem[pos + "DIFF_PATCH_OK:".len()..];
+            let target =
+                remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+            if !target.is_empty() {
+                return Ok(vec![format!("diff_patch:{}", target)]);
             }
         }
 
@@ -441,6 +742,81 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
         }
     }
 
+    /// Extract an imperative `(path, function_name)` patch target.
+    ///
+    /// This is intentionally narrow: it requires a patch directive plus a
+    /// source path and function identifier. It exists to distinguish the
+    /// mutation phase of compound missions from a later verification command.
+    fn extract_patch_target(problem: &str, problem_lower: &str) -> Option<(String, String)> {
+        let has_patch_verb = problem_lower.contains("patch_function")
+            || problem_lower.contains("patch `")
+            || problem_lower.contains("patch the")
+            || problem_lower.contains("patch function");
+
+        if !has_patch_verb {
+            return None;
+        }
+
+        let path = problem
+            .split_whitespace()
+            .map(|tok| {
+                tok.trim_matches(|c: char| {
+                    !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+                })
+            })
+            .find(|tok| {
+                tok.contains('/')
+                    && (tok.ends_with(".rs")
+                        || tok.ends_with(".py")
+                        || tok.ends_with(".js")
+                        || tok.ends_with(".ts")
+                        || tok.ends_with(".php"))
+            })?;
+
+        // Prefer the identifier explicitly following the word "function".
+        let words: Vec<&str> = problem.split_whitespace().collect();
+
+        for (i, word) in words.iter().enumerate() {
+            let normalized =
+                word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_lowercase();
+
+            if normalized == "function" && i + 1 < words.len() {
+                let candidate =
+                    words[i + 1].trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+
+                if !candidate.is_empty()
+                    && candidate.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    return Some((path.to_string(), candidate.to_string()));
+                }
+            }
+        }
+
+        // Fallback for compact directives such as:
+        // "patch add in apps/math_utils/src/lib.rs"
+        for (i, word) in words.iter().enumerate() {
+            let normalized =
+                word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_lowercase();
+
+            if normalized == "patch" && i + 1 < words.len() {
+                let candidate =
+                    words[i + 1].trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+
+                if !candidate.is_empty()
+                    && candidate.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && candidate != "the"
+                    && candidate != "function"
+                    && candidate != "so"
+                    && candidate != "to"
+                {
+                    return Some((path.to_string(), candidate.to_string()));
+                }
+            }
+        }
+
+        None
+    }
+
     pub async fn propose_action(
         client: &Client,
         api_key: &str,
@@ -513,10 +889,11 @@ Your job is to operationalize the selected strategy into the next executable nat
 
 If STRATEGY begins with or explicitly names a native action, that action MUST be the next action.
 Examples:
-- read_file:<path> -> emit read_file for that exact path.
+- search_memory:<query> -> emit search_memory with that exact query.
 - read_function:<path>:<function> -> emit read_function for that exact path/function.
-- read_file_chunk:<path> -> emit read_file_chunk for that exact path.
 - search_code:<path>:<query> -> emit search_code for that exact path/query.
+- read_file_chunk:<path> -> emit read_file_chunk for that exact path.
+- read_file:<path> -> emit read_file for that exact path.
 - execute_command:<command> -> emit execute_command with that exact command.
 - write_file:<path> -> emit write_file for that exact path.
 - synthesize_report:<path> -> emit the required report action.
@@ -531,6 +908,7 @@ You may deviate from the selected strategy ONLY when:
 
 If deviation is necessary, explicitly state why in reasoning and choose the smallest valid replacement action.
 
+CRITICAL PATCH_FUNCTION RULE: When the selected STRATEGY begins with `patch_function:`, the emitted patch_function action MUST make a real, mission-compliant mutation. Do NOT return the existing function implementation unchanged merely because its computational behavior already matches part of the directive. Preserve the inherited function signature and satisfy ALL requirements in the ORIGINAL DIRECTIVE, including documentation, comments, cleanup, or other explicitly requested implementation changes. The `new_body` must contain the complete replacement function definition/body required by the native patch_function contract. If the existing implementation already computes the requested result, make the smallest legitimate change needed to satisfy the remaining mutation requirements rather than emitting a no-op.
 CRITICAL RULE 0: NATIVE TOOLS ONLY (read_file, read_function, read_file_chunk, execute_command, patch_function, write_file, replace_lines, diff_patch, search_code, search_memory, run_tests, synthesize_report, halt).
 CRITICAL RULE 1: If the EVIDENCE contains an exact file path outputted by a previous command, you MUST use that exact path.
 CRITICAL RULE 2: If EVIDENCE satisfies the strategy, declare HALT.
@@ -668,7 +1046,19 @@ completion claim as a reason for a negative confidence_modifier and mandate the
 missing execution step. CRITICAL RULE 2.5 [SCOPE]: Rule 2 applies ONLY when the
 PROPOSED ACTION is itself 'halt'. If the PROPOSED ACTION is write_file,
 patch_function, diff_patch, or replace_lines, do NOT veto it merely because the
-target file or a success marker does not exist yet. CRITICAL RULE 4: CONSTRUCTIVE VETO.
+target file or a success marker does not exist yet.
+CRITICAL RULE 3 [PATCH MUTATION SEMANTICS]: For a patch_function proposal, evaluate
+the ACTUAL proposed `new_body`, not merely its computational equivalence to the
+previous implementation. A patch is NOT a no-op when it makes an explicit,
+mission-required source change such as adding documentation/comments, improving
+clarity, cleanup, or another requested implementation detail, even if the
+runtime result remains identical. If the ORIGINAL DIRECTIVE requires a
+"documented implementation" and the proposed `new_body` adds appropriate
+documentation or comments while preserving the requested behavior, this is a
+legitimate mutation and MUST NOT receive a no-op veto. Only call a patch a
+no-op when the proposed implementation is materially identical to the existing
+implementation and does not satisfy any remaining mutation requirement.
+CRITICAL RULE 4: CONSTRUCTIVE VETO.
 CRITICAL RULE 5 [ANTI-REDUNDANT-READ]: If EVIDENCE HISTORY already contains a successful [READ_OK] for a file, you MUST VETO any subsequent read_file on that exact same path with a negative modifier (-0.30) and instruct the Strategist to proceed immediately to writing or patching. If you issue a negative confidence_modifier, your critique
 MUST explicitly state the exact command or action the Strategist should take
 next to escape the failure. CRITICAL RULE 3: THE EVIDENCE VERIFICATION TAXONOMY.
@@ -961,6 +1351,69 @@ mod tests {
     use reqwest::Client;
 
     #[tokio::test]
+    async fn compound_patch_mission_prefers_patch_function_over_verification_command() {
+        let directive = r#"Patch `apps/math_utils/src/lib.rs` function `add` so that it returns exactly `a + b`.
+
+You MUST verify the mutation by running `cargo check -p math_utils`."#;
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("compound patch mission should produce a deterministic strategy");
+
+        assert_eq!(strategies, vec!["patch_function:apps/math_utils/src/lib.rs:add".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn command_only_mission_still_prefers_execute_command() {
+        let directive = "Execute cargo check -p math_utils to verify the package.";
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("command-only mission should produce a deterministic strategy");
+
+        assert_eq!(strategies, vec!["execute_command:cargo check -p math_utils".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn explicit_read_ok_criterion_binds_to_named_file() {
+        let directive = r#"OBJECTIVE: Inspect crates/runtime_core/src/cortical_loop.rs
+ASSIGNED ROLE: CodeAnalyzer
+
+MANDATORY NODE SUCCESS CRITERIA:
+READ_OK:crates/runtime_core/src/cortical_loop.rs
+
+NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete."#;
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("READ_OK directive should produce a deterministic strategy");
+
+        assert_eq!(
+            strategies,
+            vec!["read_file:crates/runtime_core/src/cortical_loop.rs".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn read_function_ok_still_wins_over_read_ok() {
+        let directive = r#"OBJECTIVE: Inspect the route function
+ASSIGNED ROLE: CodeAnalyzer
+
+MANDATORY NODE SUCCESS CRITERIA:
+READ_OK:crates/runtime_core/src/router.rs
+READ_FUNCTION_OK:crates/runtime_core/src/router.rs:route"#;
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("compound read directive should produce a deterministic strategy");
+
+        assert_eq!(
+            strategies,
+            vec!["read_function:crates/runtime_core/src/router.rs:route".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn explicit_search_memory_directive_is_authoritative() {
         let directive = "Use the SearchMemory tool to recall prior memory specifically about host observations involving uptime, filesystem or disk capacity, available memory/RAM, and load average.";
 
@@ -970,5 +1423,57 @@ mod tests {
 
         assert_eq!(strategies.len(), 1);
         assert_eq!(strategies[0], format!("search_memory:{}", directive));
+    }
+
+    #[tokio::test]
+    async fn compound_read_plus_memory_pushes_search_memory_first() {
+        let directive = r#"OBJECTIVE: Inspect the compiler-critic failure branch.
+ASSIGNED ROLE: CodeAnalyzer
+
+MANDATORY NODE SUCCESS CRITERIA:
+READ_OK:crates/runtime_core/src/cortical_loop.rs
+SEARCH_MEMORY_OK:compiler_critic_prior_lessons
+
+NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced."#;
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("compound READ + MEMORY mission should produce strategies");
+
+        assert_eq!(
+            strategies[0], "search_memory:compiler_critic_prior_lessons",
+            "search_memory must be selected before read_file; got {:?}",
+            strategies
+        );
+        assert!(
+            strategies.iter().any(|s| s == "read_file:crates/runtime_core/src/cortical_loop.rs"),
+            "read_file must still be present as a fallback"
+        );
+    }
+
+    #[tokio::test]
+    async fn compound_read_plus_search_code_pushes_search_first() {
+        let directive = r#"OBJECTIVE: Inspect the compiler-critic failure branch.
+ASSIGNED ROLE: CodeAnalyzer
+
+MANDATORY NODE SUCCESS CRITERIA:
+READ_OK:crates/runtime_core/src/cortical_loop.rs
+SEARCH_CODE_OK:compiler_critic
+
+NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced."#;
+
+        let strategies = EpistemicEngine::generate_hypotheses(&Client::new(), "", directive, "")
+            .await
+            .expect("compound READ + SEARCH_CODE mission should produce strategies");
+
+        assert!(
+            strategies[0].starts_with("search_code:"),
+            "search_code must be selected before read_file; got {:?}",
+            strategies
+        );
+        assert!(
+            strategies.iter().any(|s| s == "read_file:crates/runtime_core/src/cortical_loop.rs"),
+            "read_file must still be present as a fallback"
+        );
     }
 }

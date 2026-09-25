@@ -5,6 +5,6 @@ description: "Unsanitized system command execution via std.process.Child or std.
 tree_sitter_query: |
   (call_expression
     function: (field_expression
-      field: (identifier) @method (#match? @method "^(system|exec|Child)$")
+      member: (identifier) @method (#match? @method "^(system|exec|Child)$")
     )
   ) @danger.command_injection

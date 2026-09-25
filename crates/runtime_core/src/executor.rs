@@ -156,6 +156,116 @@ pub fn detect_shell_write_target(command: &str) -> Option<String> {
     None
 }
 
+/// Test-only fault-injection hooks for the iterative compile-remediation
+/// path.
+///
+/// These functions are inert unless `NEXUS_INJECT_COMPILE_FAIL_ONCE=1` is
+/// set in the daemon environment. When enabled, the FIRST successful
+/// `PatchFunction` in this process has its just-computed `patched` source
+/// corrupted in-memory (never on disk, never in the memory store) before
+/// the single canonical write. The corrupted source is syntactically
+/// valid Rust that fails type-checking, so the package-scoped compiler
+/// critic observes a real compile failure and can exercise the retained-
+/// retry path deterministically.
+///
+/// The one-shot flag is a process-global `AtomicBool`. It is consumed
+/// only after `ReplaceFunctionBody::apply_for_path` has produced a
+/// byte-different source from `patched`; if AST mutation fails or
+/// produces identical output, the flag is left untouched so a later
+/// `PatchFunction` can still inject.
+fn maybe_injected_source(
+    safe_path: &Path,
+    patched: &str,
+    function_name: &str,
+    new_body: &str,
+) -> Option<String> {
+    let enabled =
+        std::env::var("NEXUS_INJECT_COMPILE_FAIL_ONCE").map(|v| v == "1").unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+    try_one_shot_fault_injection(safe_path, patched, function_name, new_body)
+}
+
+fn try_one_shot_fault_injection(
+    safe_path: &Path,
+    patched: &str,
+    function_name: &str,
+    new_body: &str,
+) -> Option<String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static CONSUMED: AtomicBool = AtomicBool::new(false);
+
+    if CONSUMED.load(Ordering::SeqCst) {
+        return None;
+    }
+
+    // The injection payload is derived from the LLM's own `new_body` by
+    // inserting a single type-mismatched `let` at the top of the body.
+    // This preserves whatever the model actually wrote below the marker,
+    // so the corrupted source is as close as possible to the intended
+    // patch. The anchor is the first `{` in `new_body`; the pipeline
+    // convention is that `new_body` is a full function definition, so the
+    // first `{` is the body opening brace. If `new_body` has no `{`, we
+    // do not consume the one-shot — a bare body payload is not a shape
+    // the pipeline produces, and silently corrupting it would be wrong.
+    if !new_body.contains('{') {
+        tracing::warn!(
+            "[FAULT INJECTION] new_body for {}:{} contains no `{{`; not consuming one-shot",
+            safe_path.display(),
+            function_name,
+        );
+        return None;
+    }
+
+    let corrupted_payload = new_body.replacen(
+        '{',
+        "{ let __nexus_fault_injection_marker: i32 = \"fault injection\";",
+        1,
+    );
+
+    let corrupted = match nexus_ast_tool::mutation::ReplaceFunctionBody::apply_for_path(
+        safe_path,
+        patched,
+        function_name,
+        &corrupted_payload,
+    ) {
+        Ok(c) if c != patched => c,
+        Ok(_) => {
+            tracing::warn!(
+                "[FAULT INJECTION] apply_for_path produced identical source for {}:{}; not consuming one-shot",
+                safe_path.display(),
+                function_name,
+            );
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "[FAULT INJECTION] apply_for_path rejected injection for {}:{}: {}; not consuming one-shot",
+                safe_path.display(),
+                function_name,
+                e,
+            );
+            return None;
+        }
+    };
+
+    // Only now, with a proven, distinct corrupted source in hand, do we
+    // atomically consume the one-shot. If another caller won the race,
+    // that caller's injection is used and ours is discarded.
+    match CONSUMED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
+        Ok(_) => {
+            tracing::warn!(
+                "[FAULT INJECTION] one-shot compile-error injection armed for {}:{}",
+                safe_path.display(),
+                function_name,
+            );
+            Some(corrupted)
+        }
+        Err(_) => None,
+    }
+}
+
 impl RoboticExecutor {
     pub fn new(api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
         Self {
@@ -550,30 +660,63 @@ impl RoboticExecutor {
             MotorAction::PatchFunction { path, function_name, new_body } => {
                 let safe_path = sanitize(&path)?;
 
-                // Use the real nexus_ast_tool mutation strategy rather than
-                // the legacy AstEditor wrapper. Transform first; write only after
-                // validation and function lookup succeed.
+                // Use the path-aware structural mutation directly. This is
+                // the same AST mutation path used by nexus_ast_tool itself.
                 let source = tokio::fs::read_to_string(&safe_path).await?;
-                let strategy = nexus_ast_tool::mutation::get_strategy("ReplaceFunctionBody")
-                    .ok_or_else(|| {
-                        anyhow!("ReplaceFunctionBody mutation strategy is unavailable")
-                    })?;
 
-                let patched = strategy
-                    .apply(&source, &function_name, &new_body)
-                    .map_err(|e| anyhow!("PatchFunction failed for '{}': {}", function_name, e))?;
+                let patched = nexus_ast_tool::mutation::ReplaceFunctionBody::apply_for_path(
+                    &safe_path,
+                    &source,
+                    &function_name,
+                    &new_body,
+                )
+                .map_err(|e| anyhow!("PatchFunction failed for '{}': {}", function_name, e))?;
 
-                tokio::fs::write(&safe_path, &patched).await?;
+                // The requested patch is already physically satisfied.
+                // This is success, but it is NOT a mutation: do not rewrite
+                // the file, broadcast a file shift, invalidate the action
+                // cache, or record a new "Mutated" memory.
+                if patched == source {
+                    return Ok(format!(
+                        "[PATCH_IDEMPOTENT_OK] {}:{}\nPatchFunction already satisfied; source unchanged.",
+                        path, function_name
+                    ));
+                }
+
+                // Optional one-shot fault injection (test-only, env-gated).
+                // This does NOT write to disk and does NOT touch memory.
+                // It computes an alternative `final_source` in memory so
+                // the subsequent single write, broadcast, cache reset, and
+                // memory store all reference exactly one coherent source
+                // state.
+                //
+                // Precedence: the on-disk file, the memory record, and the
+                // [PATCH_FUNCTION_OK] marker all describe `final_source`,
+                // never `patched`. If injection is disabled or yields no
+                // change, `final_source == patched` and behavior is
+                // identical to the un-instrumented path.
+                let final_source =
+                    match maybe_injected_source(&safe_path, &patched, &function_name, &new_body) {
+                        Some(corrupted) => corrupted,
+                        None => patched,
+                    };
+
+                tokio::fs::write(&safe_path, &final_source).await?;
                 _dist.broadcast_file_shift(&path, "patch_function");
                 *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
 
-                let snippet: String = patched.chars().take(4000).collect();
+                let snippet: String = final_source.chars().take(4000).collect();
                 let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet)
                     .await
                     .ok();
-                let _ = memory.store_memory("PatchFunction", &path, &patched, "Mutated", emb).await;
+                let _ = memory
+                    .store_memory("PatchFunction", &path, &final_source, "Mutated", emb)
+                    .await;
 
-                Ok(format!("[PATCH_FUNCTION_OK] Updated function '{}' in {}", function_name, path))
+                Ok(format!(
+                    "[PATCH_FUNCTION_OK] {}:{}\nUpdated function '{}' in {}",
+                    path, function_name, function_name, path
+                ))
             }
             MotorAction::SearchMemory { query } => {
                 let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &query)

@@ -84,10 +84,48 @@ impl SupportedLanguage {
     pub fn symbol_query(&self) -> &'static str {
         match self {
             Self::Rust => "(function_item name: (identifier) @name)",
-            Self::Zig => "(FunctionDecl name: (identifier) @name)",
+            Self::Zig => "(function_declaration name: (identifier) @name)",
             Self::Python => "(function_definition name: (identifier) @name)",
-            Self::JavaScript => "(function_declaration name: (identifier) @name)",
-            Self::TypeScript => "(function_declaration name: (identifier) @name)",
+            Self::JavaScript => {
+                r#"
+                [
+                    (function_declaration
+                        name: (identifier) @name
+                        body: (statement_block) @body)
+                    (method_definition
+                        name: (_) @name
+                        body: (statement_block) @body)
+                    (variable_declarator
+                        name: (identifier) @name
+                        value: (function_expression
+                            body: (statement_block) @body))
+                    (variable_declarator
+                        name: (identifier) @name
+                        value: (arrow_function
+                            body: (statement_block) @body))
+                ]
+            "#
+            }
+            Self::TypeScript => {
+                r#"
+                [
+                    (function_declaration
+                        name: (identifier) @name
+                        body: (statement_block) @body)
+                    (method_definition
+                        name: (_) @name
+                        body: (statement_block) @body)
+                    (variable_declarator
+                        name: (identifier) @name
+                        value: (function_expression
+                            body: (statement_block) @body))
+                    (variable_declarator
+                        name: (identifier) @name
+                        value: (arrow_function
+                            body: (statement_block) @body))
+                ]
+            "#
+            }
             Self::C => "(function_declarator declarator: (identifier) @name)",
             Self::Cpp => "(function_declarator declarator: (identifier) @name)",
             Self::Go => "(function_declaration name: (identifier) @name)",
@@ -244,6 +282,23 @@ pub fn extract_query_var(sink_text: &str) -> Option<String> {
     }
 }
 
+fn is_ignored(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".git")
+                | Some("target")
+                | Some("node_modules")
+                | Some(".venv")
+                | Some("venv")
+                | Some("__pycache__")
+                | Some("site-packages")
+                | Some("dist-info")
+                | Some("egg-info")
+        )
+    })
+}
+
 pub struct PolyglotScanner;
 
 impl PolyglotScanner {
@@ -255,7 +310,35 @@ impl PolyglotScanner {
                 if ext == "yaml" || ext == "yml" {
                     if let Ok(content) = std::fs::read_to_string(path) {
                         match serde_yaml::from_str::<SecurityRule>(&content) {
-                            Ok(rule) => rules.push(rule),
+                            Ok(rule) => {
+                                match SupportedLanguage::from_string(&rule.language) {
+                                    Some(lang) => {
+                                        if let Err(e) = Query::new(
+                                            &lang.tree_sitter_language(),
+                                            &rule.tree_sitter_query,
+                                        ) {
+                                            eprintln!(
+                                                "==> [RULE DISABLED] {} ({}): tree-sitter query does not compile -- this rule will NEVER produce findings until fixed.\n    File: {}\n    Error: {}",
+                                                rule.id,
+                                                rule.language,
+                                                path.display(),
+                                                e.to_string().lines().next().unwrap_or("")
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                    None => {
+                                        eprintln!(
+                                            "==> [RULE DISABLED] {}: unrecognized language string '{}' in {}",
+                                            rule.id,
+                                            rule.language,
+                                            path.display()
+                                        );
+                                        continue;
+                                    }
+                                }
+                                rules.push(rule)
+                            }
                             Err(e) => eprintln!(
                                 "==> [Warning] Failed to parse YAML rule file {}: {}",
                                 path.display(),
@@ -271,7 +354,11 @@ impl PolyglotScanner {
 
     pub fn scan_path<P: AsRef<Path>>(root: P) -> Vec<PolyglotSymbol> {
         let mut symbols = Vec::new();
-        for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|e| !is_ignored(e.path()))
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             if let Some(lang) = SupportedLanguage::from_path(path) {
                 if let Ok(content) = fs::read_to_string(path) {
@@ -325,7 +412,11 @@ impl PolyglotScanner {
     ) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
 
-        for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|e| !is_ignored(e.path()))
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             if let Some(file_lang) = SupportedLanguage::from_path(path) {
                 if let Ok(content) = fs::read_to_string(path) {
@@ -354,14 +445,18 @@ impl PolyglotScanner {
         }
 
         findings.sort_by(|a, b| {
-            (a.path.as_path(), a.start_line, a.pattern_name.as_str()).cmp(&(
+            (a.path.as_path(), a.sink_start_line, a.sink_end_line, a.pattern_name.as_str()).cmp(&(
                 b.path.as_path(),
-                b.start_line,
+                b.sink_start_line,
+                b.sink_end_line,
                 b.pattern_name.as_str(),
             ))
         });
         findings.dedup_by(|a, b| {
-            a.path == b.path && a.start_line == b.start_line && a.pattern_name == b.pattern_name
+            a.path == b.path
+                && a.sink_start_line == b.sink_start_line
+                && a.sink_end_line == b.sink_end_line
+                && a.pattern_name == b.pattern_name
         });
 
         findings

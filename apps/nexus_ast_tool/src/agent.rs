@@ -125,9 +125,16 @@ impl RefactorAgent {
 
         println!("==> [RefactorAgent] Validating payload for strategy '{}'...", strategy.name());
 
-        strategy
-            .validate_payload(payload)
+        if strategy.name().eq_ignore_ascii_case("ReplaceFunctionBody") {
+            crate::mutation::ReplaceFunctionBody::validate_for_path(
+                file_path, &source, symbol, payload,
+            )
             .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy.name(), e))?;
+        } else {
+            strategy.validate_payload(payload).map_err(|e| {
+                anyhow!("Payload rejected by strategy '{}': {}", strategy.name(), e)
+            })?;
+        }
 
         println!("==> [RefactorAgent] Payload accepted by strategy '{}'.", strategy.name());
 
@@ -137,7 +144,13 @@ impl RefactorAgent {
             symbol
         );
 
-        let mutated = strategy.apply(&source, symbol, payload)?;
+        let mutated = if strategy.name().eq_ignore_ascii_case("ReplaceFunctionBody") {
+            crate::mutation::ReplaceFunctionBody::apply_for_path(
+                file_path, &source, symbol, payload,
+            )?
+        } else {
+            strategy.apply(&source, symbol, payload)?
+        };
 
         fs::write(file_path, mutated)?;
         println!("==> [RefactorAgent] Successfully updated {}", file_path.display());
@@ -170,12 +183,9 @@ impl RefactorAgent {
 
         println!("==> [ApiClient] Received refactoring payload from model.");
 
-        let strategy_impl = get_strategy(&strategy)
-            .ok_or_else(|| anyhow!("Unauthorized mutation strategy: {}", strategy))?;
-
         // Validate before mutation. A model payload is never allowed to reach
         // the mutation primitive without satisfying its strategy contract.
-        match strategy_impl.validate_payload(&generated_payload) {
+        match Self::validate_generated_payload(file_path, symbol, &strategy, &generated_payload) {
             Ok(()) => {
                 println!("==> [Mutation Boundary] Initial payload accepted for '{}'.", strategy);
 
@@ -206,18 +216,42 @@ impl RefactorAgent {
 
                 println!("==> [ApiClient] Received corrective payload for '{}'.", strategy);
 
-                strategy_impl.validate_payload(&retry_payload).map_err(|retry_error| {
-                    anyhow!(
-                        "Model payload rejected after bounded retry for strategy '{}': {}",
-                        strategy,
-                        retry_error
-                    )
-                })?;
+                Self::validate_generated_payload(file_path, symbol, &strategy, &retry_payload)
+                    .map_err(|retry_error| {
+                        anyhow!(
+                            "Model payload rejected after bounded retry for strategy '{}': {}",
+                            strategy,
+                            retry_error
+                        )
+                    })?;
 
                 println!("==> [Mutation Boundary] Corrective payload accepted for '{}'.", strategy);
 
                 self.apply_refactoring(file_path, symbol, &strategy, &retry_payload)
             }
+        }
+    }
+
+    fn validate_generated_payload(
+        file_path: &Path,
+        symbol: &str,
+        strategy: &str,
+        payload: &str,
+    ) -> Result<()> {
+        if strategy.eq_ignore_ascii_case("ReplaceFunctionBody") {
+            let source = fs::read_to_string(file_path)?;
+
+            crate::mutation::ReplaceFunctionBody::validate_for_path(
+                file_path, &source, symbol, payload,
+            )
+            .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy, e))
+        } else {
+            let strategy_impl = get_strategy(strategy)
+                .ok_or_else(|| anyhow!("Unauthorized mutation strategy: {}", strategy))?;
+
+            strategy_impl
+                .validate_payload(payload)
+                .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy, e))
         }
     }
 
@@ -274,5 +308,123 @@ impl RefactorAgent {
 impl Default for RefactorAgent {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RefactorAgent;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempSource {
+        path: PathBuf,
+    }
+
+    impl TempSource {
+        fn new(extension: &str, source: &str) -> Self {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after UNIX_EPOCH")
+                .as_nanos();
+
+            let path = std::env::temp_dir().join(format!(
+                "nexus_ast_tool_agent_{}_{}.{}",
+                std::process::id(),
+                stamp,
+                extension
+            ));
+
+            fs::write(&path, source).expect("temporary source file must be writable");
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempSource {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn apply_refactoring_uses_polyglot_tree_sitter_mutation_path() {
+        let fixtures = [
+            (
+                "py",
+                r#"def target():
+    return 20
+
+def neighbor():
+    return 30
+"#,
+                "target",
+                "return 42",
+            ),
+            (
+                "js",
+                r#"function target() {
+    return 20;
+}
+
+function neighbor() {
+    return 30;
+}
+"#,
+                "target",
+                "return 42;",
+            ),
+            (
+                "ts",
+                r#"function target(): number {
+    return 20;
+}
+
+function neighbor(): number {
+    return 30;
+}
+"#,
+                "target",
+                "return 42;",
+            ),
+        ];
+
+        let agent = RefactorAgent::new();
+
+        for (extension, source, symbol, payload) in fixtures {
+            let file = TempSource::new(extension, source);
+
+            agent
+                .apply_refactoring(file.path(), symbol, "ReplaceFunctionBody", payload)
+                .unwrap_or_else(|error| {
+                    panic!("production mutation path failed for .{extension}: {error}")
+                });
+
+            let mutated = fs::read_to_string(file.path())
+                .expect("mutated temporary source file must be readable");
+
+            assert!(mutated.contains("return 42"), ".{extension} target body was not replaced");
+            assert!(
+                !mutated.contains("return 20"),
+                ".{extension} original target body leaked through"
+            );
+            assert!(
+                mutated.contains("return 30"),
+                ".{extension} neighboring function was modified"
+            );
+
+            let language = crate::polyglot::SupportedLanguage::from_path(file.path())
+                .expect("test fixture extension must map to a supported language");
+
+            assert!(
+                language.parses_cleanly(&mutated),
+                ".{extension} mutated source must remain syntactically valid"
+            );
+        }
     }
 }

@@ -111,12 +111,24 @@ impl ActionGate {
                     .validate_intent("write_file")
                     .map_err(|e| anyhow::anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-            MotorAction::DiffPatch { .. } => {
+            MotorAction::DiffPatch { path, .. } => {
+                if path.contains("..") {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Path traversal detected: '{}'",
+                        path
+                    ));
+                }
                 self.sandbox
                     .validate_intent("diff_patch")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-            MotorAction::PatchFunction { .. } => {
+            MotorAction::PatchFunction { path, .. } => {
+                if path.contains("..") {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Path traversal detected: '{}'",
+                        path
+                    ));
+                }
                 self.sandbox
                     .validate_intent("patch_function")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;

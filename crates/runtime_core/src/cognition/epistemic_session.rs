@@ -140,6 +140,10 @@ pub struct EpistemicSession {
     pub executed_actions: HashMap<String, u32>,
     #[serde(skip)]
     pub global_action_attempts: HashMap<String, u32>,
+    #[serde(skip)]
+    pub compile_remediation: crate::compile_remediation::CompileRemediationState,
+    #[serde(skip)]
+    pub active_mutation_paths: Vec<String>,
     pub max_observed_belief: f32,
     pub best_hypothesis_id: Option<Uuid>,
     pub consecutive_mutation_vetoes: u32,
@@ -157,6 +161,8 @@ impl EpistemicSession {
             local_evidence: String::new(),
             executed_actions: HashMap::new(),
             global_action_attempts: HashMap::new(),
+            compile_remediation: crate::compile_remediation::CompileRemediationState::default(),
+            active_mutation_paths: Vec::new(),
             max_observed_belief: 0.0,
             best_hypothesis_id: None,
             consecutive_mutation_vetoes: 0,

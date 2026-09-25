@@ -79,7 +79,7 @@ fn run_scenario(fixture_path: &PathBuf) {
         .args([
             "run",
             "--bin",
-            "impact_analyzer",
+            "impact-analyzer",
             "--",
             "--target",
             target_symbol,

@@ -142,3 +142,38 @@ impl CognitiveGraph {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_contradiction_propagation_converges_without_compounding_edge_weight() {
+        let mut graph = CognitiveGraph::new();
+
+        let observation = graph.add_node(NodeKind::Observation, "compiler contradiction", 1.0, 1);
+        let hypothesis = graph.add_node(NodeKind::Hypothesis, "candidate repair", 0.8, 1);
+
+        graph.add_edge(observation, hypothesis, EdgeRelation::Contradicts, 0.30);
+
+        graph.propagate_beliefs();
+        let first = graph.nodes[&hypothesis].belief_score;
+
+        graph.propagate_beliefs();
+        let second = graph.nodes[&hypothesis].belief_score;
+
+        graph.propagate_beliefs();
+        let third = graph.nodes[&hypothesis].belief_score;
+
+        // The same persistent edge must not behave like three independent
+        // 0.30 contradictions. Repeated propagation approaches the fixed
+        // point implied by the existing damped recurrence.
+        assert!(first < 0.8);
+        assert!(second < first);
+        assert!(third < second);
+
+        // Source belief 1.0, contradiction weight 0.30, DAMPING 0.85:
+        // fixed point is 0.20. Third step is 0.202025.
+        assert!(third > 0.20);
+    }
+}

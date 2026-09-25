@@ -1,8 +1,20 @@
 use std::io::{Error, ErrorKind, Read, Result};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+// Dedicated no-login, no-home user for executing Strategist-proposed
+// commands. PRoot cannot provide namespace isolation (no real container
+// runtime is possible in this environment -- confirmed: no cgroup
+// controllers, no podman binary), so this is the only privilege boundary
+// achievable here: bound the blast radius of anything that slips past
+// ArbiterAgent::validate_action to what uid/gid 10001 can touch, instead
+// of full root access to the filesystem. Create with:
+//   useradd -u 10001 -g 10001 -M -N -s /usr/sbin/nologin nexus_exec
+const EXEC_UID: u32 = 10001;
+const EXEC_GID: u32 = 10001;
 
 pub struct PodmanShield;
 
@@ -39,6 +51,23 @@ impl PodmanShield {
         child_cmd.env_remove("CARGO_BUILD_TARGET");
         child_cmd.stdout(Stdio::piped());
         child_cmd.stderr(Stdio::piped());
+
+        // SAFETY: pre_exec runs in the forked child between fork() and
+        // exec(), before any other threads exist in that process image --
+        // only async-signal-safe calls are permitted here. setgid()/setuid()
+        // are both async-signal-safe. No allocation, no locking, nothing
+        // else happens in this closure.
+        unsafe {
+            child_cmd.pre_exec(|| {
+                if libc::setgid(EXEC_GID) != 0 {
+                    return Err(Error::last_os_error());
+                }
+                if libc::setuid(EXEC_UID) != 0 {
+                    return Err(Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
 
         let mut child = child_cmd.spawn()?;
 
