@@ -621,13 +621,11 @@ impl SubgoalCompletionEngine {
     }
 
     pub fn evaluate(contract: &SubgoalContract, local_evidence: &str, belief_score: f32) -> bool {
-        let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(
-            &contract.node_id,
+        crate::outcome_verifier::OutcomeVerifier::mission_completion_authorized(
             local_evidence,
             belief_score,
             &contract.conditions,
-        );
-        matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
+        )
     }
 
     /// Returns true when every non-output condition required for
@@ -654,14 +652,11 @@ impl SubgoalCompletionEngine {
             .cloned()
             .collect();
 
-        let verifier_result = crate::outcome_verifier::OutcomeVerifier::verify(
-            &contract.node_id,
+        crate::outcome_verifier::OutcomeVerifier::mission_completion_authorized(
             local_evidence,
             belief_score,
             &recon_conditions,
-        );
-
-        matches!(verifier_result, crate::outcome_verifier::CompletionStatus::Approved)
+        )
     }
 }
 
