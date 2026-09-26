@@ -5,6 +5,7 @@ pub mod cluster;
 pub mod cognition;
 pub mod cognition_graph;
 pub mod conductor;
+pub mod cortex;
 pub mod cortical_loop;
 pub mod critic;
 pub mod diff;

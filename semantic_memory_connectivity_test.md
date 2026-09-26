@@ -1,0 +1,1 @@
+Search for 'memory connectivity' in crates/runtime_core/src/router.rs yielded no results. The expected semantic memory connection pattern is absent from this file.

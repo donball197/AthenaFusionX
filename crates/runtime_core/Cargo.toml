@@ -26,15 +26,17 @@ bitflags = "2.4"
 sysinfo = { workspace = true }
 wasmtime = { version = "45.0.2", features = ["component-model"] }
 wasmtime-wasi = { version = "45.0.2" }
-wit-bindgen-rt = { version = "0.39", features = ["bitflags"] }
 
 nexus_substrate = { path = "../nexus_substrate" }
 nexus_model_hub = { path = "../nexus_model_hub" }
 thiserror = "2.0.19"
 walkdir = "2.5.0"
 nexus_ast_tool = { version = "0.1.0", path = "../../apps/nexus_ast_tool" }
+nexus_strategy_algorithms = { path = "../../algorithms/strategy" }
+nexus_reconnaissance_algorithms = { path = "../../algorithms/reconnaissance" }
+nexus_action_identity_algorithms = { path = "../../algorithms/action_identity" }
+nexus_algorithms = { path = "../../algorithms/nexus_algorithms" }
 sha2 = "0.10"
-hex = "0.4"
 
 [lints]
 workspace = true

@@ -117,6 +117,58 @@ pub(crate) fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
     words.iter().any(|w| has_word_unnegated(text, w))
 }
 
+/// Return true when completion requires a semantic conclusion rather than
+/// merely proving that a physical/tool action occurred.
+///
+/// This is intentionally centralized because the same classification must
+/// govern every terminal-completion shortcut in the cortical loop. Physical
+/// evidence such as READ_OK, SEARCH_CODE_OK, or HALT is not itself proof that
+/// an analysis objective was satisfied.
+pub(crate) fn requires_semantic_verification(objective: &str) -> bool {
+    let mut text = objective.trim().to_lowercase();
+
+    if let Some(stripped) = text.strip_prefix("objective:") {
+        text = stripped.trim().to_string();
+    } else if let Some(stripped) = text.strip_prefix("objective") {
+        text = stripped.trim().to_string();
+    }
+
+    // An explicitly leading command is a physical execution objective even
+    // when the command itself contains semantic vocabulary such as
+    // "check", "verify", or "compute" (for example, "Execute cargo check").
+    // This mirrors infer_contract()'s command-objective precedence.
+    let is_explicit_command =
+        text.strip_prefix("execute ").is_some()
+            || text.strip_prefix("run ").is_some();
+
+    if is_explicit_command && extract_required_command(&text).is_some() {
+        return false;
+    }
+
+    any_word_unnegated(
+        &text,
+        &[
+            "analyze",
+            "analyse",
+            "analysis",
+            "investigate",
+            "investigation",
+            "audit",
+            "compare",
+            "comparison",
+            "synthesize",
+            "synthesis",
+            "verify",
+            "compute",
+            "check",
+            "derive",
+            "determine",
+            "report",
+            "reporting",
+        ],
+    )
+}
+
 /// Recognize a read-only request for actual host metrics.
 ///
 /// These observations are physical runtime state, not source-code analysis.
@@ -729,7 +781,62 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompletionCondition, SubgoalCompletionEngine};
+    use super::{requires_semantic_verification, CompletionCondition, SubgoalCompletionEngine};
+
+    #[test]
+    fn semantic_verification_classifier_covers_analysis_objectives() {
+        let semantic_objectives = [
+            "Analyze the implementation",
+            "Investigate the failure",
+            "Perform a final audit",
+            "Compare the two implementations",
+            "Synthesize the findings",
+            "Verify the stated invariant",
+            "Compute the resulting value",
+            "Check the contract",
+            "Derive the conclusion",
+        ];
+
+        for objective in semantic_objectives {
+            assert!(
+                super::requires_semantic_verification(objective),
+                "semantic objective was not classified: {objective}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_verification_classifier_covers_host_investigation_and_reporting() {
+        let semantic_objectives = [
+            "Perform a read-only investigation and report the current host uptime, filesystem capacity for /, available memory/RAM, and load average.",
+            "Determine the current host uptime and report the findings.",
+            "Perform an investigation and report the results.",
+        ];
+
+        for objective in semantic_objectives {
+            assert!(
+                requires_semantic_verification(objective),
+                "Expected semantic verification for: {objective}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_verification_classifier_rejects_physical_only_objectives() {
+        let physical_objectives = [
+            "Read crates/runtime_core/src/lib.rs",
+            "Search for SEARCH_CODE_OK:foo",
+            "Execute cargo check -p nexus_runtime_core",
+            "Run uptime; df -h /; free -m",
+        ];
+
+        for objective in physical_objectives {
+            assert!(
+                !super::requires_semantic_verification(objective),
+                "physical-only objective was incorrectly classified as semantic: {objective}"
+            );
+        }
+    }
 
     #[test]
     fn read_only_mission_sets_flag() {
@@ -798,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn host_observation_directive_creates_exact_command_contract() {
+    fn host_observation_directive_preserves_command_contract_but_requires_semantic_verification() {
         let directive = "Perform a read-only investigation and report the current host uptime, filesystem capacity for /, available memory/RAM, and load average. Do not use SearchMemory.";
 
         let contract = SubgoalCompletionEngine::infer_contract("task_1", directive);
@@ -811,6 +918,7 @@ mod tests {
         );
         assert!(!contract.is_mutation_task);
         assert!(contract.required_artifact_paths.is_empty());
+        assert!(requires_semantic_verification(directive));
     }
 
     #[test]

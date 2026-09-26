@@ -4,6 +4,7 @@
 use crate::memory_cortex::MemoryCortex;
 use crate::sovereign_core::SovereignOutcome;
 use anyhow::Result;
+use nexus_substrate::taint::TaintLabel;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -76,7 +77,13 @@ impl ProbabilisticMemory {
             );
 
             memory
-                .store_memory("SovereignGenome", directive, &genome_payload, "Internal", embedding)
+                .store_memory(
+                    "SovereignGenome",
+                    directive,
+                    &genome_payload,
+                    TaintLabel::INTERNAL,
+                    embedding,
+                )
                 .await?;
 
             tracing::info!(
@@ -94,7 +101,7 @@ impl ProbabilisticMemory {
                     "NegativeConstraint",
                     directive,
                     &failure_payload,
-                    "Internal",
+                    TaintLabel::INTERNAL,
                     embedding,
                 )
                 .await?;

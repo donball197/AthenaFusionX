@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "approval_id": "approval:v1|candidate=candidate:v1|symbol=uuid_v4|index=4|report=report:v1|fnv1a=2e7d7929f729715e",
+  "candidate_id": "candidate:v1|symbol=uuid_v4|index=4",
+  "report_identity": "report:v1|fnv1a=2e7d7929f729715e",
+  "approved": true,
+  "confirmation": "APPROVE-DRY-RUN-V1"
+}

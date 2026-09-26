@@ -48,18 +48,21 @@ impl HypothesisEngine {
             }
         });
 
-        let heavy_models = crate::model_config::get_heavy_models();
-        if heavy_models.is_empty() {
+        let models = match nexus_algorithms::Router::select("reasoning") {
+            Some(nexus_algorithms::ModelTier::Heavy) => crate::model_config::get_heavy_models(),
+            Some(nexus_algorithms::ModelTier::Light) => crate::model_config::get_light_models(),
+            Some(nexus_algorithms::ModelTier::Planner) => crate::model_config::get_planner_models(),
+            None => crate::model_config::get_heavy_models(),
+        };
+
+        if models.is_empty() {
             return Err(anyhow!(
                 "No heavy models configured in NEXUS_HEAVY_MODEL or NEXUS_HEAVY_CASCADE"
             ));
         }
 
         let text = crate::epistemic_engine::EpistemicEngine::safe_api_call(
-            client,
-            api_key,
-            &heavy_models,
-            &payload,
+            client, api_key, &models, &payload,
         )
         .await?;
 

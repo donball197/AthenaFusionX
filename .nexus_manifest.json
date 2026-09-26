@@ -2,7 +2,19 @@
   {
     "provider": "Google",
     "name": "antigravity-preview-05-2026",
-    "context": "131.1K in / 65.5K out",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "antigravity-preview-09-2026",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "antigravity-preview-latest",
+    "context": "1.0M in / 65.5K out",
     "category": "GENERAL"
   },
   {
@@ -169,6 +181,18 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-3.8-flash-lite-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.8-flash-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-flash-latest",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
@@ -283,15 +307,9 @@
   },
   {
     "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-v4-flash-0731",
+    "name": "deepseek-ai/deepseek-v4.1-flash",
     "context": "128K in / 4K out",
     "category": "FLASH"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-v4-pro-0813",
-    "context": "128K in / 4K out",
-    "category": "PRO"
   },
   {
     "provider": "Nvidia",
@@ -631,6 +649,12 @@
   },
   {
     "provider": "Nvidia",
+    "name": "nvidia/nemotron-parse-2.0",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
     "name": "nvidia/neva-22b",
     "context": "Unknown",
     "category": "GENERAL"
@@ -712,6 +736,18 @@
     "name": "writer/palmyra-med-70b-32k",
     "context": "32K in / 4K out",
     "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "z-ai/glm-5.3",
+    "context": "128K in / 4K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "z-ai/glm-5.3-flash",
+    "context": "128K in / 4K out",
+    "category": "FLASH"
   },
   {
     "provider": "Nvidia",

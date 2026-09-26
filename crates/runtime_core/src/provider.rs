@@ -20,7 +20,11 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
     let model = model_name.to_ascii_lowercase();
 
     // 1. Local S23 Edge LiteRT-LM (Strictly e4b or explicit local names)
-    if model.contains("e4b") || model.contains("litert") || model == "nexus" {
+    // FIX: Do not blindly match "gemma" to the phone if it's a cloud size like 31b or 26b
+    if (model.contains("e4b") || model.contains("litert") || model == "nexus")
+        && !model.contains("31b")
+        && !model.contains("26b")
+    {
         let gw = env::var("OPENAI_BASE_URL")
             .or_else(|_| env::var("NEXUS_API_GATEWAY"))
             .unwrap_or_else(|_| "http://192.168.4.223:9379/v1".to_string());
@@ -41,9 +45,14 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
         };
     }
 
-    // 2. Google Cloud (Gemini models, plus the known Cloud Gemma default gemma-4-31b-it).
-    // Bare/unknown Gemma family names must NOT guess Google -- fall through to Nexus default.
-    if model.contains("gemini") || model == "gemma-4-31b-it" {
+    // 2. Google Cloud
+    if model.contains("gemini")
+        || model.contains("lyria")
+        || model.contains("antigravity")
+        || model.contains("deep-research")
+        || model == "gemma-4-31b-it"
+        || model == "gemma-4-26b-a4b-it"
+    {
         let api_key =
             env::var("GEMINI_API_KEY").or_else(|_| env::var("GOOGLE_API_KEY")).unwrap_or_default();
         return ProviderResolved {

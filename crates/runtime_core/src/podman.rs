@@ -31,6 +31,38 @@ impl PodmanShield {
         Self::execute_with_timeout(command, DEFAULT_TIMEOUT)
     }
 
+    /// Execute a program with explicit argv. No shell is involved, so a
+    /// value containing shell metacharacters (`;`, `&&`, `>`, backticks,
+    /// `$(...)`) cannot be interpreted as a second command. Use this for
+    /// any invocation whose arguments include model-supplied strings --
+    /// in particular the compiler-remediation rollback paths that build
+    /// `git checkout -- <path>` from `mutation_paths`.
+    pub fn execute_argv(program: &str, args: &[&str]) -> Result<Output> {
+        Self::execute_argv_with_timeout(program, args, DEFAULT_TIMEOUT)
+    }
+
+    pub fn execute_argv_with_timeout(
+        program: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<Output> {
+        // The Arbiter is a string blacklist. Give it a joined display form
+        // for compatibility, but the actual exec below bypasses bash
+        // entirely -- arguments reach execve() as separate argv entries.
+        let display: String =
+            std::iter::once(program).chain(args.iter().copied()).collect::<Vec<_>>().join(" ");
+        if let Err(e) =
+            crate::arbiter_agent::ArbiterAgent::validate_action("execute_command", &display)
+        {
+            return Err(Error::new(ErrorKind::PermissionDenied, e));
+        }
+        let mut child_cmd = Command::new(program);
+        for a in args {
+            child_cmd.arg(a);
+        }
+        Self::run_with_timeout(child_cmd, timeout, &display)
+    }
+
     pub fn execute_with_timeout(command: &str, timeout: Duration) -> Result<Output> {
         if let Err(e) =
             crate::arbiter_agent::ArbiterAgent::validate_action("execute_command", command)
@@ -43,6 +75,14 @@ impl PodmanShield {
         // any working command is found.
         let mut child_cmd = Command::new("bash");
         child_cmd.arg("-c").arg(command);
+        Self::run_with_timeout(child_cmd, timeout, command)
+    }
+
+    fn run_with_timeout(
+        mut child_cmd: Command,
+        timeout: Duration,
+        display: &str,
+    ) -> Result<Output> {
         for (key, value) in std::env::vars() {
             if key != "CARGO_BUILD_TARGET" {
                 child_cmd.env(key, value);
@@ -109,7 +149,7 @@ impl PodmanShield {
                             ErrorKind::TimedOut,
                             format!(
                                 "Command exceeded {:?} timeout and was killed: {}",
-                                timeout, command
+                                timeout, display
                             ),
                         ));
                     }

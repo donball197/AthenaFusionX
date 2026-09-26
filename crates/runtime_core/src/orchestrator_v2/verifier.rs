@@ -20,6 +20,24 @@ fn read_evidence_matches_path(evidence: &str, expected_path: &str) -> bool {
             return rest.split(" | ").next().map(str::trim) == Some(expected_path);
         }
 
+        // A path-qualified read failure (e.g. ENOENT) or a path-scoped
+        // search that found nothing is still a completed, evidenced
+        // inspection of the target location -- the location was checked
+        // and found empty/absent. This node-level DAG verifier is a
+        // separate, independent copy of the same READ_OK matching logic
+        // already extended in outcome_verifier.rs's ReadPathAcquired
+        // check and cortical_loop.rs's confirmed-absence terminal check;
+        // without this, the cortex can correctly complete a node on
+        // confirmed-absence evidence, only for this sibling verifier to
+        // immediately reject the same evidence as insufficient.
+        if let Some(rest) = line.strip_prefix("[ACTION FAILED] path=") {
+            return rest.split(" OS rejected action").next().map(str::trim) == Some(expected_path);
+        }
+
+        if let Some(rest) = line.strip_prefix("[SEARCH_CODE_OK] Path: ") {
+            return rest.split(" | ").next().map(str::trim) == Some(expected_path);
+        }
+
         false
     })
 }
@@ -151,13 +169,27 @@ impl Verifier {
                     && (evidence.contains(target)
                         || (evidence.contains(path) && evidence.contains(func)))
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
-                evidence.contains("[SEARCH_CODE_OK]") && evidence.contains(target)
+                crate::evidence_markers::search_term_satisfied(evidence, target)
             } else if criterion == "SEARCH_MEMORY_OK" {
                 evidence.contains("[SEARCH_MEMORY_OK]")
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
                 evidence.contains("[WRITE_OK]") && evidence.contains(path)
             } else if criterion == "CMD_OK" {
-                evidence.contains("[CMD_OK]")
+                // A bare [CMD_OK] substring is not proof of success. The
+                // verifier must require the marker on its own line followed
+                // by a zero exit status, matching the emission shape of both
+                // the executor's ExecuteCommand branch and the cortical
+                // loop's compiler-critic bridge:
+                //     [CMD_OK] Command: <cmd>
+                //     Status: exit status: 0
+                //
+                // Without this binding, literal text "[CMD_OK]" appearing in
+                // a file that was read into evidence (via [READ_OK]) would
+                // satisfy the criterion without any command having run.
+                let lines: Vec<&str> = evidence.lines().collect();
+                lines.windows(2).any(|w| {
+                    w[0].starts_with("[CMD_OK]") && w[1].trim() == "Status: exit status: 0"
+                })
             } else if criterion == "PATCH_FUNCTION_OK" {
                 evidence.contains("[PATCH_FUNCTION_OK]")
                     || evidence.contains("[PATCH_IDEMPOTENT_OK]")

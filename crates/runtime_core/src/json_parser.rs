@@ -143,6 +143,16 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                 .is_some_and(|action_type| action_type == "read_file_chunk");
 
             if is_read_file_chunk {
+                // filepath is a model-side alias for the native `path`
+                // field. Normalize it only for read_file_chunk so unrelated
+                // action schemas are not changed. Explicit `path` wins.
+                // filepath alias normalization
+                if !obj.contains_key("path") {
+                    if let Some(filepath) = obj.remove("filepath") {
+                        obj.insert("path".to_string(), filepath);
+                    }
+                }
+
                 if !obj.contains_key("start_line") {
                     if let Some(offset) = obj.remove("offset") {
                         obj.insert("start_line".to_string(), offset);
@@ -305,6 +315,30 @@ mod tests {
                 assert!(path.ends_with("cortical_loop.rs"));
                 assert_eq!(start_line, 52);
                 assert_eq!(max_lines, 49, "end_line 100 inclusive - start 52 + 1");
+            }
+            other => panic!("expected ReadFileChunk, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn read_file_chunk_normalizes_filepath_alias() {
+        // Regression for the observed model payload:
+        // `filepath` must normalize to the native `path` field, while the
+        // existing inclusive `end_line` normalization remains intact.
+        let action = extract_single(
+            r#"[{"type":"read_file_chunk","filepath":"crates/runtime_core/src/cortical_loop.rs","start_line":150,"end_line":200,"reasoning":"model emitted filepath alias"}]"#,
+        );
+
+        match action {
+            AgentAction::ReadFileChunk {
+                path,
+                start_line,
+                max_lines,
+                ..
+            } => {
+                assert!(path.ends_with("cortical_loop.rs"));
+                assert_eq!(start_line, 150);
+                assert_eq!(max_lines, 51, "end_line 200 inclusive - start 150 + 1");
             }
             other => panic!("expected ReadFileChunk, got {:?}", other),
         }

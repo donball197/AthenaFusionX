@@ -1,5 +1,10 @@
 [workspace]
 members = [
+    "algorithms/reconnaissance",
+    "algorithms/action_identity",
+    "algorithms/nexus_algorithms",
+    "algorithms/strategy",
+    "algorithms/evidence_requirements",
     "apps/nexus_ast_tool",
     "apps/benchmark_runner",
     "crates/nexus_edge_minion",
@@ -31,10 +36,14 @@ members = [
     "crates/evolution_engine",
     "crates/nexus_dag_orchestrator",
     "crates/terminal_core",
+    "bins/reflex_test",
 ]
 resolver = "2"
 exclude = [
-    "comparison_workspace"
+    "comparison_workspace",
+    "fuzz",
+    "genesis_lab",
+    "target_dummy",
 ]
 
 [workspace.package]

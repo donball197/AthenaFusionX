@@ -28,7 +28,18 @@ fi
 
 export OPENSSL_NO_VENDOR=1
 export CARGO_UNSTABLE_CARGO_LINTS=true
-export RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--threads=1 -C link-arg=-Wl,--whole-archive -C link-arg=/usr/lib/aarch64-linux-gnu/libc_nonshared.a -C link-arg=-Wl,--no-whole-archive"
+
+# Defensive: clear any RUSTFLAGS inherited from the calling shell. A
+# previous debugging session may have manually `export`ed a fragile
+# linker workaround (e.g. forcing --whole-archive on
+# libc_nonshared.a to fix an earlier symbol-resolution issue), and
+# `export` persists for the life of the terminal regardless of what
+# any script does afterward. That stale flag surviving into a later,
+# unrelated build produced a genuine duplicate-symbol linker error
+# (__pthread_atfork defined twice) since the workaround is no longer
+# needed. This script's own build should never depend on flags left
+# behind by an interactive shell.
+unset RUSTFLAGS
 
 # --- 3. Pre-Flight Cleanup ---
 rm -f target/.cargo-lock target/debug/.cargo-lock target/release/.cargo-lock 2>/dev/null || true
@@ -41,17 +52,15 @@ spinner() {
     local msg="$2"
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local i=0
-    
-    # Hide cursor
+
     tput civis 2>/dev/null || true
-    
+
     while kill -0 "$pid" 2>/dev/null; do
         printf "\r\x1b[36m[%s]\x1b[0m %s... " "${spin_chars[$i]}" "$msg"
         i=$(( (i + 1) % ${#spin_chars[@]} ))
         sleep 0.08
     done
-    
-    # Restore cursor & clear line
+
     tput cnorm 2>/dev/null || true
     printf "\r\x1b[K"
 }
@@ -62,7 +71,6 @@ echo -e "\x1b[36m[1/3] Compiling binaries (${BUILD_PROFILE})...\x1b[0m"
 cargo ${CARGO_TOOLCHAIN} build ${RELEASE_FLAG} --bin nexus-ide-backend --bin nexus-cli > /tmp/nexus_build.log 2>&1 &
 BUILD_PID=$!
 
-# Run the animated spinner while cargo compiles in background
 spinner $BUILD_PID "Verifying & building backend and CLI"
 
 wait $BUILD_PID || BUILD_STATUS=$?
@@ -74,7 +82,6 @@ fi
 
 echo -e "\x1b[32m[✓] Binaries compiled successfully (${BUILD_PROFILE}).\x1b[0m"
 
-# Ensure binaries exist
 if [[ ! -f "${TARGET_DIR}/nexus-ide-backend" || ! -f "${TARGET_DIR}/nexus-cli" ]]; then
     echo -e "\x1b[31m>> [FATAL] Expected binaries not found in ${TARGET_DIR}.\x1b[0m"
     exit 1
@@ -85,7 +92,6 @@ echo -e "\x1b[36m[2/3] Initializing Background Daemon (Port 3000)...\x1b[0m"
 "${TARGET_DIR}/nexus-ide-backend" > daemon.log 2>&1 &
 DAEMON_PID=$!
 
-# Trap signals so daemon always terminates cleanly on exit
 cleanup() {
     tput cnorm 2>/dev/null || true
     echo -e "\n\x1b[31m>> Shutting down Background Daemon (PID: $DAEMON_PID)...\x1b[0m"
@@ -96,7 +102,7 @@ trap cleanup SIGINT SIGTERM EXIT
 # --- 7. Daemon Health Check Animation ---
 printf "\x1b[33m[~] Connecting to Daemon vitals\x1b[0m"
 READY=0
-for i in $(seq 1 30); do
+for i in $(seq 1 300); do
     if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:3000/api/vitals"; then
         printf "\r\x1b[K\x1b[32m[✓] Daemon online and verified ready after ${i}s.\x1b[0m\n"
         READY=1
@@ -107,7 +113,7 @@ for i in $(seq 1 30); do
 done
 
 if [ "$READY" -eq 0 ]; then
-    echo -e "\n\x1b[31m>> [FATAL] Daemon did not respond within 30s. Checking daemon.log:\x1b[0m"
+    echo -e "\n\x1b[31m>> [FATAL] Daemon did not respond within 300s. Checking daemon.log:\x1b[0m"
     tail -n 25 daemon.log
     exit 1
 fi

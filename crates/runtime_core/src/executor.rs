@@ -3,6 +3,8 @@ use crate::memory_cortex::MemoryCortex;
 use crate::motor_cortex::{MotorAction, MotorCommand};
 use crate::shared_state::VmoState;
 use anyhow::{anyhow, Result};
+use nexus_substrate::episode::EpisodeContext;
+use nexus_substrate::taint::TaintLabel;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -21,6 +23,11 @@ pub struct RoboticExecutor {
     #[allow(dead_code)]
     tx: tokio::sync::broadcast::Sender<String>,
     pub action_cache: Arc<tokio::sync::Mutex<crate::memory_cortex::ActionCache>>,
+    /// Episode provenance attached to every memory write this
+    /// executor performs. Defaults to all-None ("episode
+    /// unknown"), which the automatic-recall gate treats as
+    /// foreign. Set by the caller before execution begins.
+    pub episode: EpisodeContext,
 }
 
 fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
@@ -275,6 +282,7 @@ impl RoboticExecutor {
             action_cache: Arc::new(tokio::sync::Mutex::new(
                 crate::memory_cortex::ActionCache::new(),
             )),
+            episode: EpisodeContext::default(),
         }
     }
 
@@ -420,7 +428,16 @@ impl RoboticExecutor {
                 let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet)
                     .await
                     .ok();
-                let _ = memory.store_memory("WriteFile", &path, &content, "Mutated", emb).await;
+                let _ = memory
+                    .store_memory_with_episode(
+                        "WriteFile",
+                        &path,
+                        &content,
+                        TaintLabel::MUTATED,
+                        emb,
+                        &self.episode,
+                    )
+                    .await;
 
                 Ok(format!("[WRITE_OK] {}", path))
             }
@@ -432,11 +449,26 @@ impl RoboticExecutor {
                     nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await
                 {
                     let _ = memory
-                        .store_memory("ReadFile", &path, &content, "Observed", Some(emb))
+                        .store_memory_with_episode(
+                            "ReadFile",
+                            &path,
+                            &content,
+                            TaintLabel::OBSERVED,
+                            Some(emb),
+                            &self.episode,
+                        )
                         .await;
                 } else {
-                    let _ =
-                        memory.store_memory("ReadFile", &path, &content, "Observed", None).await;
+                    let _ = memory
+                        .store_memory_with_episode(
+                            "ReadFile",
+                            &path,
+                            &content,
+                            TaintLabel::OBSERVED,
+                            None,
+                            &self.episode,
+                        )
+                        .await;
                 }
 
                 let total_lines = content.lines().count();
@@ -463,22 +495,24 @@ impl RoboticExecutor {
                     nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await
                 {
                     let _ = memory
-                        .store_memory(
+                        .store_memory_with_episode(
                             "ReadFunction",
                             &format!("{}:{}", path, function_name),
                             &source,
-                            "Observed",
+                            TaintLabel::OBSERVED,
                             Some(emb),
+                            &self.episode,
                         )
                         .await;
                 } else {
                     let _ = memory
-                        .store_memory(
+                        .store_memory_with_episode(
                             "ReadFunction",
                             &format!("{}:{}", path, function_name),
                             &source,
-                            "Observed",
+                            TaintLabel::OBSERVED,
                             None,
+                            &self.episode,
                         )
                         .await;
                 }
@@ -515,11 +549,12 @@ impl RoboticExecutor {
                     return Ok("[SEARCH_FAILED] Empty search query is not permitted. Provide a specific search symbol or pattern.".to_string());
                 }
 
-                let safe_path = sanitize(&path).unwrap_or_else(|_| PathBuf::from("crates"));
+                let safe_path =
+                    if path.trim().is_empty() { PathBuf::from("crates") } else { sanitize(&path)? };
                 let p_str = safe_path.to_str().unwrap_or(&path);
 
                 let cmd = format!(
-                    "(rg -n -C 2 -i '{}' {} || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' {}) 2>/dev/null || true",
+                    "(rg --type rust -n -C 2 -i '{}' {} || grep -rn -C 2 --include='*.rs' --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' {}) 2>/dev/null || true",
                     query, p_str, query, p_str
                 );
                 let out = crate::podman::PodmanShield::execute(&cmd)?;
@@ -653,7 +688,16 @@ impl RoboticExecutor {
                 let emb = nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet)
                     .await
                     .ok();
-                let _ = memory.store_memory("DiffPatch", &path, &patched, "Mutated", emb).await;
+                let _ = memory
+                    .store_memory_with_episode(
+                        "DiffPatch",
+                        &path,
+                        &patched,
+                        TaintLabel::MUTATED,
+                        emb,
+                        &self.episode,
+                    )
+                    .await;
 
                 Ok(format!("[DIFF_PATCH_OK] Applied changes to {}", path))
             }
@@ -675,7 +719,7 @@ impl RoboticExecutor {
                 // The requested patch is already physically satisfied.
                 // This is success, but it is NOT a mutation: do not rewrite
                 // the file, broadcast a file shift, invalidate the action
-                // cache, or record a new "Mutated" memory.
+                // cache, or record a new TaintLabel::MUTATED memory.
                 if patched == source {
                     return Ok(format!(
                         "[PATCH_IDEMPOTENT_OK] {}:{}\nPatchFunction already satisfied; source unchanged.",
@@ -710,7 +754,14 @@ impl RoboticExecutor {
                     .await
                     .ok();
                 let _ = memory
-                    .store_memory("PatchFunction", &path, &final_source, "Mutated", emb)
+                    .store_memory_with_episode(
+                        "PatchFunction",
+                        &path,
+                        &final_source,
+                        TaintLabel::MUTATED,
+                        emb,
+                        &self.episode,
+                    )
                     .await;
 
                 Ok(format!(
@@ -893,7 +944,14 @@ impl RoboticExecutor {
                         .ok();
 
                 memory
-                    .store_memory("WebScrape", &url, &persisted, "Untrusted", embedding)
+                    .store_memory_with_episode(
+                        "WebScrape",
+                        &url,
+                        &persisted,
+                        TaintLabel::UNTRUSTED_PUBLIC,
+                        embedding,
+                        &self.episode,
+                    )
                     .await
                     .map_err(|e| anyhow!("SCRAPE_MEMORY_STORE_FAILED: {}", e))?;
 
@@ -936,13 +994,25 @@ impl RoboticExecutor {
                     "generationConfig": { "temperature": 0.2, "maxOutputTokens": 8192 }
                 });
 
-                let heavy_models = crate::model_config::get_heavy_models();
+                let models = match nexus_algorithms::Router::select("synthesize") {
+                    Some(nexus_algorithms::ModelTier::Heavy) => {
+                        crate::model_config::get_heavy_models()
+                    }
+                    Some(nexus_algorithms::ModelTier::Light) => {
+                        crate::model_config::get_light_models()
+                    }
+                    Some(nexus_algorithms::ModelTier::Planner) => {
+                        crate::model_config::get_planner_models()
+                    }
+                    None => crate::model_config::get_heavy_models(),
+                };
+
                 let client = reqwest::Client::new();
 
                 match crate::epistemic_engine::EpistemicEngine::safe_api_call(
                     &client,
                     &self.api_key,
-                    &heavy_models,
+                    &models,
                     &payload,
                 )
                 .await
@@ -978,8 +1048,8 @@ impl RoboticExecutor {
                         _dist.broadcast_file_shift(&output_path, "synthesize_report");
                         *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
                         Ok(format!(
-                            "[WRITE_OK] Successfully synthesized and wrote report to {}",
-                            output_path
+                            "[WRITE_OK] {}\nSuccessfully synthesized and wrote report to {}",
+                            output_path, output_path
                         ))
                     }
                     Err(e) => Err(anyhow::anyhow!("Synthesis Failed: {}", e)),

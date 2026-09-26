@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use nexus_substrate::memory::{AgentMemory, MemoryPalace};
+use nexus_substrate::taint::TaintLabel;
 
 #[derive(Clone)]
 pub struct MemoryCortex {
@@ -20,11 +21,67 @@ impl MemoryCortex {
         category: &str,
         key: &str,
         value: &str,
-        taint_label: &str,
+        taint_label: TaintLabel,
         embedding: Option<Vec<f32>>,
     ) -> Result<()> {
         self.palace.store_memory(category, key, value, taint_label, embedding).await?;
         Ok(())
+    }
+
+    /// Typed pass-through for callers that know their episode.
+    pub async fn store_memory_with_episode(
+        &self,
+        category: &str,
+        key: &str,
+        value: &str,
+        taint_label: TaintLabel,
+        embedding: Option<Vec<f32>>,
+        episode: &nexus_substrate::episode::EpisodeContext,
+    ) -> Result<()> {
+        self.palace
+            .store_memory_with_episode(category, key, value, taint_label, embedding, episode)
+            .await?;
+        Ok(())
+    }
+
+    /// Taint- and episode-scoped recall. See
+    /// MemoryPalace::semantic_search_scoped for gate semantics.
+    pub async fn recall_semantic_context_scoped(
+        &self,
+        embedding: &[f32],
+        context: &str,
+        limit: usize,
+        scope: nexus_substrate::episode::RecallScope,
+        current: &nexus_substrate::episode::EpisodeContext,
+        policy: nexus_substrate::taint::FlowPolicy,
+    ) -> anyhow::Result<crate::memory_recall::RecallResult> {
+        let admitted =
+            self.palace.semantic_search_scoped(embedding, limit, scope, current, policy).await?;
+        let memories = admitted
+            .into_iter()
+            .map(|m| crate::memory_types::CognitiveMemory {
+                id: uuid::Uuid::new_v4(),
+                kind: crate::memory_types::MemoryKind::Experience,
+                key: m.directive.clone(),
+                content: m.result.clone(),
+                source: m.origin.clone(),
+                confidence: 0.5,
+                importance: 0.5,
+                created_at: m
+                    .timestamp
+                    .parse::<i64>()
+                    .unwrap_or_else(|_| chrono::Utc::now().timestamp()),
+                tags: vec![
+                    m.origin.clone(),
+                    format!("taint:{}", m.taint_label.to_storage()),
+                    format!("episode:{}", m.episode.describe_short()),
+                ],
+            })
+            .collect::<Vec<_>>();
+        let engine = crate::memory_recall::MemoryRecallEngine::new();
+        let mut result = engine.rank(memories, context);
+        result.memories.truncate(limit);
+        Ok(result)
     }
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>> {
@@ -43,7 +100,7 @@ impl MemoryCortex {
 
     pub async fn remember(&self, memory: CognitiveMemory) -> anyhow::Result<()> {
         self.palace
-            .store_memory("cognitive", &memory.key, &memory.content, "Internal", None)
+            .store_memory("cognitive", &memory.key, &memory.content, TaintLabel::INTERNAL, None)
             .await?;
         Ok(())
     }
@@ -128,7 +185,7 @@ impl MemoryCortex {
             "belief_update",
             &event.belief_id.to_string(),
             &payload,
-            "Internal",
+            TaintLabel::INTERNAL,
             None,
         )
         .await?;
@@ -144,7 +201,7 @@ impl MemoryCortex {
             "belief_decision",
             &decision.belief_id.to_string(),
             &payload,
-            "Internal",
+            TaintLabel::INTERNAL,
             None,
         )
         .await?;
@@ -160,7 +217,7 @@ impl MemoryCortex {
             "goal_adaptation",
             &decision.goal_id.to_string(),
             &payload,
-            "Internal",
+            TaintLabel::INTERNAL,
             None,
         )
         .await?;
@@ -187,7 +244,7 @@ impl MemoryCortex {
         memory: crate::memory_semantic::SemanticMemory,
     ) -> anyhow::Result<()> {
         let content = serde_json::to_string(&memory)?;
-        self.store_memory("semantic", &memory.lesson, &content, "Internal", None).await?;
+        self.store_memory("semantic", &memory.lesson, &content, TaintLabel::INTERNAL, None).await?;
         Ok(())
     }
 

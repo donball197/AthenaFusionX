@@ -13,6 +13,8 @@ use crate::{
     shared_state::VmoState,
     world_model::WorldModel,
 };
+use nexus_substrate::episode::EpisodeContext;
+use nexus_substrate::taint::TaintLabel;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -91,6 +93,17 @@ pub async fn send_task(
         let node = graph.nodes.get(&task_id).unwrap().clone();
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[SCHEDULER] Dispatching DAG Node: {}\nvia Subagent: {}", node.objective, node.required_agent)}).to_string());
 
+        // Structured DAG telemetry: this is the actual production execution boundary.
+        let _ = ctx.tx.send(
+            serde_json::json!({
+                "type": "DAG_STATE",
+                "id": task_id,
+                "objective": node.objective,
+                "status": "RUNNING"
+            })
+            .to_string(),
+        );
+
         let mut task_context_history = String::new();
 
         if node.deps.is_empty() {
@@ -138,11 +151,12 @@ pub async fn send_task(
         let lineage_mode = if lineage_inherit_only { "LINEAGE MODE: INHERIT_ONLY\n" } else { "" };
 
         let combined_mission = format!(
-            "{}OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nMANDATORY NODE SUCCESS CRITERIA:\n{}\n\nNODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete. Cortex belief alone is never sufficient.\n\nLINEAGE CONTEXT:\n{}",
+            "{}OBJECTIVE: {}\nASSIGNED ROLE: {}\n\nMANDATORY NODE SUCCESS CRITERIA:\n{}\n\nNODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete. Cortex belief alone is never sufficient.\n\nROOT DIRECTIVE CONTEXT:\n{}\n\nLINEAGE CONTEXT:\n{}",
             lineage_mode,
             node.objective,
             node.required_agent,
             success_contract,
+            raw_directive,
             task_context_history
         );
 
@@ -154,6 +168,16 @@ pub async fn send_task(
             ctx.dist.clone(),
             ctx.tx.clone(),
         );
+
+        // Episode context for this DAG node. plan_id and task_id
+        // are known here; session_id is minted inside
+        // ignite_with_evidence.
+        loop_cortex.set_episode(nexus_substrate::episode::EpisodeContext {
+            plan_id: Some(plan_id.clone()),
+            task_id: Some(task_id.clone()),
+            session_id: None,
+            mission_id: None,
+        });
 
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX] Igniting Epistemic Session for Node {}", task_id)}).to_string());
 
@@ -168,6 +192,15 @@ pub async fn send_task(
             String::new()
         };
 
+        // Completion authorization is a two-stage boundary:
+        //
+        //   1. Cortex must explicitly propose completion.
+        //   2. The deterministic verifier must independently prove every
+        //      success criterion from physical evidence.
+        //
+        // Cortex exhaustion/failure is never eligible for stage 2.
+        let cortex_proposed_completion: bool;
+
         let execution_evidence = match loop_cortex
             .ignite_with_evidence(
                 &combined_mission,
@@ -176,6 +209,7 @@ pub async fn send_task(
             .await
         {
             Ok(CortexOutcome::CompletionProposed { belief, evidence }) => {
+                cortex_proposed_completion = true;
                 // The Cortex/OutcomeVerifier has already authorized this node
                 // completion. Reflection learns from the VERIFIED result;
                 // reflection itself does not authorize completion.
@@ -217,12 +251,18 @@ pub async fn send_task(
 
                         match ctx
                             .memory
-                            .store_memory(
+                            .store_memory_with_episode(
                                 "ReflectionEngine",
                                 &node.objective,
                                 &lesson_text,
-                                "Internal",
+                                TaintLabel::INTERNAL,
                                 emb,
+                                &EpisodeContext {
+                                    plan_id: Some(plan_id.clone()),
+                                    task_id: Some(task_id.clone()),
+                                    session_id: None,
+                                    mission_id: None,
+                                },
                             )
                             .await
                         {
@@ -247,9 +287,11 @@ pub async fn send_task(
                 )
             }
             Ok(CortexOutcome::TurnsExhausted { best_belief, evidence }) => {
-                // Cortex budget exhaustion is diagnostic telemetry only.
-                // The deterministic DAG verifier remains authoritative:
-                // physical success evidence may still prove this node complete.
+                // Cortex exhaustion is a hard completion boundary.
+                // Partial action evidence must never promote an exhausted
+                // Cortex session into a completed DAG node.
+                cortex_proposed_completion = false;
+
                 let outcome = MissionOutcome {
                     mission_id: uuid::Uuid::parse_str(&task_id)
                         .unwrap_or_else(|_| uuid::Uuid::new_v4()),
@@ -276,12 +318,18 @@ pub async fn send_task(
                         .ok();
                         let _ = ctx
                             .memory
-                            .store_memory(
+                            .store_memory_with_episode(
                                 "ReflectionEngine",
                                 &node.objective,
                                 &lesson_text,
-                                "Internal",
+                                TaintLabel::INTERNAL,
                                 emb,
+                                &EpisodeContext {
+                                    plan_id: Some(plan_id.clone()),
+                                    task_id: Some(task_id.clone()),
+                                    session_id: None,
+                                    mission_id: None,
+                                },
                             )
                             .await;
                     }
@@ -290,6 +338,8 @@ pub async fn send_task(
                 format!("[DAG NODE INCOMPLETE] Objective: {}\nBest belief: {:.2}\nPartial evidence:\n{}", node.objective, best_belief, evidence)
             }
             Err(e) => {
+                // A Cortex failure cannot authorize DAG completion.
+                cortex_proposed_completion = false;
                 mission_had_failures = true;
                 let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[CORTEX FRACTURE] Node {} loop failed: {}", task_id, e)}).to_string());
                 format!("[DAG NODE FAILED] Ancestor node '{}' failed: {}", node.objective, e)
@@ -299,20 +349,34 @@ pub async fn send_task(
         task_outputs.insert(task_id.clone(), execution_evidence.clone());
         world_model.record_node_evidence(&task_id, &node.objective, &execution_evidence);
 
-        // Cortex CompletionProposed is NOT authoritative.
-        // A DAG node becomes Completed only after the deterministic verifier
-        // confirms every explicit success criterion against physical evidence.
+        // Cortex CompletionProposed is a REQUIRED precondition, not final
+        // authority. The deterministic verifier remains the final authority.
+        //
+        // This prevents TurnsExhausted/INCOMPLETE evidence from being
+        // promoted to Completed merely because partial exploration emitted
+        // individually valid-looking evidence markers.
         let verification_criteria = if lineage_inherit_only {
             vec!["DAG_LINEAGE_OK".to_string()]
         } else {
             node.success_criteria.clone()
         };
 
-        let node_verification = crate::orchestrator_v2::verifier::Verifier::verify_contract(
-            &task_id,
-            &execution_evidence,
-            &verification_criteria,
-        );
+        let node_verification = if !cortex_proposed_completion {
+            crate::orchestrator_v2::verifier::VerificationResult::Failure(
+                "Cortex did not propose completion. Node completion is not authorized.".to_string(),
+            )
+        } else if verification_criteria.is_empty() {
+            crate::orchestrator_v2::verifier::VerificationResult::Failure(
+                "Node has no explicit success criteria. Independent completion proof is unavailable."
+                    .to_string(),
+            )
+        } else {
+            crate::orchestrator_v2::verifier::Verifier::verify_contract(
+                &task_id,
+                &execution_evidence,
+                &verification_criteria,
+            )
+        };
 
         let node_verification_succeeded = matches!(
             node_verification,
@@ -327,6 +391,17 @@ pub async fn send_task(
                     graph_node.status = crate::orchestrator_v2::task_graph::TaskStatus::Completed;
                     graph_node.output_evidence = Some(execution_evidence.clone());
                 }
+
+                // Structured DAG telemetry mirrors the authoritative production mutation.
+                let _ = ctx.tx.send(
+                    serde_json::json!({
+                        "type": "DAG_STATE",
+                        "id": task_id,
+                        "objective": node.objective,
+                        "status": "COMPLETED"
+                    })
+                    .to_string(),
+                );
 
                 let _ = ctx.tx.send(
                     serde_json::json!({
@@ -355,6 +430,17 @@ pub async fn send_task(
                     ));
                 }
 
+                // Structured DAG telemetry mirrors the authoritative production mutation.
+                let _ = ctx.tx.send(
+                    serde_json::json!({
+                        "type": "DAG_STATE",
+                        "id": task_id,
+                        "objective": node.objective,
+                        "status": "FAILED"
+                    })
+                    .to_string(),
+                );
+
                 let _ = ctx.tx.send(
                     serde_json::json!({
                         "type": "LOG_EVENT",
@@ -368,10 +454,10 @@ pub async fn send_task(
             }
         }
 
-        // Deterministic verifier authority:
-        // Cortex exhaustion/incomplete markers are diagnostic telemetry.
-        // A physically evidenced node is allowed to complete when the
-        // deterministic success contract has been satisfied.
+        // Completion requires BOTH authorization stages:
+        //   Cortex CompletionProposed + deterministic contract verification.
+        //
+        // Any Cortex exhaustion/failure therefore reaches this halt path.
         if !node_verification_succeeded {
             let _ = ctx.tx.send(
                 serde_json::json!({
@@ -390,7 +476,8 @@ pub async fn send_task(
     // WHOLE-DAG COMPLETION GATE:
     // A successful Cortex node is only a subgoal completion.
     // The overall DAG is complete only when every planned node completed.
-    if mission_had_failures || completed_node_count != planned_node_count {
+    if mission_had_failures || planned_node_count == 0 || completed_node_count != planned_node_count
+    {
         let _ = ctx.tx.send(
             serde_json::json!({
                 "type": "LOG_EVENT",

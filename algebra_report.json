@@ -1,0 +1,68 @@
+{
+  "all_commutative": true,
+  "all_commutative_failures": [],
+  "all_idempotent": true,
+  "all_idempotent_failures": [],
+  "rc_absorbing": true,
+  "rc_absorbing_failures": [],
+  "ordering_verified": true,
+  "ordering_failures": [],
+  "any_table": {
+    "SC": {
+      "SC": "SC",
+      "SP": "SC",
+      "RC": "SC",
+      "RP": "SC",
+      "NP": "SC",
+      "NN": "SC"
+    },
+    "SP": {
+      "SC": "SC",
+      "SP": "SP",
+      "RC": "SP",
+      "RP": "SP",
+      "NP": "SP",
+      "NN": "SP"
+    },
+    "RC": {
+      "SC": "SC",
+      "SP": "SP",
+      "RC": "RC",
+      "RP": "RP",
+      "NP": "NP",
+      "NN": "NN"
+    },
+    "RP": {
+      "SC": "SC",
+      "SP": "SP",
+      "RC": "RP",
+      "RP": "RP",
+      "NP": "NP",
+      "NN": "NN"
+    },
+    "NP": {
+      "SC": "SC",
+      "SP": "SP",
+      "RC": "NP",
+      "RP": "NP",
+      "NP": "NP",
+      "NN": "NN"
+    },
+    "NN": {
+      "SC": "SC",
+      "SP": "SP",
+      "RC": "NN",
+      "RP": "NN",
+      "NP": "NN",
+      "NN": "NN"
+    }
+  },
+  "any_commutative": true,
+  "any_commutative_failures": [],
+  "any_idempotent": true,
+  "any_idempotent_failures": [],
+  "sc_absorbing": true,
+  "sc_absorbing_failures": [],
+  "duality_verified": true,
+  "duality_failures": []
+}

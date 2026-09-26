@@ -454,19 +454,14 @@ impl CorticalLoop {
                     );
                 }
 
-                let objective_lower = session.contract.objective.to_lowercase();
-                let is_analysis_node = objective_lower.contains("verify")
-                    || objective_lower.contains("compute")
-                    || objective_lower.contains("check")
-                    || objective_lower.contains("analyze")
-                    || objective_lower.contains("derive");
-
-                let has_reasoning_conclusion = session.local_evidence.contains("[PROPOSITION]")
-                    || session.local_evidence.contains("[HALT]");
+                let requires_semantic_verification =
+                    crate::completion_engine::requires_semantic_verification(
+                        &session.contract.objective,
+                    );
 
                 if deterministic_contract_satisfied
                     && compile_remediation_resolved
-                    && (!is_analysis_node || has_reasoning_conclusion)
+                    && !requires_semantic_verification
                 {
                     self.log(
                         "\x1b[1;36m>> [CORTEX TERMINAL] Physical success contract already satisfied. No additional cognitive turn required.\x1b[0m"
@@ -525,9 +520,14 @@ impl CorticalLoop {
                         1.0,
                     );
 
-                if contract_satisfied_by_evidence {
+                let requires_semantic_verification =
+                    crate::completion_engine::requires_semantic_verification(
+                        &session.contract.objective,
+                    );
+
+                if contract_satisfied_by_evidence && !requires_semantic_verification {
                     self.log(
-                        "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated evidence already satisfies the contract. Node complete.\x1b[0m"
+                        "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated physical evidence already satisfies the contract. Node complete.\x1b[0m"
                             .to_string(),
                     );
                     return Ok(CortexOutcome::CompletionProposed {
@@ -625,9 +625,14 @@ impl CorticalLoop {
                             1.0,
                         );
 
-                    if contract_satisfied_by_evidence {
+                    let requires_semantic_verification =
+                        crate::completion_engine::requires_semantic_verification(
+                            &session.contract.objective,
+                        );
+
+                    if contract_satisfied_by_evidence && !requires_semantic_verification {
                         self.log(
-                            "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated evidence already satisfies the contract. Node complete.\x1b[0m"
+                            "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated physical evidence already satisfies the contract. Node complete.\x1b[0m"
                                 .to_string(),
                         );
                         return Ok(CortexOutcome::CompletionProposed {
@@ -1244,7 +1249,12 @@ impl CorticalLoop {
                     )
                 );
 
-            if command_only_contract {
+            let requires_semantic_verification =
+                crate::completion_engine::requires_semantic_verification(
+                    &session.contract.objective,
+                );
+
+            if command_only_contract && !requires_semantic_verification {
                 self.log(
                     "\x1b[1;36m>> [CORTEX TERMINAL] Pure command contract satisfied by physical CMD_OK evidence. No additional model turn required. Node complete.\x1b[0m"
                         .to_string(),
@@ -2755,7 +2765,16 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                         Some(crate::completion_engine::CompletionCondition::CommandExecutionVerified { .. })
                     );
 
-                if is_halt_action && deterministic_contract_satisfied && command_only_contract {
+                let requires_semantic_verification =
+                    crate::completion_engine::requires_semantic_verification(
+                        &session.contract.objective,
+                    );
+
+                if is_halt_action
+                    && deterministic_contract_satisfied
+                    && command_only_contract
+                    && !requires_semantic_verification
+                {
                     self.log(
                         "\x1b[1;36m>> [CORTEX TERMINAL] Deterministic command contract satisfied by physical CMD_OK evidence. No additional model verification required. Node complete.\x1b[0m"
                             .to_string(),

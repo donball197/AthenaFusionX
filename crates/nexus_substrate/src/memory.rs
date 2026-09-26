@@ -1,3 +1,29 @@
+use crate::episode::{EpisodeContext, RecallScope};
+use crate::taint::TaintLabel;
+/// Non-silent, idempotent column add. Checks PRAGMA table_info
+/// first; runs ALTER only if the column is absent. Every error
+/// is propagated: a security migration must not be swallowed
+/// by `.ok()`.
+async fn ensure_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), sqlx::Error> {
+    let pragma = format!("PRAGMA table_info({})", table);
+    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    let exists = rows.iter().any(|r| {
+        let name: String = r.get("name");
+        name == column
+    });
+    if exists {
+        return Ok(());
+    }
+    let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, definition);
+    sqlx::query(&sql).execute(pool).await?;
+    Ok(())
+}
+
 use nexus_search::VectorVault;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -5,13 +31,21 @@ use sqlx::{sqlite::SqlitePoolOptions, Executor, FromRow, Row, SqlitePool};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Parse a stored taint label, accepting legacy string values.
+pub fn parse_taint(s: &str) -> TaintLabel {
+    TaintLabel::from_storage(s)
+        .or_else(|| TaintLabel::from_legacy(s))
+        .unwrap_or(TaintLabel::UNTRUSTED_PUBLIC)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentMemory {
     pub id: i64,
     pub origin: String,
     pub directive: String,
     pub result: String,
-    pub taint_label: String, // <-- LATTICE TAINT ADDED
+    pub taint_label: TaintLabel,
+    pub episode: EpisodeContext,
     pub timestamp: String,
 }
 
@@ -109,7 +143,7 @@ impl MemoryPalace {
                     directive TEXT NOT NULL,
                     result TEXT NOT NULL,
                     embedding TEXT,
-                    taint_label TEXT NOT NULL DEFAULT 'Untrusted',
+                    taint_label TEXT NOT NULL DEFAULT 'I:0,S:0,E:0',
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 );",
             )
@@ -117,9 +151,25 @@ impl MemoryPalace {
 
         // ⚡ SAFE SCHEMA MIGRATION: Upgrades existing DBs dynamically
         self.pool
-            .execute("ALTER TABLE neural_context ADD COLUMN taint_label TEXT NOT NULL DEFAULT 'Untrusted';")
+            .execute("ALTER TABLE neural_context ADD COLUMN taint_label TEXT NOT NULL DEFAULT 'I:0,S:0,E:0';")
             .await
             .ok();
+
+        // Migrate legacy string labels to the packed encoding.
+        self.pool
+            .execute(
+                "UPDATE neural_context\n                 SET taint_label = CASE taint_label\n                     WHEN 'Untrusted' THEN 'I:0,S:0,E:0'\n                     WHEN 'Observed'  THEN 'I:1,S:1,E:0'\n                     WHEN 'Mutated'   THEN 'I:1,S:1,E:1'\n                     WHEN 'Internal'  THEN 'I:2,S:1,E:2'\n                     ELSE taint_label\n                 END\n                 WHERE taint_label NOT LIKE 'I:%';",
+            )
+            .await
+            .ok();
+
+        // Episode provenance columns. Nullable: legacy rows have
+        // NULL, meaning "episode unknown". No existing row is
+        // modified or deleted by this migration.
+        ensure_column(&self.pool, "neural_context", "plan_id", "TEXT NULL").await?;
+        ensure_column(&self.pool, "neural_context", "task_id", "TEXT NULL").await?;
+        ensure_column(&self.pool, "neural_context", "session_id", "TEXT NULL").await?;
+        ensure_column(&self.pool, "neural_context", "mission_id", "TEXT NULL").await?;
 
         self.pool
             .execute(
@@ -151,6 +201,13 @@ impl MemoryPalace {
                 );",
             )
             .await?;
+        ensure_column(
+            &self.pool,
+            "cognition_provenance",
+            "taint_label",
+            "TEXT NOT NULL DEFAULT 'I:2,S:1,E:2'",
+        )
+        .await?;
 
         self.pool
             .execute(
@@ -174,20 +231,51 @@ impl MemoryPalace {
             .await
             .ok();
 
+        ensure_column(
+            &self.pool,
+            "plan_runs",
+            "taint_label",
+            "TEXT NOT NULL DEFAULT 'I:2,S:1,E:2'",
+        )
+        .await?;
+
         Ok(())
     }
 
+    /// Backwards-compatible entry point. Episode defaults to
+    /// all-NULL ("episode unknown"). Prefer store_memory_with_episode
+    /// at call sites that know their plan/task/session/mission.
     pub async fn store_memory(
         &self,
         origin: &str,
         directive: &str,
         result: &str,
-        taint_label: &str, // <-- LATTICE TAINT ADDED
+        taint_label: TaintLabel,
         embedding: Option<Vec<f32>>,
+    ) -> Result<(), sqlx::Error> {
+        self.store_memory_with_episode(
+            origin,
+            directive,
+            result,
+            taint_label,
+            embedding,
+            &EpisodeContext::default(),
+        )
+        .await
+    }
+
+    pub async fn store_memory_with_episode(
+        &self,
+        origin: &str,
+        directive: &str,
+        result: &str,
+        taint_label: TaintLabel,
+        embedding: Option<Vec<f32>>,
+        episode: &EpisodeContext,
     ) -> Result<(), sqlx::Error> {
         // Deduplication: Check if most recent entry for (origin, directive) has identical content
         let existing = sqlx::query(
-            "SELECT id, result FROM neural_context WHERE origin = ? AND directive = ? ORDER BY id DESC LIMIT 1",
+            "SELECT id, result, taint_label FROM neural_context WHERE origin = ? AND directive = ? ORDER BY id DESC LIMIT 1",
         )
         .bind(origin)
         .bind(directive)
@@ -198,6 +286,16 @@ impl MemoryPalace {
             let prev_result: String = row.get("result");
             if prev_result == result {
                 let existing_id: i64 = row.get("id");
+                let prev_raw: String = row.get("taint_label");
+                let prev = parse_taint(&prev_raw);
+                let merged = prev.join(taint_label);
+                if merged != prev {
+                    sqlx::query("UPDATE neural_context SET taint_label = ? WHERE id = ?")
+                        .bind(merged.to_storage())
+                        .bind(existing_id)
+                        .execute(&self.pool)
+                        .await?;
+                }
                 sqlx::query("UPDATE neural_context SET timestamp = CURRENT_TIMESTAMP WHERE id = ?")
                     .bind(existing_id)
                     .execute(&self.pool)
@@ -219,13 +317,17 @@ impl MemoryPalace {
         let mut tx = self.pool.begin().await?;
 
         let res = sqlx::query(
-            "INSERT INTO neural_context (origin, directive, result, embedding, taint_label) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO neural_context (origin, directive, result, embedding, taint_label, plan_id, task_id, session_id, mission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(origin)
         .bind(directive)
         .bind(result)
         .bind(emb_str)
-        .bind(taint_label)
+        .bind(taint_label.to_storage())
+        .bind(episode.plan_id.as_deref())
+        .bind(episode.task_id.as_deref())
+        .bind(episode.session_id.as_deref())
+        .bind(episode.mission_id.as_deref())
         .execute(&mut *tx)
         .await?;
         let row_id = res.last_insert_rowid();
@@ -262,7 +364,7 @@ impl MemoryPalace {
     }
 
     pub async fn fetch_all(&self) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp FROM neural_context ORDER BY id DESC LIMIT 50")
+        let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp, plan_id, task_id, session_id, mission_id FROM neural_context ORDER BY id DESC LIMIT 50")
             .fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -271,7 +373,13 @@ impl MemoryPalace {
                 origin: row.get("origin"),
                 directive: row.get("directive"),
                 result: row.get("result"),
-                taint_label: row.get("taint_label"),
+                taint_label: parse_taint(&row.get::<String, _>("taint_label")),
+                episode: EpisodeContext {
+                    plan_id: row.get("plan_id"),
+                    task_id: row.get("task_id"),
+                    session_id: row.get("session_id"),
+                    mission_id: row.get("mission_id"),
+                },
                 timestamp: row.get("timestamp"),
             })
             .collect())
@@ -306,7 +414,7 @@ impl MemoryPalace {
         }
 
         let rows = sqlx::query(
-            "SELECT n.id, n.origin, n.directive, n.result, n.taint_label, n.timestamp              FROM neural_context n              JOIN memory_search m ON n.id = m.rowid              WHERE memory_search MATCH ?              ORDER BY rank              LIMIT 10",
+            "SELECT n.id, n.origin, n.directive, n.result, n.taint_label, n.timestamp, n.plan_id, n.task_id, n.session_id, n.mission_id              FROM neural_context n              JOIN memory_search m ON n.id = m.rowid              WHERE memory_search MATCH ?              ORDER BY rank              LIMIT 10",
         )
         .bind(&fts_query)
         .fetch_all(&self.pool)
@@ -319,10 +427,51 @@ impl MemoryPalace {
                 origin: row.get("origin"),
                 directive: row.get("directive"),
                 result: row.get("result"),
-                taint_label: row.get("taint_label"),
+                taint_label: parse_taint(&row.get::<String, _>("taint_label")),
+                episode: EpisodeContext {
+                    plan_id: row.get("plan_id"),
+                    task_id: row.get("task_id"),
+                    session_id: row.get("session_id"),
+                    mission_id: row.get("mission_id"),
+                },
                 timestamp: row.get("timestamp"),
             })
             .collect())
+    }
+
+    /// Taint- and episode-scoped recall.
+    ///
+    /// Scope gates episode eligibility; policy gates taint.
+    /// Retrieval slack of 4x accounts for entries filtered out
+    /// by either gate.
+    pub async fn semantic_search_scoped(
+        &self,
+        query_vec: &[f32],
+        limit: usize,
+        scope: RecallScope,
+        current: &EpisodeContext,
+        policy: crate::taint::FlowPolicy,
+    ) -> anyhow::Result<Vec<AgentMemory>> {
+        let candidates = self.semantic_search(query_vec, limit.saturating_mul(4)).await?;
+        let mut admitted = Vec::with_capacity(limit);
+        for m in candidates {
+            if m.taint_label.flow_to(policy).is_err() {
+                continue;
+            }
+            let eligible = match scope {
+                RecallScope::ExplicitCrossEpisode => true,
+                RecallScope::CurrentEpisode => current.same_session(&m.episode),
+                RecallScope::CurrentMission => current.same_mission(&m.episode),
+            };
+            if !eligible {
+                continue;
+            }
+            admitted.push(m);
+            if admitted.len() >= limit {
+                break;
+            }
+        }
+        Ok(admitted)
     }
 
     pub async fn semantic_search(
@@ -345,7 +494,7 @@ impl MemoryPalace {
         let mut memories = Vec::new();
         for id in matched_ids {
             let row = sqlx::query(
-                "SELECT id, origin, directive, result, taint_label, timestamp FROM neural_context WHERE id = ?",
+                "SELECT id, origin, directive, result, taint_label, timestamp, plan_id, task_id, session_id, mission_id FROM neural_context WHERE id = ?",
             )
             .bind(id as i64)
             .fetch_optional(&self.pool)
@@ -357,7 +506,13 @@ impl MemoryPalace {
                     origin: r.get("origin"),
                     directive: r.get("directive"),
                     result: r.get("result"),
-                    taint_label: r.get("taint_label"),
+                    taint_label: parse_taint(&r.get::<String, _>("taint_label")),
+                    episode: EpisodeContext {
+                        plan_id: r.get("plan_id"),
+                        task_id: r.get("task_id"),
+                        session_id: r.get("session_id"),
+                        mission_id: r.get("mission_id"),
+                    },
                     timestamp: r.get("timestamp"),
                 });
             }
@@ -377,7 +532,7 @@ impl MemoryPalace {
     }
 
     pub async fn fetch_random_strands(&self, limit: i64) -> Result<Vec<AgentMemory>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp FROM neural_context ORDER BY RANDOM() LIMIT ?")
+        let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp, plan_id, task_id, session_id, mission_id FROM neural_context ORDER BY RANDOM() LIMIT ?")
             .bind(limit).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -386,7 +541,13 @@ impl MemoryPalace {
                 origin: row.get("origin"),
                 directive: row.get("directive"),
                 result: row.get("result"),
-                taint_label: row.get("taint_label"),
+                taint_label: parse_taint(&row.get::<String, _>("taint_label")),
+                episode: EpisodeContext {
+                    plan_id: row.get("plan_id"),
+                    task_id: row.get("task_id"),
+                    session_id: row.get("session_id"),
+                    mission_id: row.get("mission_id"),
+                },
                 timestamp: row.get("timestamp"),
             })
             .collect())

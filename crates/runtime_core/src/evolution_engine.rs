@@ -3,6 +3,7 @@ use crate::memory_cortex::MemoryCortex;
 use crate::wasm_forge::WasmForge;
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
+use nexus_substrate::taint::TaintLabel;
 use nexus_substrate::vector_bridge;
 use reqwest::Client;
 use std::sync::Arc;
@@ -54,7 +55,14 @@ impl EvolutionEngine {
 
             // Store in Memory Palace
             let mem = memory;
-            mem.store_memory("EvolutionEngine", objective, &insight, "Internal", embedding).await?;
+            mem.store_memory(
+                "EvolutionEngine",
+                objective,
+                &insight,
+                TaintLabel::INTERNAL,
+                embedding,
+            )
+            .await?;
 
             tracing::info!("\x1b[1;36m>> [EVOLUTION] Genetic material successfully committed to VectorVault.\x1b[0m");
         } else {

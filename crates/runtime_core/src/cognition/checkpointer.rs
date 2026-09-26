@@ -1,6 +1,26 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
+
+async fn ensure_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), sqlx::Error> {
+    let pragma = format!("PRAGMA table_info({})", table);
+    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    let exists = rows.iter().any(|r| {
+        let name: String = r.get("name");
+        name == column
+    });
+    if exists {
+        return Ok(());
+    }
+    let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, definition);
+    sqlx::query(&sql).execute(pool).await?;
+    Ok(())
+}
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +62,15 @@ impl SqliteCheckpointer {
         )
         .execute(&self.pool)
         .await?;
+
+        ensure_column(
+            &self.pool,
+            "state_checkpoints",
+            "taint_label",
+            "TEXT NOT NULL DEFAULT 'I:2,S:1,E:2'",
+        )
+        .await?;
+
         Ok(())
     }
 
