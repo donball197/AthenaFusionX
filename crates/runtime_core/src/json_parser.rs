@@ -330,12 +330,7 @@ mod tests {
         );
 
         match action {
-            AgentAction::ReadFileChunk {
-                path,
-                start_line,
-                max_lines,
-                ..
-            } => {
+            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
                 assert!(path.ends_with("cortical_loop.rs"));
                 assert_eq!(start_line, 150);
                 assert_eq!(max_lines, 51, "end_line 200 inclusive - start 150 + 1");

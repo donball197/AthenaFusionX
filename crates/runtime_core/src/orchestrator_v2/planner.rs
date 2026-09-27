@@ -473,28 +473,14 @@ OUTPUT ONLY VALID JSON with this exact structure:
             ],
         );
 
-        let software_path = [
-            ".rs",
-            ".toml",
-            ".yaml",
-            ".yml",
-            ".json",
-            "src/",
-            "crates/",
-            "apps/",
-            "cargo.toml",
-        ]
-        .iter()
-        .any(|term| lower.contains(term));
+        let software_path =
+            [".rs", ".toml", ".yaml", ".yml", ".json", "src/", "crates/", "apps/", "cargo.toml"]
+                .iter()
+                .any(|term| lower.contains(term));
 
-        let software_phrase = [
-            "lookup table",
-            "hash table",
-            "routing table",
-            "state machine",
-        ]
-        .iter()
-        .any(|term| lower.contains(term));
+        let software_phrase = ["lookup table", "hash table", "routing table", "state machine"]
+            .iter()
+            .any(|term| lower.contains(term));
 
         let software_artifact = software_word || software_path || software_phrase;
 
@@ -507,15 +493,9 @@ OUTPUT ONLY VALID JSON with this exact structure:
         // must not be re-derived by a command whose output merely reproduces
         // them. The supply verb keeps a genuinely requested derivation
         // ("derive the truth table") on the fast path.
-        let table_phrase = [
-            "all table",
-            "any table",
-            "truth table",
-            "full 6x6",
-            "6x6 table",
-        ]
-        .iter()
-        .any(|term| lower.contains(term));
+        let table_phrase = ["all table", "any table", "truth table", "full 6x6", "6x6 table"]
+            .iter()
+            .any(|term| lower.contains(term));
 
         let supply_verb = ["supplied", "provided", "given", "shown", "below"]
             .iter()
@@ -671,8 +651,7 @@ mod tests {
 
     #[test]
     fn ordinary_verify_directive_is_not_treated_as_mathematical_derivation() {
-        let directive =
-            "Verify the router source contract using read-only source inspection.";
+        let directive = "Verify the router source contract using read-only source inspection.";
 
         assert!(!PlannerAgent::is_mathematical_derivation_directive(directive));
     }
@@ -717,16 +696,14 @@ mod tests {
 
     #[test]
     fn requested_truth_table_still_takes_the_math_fast_path() {
-        let directive =
-            "Derive the six-state ALL/ANY truth table and verify its duality.";
+        let directive = "Derive the six-state ALL/ANY truth table and verify its duality.";
 
         assert!(PlannerAgent::is_mathematical_derivation_directive(directive));
     }
 
     #[test]
     fn mathematical_derivation_creates_exact_deterministic_cmd_strategy() {
-        let directive =
-            "Verify the six-state ALL/ANY algebra and compute the full 6x6 ANY table.";
+        let directive = "Verify the six-state ALL/ANY algebra and compute the full 6x6 ANY table.";
 
         let graph = PlannerAgent::create_mathematical_verification_graph(directive);
         let node = &graph.nodes["task_1"];
@@ -737,9 +714,8 @@ mod tests {
         );
         assert_eq!(node.success_criteria, vec!["CMD_OK".to_string()]);
 
-        let command =
-            crate::completion_engine::extract_required_command(&node.objective)
-                .expect("mathematical node must expose an exact executable command");
+        let command = crate::completion_engine::extract_required_command(&node.objective)
+            .expect("mathematical node must expose an exact executable command");
 
         assert!(command.starts_with("python3 -c '"));
         assert!(command.contains("ALL TABLE"));
@@ -758,19 +734,16 @@ mod tests {
 
         assert_eq!(strategies, vec![format!("execute_command:{}", command)]);
 
-        let inferred =
-            crate::completion_engine::SubgoalCompletionEngine::infer_contract(
-                &node.id,
-                &node.objective,
-            );
+        let inferred = crate::completion_engine::SubgoalCompletionEngine::infer_contract(
+            &node.id,
+            &node.objective,
+        );
 
         assert_eq!(
             inferred.conditions,
-            vec![
-                crate::completion_engine::CompletionCondition::CommandExecutionVerified {
-                    command,
-                }
-            ],
+            vec![crate::completion_engine::CompletionCondition::CommandExecutionVerified {
+                command,
+            }],
             "mathematical execution node must require verification of the exact command"
         );
     }

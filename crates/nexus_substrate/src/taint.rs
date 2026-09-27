@@ -30,17 +30,12 @@ pub enum Secrecy {
     Secret = 2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Effect {
     Observed,
     Mutated,
+    #[default]
     Internal,
-}
-
-impl Default for Effect {
-    fn default() -> Self {
-        Effect::Internal
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

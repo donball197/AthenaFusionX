@@ -186,9 +186,31 @@ impl Verifier {
                 // Without this binding, literal text "[CMD_OK]" appearing in
                 // a file that was read into evidence (via [READ_OK]) would
                 // satisfy the criterion without any command having run.
+                //
+                // The original check required the Status line to be the
+                // LITERAL NEXT line after [CMD_OK], which assumes a
+                // single-line command. The executor's format string embeds
+                // command.trim() verbatim before the Status line, so a
+                // multi-line command (e.g. python3 -c with a multi-line
+                // script) pushes Status several lines further down.
+                // Confirmed root cause (2026-09-26): the ALL/ANY duality
+                // mission's verification Python script executed successfully
+                // (STDOUT confirmed all checks passed) but was rejected with
+                // "Mandatory success criterion not satisfied: CMD_OK" because
+                // the line immediately after [CMD_OK] was the script's own
+                // first line of source, not "Status: exit status: 0".
+                //
+                // Fix: scan forward from [CMD_OK] for the Status line,
+                // bounded by the next bracketed marker so a Status line
+                // belonging to a later, unrelated command block can't be
+                // matched instead.
                 let lines: Vec<&str> = evidence.lines().collect();
-                lines.windows(2).any(|w| {
-                    w[0].starts_with("[CMD_OK]") && w[1].trim() == "Status: exit status: 0"
+                lines.iter().enumerate().any(|(i, line)| {
+                    line.starts_with("[CMD_OK]")
+                        && lines[i + 1..]
+                            .iter()
+                            .take_while(|l| !l.starts_with('['))
+                            .any(|l| l.trim() == "Status: exit status: 0")
                 })
             } else if criterion == "PATCH_FUNCTION_OK" {
                 evidence.contains("[PATCH_FUNCTION_OK]")

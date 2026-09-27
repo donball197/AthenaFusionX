@@ -124,7 +124,44 @@ impl OutcomeVerifier {
                 CompletionCondition::PatchMarkerAcquired => {
                     crate::evidence_markers::has_patch_satisfied_marker(local_evidence)
                 }
-                CompletionCondition::CommandMarkerAcquired => local_evidence.contains("[CMD_OK]"),
+                CompletionCondition::CommandMarkerAcquired => {
+                    // A bare "[CMD_OK]" substring is not proof: mission text,
+                    // quoted source, and tool output can all contain the
+                    // literal marker (see the spoof warning in
+                    // orchestrator_v2's verifier.rs). Authorize only a real
+                    // execution record: a line-anchored [CMD_OK] whose record
+                    // carries a Status of exit status: 0 -- the format the
+                    // executor emits. The legacy short form
+                    // "[CMD_OK] Status: exit status: 0" parses through the
+                    // same path as the long
+                    // "[CMD_OK] Command: ...\nStatus: exit status: 0" form.
+                    let lines: Vec<&str> = local_evidence.lines().collect();
+                    let mut authorized = false;
+                    for (i, line) in lines.iter().enumerate() {
+                        let t = line.trim_start();
+                        let Some(rest) = t.strip_prefix("[CMD_OK]") else {
+                            continue;
+                        };
+                        let inline = rest
+                            .strip_prefix(" Status:")
+                            .or_else(|| rest.strip_prefix("Status:"));
+                        let mut ok = inline
+                            .map(|s| s.trim().ends_with("exit status: 0"))
+                            .unwrap_or(false);
+                        if !ok {
+                            if let Some(next) = lines.get(i + 1) {
+                                if let Some(s) = next.trim().strip_prefix("Status:") {
+                                    ok = s.trim().ends_with("exit status: 0");
+                                }
+                            }
+                        }
+                        if ok {
+                            authorized = true;
+                            break;
+                        }
+                    }
+                    authorized
+                }
                 CompletionCondition::LineageEvidenceAcquired => {
                     verify_lineage_provenance(local_evidence)
                 }
@@ -200,10 +237,7 @@ impl OutcomeVerifier {
             };
 
             if !met {
-                return Err(format!(
-                    "Contract condition {:?} not met in evidence.",
-                    cond
-                ));
+                return Err(format!("Contract condition {:?} not met in evidence.", cond));
             }
         }
 
@@ -215,10 +249,8 @@ impl OutcomeVerifier {
             {
                 return Ok(());
             } else {
-                return Err(
-                    "Missing verified TelemetryArtifact side-channel or execution marker."
-                        .to_string(),
-                );
+                return Err("Missing verified TelemetryArtifact side-channel or execution marker."
+                    .to_string());
             }
         }
 
@@ -404,6 +436,44 @@ mod tests {
     }
 
     #[test]
+    fn generic_cmd_ok_requires_zero_exit_status_record() {
+        // Legacy short form still authorizes.
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            "[CMD_OK] Status: exit status: 0\n",
+            1.0,
+            &[CompletionCondition::CommandMarkerAcquired],
+        ));
+
+        // Executor long form authorizes.
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            "[CMD_OK] Command: cargo test\nStatus: exit status: 0\n",
+            1.0,
+            &[CompletionCondition::CommandMarkerAcquired],
+        ));
+
+        // A failed status must not authorize.
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            "[CMD_OK] Command: cargo test\nStatus: exit status: 101\n",
+            1.0,
+            &[CompletionCondition::CommandMarkerAcquired],
+        ));
+
+        // Literal "[CMD_OK]" prose must not authorize.
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            "quoting the marker [CMD_OK] in mission text\n",
+            1.0,
+            &[CompletionCondition::CommandMarkerAcquired],
+        ));
+
+        // A bare marker with no status record must not authorize.
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            "all done [CMD_OK]\n",
+            1.0,
+            &[CompletionCondition::CommandMarkerAcquired],
+        ));
+    }
+
+    #[test]
     fn generic_cmd_ok_remains_legacy_compatible() {
         let condition = CompletionCondition::CommandMarkerAcquired;
 
@@ -426,11 +496,7 @@ mod tests {
         );
 
         let condition = CompletionCondition::LineageEvidenceAcquired;
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            &evidence,
-            1.0,
-            &[condition]
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized(&evidence, 1.0, &[condition]));
     }
 
     #[test]
@@ -448,11 +514,7 @@ mod tests {
         );
 
         let condition = CompletionCondition::LineageEvidenceAcquired;
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            &evidence,
-            1.0,
-            &[condition]
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(&evidence, 1.0, &[condition]));
     }
 
     #[test]
@@ -464,11 +526,7 @@ mod tests {
         );
 
         let condition = CompletionCondition::LineageEvidenceAcquired;
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &[condition]
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition]));
     }
 }
 
@@ -481,11 +539,7 @@ mod extraction_guards {
         let conditions = vec![CompletionCondition::ReadMarkerAcquired];
         let evidence = "[READ_OK] crates/runtime_core/src/lib.rs";
 
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &conditions
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &conditions));
     }
 
     #[test]
@@ -493,43 +547,23 @@ mod extraction_guards {
         let conditions = vec![CompletionCondition::WriteMarkerAcquired];
         let evidence = "[READ_OK] crates/runtime_core/src/lib.rs";
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &conditions
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &conditions));
     }
 
     #[test]
     fn belief_threshold_is_gated_exactly_at_boundary() {
         let conditions = vec![CompletionCondition::MinBeliefScore(0.8)];
 
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            "[READ_OK] x",
-            0.8,
-            &conditions
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized("[READ_OK] x", 0.8, &conditions));
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            "[READ_OK] x",
-            0.79,
-            &conditions
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized("[READ_OK] x", 0.79, &conditions));
     }
 
     #[test]
     fn empty_condition_fallback_requires_a_write_marker() {
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            "[WRITE_OK] out.md",
-            1.0,
-            &[]
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized("[WRITE_OK] out.md", 1.0, &[]));
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            "[READ_OK] lib.rs",
-            1.0,
-            &[]
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized("[READ_OK] lib.rs", 1.0, &[]));
     }
 
     #[test]
@@ -541,32 +575,18 @@ mod extraction_guards {
         let ok = "[CMD_OK] Command: cargo test\nStatus: exit status: 0";
         let bad = "[CMD_OK] Command: cargo test\nStatus: exit status: 101";
 
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            ok,
-            1.0,
-            &conditions
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized(ok, 1.0, &conditions));
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            bad,
-            1.0,
-            &conditions
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(bad, 1.0, &conditions));
     }
 
     #[test]
     fn path_scoped_search_satisfies_not_yet_created_path() {
-        let conditions = vec![CompletionCondition::ReadPathAcquired {
-            path: "reports/summary.md".into(),
-        }];
+        let conditions =
+            vec![CompletionCondition::ReadPathAcquired { path: "reports/summary.md".into() }];
 
-        let evidence =
-            "[SEARCH_CODE_OK] Path: reports/summary.md | Query: todo | 0 matches";
+        let evidence = "[SEARCH_CODE_OK] Path: reports/summary.md | Query: todo | 0 matches";
 
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &conditions
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &conditions));
     }
 }

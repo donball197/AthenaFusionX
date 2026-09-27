@@ -113,6 +113,34 @@ fn has_word_unnegated(text: &str, word: &str) -> bool {
     false
 }
 
+/// True when `evidence` contains a [CMD_OK] execution record whose `Command:`
+/// line matches `command` (whitespace-normalized) AND whose `Status:` line
+/// proves exit status: 0. A bare "[CMD_OK]" substring -- including literal
+/// "[CMD_OK]" text echoed inside another tool's output -- is NOT proof. This
+/// is the deterministic binding the terminal-completion shortcut in
+/// `cortical_loop.rs` must satisfy before it may complete a node without a
+/// further verification turn.
+pub(crate) fn cmd_ok_binds_command(evidence: &str, command: &str) -> bool {
+    let want = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    if want.is_empty() {
+        return false;
+    }
+    evidence.split("[CMD_OK]").skip(1).any(|block| {
+        let mut got = String::new();
+        let mut status_ok = false;
+        for line in block.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("Command:") {
+                got = rest.split_whitespace().collect::<Vec<_>>().join(" ");
+            }
+            if let Some(rest) = t.strip_prefix("Status:") {
+                status_ok = rest.trim().ends_with("exit status: 0");
+            }
+        }
+        !got.is_empty() && got == want && status_ok
+    })
+}
+
 pub(crate) fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
     words.iter().any(|w| has_word_unnegated(text, w))
 }
@@ -138,8 +166,7 @@ pub(crate) fn requires_semantic_verification(objective: &str) -> bool {
     // "check", "verify", or "compute" (for example, "Execute cargo check").
     // This mirrors infer_contract()'s command-objective precedence.
     let is_explicit_command =
-        text.strip_prefix("execute ").is_some()
-            || text.strip_prefix("run ").is_some();
+        text.strip_prefix("execute ").is_some() || text.strip_prefix("run ").is_some();
 
     if is_explicit_command && extract_required_command(&text).is_some() {
         return false;
@@ -148,6 +175,47 @@ pub(crate) fn requires_semantic_verification(objective: &str) -> bool {
     any_word_unnegated(
         &text,
         &[
+            // --- additional base forms not previously covered ---
+            "review",
+            "explain",
+            "assess",
+            "evaluate",
+            "interpret",
+            "reason",
+            "critique",
+            "examine",
+            "summarize",
+            // --- present-participle forms ---
+            //
+            // LLM-planned objectives are frequently phrased in the present
+            // participle ("Analyzing the call graph", "Investigating the
+            // failure mode"), while this list is canonicalized to base
+            // forms. The list itself is deliberately kept explicit rather
+            // than teaching `has_word_unnegated` to strip suffixes: that
+            // helper is shared with `infer_contract` and the planner, and
+            // widening it would change write/read/search intent detection
+            // globally. Only the semantic-objective classifier needs the
+            // verb-morphology tolerance.
+            "analyzing",
+            "investigating",
+            "reviewing",
+            "evaluating",
+            "assessing",
+            "auditing",
+            "comparing",
+            "synthesizing",
+            "verifying",
+            "computing",
+            "checking",
+            "deriving",
+            "determining",
+            "reporting",
+            "examining",
+            "interpreting",
+            "critiquing",
+            "reasoning",
+            "summarizing",
+            // --- existing base forms ---
             "analyze",
             "analyse",
             "analysis",
@@ -662,7 +730,7 @@ impl SubgoalCompletionEngine {
             conditions.push(CompletionCondition::WriteMarkerAcquired);
         }
 
-        SubgoalContract {
+        crate::completion_engine::SubgoalContract {
             node_id: node_id.to_string(),
             objective: objective.to_string(),
             conditions,
@@ -839,6 +907,148 @@ mod tests {
     }
 
     #[test]
+    fn cmd_ok_binding_requires_matching_command_and_success_status() {
+        let ok = "[CMD_OK] Command: cargo check -p nexus_runtime_core\nStatus: exit status: 0\n";
+        assert!(super::cmd_ok_binds_command(ok, "cargo check -p nexus_runtime_core"));
+        // Whitespace normalization must not weaken the binding.
+        assert!(super::cmd_ok_binds_command(ok, "cargo  check -p   nexus_runtime_core"));
+
+        // Some other command succeeded -> must not bind.
+        let wrong = "[CMD_OK] Command: ls -la\nStatus: exit status: 0\n";
+        assert!(!super::cmd_ok_binds_command(wrong, "cargo check -p nexus_runtime_core"));
+
+        // Right command, failed status -> must not bind.
+        let failed =
+            "[CMD_OK] Command: cargo check -p nexus_runtime_core\nStatus: exit status: 101\n";
+        assert!(!super::cmd_ok_binds_command(failed, "cargo check -p nexus_runtime_core"));
+
+        // Literal "[CMD_OK]" text in prose is not an execution record.
+        let spoof = "discussion of [CMD_OK] markers in the runtime\n";
+        assert!(!super::cmd_ok_binds_command(spoof, "cargo check -p nexus_runtime_core"));
+
+        // Multi-record evidence: the matching record wins regardless of order.
+        let multi = format!("{}{}", wrong, ok);
+        assert!(super::cmd_ok_binds_command(&multi, "cargo check -p nexus_runtime_core"));
+
+        // Empty command can never bind.
+        assert!(!super::cmd_ok_binds_command(ok, "   "));
+    }
+
+    #[test]
+    fn semantic_verification_classifier_coverage_table() {
+        // Coverage table for `requires_semantic_verification`.
+        //
+        // The classifier gates every terminal completion shortcut in
+        // `cortical_loop.rs` (five call sites as of this writing). A
+        // false negative here is a silent completion-authority leak: a
+        // semantic objective completes on a single physical marker
+        // without ever passing through `verify_outcome`. A false
+        // positive merely costs turns.
+        //
+        // Broader than `semantic_verification_classifier_covers_analysis_objectives`:
+        // sweeps additional verbs, present-participle forms, and compound
+        // objectives. Collects ALL mismatches into a Vec before asserting,
+        // so one run reveals every gap in the classifier's word list.
+        let should_trigger: &[(&str, &str)] = &[
+            // Base-form verbs already asserted by the sibling test.
+            ("Analyze the implementation", "base verb: analyze"),
+            ("Investigate the failure", "base verb: investigate"),
+            ("Perform a final audit", "base verb: audit"),
+            ("Compare the two implementations", "base verb: compare"),
+            ("Synthesize the findings", "base verb: synthesize"),
+            ("Verify the stated invariant", "base verb: verify"),
+            ("Compute the resulting value", "base verb: compute"),
+            ("Check the contract", "base verb: check"),
+            ("Derive the conclusion", "base verb: derive"),
+            ("Determine the root cause", "base verb: determine"),
+            ("Report the results", "base verb: report"),
+            // Verbs/nouns frequently emitted by the LLM planner that are
+            // NOT exercised by the sibling test.
+            (
+                "Review the implementation and explain the failure modes",
+                "review / explain",
+            ),
+            ("Assess the remediation strategy", "assess"),
+            ("Evaluate the compiler output", "evaluate"),
+            ("Summarize the audit findings", "summarize"),
+            ("Interpret the error trace", "interpret"),
+            ("Reason about the invariant", "reason"),
+            ("Critique the proposal", "critique"),
+            ("Examine the call graph", "examine"),
+            // Present-participle forms. The classifier's token matcher
+            // compares whole tokens case-insensitively; if the word list
+            // contains only the base form, these will not match.
+            ("Analyzing the call graph", "present participle: analyzing"),
+            (
+                "Investigating the failure mode",
+                "present participle: investigating",
+            ),
+            ("Reviewing the implementation", "present participle: reviewing"),
+            ("Evaluating the compiler output", "present participle: evaluating"),
+            (
+                "Assessing the remediation strategy",
+                "present participle: assessing",
+            ),
+            // Compound objectives: a semantic word must still trigger even
+            // when a physical verb appears earlier in the same objective.
+            (
+                "Read the file and analyze the implementation",
+                "compound: read + analyze",
+            ),
+            (
+                "Search for the symbol, then summarize the findings",
+                "compound: search + summarize",
+            ),
+        ];
+
+        // Objectives that MUST NOT be classified as semantic: purely
+        // physical work whose completion is provable from a single marker.
+        let should_not_trigger: &[&str] = &[
+            "Read crates/runtime_core/src/lib.rs",
+            "Search for SEARCH_CODE_OK:foo",
+            "Execute cargo check -p nexus_runtime_core",
+            "Run uptime; df -h /; free -m",
+            "READ_OK:crates/runtime_core/src/router.rs",
+            "SEARCH_CODE_OK:compiler_critic",
+            "PATCH_FUNCTION_OK:crates/runtime_core/src/foo.rs:bar",
+        ];
+
+        let mut missing: Vec<(&str, &str)> = Vec::new();
+        for (objective, category) in should_trigger {
+            if !requires_semantic_verification(objective) {
+                missing.push((objective, category));
+            }
+        }
+
+        let mut false_positives: Vec<&str> = Vec::new();
+        for objective in should_not_trigger {
+            if requires_semantic_verification(objective) {
+                false_positives.push(objective);
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "classifier missed {} semantic objective(s) - add the missing \
+             word(s) to the `any_word_unnegated` list in \
+             `requires_semantic_verification`:\n  - {}",
+            missing.len(),
+            missing
+                .iter()
+                .map(|(obj, cat)| format!("[{cat}] {obj}"))
+                .collect::<Vec<_>>()
+                .join("\n  - ")
+        );
+        assert!(
+            false_positives.is_empty(),
+            "classifier false-positived {} physical objective(s) - \
+             these must short-circuit before the word check:\n  - {}",
+            false_positives.len(),
+            false_positives.join("\n  - ")
+        );
+    }
+
+    #[test]
     fn read_only_mission_sets_flag() {
         let mission = "Perform a READ-ONLY final audit of the compiler-remediation implementation.";
         let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
@@ -935,6 +1145,52 @@ mod tests {
     // ------------------------------------------------------------------
     // Path-bound READ_OK / WRITE_OK contract coverage
     // ------------------------------------------------------------------
+
+    // Mission 2 shapes: the gate's two boundary cases, plus the belief
+    // convention the widened disjunction depends on. Fixtures mirror the
+    // existing SubgoalContract literals; only `conditions` varies.
+    fn mk(conditions: Vec<CompletionCondition>) -> crate::completion_engine::SubgoalContract {
+        crate::completion_engine::SubgoalContract {
+            node_id: "test_node".to_string(),
+            objective: "test objective".to_string(),
+            conditions,
+            is_mutation_task: false,
+            read_only: false,
+            required_artifact_paths: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn mission2_shape_reads_satisfied_once_the_command_is_evidenced() {
+        let contract = mk(vec![CompletionCondition::CommandExecutionVerified {
+            command: "git clone https://github.com/RightNow-AI/openfang.git vendor/openfang".into(),
+        }]);
+        let evidence = "[CMD_OK] Command: git clone https://github.com/RightNow-AI/openfang.git vendor/openfang\nStatus: exit status: 0\n";
+        assert!(SubgoalCompletionEngine::evaluate(&contract, evidence, 1.0));
+    }
+
+    #[test]
+    fn mission2_shape_reads_unmet_before_the_command_runs() {
+        let contract = mk(vec![CompletionCondition::CommandExecutionVerified {
+            command: "git clone https://github.com/RightNow-AI/openfang.git vendor/openfang".into(),
+        }]);
+        let evidence = "hypothesis: run the clone next\n";
+        assert!(!SubgoalCompletionEngine::evaluate(&contract, evidence, 1.0));
+    }
+
+    #[test]
+    fn belief_shortfall_reads_satisfied_at_the_gate() {
+        // MinBeliefScore is the one condition no action can advance. Every
+        // gate probe uses belief = 1.0, so it reads satisfied here and
+        // proposals flow; the terminal gate passes the live belief, so
+        // Complete still waits for the real propagation.
+        let contract = mk(vec![
+            CompletionCondition::CommandMarkerAcquired,
+            CompletionCondition::MinBeliefScore(0.9),
+        ]);
+        let evidence = "[CMD_OK] Status: exit status: 0\n";
+        assert!(SubgoalCompletionEngine::evaluate(&contract, evidence, 1.0));
+    }
 
     #[test]
     fn case_1_twelve_reads_produce_twelve_conditions() {

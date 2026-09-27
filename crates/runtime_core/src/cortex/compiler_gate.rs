@@ -93,8 +93,7 @@ impl CompilerGate {
                 else {
                     continue;
                 };
-                let Ok(package_root) =
-                    Path::new(manifest_path).parent().ok_or_else(|| "invalid path")
+                let Ok(package_root) = Path::new(manifest_path).parent().ok_or("invalid path")
                 else {
                     continue;
                 };

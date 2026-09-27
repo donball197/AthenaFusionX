@@ -119,12 +119,12 @@ impl CapabilityRegistry {
                 CapabilityKind::Deterministic => "deterministic",
             };
 
-            rendered.push_str("\n");
+            rendered.push('\n');
             rendered.push_str(capability.name);
-            rendered.push_str("\n");
+            rendered.push('\n');
             rendered.push_str("  kind: ");
             rendered.push_str(kind);
-            rendered.push_str("\n");
+            rendered.push('\n');
             rendered.push_str("  description: ");
             rendered.push_str(capability.description);
             rendered.push('\n');

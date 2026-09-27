@@ -49,10 +49,8 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
         };
 
         let recorded_path = recorded_path.trim().to_lowercase();
-        let recorded_query = query_field
-            .trim()
-            .trim_matches(|c| c == '\'' || c == '"' || c == '`')
-            .to_lowercase();
+        let recorded_query =
+            query_field.trim().trim_matches(|c| c == '\'' || c == '"' || c == '`').to_lowercase();
 
         if recorded_query.is_empty() {
             return false;
@@ -62,9 +60,7 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
             || recorded_path == path_part
             || recorded_path.ends_with(&format!("/{}", path_part));
 
-        path_ok
-            && (recorded_query.contains(&term_part)
-                || term_part.contains(&recorded_query))
+        path_ok && (recorded_query.contains(&term_part) || term_part.contains(&recorded_query))
     })
 }
 
@@ -124,11 +120,9 @@ mod tests {
         assert!(!has_mutation_marker("[PATCH_IDEMPOTENT_OK] a.rs:x\n"));
     }
 
-
     #[test]
     fn search_term_matches_recorded_query_not_body() {
-        let ev =
-            "[SEARCH_CODE_OK] Path: src | Query: some_term\nMATCHES:\nline 1\n";
+        let ev = "[SEARCH_CODE_OK] Path: src | Query: some_term\nMATCHES:\nline 1\n";
         assert!(search_term_satisfied(ev, "some_term"));
     }
 
@@ -202,10 +196,7 @@ mod tests {
     #[test]
     fn artifact_write_rejects_non_write_markers() {
         assert!(!has_artifact_write("[READ_OK] foo.rs\n", "foo.rs"));
-        assert!(!has_artifact_write(
-            "[SEARCH_CODE_OK] Path: foo.rs | Query: 'x'\n",
-            "foo.rs"
-        ));
+        assert!(!has_artifact_write("[SEARCH_CODE_OK] Path: foo.rs | Query: 'x'\n", "foo.rs"));
     }
 }
 
@@ -258,11 +249,8 @@ pub fn has_artifact_write(evidence: &str, target_path_substr: &str) -> bool {
 fn path_component_match(line_lower: &str, target: &str, target_basename: &str) -> bool {
     let mut token = String::new();
     for ch in line_lower.chars().chain(std::iter::once(' ')) {
-        let is_path_char = ch.is_ascii_alphanumeric()
-            || ch == '/'
-            || ch == '.'
-            || ch == '_'
-            || ch == '-';
+        let is_path_char =
+            ch.is_ascii_alphanumeric() || ch == '/' || ch == '.' || ch == '_' || ch == '-';
         if is_path_char {
             token.push(ch);
         } else if !token.is_empty() {
@@ -277,7 +265,7 @@ fn path_component_match(line_lower: &str, target: &str, target_basename: &str) -
 
 /// Compare one path-shaped token against the target.
 fn path_token_matches(token: &str, target: &str, target_basename: &str) -> bool {
-    let token = token.trim_end_matches(|c: char| c == '.' || c == '/');
+    let token = token.trim_end_matches(['.', '/']);
     let token = token.trim_start_matches("./");
     if token.is_empty() {
         return false;
@@ -292,10 +280,8 @@ fn path_token_matches(token: &str, target: &str, target_basename: &str) -> bool 
     // name. A target with directory components must match by path, so a
     // same-named file elsewhere cannot stand in for the required artifact.
     if !target.contains('/') {
-        let token_basename = std::path::Path::new(token)
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or(token);
+        let token_basename =
+            std::path::Path::new(token).file_name().and_then(|f| f.to_str()).unwrap_or(token);
         return token_basename == target_basename;
     }
     false

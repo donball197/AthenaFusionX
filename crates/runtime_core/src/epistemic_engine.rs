@@ -417,14 +417,16 @@ impl EpistemicEngine {
                 || (crate::completion_engine::any_word_unnegated(&problem_lower, &["search"])
                     && crate::completion_engine::any_word_unnegated(&problem_lower, &["memory"])));
 
-        let read_targets = crate::completion_engine::extract_all_named_targets(scoped_problem, "READ_OK:");
+        let read_targets =
+            crate::completion_engine::extract_all_named_targets(scoped_problem, "READ_OK:");
 
         let required_command = crate::completion_engine::extract_required_command(scoped_problem);
 
         let lineage_inherit_only =
             crate::completion_engine::is_lineage_inherit_only_objective(scoped_problem);
 
-        let host_observation = crate::completion_engine::is_host_observation_objective(scoped_problem);
+        let host_observation =
+            crate::completion_engine::is_host_observation_objective(scoped_problem);
 
         let directive_inputs = DirectiveInputs {
             problem: scoped_problem.to_string(),
@@ -440,6 +442,31 @@ impl EpistemicEngine {
         if let Some(strategies) = DirectiveStrategyCompiler::compile(&directive_inputs) {
             return Ok(strategies);
         }
+
+        // PROBABILISTIC-PROMPT SCOPING:
+        //
+        // The deterministic compiler above already operates on scoped_problem.
+        // Everything past this point -- audit_guidance/analysis_guidance
+        // detection and the LLM strategy-generation prompt itself -- must
+        // ALSO see only this node's own instructions, not the full
+        // combined_mission (which still carries every OTHER step of a
+        // multi-step directive under ROOT DIRECTIVE CONTEXT). Without this,
+        // a node whose deterministic strategy could not be derived (e.g.
+        // extract_required_command failing to parse an unquoted "run
+        // exactly: <cmd>" phrasing) falls through to the LLM, which then
+        // sees the entire multi-step mission and invents one strategy per
+        // overall mission step instead of per-node alternatives. Confirmed
+        // root cause of the OpenFang-roadmap mission's task_1 oscillation:
+        // task_1's own job was only the git clone, but its turn-1
+        // hypothesis set included a `search_code` strategy (task_2's job)
+        // and a `write_file` strategy (task_3's job), which then competed
+        // with the real clone hypothesis turn after turn.
+        //
+        // Shadowing `problem` here scopes every remaining reference in this
+        // function (audit_guidance, analysis_guidance, the prompt's
+        // DIRECTIVE line, and the final "Execute directive: {}" fallback)
+        // without editing each call site individually.
+        let problem = scoped_problem;
 
         let audit_guidance = if problem_lower.contains("audit")
             || problem.to_lowercase().contains("vulnerabilit")
