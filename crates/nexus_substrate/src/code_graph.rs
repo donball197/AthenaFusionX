@@ -1,5 +1,5 @@
 //! Semantic Code Knowledge Graph (Code RAG)
-//! Combines structural AST edges with 384-dim FastEmbed vector embeddings.
+//! Combines structural AST edges with 768-dim Granite vector embeddings.
 //! Enables semantic search ("find command injection") instead of just string search.
 
 use anyhow::Result;

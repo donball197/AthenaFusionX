@@ -76,7 +76,7 @@ impl MemoryPalace {
         let pool =
             SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?;
 
-        let vault = Arc::new(Mutex::new(VectorVault::new(384, 4)));
+        let vault = Arc::new(Mutex::new(VectorVault::new(crate::vector_bridge::EMBEDDING_DIM, 4)));
 
         let palace = Self { pool, vault };
         palace.init_full_schema().await?;
@@ -87,8 +87,9 @@ impl MemoryPalace {
 
     async fn hydrate_vault(&self) -> Result<(), sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL ORDER BY id ASC",
+            "SELECT id, embedding FROM neural_context WHERE embedding IS NOT NULL AND embedding_status = 'ready' AND embedding_model = ? ORDER BY id ASC",
         )
+        .bind(crate::vector_bridge::EMBEDDING_MODEL)
         .fetch_all(&self.pool)
         .await?;
 
@@ -100,7 +101,7 @@ impl MemoryPalace {
                 let emb_str: Option<String> = row.get("embedding");
                 if let Some(s) = emb_str {
                     match serde_json::from_str::<Vec<f32>>(&s) {
-                        Ok(vec) if vec.len() == 384 => {
+                        Ok(vec) if vec.len() == crate::vector_bridge::EMBEDDING_DIM => {
                             if let Err(e) = vault_guard.commit_state(id as u64, &vec) {
                                 tracing::warn!(
                                     "[MEMORY PALACE] Failed to hydrate vector id {}: {}",
@@ -111,8 +112,9 @@ impl MemoryPalace {
                         }
                         Ok(vec) => {
                             tracing::warn!(
-                                "[MEMORY PALACE] Skipping vector id {}: expected 384 dimensions, got {}",
+                                "[MEMORY PALACE] Skipping vector id {}: expected {} dimensions, got {}",
                                 id,
+                                crate::vector_bridge::EMBEDDING_DIM,
                                 vec.len()
                             );
                         }
@@ -170,6 +172,10 @@ impl MemoryPalace {
         ensure_column(&self.pool, "neural_context", "task_id", "TEXT NULL").await?;
         ensure_column(&self.pool, "neural_context", "session_id", "TEXT NULL").await?;
         ensure_column(&self.pool, "neural_context", "mission_id", "TEXT NULL").await?;
+        ensure_column(&self.pool, "neural_context", "embedding_status", "TEXT NOT NULL DEFAULT 'pending'").await?;
+        ensure_column(&self.pool, "neural_context", "embedding_model", "TEXT NULL").await?;
+        ensure_column(&self.pool, "neural_context", "embedding_error", "TEXT NULL").await?;
+        ensure_column(&self.pool, "neural_context", "embedding_attempts", "INTEGER NOT NULL DEFAULT 0").await?;
 
         self.pool
             .execute(
@@ -275,7 +281,7 @@ impl MemoryPalace {
     ) -> Result<(), sqlx::Error> {
         // Deduplication: Check if most recent entry for (origin, directive) has identical content
         let existing = sqlx::query(
-            "SELECT id, result, taint_label FROM neural_context WHERE origin = ? AND directive = ? ORDER BY id DESC LIMIT 1",
+            "SELECT id, result, taint_label, embedding_status FROM neural_context WHERE origin = ? AND directive = ? ORDER BY id DESC LIMIT 1",
         )
         .bind(origin)
         .bind(directive)
@@ -300,24 +306,46 @@ impl MemoryPalace {
                     .bind(existing_id)
                     .execute(&self.pool)
                     .await?;
+                let prev_status: String = row.get("embedding_status");
+                let upgrade = if prev_status != "ready" {
+                    embedding.as_ref().filter(|v| v.len() == crate::vector_bridge::EMBEDDING_DIM)
+                } else {
+                    None
+                };
+                if let Some(vec) = upgrade {
+                    let emb_json = serde_json::to_string(vec).unwrap_or_default();
+                    sqlx::query("UPDATE neural_context SET embedding = ?, embedding_status = 'ready', embedding_model = ?, embedding_error = NULL WHERE id = ?")
+                        .bind(emb_json)
+                        .bind(crate::vector_bridge::EMBEDDING_MODEL)
+                        .bind(existing_id)
+                        .execute(&self.pool)
+                        .await?;
+                    let mut vault = self.vault.lock();
+                    if let Err(e) = vault.commit_state(existing_id as u64, vec) {
+                        tracing::error!("[MEMORY PALACE] Vector index commit failed for memory id {}: {}", existing_id, e);
+                    }
+                }
                 return Ok(());
             }
         }
 
         if let Some(ref vec) = embedding {
-            if vec.len() != 384 {
+            if vec.len() != crate::vector_bridge::EMBEDDING_DIM {
                 return Err(sqlx::Error::Protocol(format!(
-                    "Embedding dimension mismatch: expected 384, got {}",
+                    "Embedding dimension mismatch: expected {}, got {}",
+                    crate::vector_bridge::EMBEDDING_DIM,
                     vec.len()
                 )));
             }
         }
 
         let emb_str = embedding.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+        let emb_status = if emb_str.is_some() { "ready" } else { "pending" };
+        let emb_model: Option<&str> = emb_str.as_ref().map(|_| crate::vector_bridge::EMBEDDING_MODEL);
         let mut tx = self.pool.begin().await?;
 
         let res = sqlx::query(
-            "INSERT INTO neural_context (origin, directive, result, embedding, taint_label, plan_id, task_id, session_id, mission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO neural_context (origin, directive, result, embedding, taint_label, plan_id, task_id, session_id, mission_id, embedding_status, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(origin)
         .bind(directive)
@@ -328,6 +356,8 @@ impl MemoryPalace {
         .bind(episode.task_id.as_deref())
         .bind(episode.session_id.as_deref())
         .bind(episode.mission_id.as_deref())
+        .bind(emb_status)
+        .bind(emb_model)
         .execute(&mut *tx)
         .await?;
         let row_id = res.last_insert_rowid();
@@ -526,7 +556,7 @@ impl MemoryPalace {
         sqlx::query("DELETE FROM system_insights").execute(&self.pool).await?;
 
         let mut vault = self.vault.lock();
-        *vault = VectorVault::new(384, 4);
+        *vault = VectorVault::new(crate::vector_bridge::EMBEDDING_DIM, 4);
 
         Ok(())
     }

@@ -25,7 +25,7 @@ else
     echo "[INFO] Granite service is not running."
     echo "[INFO] Starting serve_embeddings.py..."
 
-    nohup python3 serve_embeddings.py \
+    nohup /root/granite-embed-venv/bin/python serve_embeddings.py \
         >/tmp/athena_embedding_node.log 2>&1 &
 
     sleep 3

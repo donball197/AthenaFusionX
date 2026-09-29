@@ -3,10 +3,14 @@ use reqwest::Client;
 use serde_json::json;
 use std::env;
 
+/// Single source of truth for the embedding space. Must match the gateway model.
+pub const EMBEDDING_DIM: usize = 768;
+pub const EMBEDDING_MODEL: &str = "granite-embedding-311m-r2";
+
 pub async fn get_embedding(_api_key: &str, text: &str) -> Result<Vec<f32>> {
     // The Edge gateway is the authoritative embedding provider.
     // Do not silently mix embedding models: all persisted/query vectors
-    // must remain in the same 384-dimensional vector space.
+    // must remain in the same EMBEDDING_DIM-dimensional vector space.
     let edge_url = env::var("NEXUS_EMBEDDING_URL").or_else(|_| {
         env::var("NEXUS_EMBEDDING_GATEWAY")
             .map(|g| format!("{}/embeddings", g.trim_end_matches('/')))
@@ -44,9 +48,10 @@ pub async fn get_embedding(_api_key: &str, text: &str) -> Result<Vec<f32>> {
 
     let vector: Vec<f32> = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
 
-    if vector.len() != 384 {
+    if vector.len() != EMBEDDING_DIM {
         return Err(anyhow::anyhow!(
-            "Embedding dimension mismatch: expected 384, got {}",
+            "Embedding dimension mismatch: expected {}, got {}",
+            EMBEDDING_DIM,
             vector.len()
         ));
     }

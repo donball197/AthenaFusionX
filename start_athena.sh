@@ -4,12 +4,12 @@ PHONE_USER="donball197"
 PHONE_PORT="8022"
 
 echo "[1/3] Cleaning up old processes..."
-pkill -f "python3 serve_embeddings.py"
+pkill -f "serve_embeddings.py"
 pkill -f "ssh.*-R 9380"
 
 echo "[2/3] Starting LiteRT embedding server..."
 cd ~/AthenaFusionX
-nohup python3 serve_embeddings.py > ~/AthenaFusionX/server.log 2>&1 &
+nohup /root/granite-embed-venv/bin/python serve_embeddings.py > ~/AthenaFusionX/server.log 2>&1 &
 sleep 2
 
 echo "[3/3] Opening reverse tunnel to Android..."

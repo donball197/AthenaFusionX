@@ -50,8 +50,8 @@ async fn main() -> Result<()> {
 
     println!("QUERY EMBEDDING DIMENSIONS: {}", embedding.len());
 
-    if embedding.len() != 384 {
-        anyhow::bail!("expected 384-dimensional embedding, got {}", embedding.len());
+    if embedding.len() != nexus_substrate::vector_bridge::EMBEDDING_DIM {
+        anyhow::bail!("expected {}-dimensional embedding, got {}", nexus_substrate::vector_bridge::EMBEDDING_DIM, embedding.len());
     }
 
     let memories =
