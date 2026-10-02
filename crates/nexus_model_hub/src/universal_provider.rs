@@ -6,6 +6,7 @@ use std::env;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderKind {
     Google,
+    Nvidia,
     OpenAiCompatible, // Covers NVIDIA NIM, Ollama, vLLM, Groq, Together
 }
 
@@ -16,8 +17,11 @@ impl ProviderKind {
         // Explicit provider selection always wins.
         let env_provider = env::var("NEXUS_PROVIDER").unwrap_or_default().to_ascii_lowercase();
 
-        if env_provider == "nvidia"
-            || env_provider == "openai"
+        if env_provider == "nvidia" {
+            return ProviderKind::Nvidia;
+        }
+
+        if env_provider == "openai"
             || env_provider == "ollama"
             || env_provider == "nexus"
             || env_provider == "local"
@@ -122,7 +126,7 @@ impl UniversalProvider {
                 Ok(text.replace("```json", "").replace("```", "").trim().to_string())
             }
 
-            ProviderKind::OpenAiCompatible => {
+            ProviderKind::Nvidia | ProviderKind::OpenAiCompatible => {
                 let base_url = env::var("OPENAI_BASE_URL")
                     .or_else(|_| env::var("NEXUS_OPENAI_GATEWAY"))
                     .or_else(|_| env::var("NEXUS_API_GATEWAY"))
@@ -137,12 +141,28 @@ impl UniversalProvider {
                 }
                 messages.push(json!({"role": "user", "content": user_prompt}));
 
-                let payload = json!({
+                let mut payload = json!({
                     "model": model,
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens
                 });
+
+                if kind == ProviderKind::Nvidia {
+                    payload["chat_template_kwargs"] = json!({
+                        "enable_thinking": false,
+                        "thinking": false,
+                        "force_nonempty_content": true
+                    });
+                }
+
+                if kind == ProviderKind::Nvidia && model.starts_with("z-ai/") {
+                    // GLM on NIM ignores chat_template_kwargs; it uses a top-level field.
+                    if let Some(o) = payload.as_object_mut() {
+                        o.remove("chat_template_kwargs");
+                    }
+                    payload["reasoning_effort"] = json!("low");
+                }
 
                 let auth_key = env::var("OPENAI_API_KEY")
                     .or_else(|_| env::var("NEXUS_AUTH_KEY"))

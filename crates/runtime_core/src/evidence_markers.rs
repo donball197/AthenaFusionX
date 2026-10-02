@@ -22,8 +22,8 @@ pub fn has_mutation_marker(evidence: &str) -> bool {
 /// block so an unrelated inherited search cannot satisfy this criterion.
 pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
     let expected = expected.trim().to_lowercase();
-    let (path_part, term_part) = match expected.rfind(':') {
-        Some(c) => (expected[..c].trim().to_string(), expected[c + 1..].trim().to_string()),
+    let (path_part, term_part) = match expected.split_once(':') {
+        Some((p, t)) => (p.trim().to_string(), t.trim().to_string()),
         None => (String::new(), expected.clone()),
     };
 
@@ -60,7 +60,7 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
             || recorded_path == path_part
             || recorded_path.ends_with(&format!("/{}", path_part));
 
-        path_ok && (recorded_query.contains(&term_part) || term_part.contains(&recorded_query))
+        path_ok && recorded_query.contains(&term_part)
     })
 }
 

@@ -149,18 +149,47 @@ impl MicroAgent {
                 }
             }
 
-            let p = json!({
+            let mut p = json!({
                 "model": model,
                 "messages": messages,
                 "temperature": 0.15,
                 "max_tokens": 8192,
                 "stream": true
             });
+
+            // Nemotron reasoning is explicitly disabled for concise/structured
+            // runtime calls. Keep this model-specific: other NVIDIA-hosted
+            // models may use different reasoning controls.
+            if model.to_ascii_lowercase().contains("nemotron") {
+                p["chat_template_kwargs"] = json!({
+                    "enable_thinking": false,
+                    "thinking": false,
+                    "force_nonempty_content": true
+                });
+            }
+
+            if model.starts_with("z-ai/") {
+                if let Some(o) = p.as_object_mut() {
+                    o.remove("chat_template_kwargs");
+                }
+                p["reasoning_effort"] = json!("low");
+            }
+
             (u, p)
         };
 
-        let response =
-            client.post(&url).json(&req_payload).send().await.context("API request failed")?;
+        let mut rb = client.post(&url).json(&req_payload);
+        if !is_gemini {
+            let key = std::env::var("NVIDIA_API_KEY").unwrap_or_else(|_| api_key.to_string());
+            rb = rb.bearer_auth(key.trim());
+        }
+        let response = rb.send().await.context("API request failed")?;
+
+        if !response.status().is_success() {
+            let st = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API HTTP {}: {}", st, body);
+        }
 
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
@@ -178,6 +207,21 @@ impl MicroAgent {
                     }
 
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
+                        // OpenAI-compatible (NVIDIA NIM) SSE shape
+                        if let Some(delta) = val.pointer("/choices/0/delta") {
+                            if let Some(r) = delta.get("reasoning_content").and_then(|t| t.as_str())
+                            {
+                                let _ = self.tx.send(
+                                    json!({"type": "NEURAL_THOUGHT", "payload": r}).to_string(),
+                                );
+                            }
+                            if let Some(token) = delta.get("content").and_then(|t| t.as_str()) {
+                                full_response.push_str(token);
+                                let _ = self.tx.send(
+                                    json!({"type": "NEURAL_STREAM", "payload": token}).to_string(),
+                                );
+                            }
+                        }
                         if let Some(parts) =
                             val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
                         {

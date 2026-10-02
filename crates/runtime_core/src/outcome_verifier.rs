@@ -1,4 +1,3 @@
-use crate::cognitive_events::TelemetryArtifact;
 use crate::completion_engine::CompletionCondition;
 use serde::{Deserialize, Serialize};
 
@@ -30,44 +29,44 @@ impl OutcomeVerifier {
         belief_score: f32,
         conditions: &[CompletionCondition],
     ) -> Result<(), String> {
-        // 1. If telemetry is provided, it overrides all else (Phase 2 external proof)
-        if let Some(telemetry_json) = extract_telemetry(local_evidence) {
-            if telemetry_json.exit_code == 0 && telemetry_json.test_digest.is_some() {
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "Telemetry captured, but verification failed. Exit code: {}, Tests passed: {}",
-                    telemetry_json.exit_code,
-                    telemetry_json.test_digest.is_some()
-                ));
-            }
+        // FAIL CLOSED: an empty contract authorizes nothing. Universal
+        // quantification over zero conditions is vacuously true and would let
+        // an unrecognized mission authorize itself.
+        if conditions.is_empty() {
+            return Err("empty completion contract is never satisfied".to_string());
         }
+
+        // Former "telemetry overrides all else" branch removed. External
+        // proof, when implemented, must be an ADDITIONAL contract condition
+        // rather than a substitution for the declared conditions.
 
         // 2. Strictly verify that EVERY condition in the contract is met
         for cond in conditions {
             let met = match cond {
-                CompletionCondition::ReadMarkerAcquired => {
-                    local_evidence.contains("[READ_OK]")
-                        || local_evidence.contains("[READ_CHUNK_OK]")
-                }
+                CompletionCondition::ReadMarkerAcquired => local_evidence.lines().any(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("[READ_OK]") || t.starts_with("[READ_CHUNK_OK]")
+                }),
                 CompletionCondition::ReadPathAcquired { path } => {
                     let expected = path.trim();
                     local_evidence.lines().any(|l| {
                         if let Some(rest) = l.strip_prefix("[READ_OK]") {
-                            rest.trim() == expected
+                            crate::evidence_paths::paths_equivalent(rest.trim(), expected)
                         } else if let Some(rest) = l.strip_prefix("[READ_CHUNK_OK] File: ") {
-                            rest.split(" | ").next().map(|p| p.trim() == expected).unwrap_or(false)
+                            rest.split(" | ")
+                                .next()
+                                .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
+                                .unwrap_or(false)
                         } else if let Some(rest) = l.strip_prefix("[ACTION FAILED] path=") {
-                            // A path-qualified read failure (e.g. ENOENT) is
-                            // still a completed, evidenced inspection of the
-                            // target location -- the location was checked
-                            // and found empty. See cortical_loop.rs's
-                            // motor-command error formatting for where
-                            // "path=<p> " is emitted.
+                            // CONFIRMED-ABSENCE ONLY. ENOENT proves the target
+                            // was inspected and found absent; sandbox denials
+                            // inspected nothing. See
+                            // evidence_paths::is_confirmed_absence.
                             rest.split(" OS rejected action")
                                 .next()
-                                .map(|p| p.trim() == expected)
+                                .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
                                 .unwrap_or(false)
+                                && crate::evidence_paths::is_confirmed_absence(rest)
                         } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
                             // "Inspect this location" is satisfied by a
                             // documented, path-scoped search attempt even
@@ -81,15 +80,19 @@ impl OutcomeVerifier {
                             // path with nothing there to read. Confirmed
                             // root cause of the reflection_test.rs
                             // mission's task_1 stall (0/3 nodes, belief
-                            // decayed to 0.00 across 11 turns).
-                            rest.split(" | ").next().map(|p| p.trim() == expected).unwrap_or(false)
+                            // decayed to 0.00 across 11 turns). Path
+                            // comparison uses the shared paths_equivalent.
+                            rest.split(" | ")
+                                .next()
+                                .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
+                                .unwrap_or(false)
                         } else {
                             false
                         }
                     })
                 }
                 CompletionCondition::SearchMarkerAcquired => {
-                    local_evidence.contains("[SEARCH_CODE_OK]")
+                    local_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_CODE_OK]"))
                 }
                 CompletionCondition::SearchTermAcquired { term } => {
                     // Term matching lives in evidence_markers::search_term_satisfied --
@@ -98,9 +101,11 @@ impl OutcomeVerifier {
                     crate::evidence_markers::search_term_satisfied(local_evidence, term)
                 }
                 CompletionCondition::SearchMemoryMarkerAcquired => {
-                    local_evidence.contains("[SEARCH_MEMORY_OK]")
+                    local_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
                 }
-                CompletionCondition::WriteMarkerAcquired => local_evidence.contains("[WRITE_OK]"),
+                CompletionCondition::WriteMarkerAcquired => {
+                    local_evidence.lines().any(|l| l.trim_start().starts_with("[WRITE_OK]"))
+                }
                 CompletionCondition::WritePathAcquired { path } => {
                     let expected = path.trim();
                     // Two emission shapes exist in the executor:
@@ -135,35 +140,16 @@ impl OutcomeVerifier {
                     // "[CMD_OK] Status: exit status: 0" parses through the
                     // same path as the long
                     // "[CMD_OK] Command: ...\nStatus: exit status: 0" form.
-                    let lines: Vec<&str> = local_evidence.lines().collect();
-                    let mut authorized = false;
-                    for (i, line) in lines.iter().enumerate() {
-                        let t = line.trim_start();
-                        let Some(rest) = t.strip_prefix("[CMD_OK]") else {
-                            continue;
-                        };
-                        let inline = rest
-                            .strip_prefix(" Status:")
-                            .or_else(|| rest.strip_prefix("Status:"));
-                        let mut ok = inline
-                            .map(|s| s.trim().ends_with("exit status: 0"))
-                            .unwrap_or(false);
-                        if !ok {
-                            if let Some(next) = lines.get(i + 1) {
-                                if let Some(s) = next.trim().strip_prefix("Status:") {
-                                    ok = s.trim().ends_with("exit status: 0");
-                                }
-                            }
-                        }
-                        if ok {
-                            authorized = true;
-                            break;
-                        }
-                    }
-                    authorized
+                    // Delegates to the shared binder in evidence_paths. The
+                    // former 1-line-forward scan mishandled multi-line
+                    // commands and bracketed output.
+                    crate::evidence_paths::cmd_ok_binds_command(local_evidence)
                 }
                 CompletionCondition::LineageEvidenceAcquired => {
                     verify_lineage_provenance(local_evidence)
+                }
+                CompletionCondition::HaltDelivered => {
+                    local_evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
                 }
                 CompletionCondition::ReadFunctionMarkerAcquired { path, function_name } => {
                     local_evidence.contains("[READ_FUNCTION_OK]")
@@ -241,19 +227,6 @@ impl OutcomeVerifier {
             }
         }
 
-        // 3. Default fallback for empty conditions (backward compatibility)
-        if conditions.is_empty() {
-            if local_evidence.contains("[WRITE_OK]")
-                || local_evidence.contains("[DIFF_PATCH_OK]")
-                || local_evidence.contains("[PATCH_FUNCTION_OK]")
-            {
-                return Ok(());
-            } else {
-                return Err("Missing verified TelemetryArtifact side-channel or execution marker."
-                    .to_string());
-            }
-        }
-
         Ok(())
     }
 
@@ -265,13 +238,26 @@ impl OutcomeVerifier {
     ) -> bool {
         Self::evaluate_contract(local_evidence, belief_score, conditions).is_ok()
     }
-}
 
-// Helper to extract JSON artifact appended by the RoboticExecutor
-fn extract_telemetry(_local_evidence: &str) -> Option<TelemetryArtifact> {
-    // Assumed to exist in the original file or cognitive_events
-    // If missing, returns None and skips telemetry check
-    None
+    /// Diagnostic helper: names each contract condition that is NOT yet
+    /// satisfied. Backs actionable HALT-rejection logging.
+    pub fn unmet_conditions(
+        local_evidence: &str,
+        belief_score: f32,
+        conditions: &[CompletionCondition],
+    ) -> Vec<String> {
+        conditions
+            .iter()
+            .filter(|cond| {
+                !Self::mission_completion_authorized(
+                    local_evidence,
+                    belief_score,
+                    std::slice::from_ref(*cond),
+                )
+            })
+            .map(|cond| format!("{:?}", cond))
+            .collect()
+    }
 }
 
 /// Cryptographically verify the provenance of ancestor evidence.
@@ -535,6 +521,19 @@ mod extraction_guards {
     use super::*;
 
     #[test]
+    fn unmet_conditions_names_each_unsatisfied_condition() {
+        let conditions =
+            vec![CompletionCondition::ReadMarkerAcquired, CompletionCondition::WriteMarkerAcquired];
+        let unmet = OutcomeVerifier::unmet_conditions(
+            "[READ_OK] crates/runtime_core/src/lib.rs\n",
+            1.0,
+            &conditions,
+        );
+        assert_eq!(unmet.len(), 1);
+        assert!(unmet[0].contains("WriteMarkerAcquired"), "got {:?}", unmet);
+    }
+
+    #[test]
     fn mission_completion_authorized_mirrors_approved_contract() {
         let conditions = vec![CompletionCondition::ReadMarkerAcquired];
         let evidence = "[READ_OK] crates/runtime_core/src/lib.rs";
@@ -560,8 +559,8 @@ mod extraction_guards {
     }
 
     #[test]
-    fn empty_condition_fallback_requires_a_write_marker() {
-        assert!(OutcomeVerifier::mission_completion_authorized("[WRITE_OK] out.md", 1.0, &[]));
+    fn empty_contract_fails_closed() {
+        assert!(!OutcomeVerifier::mission_completion_authorized("[WRITE_OK] out.md", 1.0, &[]));
 
         assert!(!OutcomeVerifier::mission_completion_authorized("[READ_OK] lib.rs", 1.0, &[]));
     }

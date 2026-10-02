@@ -27,10 +27,11 @@ impl ContractEvaluator {
             .filter(|p| !crate::evidence_markers::has_artifact_write(local_evidence, p))
             .collect();
 
-        if !missing.is_empty() {
-            return ContractStatus::NoEvidence;
-        }
-
+        // REGRESSION FIX (missing-artifact early return): missing artifacts
+        // must NOT unconditionally classify NoEvidence. They guarantee
+        // contract_satisfied == false below, so the flow reaches the final
+        // block and correctly returns PartialEvidence when mutation or recon
+        // markers are present.
         let has_mutation = has_mutation_marker(local_evidence);
         let has_recon = has_recon_marker(local_evidence);
 
@@ -48,11 +49,14 @@ impl ContractEvaluator {
         // The typed completion contract is the sole authority for
         // mission satisfaction. Mutation/write markers and belief are
         // evidence, not proof of the enclosing objective.
-        let contract_satisfied = crate::completion_engine::SubgoalCompletionEngine::evaluate(
-            &mission_contract,
-            local_evidence,
-            current_belief,
-        );
+        // Missing artifacts can never satisfy the contract, but must not
+        // short-circuit the classification.
+        let contract_satisfied = missing.is_empty()
+            && crate::completion_engine::SubgoalCompletionEngine::evaluate(
+                &mission_contract,
+                local_evidence,
+                current_belief,
+            );
 
         if contract_satisfied {
             ContractStatus::Satisfied

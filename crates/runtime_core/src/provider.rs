@@ -65,7 +65,12 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
     }
 
     // 3. NVIDIA NIM Cloud (nvidia/*, meta/*, deepseek/*, google/*)
-    if model.contains("nvidia")
+    if model.starts_with("z-ai/")
+        || model.starts_with("moonshotai/")
+        || model.starts_with("openai/")
+        || model.starts_with("mistralai/")
+        || model.starts_with("writer/")
+        || model.contains("nvidia")
         || model.contains("nemotron")
         || model.contains("deepseek")
         || model.contains("meta/")

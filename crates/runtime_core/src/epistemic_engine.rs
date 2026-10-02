@@ -66,6 +66,10 @@ impl EpistemicEngine {
             let mut retries = 0;
 
             loop {
+                eprintln!(
+                    "[MODEL TRACE] -> attempt model={} provider={} retry={}",
+                    model_endpoint, resolved.provider_name, retries
+                );
                 let (url, req_payload) = match resolved.provider_name {
                     "google" => {
                         let u = format!(
@@ -145,6 +149,20 @@ impl EpistemicEngine {
                             if mime == "application/json" {
                                 let msg = format!("{}\n\nCRITICAL: You must return a valid JSON object. Do NOT wrap it in markdown blockquotes.", text);
                                 p["messages"][0]["content"] = serde_json::json!(msg);
+                            }
+                        }
+                        // Reasoning control for NVIDIA NIM. GLM ignores
+                        // chat_template_kwargs and needs top-level
+                        // reasoning_effort; others use the template kwargs.
+                        if resolved.provider_name == "nvidia" {
+                            if model_endpoint.to_ascii_lowercase().starts_with("z-ai/") {
+                                p["reasoning_effort"] = serde_json::json!("low");
+                            } else {
+                                p["chat_template_kwargs"] = serde_json::json!({
+                                    "enable_thinking": false,
+                                    "thinking": false,
+                                    "force_nonempty_content": true
+                                });
                             }
                         }
                         (resolved.endpoint.clone(), p)
@@ -365,6 +383,158 @@ impl EpistemicEngine {
         &mission[..end]
     }
 
+    /// Prompt-window `evidence` while keeping physically read source whole.
+    ///
+    /// RULE 6 and the verifier's quote clause require the judging model to
+    /// SEE the source a halt's claims are about; naive head/tail windows
+    /// elide the middle of a large [READ_OK] ... FULL FILE CONTENT block --
+    /// exactly where the interesting lines live -- so grounded claims fail
+    /// for lack of visible quotes. This windows only the non-read material;
+    /// every read-record region survives verbatim and in order.
+    /// Region boundaries use a POSITIVE list of known evidence markers: an
+    /// unknown bracketed line (e.g. a source line starting with `[ERROR]`)
+    /// does NOT end the pinned region -- when in doubt we over-pin, never
+    /// silently drop source. Oversized regions are capped with a VISIBLE
+    /// marker, never silently, because the critic may run on a small-context
+    /// tier. The strategist keeps its own strict 2500-char edge budget on
+    /// purpose (4K-context persona); only judgment layers pin reads.
+    pub(crate) fn compress_preserving_reads(evidence: &str, head: usize, tail: usize) -> String {
+        const MAX_PINNED_REGION: usize = 12_000;
+
+        let starts_read_region = |line: &str| {
+            let t = line.trim_start();
+            t.starts_with("[READ_OK]") || t.starts_with("[READ_CHUNK_OK]")
+        };
+        let ends_region = |line: &str| {
+            const ENDERS: &[&str] = &[
+                "[READ_OK]",
+                "[READ_CHUNK_OK]",
+                "[WRITE_OK]",
+                "[CMD_OK]",
+                "[SEARCH_CODE_OK]",
+                "[SEARCH_MEMORY_OK]",
+                "[PATCH_FUNCTION_OK]",
+                "[PATCH_IDEMPOTENT_OK]",
+                "[DIFF_PATCH_OK]",
+                "[REPLACE_LINES_OK]",
+                "[RUN_TESTS_OK]",
+                "[COMPILE_OK]",
+                "[PROPOSITION]",
+                "[HALT",
+                "[CRITIC_VETO]",
+                "[CRITIC_FACT_OVERRIDE]",
+                "[HALT_REJECTED]",
+                "[PHYSICAL SESSION EVIDENCE]",
+            ];
+            let t = line.trim_start();
+            ENDERS.iter().any(|m| t.starts_with(m)) && !starts_read_region(t)
+        };
+
+        enum Seg {
+            Pinned(String),
+            Plain(String),
+        }
+
+        let lines: Vec<&str> = evidence.lines().collect();
+        let mut segs: Vec<Seg> = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            if starts_read_region(lines[i]) {
+                let mut region = String::new();
+                while i < lines.len() {
+                    let cur = lines[i];
+                    if !region.is_empty() && ends_region(cur) {
+                        break;
+                    }
+                    region.push_str(cur);
+                    region.push('\n');
+                    i += 1;
+                }
+                let pinned = if region.chars().count() > MAX_PINNED_REGION {
+                    let kept: String = region.chars().take(MAX_PINNED_REGION).collect();
+                    format!(
+                        "{}\n[... READ BODY CAPPED AT {} CHARS IN JUDGE WINDOW ...]",
+                        kept, MAX_PINNED_REGION
+                    )
+                } else {
+                    region.trim_end_matches('\n').to_string()
+                };
+                segs.push(Seg::Pinned(pinned));
+            } else {
+                segs.push(Seg::Plain(lines[i].to_string()));
+                i += 1;
+            }
+        }
+
+        let plain_total: usize = segs
+            .iter()
+            .map(|s| match s {
+                Seg::Plain(l) => l.len() + 1,
+                Seg::Pinned(_) => 0,
+            })
+            .sum();
+        let render = |s: &Seg| match s {
+            Seg::Plain(l) => l.clone(),
+            Seg::Pinned(r) => r.clone(),
+        };
+        if plain_total <= head + tail {
+            return segs.iter().map(render).collect::<Vec<_>>().join("\n");
+        }
+
+        let n = segs.len();
+        let mut head_end = 0usize;
+        let mut used = 0usize;
+        while head_end < n && used < head {
+            if let Seg::Plain(l) = &segs[head_end] {
+                used += l.len() + 1;
+            }
+            head_end += 1;
+        }
+        let mut tail_start = n;
+        used = 0;
+        while tail_start > head_end && used < tail {
+            if let Seg::Plain(l) = &segs[tail_start - 1] {
+                used += l.len() + 1;
+            }
+            tail_start -= 1;
+        }
+
+        let mut out: Vec<String> = Vec::new();
+        for s in &segs[..head_end] {
+            out.push(render(s));
+        }
+        let middle = &segs[head_end..tail_start];
+        if middle.iter().any(|s| matches!(s, Seg::Plain(_))) {
+            out.push("[... MIDDLE EVIDENCE COMPRESSED ...]".to_string());
+        }
+        for s in middle {
+            if matches!(s, Seg::Pinned(_)) {
+                out.push(render(s));
+            }
+        }
+        for s in &segs[tail_start..] {
+            out.push(render(s));
+        }
+        out.join("\n")
+    }
+
+    /// Evidence history as the CRITIC may see it. Prior critic verdicts and
+    /// halt rejections are feedback for the STRATEGIST, not evidence for the
+    /// critic: keeping them let the critic restate its previous verdict as a
+    /// fresh one (observed echo: a veto about "no defect found" issued
+    /// against a proposal that DID report a defect).
+    pub(crate) fn critic_visible_history(evidence_history: &str) -> String {
+        evidence_history
+            .split("\n\n")
+            .filter(|c| {
+                !c.trim().is_empty()
+                    && !c.contains("[CRITIC_VETO]")
+                    && !c.contains("[HALT_REJECTED]")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     pub async fn generate_hypotheses(
         client: &Client,
         api_key: &str,
@@ -394,6 +564,23 @@ impl EpistemicEngine {
         // exploration, code search, or host observation. Preserve the
         // directive's requested native operation as the authoritative strategy.
         let problem_lower = scoped_problem.to_lowercase();
+
+        // Inline-analysis nodes (ANALYSIS_OK): the code is in the directive.
+        // The only valid strategy is to deliver the answer via halt.
+        let has_inline_code = problem.contains("fn ")
+            || problem.contains("```")
+            || problem.contains("struct ")
+            || problem.contains("enum ")
+            || problem.contains("impl ");
+        if scoped_problem.contains("ANALYSIS_OK")
+            && has_inline_code
+            && !scoped_problem.contains("READ_OK:")
+            && !scoped_problem.contains("SEARCH_CODE_OK:")
+        {
+            return Ok(vec![
+                "halt: the material to analyze is inline in the directive; deliver the complete written analysis in one halt action with no searches, reads, or commands".to_string(),
+            ]);
+        }
 
         let has_explicit_success_criterion = problem_lower.contains("search_memory_ok:")
             || problem_lower.contains("search_code_ok:")
@@ -668,7 +855,7 @@ CRITICAL MULTI-PASS RULES FOR LARGE FILES (MANDATORY):
 4. Only after the above condition is met may you emit a halt / final_answer.
 5. Prefer small chunks (30-50 lines) so context stays clean across turns.
 
-- COMPLETION PROTOCOL: When your analysis or recon is complete, DO NOT output markdown and DO NOT attempt to rewrite the file. You MUST output a JSON `halt` action and place your complete final explanation in the "reasoning" field.
+- COMPLETION PROTOCOL: When your analysis or recon is complete, DO NOT output markdown and DO NOT attempt to rewrite the file. You MUST output a JSON `halt` action and place your complete final explanation in the "reasoning" field. If the mission specifies an output format (for example ROOT_CAUSE / TRACE / FIX), the reasoning field MUST use exactly those labeled sections, each containing concrete findings with file and line references; never write only a statement that the analysis is complete.
 
 ORIGINAL DIRECTIVE: {}
 STRATEGY: {}
@@ -811,24 +998,10 @@ the XML tags above. Do NOT veto legitimate search/recon commands. When the missi
         );
         let proposed_action = &p_armored;
 
-        const K: usize = 6;
-        let grounded_evidence = {
-            let chunks: Vec<&str> =
-                evidence_history.split("\n\n").filter(|c| !c.trim().is_empty()).collect();
-            let base = if chunks.len() > K {
-                chunks[chunks.len() - K..].join("\n\n")
-            } else {
-                evidence_history.to_string()
-            };
-            if base.chars().count() > 4000 {
-                let start: String = base.chars().take(2000).collect();
-                let end: String =
-                    base.chars().skip(base.chars().count().saturating_sub(2000)).collect();
-                format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
-            } else {
-                base
-            }
-        };
+        let filtered_history = Self::critic_visible_history(evidence_history);
+        // Judgment-layer window: recent material plus every physically read
+        // source region, so RULE 6 can pair claims with quotes.
+        let grounded_evidence = Self::compress_preserving_reads(&filtered_history, 1500, 2500);
 
         let prompt = format!(
             r#"{preamble}
@@ -876,6 +1049,8 @@ next to escape the failure. CRITICAL RULE 3: THE EVIDENCE VERIFICATION TAXONOMY.
 If the proposed action contains a quantitative claim, architectural assumption,
 or performance metric, you MUST check the EVIDENCE HISTORY. If there is no
 explicit [Measured] execution log proving the claim, you MUST VETO the proposal.
+CRITICAL RULE 6 [CLAIM CHECK]: When the PROPOSED ACTION is a halt on an analysis or audit objective, verify every claimed behavior against the actual source text in EVIDENCE HISTORY before approving. Quote the exact source lines that support or contradict each numbered claim in the critique. If a claim cannot be paired with source lines, or if the source shows different behavior than claimed, VETO with a negative confidence_modifier and name the contradicted claim.
+CRITICAL RULE 7 [NO-DEFECT HALTS]: When the PROPOSED ACTION is a halt that reports NO defect on an audit whose directive says a defect may be reported only if the source establishes a violated contract, you may veto it ONLY by supplying a concrete counterexample: specific argument values for the function, and the exact sequence of branches the code takes for them, ending in the incorrect result. Walk the early returns and guards in order, since an earlier return can make a later branch unreachable for those inputs. A code comment is not a contract and cannot by itself establish a violation. If you cannot supply such a counterexample, approve the halt.
 OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
 -0.5 to 0.5>}}"#,
             preamble = CRITIC_GROUNDING_PREAMBLE,
@@ -886,12 +1061,18 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
             grounded_evidence = grounded_evidence
         );
 
-        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
-        let models = match nexus_algorithms::Router::select("critique") {
+        let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 4096 }});
+        let models_default = match nexus_algorithms::Router::select("critique") {
             Some(nexus_algorithms::ModelTier::Heavy) => crate::model_config::get_heavy_models(),
             Some(nexus_algorithms::ModelTier::Light) => crate::model_config::get_light_models(),
             Some(nexus_algorithms::ModelTier::Planner) => crate::model_config::get_planner_models(),
             None => crate::model_config::get_heavy_models(),
+        };
+        let models: Vec<String> = match std::env::var("NEXUS_CRITIC_MODEL") {
+            Ok(v) if !v.trim().is_empty() => {
+                v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+            }
+            _ => models_default,
         };
         let text = Self::safe_api_call(client, api_key, &models, &payload).await?;
         let clean_text = sanitize_json_escapes(&text);
@@ -985,14 +1166,7 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
         action: &str,
         evidence: &str,
     ) -> Result<CriticResponse> {
-        let truncated_evidence: String = if evidence.chars().count() <= 2500 {
-            evidence.to_string()
-        } else {
-            let start: String = evidence.chars().take(1000).collect();
-            let end: String =
-                evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
-            format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
-        };
+        let truncated_evidence: String = Self::compress_preserving_reads(evidence, 1000, 1500);
         let prompt = format!(
             r#"You are the Scientific Evaluator.
 STRATEGY: {}
@@ -1062,15 +1236,12 @@ OUTPUT ONLY VALID JSON:
         action: &str,
         evidence: &str,
     ) -> Result<crate::cognition_graph::VerificationReport> {
-        let truncated_evidence: String = if evidence.chars().count() <= 2500 {
-            evidence.to_string()
-        } else {
-            let start: String = evidence.chars().take(1000).collect();
-            let end: String =
-                evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
-            format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
-        };
-        let truncated_action: String = action.chars().take(2000).collect();
+        let truncated_evidence: String = Self::compress_preserving_reads(evidence, 3000, 11000);
+        // The halt text IS the claim source for read-only analysis halts; the
+        // claim-check below must see the full claims. The old 2000-char cap
+        // silently truncated ROOT_CAUSE/TRACE/FIX answers mid-claim, leaving
+        // the verifier to judge only their openings.
+        let truncated_action: String = action.chars().take(6000).collect();
         let prompt = format!(
             r#"You are the Epistemic Verifier.
 STRATEGY: {}
@@ -1078,19 +1249,32 @@ ACTION TAKEN: {}
 EVIDENCE:
 {}
 Does this evidence mathematically prove the stated strategy's objective was achieved? A successful action (like [WRITE_OK] or [CMD_OK]) is NOT proof of success on its own UNLESS the ACTION TAKEN itself contains the actual content that was written or patched (write_file/diff_patch/patch_function actions above include the real file content directly in ACTION TAKEN) — in that case, check whether that content satisfies the objective, and treat a confirmed match as proof. Do not reject a successful write or patch merely because the bare EVIDENCE line (e.g. [WRITE_OK]) doesn't repeat the content; the content to check is in ACTION TAKEN.
+For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) read markers ([READ_OK] or [READ_CHUNK_OK]) for the files it discusses appear anywhere in EVIDENCE, including the historical section. Reject a halt that only claims the work is done. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
+Reply with a single JSON object and nothing else. The first character of your reply must be an opening curly brace.
 OUTPUT ONLY VALID JSON matching this schema:
-{{"goal_satisfied": true, "evidence_confidence": 0.9, "independent_check_passed": true, "rationale": "<reason>"}}"#,
+{{"rationale": "<reasoning and exact source quotes>", "goal_satisfied": true, "evidence_confidence": 0.9, "independent_check_passed": true}}"#,
             strategy, truncated_action, truncated_evidence
         );
 
         let payload = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": { "temperature": 0.0, "maxOutputTokens": 1024 }});
-        let models = match nexus_algorithms::Router::select("verify") {
-            Some(nexus_algorithms::ModelTier::Heavy) => crate::model_config::get_heavy_models(),
-            Some(nexus_algorithms::ModelTier::Light) => crate::model_config::get_light_models(),
-            Some(nexus_algorithms::ModelTier::Planner) => crate::model_config::get_planner_models(),
-            None => crate::model_config::get_heavy_models(),
-        };
-        let text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+        // Verification is the last gate before mission authorization: serve
+        // it from the heavy tier. A lightweight verifier has been observed
+        // rubber-stamping halt text that contradicts the source in evidence,
+        // and the NVIDIA fallback tier is unreachable from this host, which
+        // silently drops the cascade to its weakest member.
+        // To restore Router routing, replace the line below with the former
+        // `match nexus_algorithms::Router::select("verify") { ... }` block.
+        let models = crate::model_config::get_heavy_models();
+        eprintln!("[VERIFIER] model cascade: {:?}", models);
+        let mut text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+        if serde_json::from_str::<serde_json::Value>(extract_json_block(&sanitize_json_escapes(
+            &text,
+        )))
+        .is_err()
+        {
+            eprintln!("[VERIFIER] non-JSON reply; retrying once");
+            text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+        }
         let clean_text = sanitize_json_escapes(&text);
 
         let json_str = extract_json_block(&clean_text);
@@ -1131,14 +1315,7 @@ OUTPUT ONLY VALID JSON matching this schema:
         strategy: &str,
         evidence: &str,
     ) -> Result<String> {
-        let truncated_evidence: String = if evidence.chars().count() <= 2500 {
-            evidence.to_string()
-        } else {
-            let start: String = evidence.chars().take(1000).collect();
-            let end: String =
-                evidence.chars().skip(evidence.chars().count().saturating_sub(1500)).collect();
-            format!("{}...\n\n[... MIDDLE EVIDENCE COMPRESSED ...]\n\n{}", start, end)
-        };
+        let truncated_evidence: String = Self::compress_preserving_reads(evidence, 1000, 1500);
         let prompt = format!(
             r#"You are the Meta-Cognitive Reflector.
 STRATEGY: {}
@@ -1182,7 +1359,14 @@ You MUST verify the mutation by running `cargo check -p math_utils`."#;
             .await
             .expect("compound patch mission should produce a deterministic strategy");
 
-        assert_eq!(strategies, vec!["patch_function:apps/math_utils/src/lib.rs:add".to_string()]);
+        assert_eq!(
+            strategies,
+            vec![
+                "patch_function:apps/math_utils/src/lib.rs:add".to_string(),
+                "read_file:apps/math_utils/src/lib.rs".to_string(),
+                "replace_lines:apps/math_utils/src/lib.rs".to_string()
+            ]
+        );
     }
 
     #[tokio::test]
@@ -1273,6 +1457,27 @@ NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced."#;
         );
     }
 
+    // Source-inspection guard
+    // The verifier's claim-check depends on BOTH the untruncated halt text
+    // and the grounding instruction; losing either silently reverts the
+    // verifier to rubber-stamping.
+    #[test]
+    fn verifier_claim_check_needs_full_claims_and_grounded_quotes() {
+        let source = include_str!("epistemic_engine.rs");
+        assert!(
+            source.contains("action.chars().take(6000)"),
+            "halt claims must not be truncated at 6000 chars"
+        );
+        assert!(
+            source.contains("quote the exact source lines from EVIDENCE"),
+            "claim-check must require grounded quotes before the verdict"
+        );
+        assert!(
+            source.contains("eprintln!(\"[VERIFIER] model cascade"),
+            "verify model cascade must be logged"
+        );
+    }
+
     #[tokio::test]
     async fn combined_mission_root_context_cannot_contaminate_node_strategy() {
         // This reproduces the observed OpenFang failure:
@@ -1307,6 +1512,87 @@ A later analysis node will inspect files and synthesize a roadmap using write_fi
             ],
             "root/lineage write instructions must not contaminate the node-local command strategy"
         );
+    }
+
+    #[test]
+    fn critic_prompt_carries_grounded_claim_check() {
+        let source = include_str!("epistemic_engine.rs");
+        assert!(
+            source.contains("CRITICAL RULE 6 [CLAIM CHECK]"),
+            "critic must verify halt claims against source before approving"
+        );
+    }
+
+    #[test]
+    fn safe_api_call_logs_every_attempt() {
+        let source = include_str!("epistemic_engine.rs");
+        assert!(
+            source.contains("[MODEL TRACE] -> attempt model="),
+            "each cascade attempt must be logged for serving-model attribution"
+        );
+    }
+
+    #[test]
+    fn compress_preserving_reads_keeps_whole_file_content() {
+        let body: String =
+            (0..200).map(|i| format!("fn line_{}() {{}}", i)).collect::<Vec<_>>().join("\n");
+        let read = format!("[READ_OK] x.rs\nFULL FILE CONTENT:\n{}\n", body);
+        let noise: String = (0..120).map(|i| format!("noise {}", i)).collect::<Vec<_>>().join("\n");
+        let evidence =
+            format!("line_a\nline_b\n{}\n[PROPOSITION] end-of-read\n{}\ntail_marker", read, noise);
+
+        let out = EpistemicEngine::compress_preserving_reads(&evidence, 64, 64);
+        assert!(out.contains("FULL FILE CONTENT:"), "read record must survive");
+        assert!(out.contains("fn line_199() {}"), "end of the file body must survive");
+        assert!(out.contains("line_a"), "head must survive");
+        assert!(out.contains("tail_marker"), "tail must survive");
+        assert!(out.contains("[... MIDDLE EVIDENCE COMPRESSED ...]"), "elision must be marked");
+        assert!(!out.contains("noise 100"), "middle non-read noise must be elided");
+    }
+
+    #[test]
+    fn compress_preserving_reads_keeps_short_evidence_verbatim() {
+        let evidence = "[READ_OK] x.rs\nFULL FILE CONTENT:\nfn main() {}";
+        let out = EpistemicEngine::compress_preserving_reads(evidence, 64, 64);
+        assert_eq!(out, evidence);
+    }
+
+    #[test]
+    fn compress_preserving_reads_caps_oversized_reads_visibly() {
+        let body: String =
+            (0..2000).map(|i| format!("fn line_{}() {{}}", i)).collect::<Vec<_>>().join("\n");
+        let read = format!("[READ_OK] big.rs\nFULL FILE CONTENT:\n{}\n", body);
+        let out = EpistemicEngine::compress_preserving_reads(&read, 64, 64);
+        assert!(
+            out.contains("[... READ BODY CAPPED AT 12000 CHARS IN JUDGE WINDOW ...]"),
+            "oversized reads must be capped with a visible marker"
+        );
+        assert!(out.contains("fn line_0() {}"), "the head of the read must survive");
+    }
+
+    #[test]
+    fn bracketed_source_lines_do_not_end_a_pinned_read() {
+        let read = "[READ_OK] s.rs\nFULL FILE CONTENT:\n[ERROR] marker-shaped source line\nfn after() {}\n";
+        let out = EpistemicEngine::compress_preserving_reads(read, 8, 8);
+        assert!(
+            out.contains("fn after() {}"),
+            "unknown bracketed lines must not terminate the pinned read"
+        );
+    }
+
+    #[test]
+    fn critic_visible_history_drops_echo_chunks_and_keeps_reads() {
+        let read = "[READ_OK] x.rs\nFULL FILE CONTENT:\nfn target() {}\n";
+        let history = format!(
+            "{}\n\n[CRITIC_VETO]\nold verdict text\n\n[HALT_REJECTED]\nold rejection text\n\ntail_line",
+            read
+        );
+        let visible = EpistemicEngine::critic_visible_history(&history);
+        assert!(!visible.contains("old verdict text"), "echo veto must be filtered");
+        assert!(!visible.contains("old rejection text"), "old halt rejections must be filtered");
+        assert!(visible.contains("fn target() {}"), "physically read source must remain visible");
+        let windowed = EpistemicEngine::compress_preserving_reads(&visible, 64, 64);
+        assert!(windowed.contains("fn target() {}"), "judge window must keep the read whole");
     }
 
     #[tokio::test]

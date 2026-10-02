@@ -172,10 +172,22 @@ impl MemoryPalace {
         ensure_column(&self.pool, "neural_context", "task_id", "TEXT NULL").await?;
         ensure_column(&self.pool, "neural_context", "session_id", "TEXT NULL").await?;
         ensure_column(&self.pool, "neural_context", "mission_id", "TEXT NULL").await?;
-        ensure_column(&self.pool, "neural_context", "embedding_status", "TEXT NOT NULL DEFAULT 'pending'").await?;
+        ensure_column(
+            &self.pool,
+            "neural_context",
+            "embedding_status",
+            "TEXT NOT NULL DEFAULT 'pending'",
+        )
+        .await?;
         ensure_column(&self.pool, "neural_context", "embedding_model", "TEXT NULL").await?;
         ensure_column(&self.pool, "neural_context", "embedding_error", "TEXT NULL").await?;
-        ensure_column(&self.pool, "neural_context", "embedding_attempts", "INTEGER NOT NULL DEFAULT 0").await?;
+        ensure_column(
+            &self.pool,
+            "neural_context",
+            "embedding_attempts",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
 
         self.pool
             .execute(
@@ -322,7 +334,11 @@ impl MemoryPalace {
                         .await?;
                     let mut vault = self.vault.lock();
                     if let Err(e) = vault.commit_state(existing_id as u64, vec) {
-                        tracing::error!("[MEMORY PALACE] Vector index commit failed for memory id {}: {}", existing_id, e);
+                        tracing::error!(
+                            "[MEMORY PALACE] Vector index commit failed for memory id {}: {}",
+                            existing_id,
+                            e
+                        );
                     }
                 }
                 return Ok(());
@@ -341,7 +357,8 @@ impl MemoryPalace {
 
         let emb_str = embedding.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
         let emb_status = if emb_str.is_some() { "ready" } else { "pending" };
-        let emb_model: Option<&str> = emb_str.as_ref().map(|_| crate::vector_bridge::EMBEDDING_MODEL);
+        let emb_model: Option<&str> =
+            emb_str.as_ref().map(|_| crate::vector_bridge::EMBEDDING_MODEL);
         let mut tx = self.pool.begin().await?;
 
         let res = sqlx::query(

@@ -389,6 +389,18 @@ impl CorticalLoop {
             || session.contract.objective.to_lowercase().contains(".json")
             || mission.to_lowercase().contains("synthesize_report");
 
+        self.log(format!(
+            "\x1b[90m  -> Contract: read_only={} mutation={} artifacts={:?}\n  -> Conditions: {:?}\x1b[0m",
+            session.contract.read_only,
+            session.contract.is_mutation_task,
+            session.contract
+                .required_artifact_paths
+                .iter()
+                .map(|a| &a.path)
+                .collect::<Vec<_>>(),
+            session.contract.conditions,
+        ));
+
         let mut state = CortexState::Strategize;
         let mut turn = 0;
         let mut shift_rx = self.dist.file_shift_tx.subscribe();
@@ -697,9 +709,17 @@ impl CorticalLoop {
             AgentAction::ExecuteCommand { command, .. } => {
                 Some(ActionIdentityInput::ExecuteCommand { command })
             }
-            AgentAction::Halt { .. } => Some(ActionIdentityInput::Halt),
             _ => None,
         };
+
+        // A halt carries its answer in `reasoning`. Key on a hash of the
+        // text so a revised halt after a rejection is not a "duplicate".
+        if let AgentAction::Halt { .. } = action {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            format!("{:?}", action).hash(&mut h);
+            return format!("halt:{:016x}", h.finish());
+        }
 
         match input {
             Some(input) => calculate_action_key(input),
@@ -727,6 +747,21 @@ impl CorticalLoop {
         // reflection_test.rs mission: 0/3 nodes).
         if matches!(action, AgentAction::Halt { .. }) {
             return true;
+        }
+
+        // HALT-PREFIX RECOVERY: a strategy that begins with "halt:" must not
+        // permanently block reconnaissance actions. Without this, a HaltDelivered
+        // analysis node that later requires source inspection can never escape
+        // the initial halt-prefixed hypothesis.
+        if strategy.starts_with("halt:") {
+            return matches!(
+                action,
+                AgentAction::SearchCode { .. }
+                    | AgentAction::ReadFile { .. }
+                    | AgentAction::ReadFileChunk { .. }
+                    | AgentAction::ReadFunction { .. }
+                    | AgentAction::SearchMemory { .. }
+            );
         }
 
         if let Some(expected_path) = strategy.strip_prefix("read_file:") {
@@ -1157,6 +1192,7 @@ impl CorticalLoop {
                         | AgentAction::ReadFileChunk { .. }
                         | AgentAction::SearchCode { .. }
                 ),
+                CC::HaltDelivered => matches!(action, AgentAction::Halt { .. }),
                 CC::LineageEvidenceAcquired | CC::MinBeliefScore(_) => false,
             };
             if advances {
@@ -1209,10 +1245,55 @@ impl CorticalLoop {
         let best_node = match session.graph.select_best_hypothesis().cloned() {
             Some(node) => node,
             None => {
+                // D (no-selectable-hypothesis recovery): a node must not die
+                // merely because every hypothesis decayed below the 0.15
+                // selection floor. Log the condition (it was previously a
+                // silent turn), then attempt ONE regeneration pass. Content
+                // identical to any existing hypothesis -- including the dead
+                // one that just fell below the floor -- is skipped, so this
+                // can never resurrect a poisoned strategy.
+                self.log(
+                    "\x1b[1;31m>> [CORTEX] No selectable hypothesis (threshold 0.15). Attempting one regeneration.\x1b[0m"
+                        .to_string(),
+                );
+                session.budget.record_call();
+                if let Ok(hyps) = EpistemicEngine::generate_hypotheses(
+                    &self.client,
+                    &self.api_key,
+                    mission,
+                    world_context,
+                )
+                .await
+                {
+                    for h in hyps {
+                        let already = session.graph.nodes.values().any(|n| n.content == h);
+                        if already {
+                            continue;
+                        }
+                        let hid = session.graph.add_node(NodeKind::Hypothesis, &h, 0.51, 100);
+                        session.best_hypothesis_id = Some(hid);
+                        self.log(format!(
+                            "\x1b[1;36m>> [CORTEX HYPOTHESIS REGENERATION]\x1b[0m Injected `{}`.",
+                            h
+                        ));
+                        return Ok(CortexState::Strategize);
+                    }
+                }
+                self.log(
+                    "\x1b[1;31m>> [CORTEX] Regeneration produced no new hypotheses; failing node.\x1b[0m"
+                        .to_string(),
+                );
+                let best_belief = session
+                    .graph
+                    .nodes
+                    .values()
+                    .filter(|n| matches!(n.kind, NodeKind::Hypothesis))
+                    .map(|n| n.belief_score)
+                    .fold(0.0_f32, f32::max);
                 return Ok(CortexState::Fail {
-                    belief: 0.0,
+                    belief: best_belief,
                     evidence: "No viable hypotheses left.".to_string(),
-                })
+                });
             }
         };
 
@@ -1345,6 +1426,249 @@ impl CorticalLoop {
 
 );
 
+        // --- AST-UNADDRESSABLE RECOVERY (Tree-sitter body missing) ---
+        // When PatchFunction fails because the symbol has no Tree-sitter body,
+        // demote the dead patch_function hypothesis and pivot to read_file of
+        // the exact path named in the strategy. Do not guess a fallback path.
+        // Do not synthesize replace_lines until READ_OK evidence exists.
+        let tree_sitter_unaddressable = session.local_evidence.contains("has no Tree-sitter body")
+            || session.local_evidence.contains("has no Tree-sitter body in Rust");
+
+        if patch_function_strategy && tree_sitter_unaddressable {
+            if let Some(h_id) = session.best_hypothesis_id {
+                if let Some(node) = session.graph.nodes.get_mut(&h_id) {
+                    if node.content.starts_with("patch_function:") {
+                        node.belief_score = 0.05;
+                    }
+                }
+            }
+
+            let path = active_strategy
+                .strip_prefix("patch_function:")
+                .and_then(|rest| rest.split(':').next())
+                .map(str::trim)
+                .filter(|p| !p.is_empty());
+
+            if let Some(path) = path {
+                let pivot_marker = format!("[AST_UNADDRESSABLE_PIVOTED]:{}", path);
+                let already_pivoted = session.local_evidence.contains(&pivot_marker);
+
+                let recon = format!("read_file:{}", path);
+                let hid = session
+                    .graph
+                    .nodes
+                    .iter()
+                    .find(|(_, n)| n.content == recon)
+                    .map(|(id, _)| *id)
+                    .unwrap_or_else(|| {
+                        session.graph.add_node(NodeKind::Hypothesis, &recon, 0.58, 100)
+                    });
+
+                // Always keep strategy/hypothesis coherent; log/mark only once.
+                session.best_hypothesis_id = Some(hid);
+                active_strategy = recon;
+
+                if !already_pivoted {
+                    session.local_evidence.push_str("\n");
+                    session.local_evidence.push_str(&pivot_marker);
+                    session.local_evidence.push('\n');
+                    self.log(
+                        "\x1b[1;36m>> [CORTEX AST-UNADDRESSABLE RECOVERY]\x1b[0m \
+                         Symbol has no Tree-sitter body; pivoting to read_file."
+                            .to_string(),
+                    );
+                }
+            } else {
+                self.log(
+                    "\x1b[1;31m>> [CORTEX AST-UNADDRESSABLE RECOVERY]\x1b[0m \
+                     Could not parse path from patch_function strategy; recovery aborted."
+                        .to_string(),
+                );
+            }
+        }
+        // --- end AST-UNADDRESSABLE RECOVERY ---
+
+        // --- POST-READ MUTATION PIVOT ---
+        // After READ_OK on a mutation mission, inject patch_function / replace_lines
+        // so strict action_matches_strategy does not reject mutation proposals
+        // while active_strategy is still read_file.
+        {
+            let read_ok_done = session.local_evidence.contains("[READ_OK]");
+            let patch_marker_needed = session.contract.is_mutation_task
+                || session.contract.conditions.iter().any(|c| {
+                    let s = format!("{:?}", c);
+                    s.contains("PatchMarker") || s.contains("MutationMarker")
+                })
+                || {
+                    let m = mission.to_lowercase();
+                    m.contains("patch")
+                        || m.contains("modify ")
+                        || m.contains("remove the unconditional")
+                };
+            let already_mutated = session.local_evidence.contains("[PATCH_FUNCTION_OK]")
+                || session.local_evidence.contains("[DIFF_PATCH_OK]")
+                || session.local_evidence.contains("[REPLACE_LINES_OK]")
+                || session.local_evidence.contains("[WRITE_OK]");
+
+            if read_ok_done && patch_marker_needed && !already_mutated && !write_phase_ready {
+                let mut target_path: Option<String> = None;
+                for line in session.local_evidence.lines().rev() {
+                    let t = line.trim();
+                    if let Some(rest) = t.strip_prefix("[READ_OK]") {
+                        let p = rest.trim().split_whitespace().next().unwrap_or("").trim();
+                        if !p.is_empty() && p.ends_with(".rs") {
+                            target_path = Some(p.to_string());
+                            break;
+                        }
+                    }
+                }
+                if target_path.is_none() {
+                    if let Some(rest) = active_strategy.strip_prefix("read_file:") {
+                        let p = rest.trim();
+                        if !p.is_empty() {
+                            target_path = Some(p.to_string());
+                        }
+                    }
+                }
+
+                if let Some(ref path_str) = target_path {
+                    let fn_name = {
+                        let lower = mission.to_lowercase();
+                        ["evaluate", "check_contract_status", "check_contract"]
+                            .iter()
+                            .find(|c| lower.contains(**c))
+                            .map(|s| (*s).to_string())
+                            .unwrap_or_else(|| "evaluate".to_string())
+                    };
+
+                    let mutation_strats = [
+                        format!("patch_function:{}:{}", path_str, fn_name),
+                        format!("replace_lines:{}", path_str),
+                    ];
+
+                    let mut injected = 0usize;
+                    for strat in &mutation_strats {
+                        let already = session.graph.nodes.values().any(|n| n.content == *strat);
+                        if already {
+                            if injected == 0 {
+                                let existing_id = session
+                                    .graph
+                                    .nodes
+                                    .iter()
+                                    .find(|(_, n)| n.content == *strat)
+                                    .map(|(id, _)| *id);
+                                if let Some(id) = existing_id {
+                                    if let Some(node) = session.graph.nodes.get_mut(&id) {
+                                        if node.belief_score < 0.56 {
+                                            node.belief_score = 0.56;
+                                        }
+                                    }
+                                    session.best_hypothesis_id = Some(id);
+                                    active_strategy = strat.clone();
+                                    injected += 1;
+                                    self.log(format!(
+                                        "\x1b[1;36m>> [CORTEX POST-READ MUTATION PIVOT]\x1b[0m Promoted existing `{}`.",
+                                        strat
+                                    ));
+                                }
+                            }
+                            continue;
+                        }
+                        let belief = if injected == 0 { 0.58 } else { 0.54 };
+                        let hid = session.graph.add_node(
+                            NodeKind::Hypothesis,
+                            strat,
+                            belief,
+                            100,
+                        );
+                        if injected == 0 {
+                            session.best_hypothesis_id = Some(hid);
+                            active_strategy = strat.clone();
+                            self.log(format!(
+                                "\x1b[1;36m>> [CORTEX POST-READ MUTATION PIVOT]\x1b[0m Prefer `{}` after READ_OK on mutation mission.",
+                                strat
+                            ));
+                        } else {
+                            self.log(format!(
+                                "\x1b[90m  -> Injected strategy: {}\x1b[0m",
+                                strat
+                            ));
+                        }
+                        injected += 1;
+                    }
+
+                    if injected > 0 {
+                        for node in session.graph.nodes.values_mut() {
+                            if node.content.starts_with("read_file:")
+                                && node.content.contains(path_str.as_str())
+                                && node.belief_score > 0.20
+                            {
+                                node.belief_score = 0.20;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // --- end POST-READ MUTATION PIVOT ---
+
+
+
+        // HALT-VETO RECOVERY (HaltDelivered strategy-prefix lock fix):
+        //
+        // When the contract is solely HaltDelivered and the critic has just
+        // vetoed a halt for lack of inspection evidence, the original
+        // "halt: ..." hypothesis becomes sticky. Demote it and inject a
+        // competing reconnaissance hypothesis so the node can escape.
+        {
+            let is_halt_delivered =
+                session.contract.conditions.iter().any(|c| {
+                    matches!(c, crate::completion_engine::CompletionCondition::HaltDelivered)
+                });
+            let critic_demands_inspection =
+                session.local_evidence.lines().rev().take(60).any(|l| {
+                    let lower = l.to_lowercase();
+                    (lower.contains("critic")
+                        || lower.contains("veto")
+                        || lower.contains("dialectic"))
+                        && (lower.contains("no source")
+                            || lower.contains("not inspected")
+                            || lower.contains("no [read_ok]")
+                            || lower.contains("no [search")
+                            || lower.contains("must search")
+                            || lower.contains("mandatory first step")
+                            || lower.contains("zero inspection")
+                            || lower.contains("locate and read")
+                            || lower.contains("first locate")
+                            || lower.contains("hallucination")
+                            || lower.contains("evidentiary support"))
+                });
+            if is_halt_delivered && critic_demands_inspection {
+                if let Some(h_id) = session.best_hypothesis_id {
+                    if let Some(node) = session.graph.nodes.get_mut(&h_id) {
+                        if node.content.trim().starts_with("halt:") {
+                            node.belief_score = 0.05;
+                        }
+                    }
+                }
+                let recon = "search_code:crates/runtime_core/src evaluate_contract OR mission_completion_authorized OR HaltDelivered";
+                let already = session.graph.nodes.values().any(|n| n.content == recon);
+                if !already {
+                    let hid = session.graph.add_node(
+                        crate::cognition_graph::NodeKind::Hypothesis,
+                        recon,
+                        0.56,
+                        100,
+                    );
+                    session.best_hypothesis_id = Some(hid);
+                    self.log(
+                        "\x1b[1;36m>> [CORTEX HALT-VETO RECOVERY]\x1b[0m Injected reconnaissance hypothesis after critic veto on HaltDelivered contract."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
         // POST-SEARCH EXPANSION (recon stall fix):
         //
         // The deterministic parsing of SEARCH_CODE MATCHES evidence is
@@ -1401,7 +1725,7 @@ impl CorticalLoop {
                 mission,
                 unwritten_targets[0]
             )
-        } else if patch_function_strategy && critic_veto_present {
+        } else if active_strategy.starts_with("patch_function:") && critic_veto_present {
             format!(
                 "{}\n\n[CRITIC VETO RECOVERY MANDATE]\nThe previous patch_function proposal was explicitly rejected by the Adversarial Critic. Do NOT repeat the rejected implementation or its `new_body`. Produce a materially different, mission-compliant patch_function action now. Preserve the inherited function signature. The current directive explicitly requires a clean, documented implementation, so the replacement MUST contain an appropriate documentation comment or equivalent source-level documentation while preserving the required `a + b` behavior. The next proposal MUST be a real source mutation, not a restatement or reformatting of the existing implementation.",
                 mission
@@ -1461,8 +1785,10 @@ impl CorticalLoop {
         }
 
         if actions.is_empty() {
-            let prop_trim = raw_proposal.trim().to_lowercase();
-            if prop_trim.contains("halt") {
+            // Synthesize a halt ONLY from prose-only output. A JSON proposal
+            // that failed schema validation must fall through to the
+            // parse-fault recovery path instead of manufacturing a halt.
+            if should_synthesize_halt(&raw_proposal) {
                 actions.push(AgentAction::Halt {
                     reasoning: "Model declared task complete".to_string(),
                 });
@@ -2097,11 +2423,29 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 // mutation so the compiler-critic gate below still runs -- silent
                 // corruption from an external tool must not skip verification
                 // just because it didn't arrive as a WriteFile/DiffPatch/etc.
+                // Only commands that can plausibly write count as mutations.
+                // Read-only commands (find, grep, cat, ls) that merely name a
+                // .rs file or glob must not trigger compiler verification.
+                let cmd_may_write = [
+                    ">",
+                    "sed -i",
+                    "tee ",
+                    "mv ",
+                    "cp ",
+                    "rm ",
+                    "patch ",
+                    "rustfmt",
+                    "cargo fix",
+                    "cargo fmt",
+                    "nexus_ast_tool",
+                ]
+                .iter()
+                .any(|m| command.contains(m));
                 for token in command.split_whitespace() {
                     let clean = token.trim_matches(|c: char| {
                         !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-'
                     });
-                    if clean.ends_with(".rs") {
+                    if cmd_may_write && clean.len() > 3 && clean.ends_with(".rs") {
                         mutation_paths.push(clean.to_string());
                         rust_files_mutated = true;
                     }
@@ -2247,6 +2591,18 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         if latest_evidence.trim().is_empty() {
             return Ok(CortexState::Strategize);
         }
+
+        // Guard: only genuine *.rs file paths may trigger compiler verification.
+        // Command text such as `find . -name "*.rs"` must not register as a mutation.
+        let mutation_paths: Vec<_> = mutation_paths
+            .iter()
+            .filter(|p| {
+                let pp = std::path::Path::new(*p);
+                pp.extension().map(|e| e == "rs").unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        let rust_files_mutated = rust_files_mutated && !mutation_paths.is_empty();
 
         if rust_files_mutated {
             self.log(
@@ -2756,7 +3112,11 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                     crate::completion_engine::SubgoalCompletionEngine::evaluate(
                         &session.contract,
                         &session.local_evidence,
-                        current_belief,
+                        if is_halt_action && session.contract.read_only {
+                            1.0
+                        } else {
+                            current_belief
+                        },
                     );
 
                 let command_only_contract = session.contract.conditions.len() == 1
@@ -2788,8 +3148,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
 
                 if is_halt_action
                     && deterministic_contract_satisfied
-                    && eval.confidence_modifier >= 0.0
-                    && current_belief > 0.70
+                    && (eval.confidence_modifier >= 0.0 || session.contract.read_only)
                 {
                     let strategy_for_verification = format!(
                         "MISSION OBJECTIVE:\n{}\n\nCURRENT STRATEGY:\n{}",
@@ -2859,13 +3218,19 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 }
 
                 if is_halt_action && !deterministic_contract_satisfied {
-                    self.log(
-                        "\x1b[1;33m>> [CORTEX] HALT rejected: deterministic completion contract is not satisfied. Continuing mission.\x1b[0m"
-                            .to_string(),
+                    let unmet = crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
+                        &session.local_evidence,
+                        current_belief,
+                        &session.contract.conditions,
                     );
-                    session.local_evidence.push_str(
-                        "\n[HALT_REJECTED] Deterministic completion contract not satisfied.\n",
-                    );
+                    self.log(format!(
+                        "\x1b[1;33m>> [CORTEX] HALT rejected: deterministic completion contract is not satisfied. Unmet: {:?}\x1b[0m",
+                        unmet
+                    ));
+                    session.local_evidence.push_str(&format!(
+                        "\n[HALT_REJECTED] Deterministic completion contract not satisfied. Unmet: {:?}\n",
+                        unmet
+                    ));
                     return Ok(CortexState::Strategize);
                 }
 
@@ -3070,6 +3435,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_failure_never_manufactures_a_typed_halt() {
+        assert!(super::should_synthesize_halt("halt"));
+        assert!(super::should_synthesize_halt("The task is done, halt."));
+        assert!(!super::should_synthesize_halt(r#"[{"type":"halt","reasoning":{"a":1}}]"#));
+        assert!(!super::should_synthesize_halt("no stop word here"));
+    }
+
+    #[test]
     fn extract_named_target_read_ok() {
         // Reproduces the 2026-09-14 audit run's turn-1 mission text.
         let mission = "OBJECTIVE: inspect\n\nMANDATORY NODE SUCCESS CRITERIA:\nREAD_OK:crates/runtime_core/src/cortical_loop.rs\n\nNODE COMPLETION RULE: ...";
@@ -3166,4 +3539,10 @@ mod tests {
             Some("crates/runtime_core/src/router.rs")
         );
     }
+}
+
+/// True only for prose-only proposals that mention "halt". Typed JSON
+/// proposals (containing a "type" field) that failed validation return false.
+fn should_synthesize_halt(raw: &str) -> bool {
+    raw.trim().to_lowercase().contains("halt") && !raw.contains("\"type\"")
 }

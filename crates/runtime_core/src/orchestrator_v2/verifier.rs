@@ -13,11 +13,15 @@ pub struct Verifier;
 fn read_evidence_matches_path(evidence: &str, expected_path: &str) -> bool {
     evidence.lines().any(|line| {
         if let Some(path) = line.strip_prefix("[READ_OK]") {
-            return path.trim() == expected_path;
+            return crate::evidence_paths::paths_equivalent(path.trim(), expected_path);
         }
 
         if let Some(rest) = line.strip_prefix("[READ_CHUNK_OK] File: ") {
-            return rest.split(" | ").next().map(str::trim) == Some(expected_path);
+            return rest
+                .split(" | ")
+                .next()
+                .map(|p| crate::evidence_paths::paths_equivalent(p, expected_path))
+                .unwrap_or(false);
         }
 
         // A path-qualified read failure (e.g. ENOENT) or a path-scoped
@@ -31,11 +35,21 @@ fn read_evidence_matches_path(evidence: &str, expected_path: &str) -> bool {
         // confirmed-absence evidence, only for this sibling verifier to
         // immediately reject the same evidence as insufficient.
         if let Some(rest) = line.strip_prefix("[ACTION FAILED] path=") {
-            return rest.split(" OS rejected action").next().map(str::trim) == Some(expected_path);
+            // CONFIRMED-ABSENCE ONLY (see evidence_paths::is_confirmed_absence).
+            return rest
+                .split(" OS rejected action")
+                .next()
+                .map(|p| crate::evidence_paths::paths_equivalent(p, expected_path))
+                .unwrap_or(false)
+                && crate::evidence_paths::is_confirmed_absence(rest);
         }
 
         if let Some(rest) = line.strip_prefix("[SEARCH_CODE_OK] Path: ") {
-            return rest.split(" | ").next().map(str::trim) == Some(expected_path);
+            return rest
+                .split(" | ")
+                .next()
+                .map(|p| crate::evidence_paths::paths_equivalent(p, expected_path))
+                .unwrap_or(false);
         }
 
         false
@@ -170,10 +184,22 @@ impl Verifier {
                         || (evidence.contains(path) && evidence.contains(func)))
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 crate::evidence_markers::search_term_satisfied(evidence, target)
+            } else if criterion == "ANALYSIS_OK" {
+                evidence.contains("[HALT]")
             } else if criterion == "SEARCH_MEMORY_OK" {
-                evidence.contains("[SEARCH_MEMORY_OK]")
+                evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
-                evidence.contains("[WRITE_OK]") && evidence.contains(path)
+                let target = path.trim();
+                let synthesized =
+                    format!("Successfully synthesized and wrote report to {}", target);
+                evidence.lines().any(|l| {
+                    l.strip_prefix("[WRITE_OK]")
+                        .map(|rest| {
+                            let rest = rest.trim();
+                            rest == target || rest == synthesized
+                        })
+                        .unwrap_or(false)
+                })
             } else if criterion == "CMD_OK" {
                 // A bare [CMD_OK] substring is not proof of success. The
                 // verifier must require the marker on its own line followed
@@ -206,10 +232,13 @@ impl Verifier {
                 // matched instead.
                 let lines: Vec<&str> = evidence.lines().collect();
                 lines.iter().enumerate().any(|(i, line)| {
-                    line.starts_with("[CMD_OK]")
+                    // Trimmed: an indented [CMD_OK] counts. Scan bounded by
+                    // is_marker_line so bracketed command output does not
+                    // truncate the scan early.
+                    line.trim_start().starts_with("[CMD_OK]")
                         && lines[i + 1..]
                             .iter()
-                            .take_while(|l| !l.starts_with('['))
+                            .take_while(|l| !crate::evidence_paths::is_marker_line(l))
                             .any(|l| l.trim() == "Status: exit status: 0")
                 })
             } else if criterion == "PATCH_FUNCTION_OK" {

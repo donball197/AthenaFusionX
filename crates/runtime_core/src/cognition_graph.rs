@@ -116,6 +116,20 @@ impl CognitiveGraph {
                 let candidate = (0.5 + d).clamp(0.0, 1.0);
                 // Keep a fraction of the previous score (PageRank-style damping)
                 node.belief_score = DAMPING * candidate + (1.0 - DAMPING) * node.belief_score;
+                // E (belief floor): the 0.15 selection floor must hold at the
+                // graph boundary. propagate_beliefs is the one chokepoint that
+                // can drop a selectable hypothesis below the floor (a single
+                // 0.40 Contradicts edge: 0.15 -> 0.1075 -> fixed point 0.10),
+                // and the failure paths call it without going through
+                // floor_hypothesis_belief_after_failure. Clamp only hypotheses
+                // that were selectable BEFORE this pass: an explicit demotion
+                // to 0.05 (e.g. HALT-VETO recovery) must stay dead.
+                if matches!(node.kind, NodeKind::Hypothesis)
+                    && before >= 0.15
+                    && node.belief_score < 0.15
+                {
+                    node.belief_score = 0.15;
+                }
 
                 if matches!(node.kind, NodeKind::Hypothesis) {
                     eprintln!(

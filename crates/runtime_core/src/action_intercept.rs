@@ -62,10 +62,13 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
 }
 
 fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
-    let lower = text.to_lowercase();
+    let _lower = text.to_lowercase();
 
-    // search_code (handles [TOOL]: search_code, Tool: search_code, etc.)
-    if lower.contains("search_code") {
+    // search_code: only recognize an explicit action label, never a mere
+    // mention of the tool name in natural-language reasoning.
+    if has_action_label(text, &["[TOOL]:", "Tool:", "[ACTION]:", "Action:"])
+        && lower_action_label(text).contains("search_code")
+    {
         let path = labeled_value(
             text,
             &["[PATH]:", "[PATH]", "Target Path:", "target path:", "Path:", "path:"],
@@ -81,8 +84,10 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         });
     }
 
-    // read_file
-    if lower.contains("read_file") {
+    // read_file: require an explicit action label.
+    if has_action_label(text, &["[TOOL]:", "Tool:", "[ACTION]:", "Action:"])
+        && lower_action_label(text).contains("read_file")
+    {
         if let Some(path) = labeled_value(
             text,
             &[
@@ -102,8 +107,10 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         }
     }
 
-    // scrape_url
-    if lower.contains("scrape_url") {
+    // scrape_url: require an explicit action label.
+    if has_action_label(text, &["[TOOL]:", "Tool:", "[ACTION]:", "Action:"])
+        && lower_action_label(text).contains("scrape_url")
+    {
         let url = labeled_value(text, &["[URL]:", "[URL]", "[SCRAPE_URL]:", "URL:", "url:"]);
 
         let prompt = labeled_value(
@@ -120,8 +127,10 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         }
     }
 
-    // execute_command
-    if lower.contains("execute_command") {
+    // execute_command: require an explicit action label.
+    if has_action_label(text, &["[TOOL]:", "Tool:", "[ACTION]:", "Action:"])
+        && lower_action_label(text).contains("execute_command")
+    {
         if let Some(cmd) = labeled_value(
             text,
             &["[COMMAND]:", "[COMMAND]", "[EXECUTE_COMMAND]:", "Command:", "command:"],
@@ -134,14 +143,41 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         }
     }
 
-    // halt
-    if lower.contains("halt") || lower.contains("[halt]") {
+    // Halt is intentionally NOT inferred from arbitrary prose. A model
+    // mentioning "halt" is not the same thing as proposing a Halt action.
+    // The strict JSON parser is authoritative; this interceptor may only
+    // recover an explicitly labeled action.
+    if has_action_label(text, &["[TOOL]:", "Tool:", "[ACTION]:", "Action:"])
+        && lower_action_label(text).trim() == "halt"
+    {
         return Some(AgentAction::Halt {
-            reasoning: "Model signaled halt via labeled proposal".to_string(),
+            reasoning: "Model explicitly labeled a halt action".to_string(),
         });
     }
 
     None
+}
+
+fn has_action_label(text: &str, markers: &[&str]) -> bool {
+    markers.iter().any(|marker| {
+        text.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed.len() >= marker.len() && trimmed[..marker.len()].eq_ignore_ascii_case(marker)
+        })
+    })
+}
+
+fn lower_action_label(text: &str) -> String {
+    for marker in ["[TOOL]:", "Tool:", "[ACTION]:", "Action:"] {
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.len() >= marker.len() && trimmed[..marker.len()].eq_ignore_ascii_case(marker)
+            {
+                return trimmed[marker.len()..].trim().to_lowercase();
+            }
+        }
+    }
+    String::new()
 }
 
 fn labeled_value(text: &str, markers: &[&str]) -> Option<String> {
@@ -160,4 +196,46 @@ fn labeled_value(text: &str, markers: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::intercept_fallback_action;
+    use crate::agent_protocol::AgentAction;
+
+    #[test]
+    fn rejects_natural_language_mentions_of_actions() {
+        assert!(intercept_fallback_action(
+            "The previous strategy suggested execute_command cargo test, but this is only analysis."
+        ).is_none());
+
+        assert!(intercept_fallback_action("The mission is incomplete. Do not halt yet.").is_none());
+
+        assert!(intercept_fallback_action(
+            "We should use search_code to inspect the implementation."
+        )
+        .is_none());
+
+        assert!(
+            intercept_fallback_action("I need to read_file before making a conclusion.").is_none()
+        );
+    }
+
+    #[test]
+    fn accepts_explicit_labeled_halt() {
+        assert!(matches!(
+            intercept_fallback_action("[ACTION]: halt"),
+            Some(AgentAction::Halt { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_explicit_labeled_execute_command() {
+        assert!(matches!(
+            intercept_fallback_action("[TOOL]: execute_command
+        [COMMAND]: cargo test"),
+            Some(AgentAction::ExecuteCommand { command, .. })
+                if command == "cargo test"
+        ));
+    }
 }

@@ -59,17 +59,19 @@ pub async fn send_task(
             Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
         };
 
-    if let Some(expected_path) =
+    let expected_paths: Vec<String> =
         crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", raw_directive)
             .required_artifact_paths
-            .first()
-    {
+            .into_iter()
+            .map(|a| a.path)
+            .collect();
+    for expected_path in &expected_paths {
         let has_write_node =
-            graph.nodes.values().any(|n| n.objective.contains(&expected_path.path));
+            graph.nodes.values().any(|n| n.objective.contains(expected_path.as_str()));
         if !has_write_node {
             return format!(
                 "FRACTURE: Directive requires writing '{}' but Planner produced no node for it. Refusing to run an incomplete DAG.",
-                expected_path.path
+                expected_path
             );
         }
     }

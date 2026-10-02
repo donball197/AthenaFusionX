@@ -47,6 +47,8 @@ pub enum CompletionCondition {
         function_name: String,
     },
     SourceCodeEvidenceRequired,
+    /// Inline-analysis nodes: the deliverable is the HALT answer itself.
+    HaltDelivered,
     MinBeliefScore(f32),
 }
 
@@ -111,34 +113,6 @@ fn has_word_unnegated(text: &str, word: &str) -> bool {
         }
     }
     false
-}
-
-/// True when `evidence` contains a [CMD_OK] execution record whose `Command:`
-/// line matches `command` (whitespace-normalized) AND whose `Status:` line
-/// proves exit status: 0. A bare "[CMD_OK]" substring -- including literal
-/// "[CMD_OK]" text echoed inside another tool's output -- is NOT proof. This
-/// is the deterministic binding the terminal-completion shortcut in
-/// `cortical_loop.rs` must satisfy before it may complete a node without a
-/// further verification turn.
-pub(crate) fn cmd_ok_binds_command(evidence: &str, command: &str) -> bool {
-    let want = command.split_whitespace().collect::<Vec<_>>().join(" ");
-    if want.is_empty() {
-        return false;
-    }
-    evidence.split("[CMD_OK]").skip(1).any(|block| {
-        let mut got = String::new();
-        let mut status_ok = false;
-        for line in block.lines() {
-            let t = line.trim();
-            if let Some(rest) = t.strip_prefix("Command:") {
-                got = rest.split_whitespace().collect::<Vec<_>>().join(" ");
-            }
-            if let Some(rest) = t.strip_prefix("Status:") {
-                status_ok = rest.trim().ends_with("exit status: 0");
-            }
-        }
-        !got.is_empty() && got == want && status_ok
-    })
 }
 
 pub(crate) fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
@@ -391,8 +365,205 @@ pub(crate) fn extract_all_named_targets(objective: &str, marker: &str) -> Vec<St
     out
 }
 
+/// Structural scopes of a composed DAG-node mission.
+pub(crate) struct MissionScopes<'a> {
+    pub objective: &'a str,
+    pub criteria: &'a str,
+    pub root_directive: &'a str,
+    #[allow(dead_code)]
+    pub lineage: &'a str,
+}
+
+impl<'a> MissionScopes<'a> {
+    pub fn parse(raw: &'a str) -> Self {
+        const CRITERIA_HEADER: &str = "MANDATORY NODE SUCCESS CRITERIA:";
+        const ROOT_HEADER: &str = "ROOT DIRECTIVE CONTEXT:";
+        const LINEAGE_HEADER: &str = "LINEAGE CONTEXT:";
+
+        let criteria_start = raw.find(CRITERIA_HEADER);
+        let root_start = raw.find(ROOT_HEADER);
+        let lineage_start = raw.find(LINEAGE_HEADER);
+
+        if criteria_start.is_none() && root_start.is_none() {
+            return Self { objective: raw, criteria: raw, root_directive: "", lineage: "" };
+        }
+
+        let objective_end = criteria_start.or(root_start).unwrap_or(raw.len());
+        let objective = &raw[..objective_end];
+
+        let criteria_end = root_start.or(lineage_start).unwrap_or(raw.len());
+        let mut criteria = match criteria_start {
+            Some(s) => &raw[s + CRITERIA_HEADER.len()..criteria_end],
+            None => "",
+        };
+        if let Some(rule_start) = criteria.find("NODE COMPLETION RULE") {
+            criteria = &criteria[..rule_start];
+        }
+
+        let root_directive = match (root_start, lineage_start) {
+            (Some(rs), Some(ls)) if ls > rs => &raw[rs + ROOT_HEADER.len()..ls],
+            (Some(rs), _) => &raw[rs + ROOT_HEADER.len()..],
+            _ => "",
+        };
+        let lineage = match lineage_start {
+            Some(ls) => &raw[ls + LINEAGE_HEADER.len()..],
+            None => "",
+        };
+
+        Self { objective, criteria, root_directive, lineage }
+    }
+
+    pub fn inference_text(&self) -> String {
+        if std::ptr::eq(self.objective, self.criteria) {
+            return self.objective.to_string();
+        }
+        format!("{}\n{}", self.objective, self.criteria)
+    }
+}
+
+fn detect_read_only(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    const PHRASES: &[&str] = &[
+        "read-only",
+        "read only",
+        "audit only",
+        "do not modify any",
+        "don't modify any",
+        "without modifying any",
+        "do not modify files",
+        "don't modify files",
+        "without modifying files",
+        "do not modify, create",
+        "do not modify/create",
+        "do not write any",
+        "don't write any",
+        "without writing any",
+        "do not create any",
+        "don't create any",
+        "do not change any",
+        "don't change any",
+        "no files may be modified",
+        "must not be modified",
+        "must not modify",
+    ];
+    PHRASES.iter().any(|p| lower.contains(p))
+}
+
+fn declared_criteria_contract(
+    node_id: &str,
+    text: &str,
+    read_only: bool,
+) -> Option<SubgoalContract> {
+    let mut conditions: Vec<CompletionCondition> = Vec::new();
+    let mut required_artifact_paths: Vec<ArtifactSpec> = Vec::new();
+
+    for path in extract_all_named_targets(text, "READ_OK:") {
+        conditions.push(CompletionCondition::ReadPathAcquired { path });
+    }
+
+    for path in extract_all_named_targets(text, "WRITE_OK:") {
+        if read_only {
+            continue;
+        }
+        conditions.push(CompletionCondition::WritePathAcquired { path: path.clone() });
+        required_artifact_paths.push(ArtifactSpec { path, reason: "output_deliverable".into() });
+    }
+
+    if (text.contains("PATCH_FUNCTION_OK:")
+        || text.contains("DIFF_PATCH_OK:")
+        || text.contains("REPLACE_LINES_OK:"))
+        && !read_only
+    {
+        conditions.push(CompletionCondition::PatchMarkerAcquired);
+    }
+
+    for term in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
+        conditions.push(CompletionCondition::SearchTermAcquired { term });
+    }
+
+    if text.contains("SEARCH_MEMORY_OK") {
+        conditions.push(CompletionCondition::SearchMemoryMarkerAcquired);
+    }
+
+    if text.contains("DAG_LINEAGE_OK") || text.contains("LINEAGE MODE: INHERIT_ONLY") {
+        conditions.push(CompletionCondition::LineageEvidenceAcquired);
+    }
+
+    if let Some(pos) = text.find("READ_FUNCTION_OK:") {
+        let remainder = &text[pos + "READ_FUNCTION_OK:".len()..];
+        let target =
+            remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
+        let mut parts = target.splitn(2, ':');
+        let path = parts.next().unwrap_or("").trim().to_string();
+        let function_name = parts.next().unwrap_or("").trim().to_string();
+        if !path.is_empty() && !function_name.is_empty() {
+            conditions
+                .push(CompletionCondition::ReadFunctionMarkerAcquired { path, function_name });
+        }
+    }
+
+    if text.contains("CMD_OK") {
+        if let Some(command) = extract_required_command(text) {
+            conditions.push(CompletionCondition::CommandExecutionVerified { command });
+        } else {
+            conditions.push(CompletionCondition::CommandMarkerAcquired);
+        }
+    }
+
+    if conditions.is_empty() {
+        return None;
+    }
+
+    let only_search_markers = conditions.iter().all(|c| {
+        matches!(
+            c,
+            CompletionCondition::SearchTermAcquired { .. }
+                | CompletionCondition::SearchMarkerAcquired
+                | CompletionCondition::SearchMemoryMarkerAcquired
+        )
+    });
+    let has_output = conditions.iter().any(|c| {
+        matches!(
+            c,
+            CompletionCondition::WritePathAcquired { .. }
+                | CompletionCondition::WriteMarkerAcquired
+                | CompletionCondition::PatchMarkerAcquired
+        )
+    });
+    let has_recon = conditions.iter().any(|c| {
+        matches!(
+            c,
+            CompletionCondition::ReadPathAcquired { .. }
+                | CompletionCondition::ReadMarkerAcquired
+                | CompletionCondition::ReadFunctionMarkerAcquired { .. }
+                | CompletionCondition::SearchTermAcquired { .. }
+                | CompletionCondition::SearchMarkerAcquired
+                | CompletionCondition::SearchMemoryMarkerAcquired
+                | CompletionCondition::SourceCodeEvidenceRequired
+        )
+    });
+
+    if has_recon && !only_search_markers {
+        let threshold = if has_output { 0.75 } else { 0.65 };
+        conditions.push(CompletionCondition::MinBeliefScore(threshold));
+    }
+
+    Some(SubgoalContract {
+        node_id: node_id.to_string(),
+        objective: text.to_string(),
+        is_mutation_task: has_output,
+        read_only,
+        conditions,
+        required_artifact_paths,
+    })
+}
+
 impl SubgoalCompletionEngine {
     pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
+        let scopes = MissionScopes::parse(objective);
+        let inference_text = scopes.inference_text();
+        let objective: &str = &inference_text;
+
         let obj_lower = objective.trim().to_lowercase();
         let classify_text = obj_lower
             .strip_prefix("objective:")
@@ -415,10 +586,16 @@ impl SubgoalCompletionEngine {
         // The heuristic matches the declaration forms used by real
         // missions. Matching is on the already-lowercased objective text,
         // so case is irrelevant. See also cortical_loop::handle_execute.
-        let read_only = classify_text.contains("read-only")
-            || classify_text.contains("read only")
-            || classify_text.contains("audit only")
-            || classify_text.contains("do not modify any source files");
+        let declared_mutation_criteria = objective.contains("WRITE_OK:")
+            || objective.contains("PATCH_FUNCTION_OK:")
+            || objective.contains("DIFF_PATCH_OK:")
+            || objective.contains("REPLACE_LINES_OK:");
+        let read_only = detect_read_only(objective)
+            || (detect_read_only(scopes.root_directive) && !declared_mutation_criteria);
+
+        if let Some(contract) = declared_criteria_contract(node_id, objective, read_only) {
+            return contract;
+        }
 
         // Explicit PATCH_FUNCTION_OK contract.
         //
@@ -477,6 +654,21 @@ impl SubgoalCompletionEngine {
                 conditions: vec![CompletionCondition::LineageEvidenceAcquired],
                 is_mutation_task: false,
                 read_only,
+                required_artifact_paths: Vec::new(),
+            };
+        }
+
+        // Inline-analysis contract: no reads, searches, or belief threshold.
+        if objective.contains("ANALYSIS_OK")
+            && !objective.contains("READ_OK:")
+            && !objective.contains("SEARCH_CODE_OK:")
+        {
+            return SubgoalContract {
+                node_id: node_id.to_string(),
+                objective: objective.to_string(),
+                conditions: vec![CompletionCondition::HaltDelivered],
+                is_mutation_task: false,
+                read_only: true,
                 required_artifact_paths: Vec::new(),
             };
         }
@@ -544,7 +736,7 @@ impl SubgoalCompletionEngine {
 
         let has_write = any_word_unnegated(
             classify_text,
-            &["write", "export", "save", "implement", "integrate", "add", "create", "synthesize"],
+            &["write", "export", "save", "implement", "integrate", "create", "synthesize"],
         );
 
         let has_read_intent =
@@ -583,8 +775,12 @@ impl SubgoalCompletionEngine {
         // when the mission ALSO names path-bound criteria (READ_OK:,
         // WRITE_OK:), do not discard them. Fall through so the intent
         // block below preserves every declared criterion.
-        let has_explicit_path_bound =
-            objective.contains("READ_OK:") || objective.contains("WRITE_OK:");
+        let has_explicit_path_bound = objective.contains("READ_OK:")
+            || objective.contains("WRITE_OK:")
+            || objective.contains("SEARCH_CODE_OK:")
+            || objective.contains("SEARCH_MEMORY_OK:")
+            || objective.contains("PATCH_FUNCTION_OK:")
+            || objective.contains("READ_FUNCTION_OK:");
         if has_search_memory_intent && !has_explicit_path_bound {
             return SubgoalContract {
                 node_id: node_id.to_string(),
@@ -728,6 +924,12 @@ impl SubgoalCompletionEngine {
             })
         {
             conditions.push(CompletionCondition::WriteMarkerAcquired);
+        }
+
+        if objective.contains("ANALYSIS_OK")
+            && !conditions.iter().any(|c| matches!(c, CompletionCondition::HaltDelivered))
+        {
+            conditions.push(CompletionCondition::HaltDelivered);
         }
 
         crate::completion_engine::SubgoalContract {
@@ -907,34 +1109,6 @@ mod tests {
     }
 
     #[test]
-    fn cmd_ok_binding_requires_matching_command_and_success_status() {
-        let ok = "[CMD_OK] Command: cargo check -p nexus_runtime_core\nStatus: exit status: 0\n";
-        assert!(super::cmd_ok_binds_command(ok, "cargo check -p nexus_runtime_core"));
-        // Whitespace normalization must not weaken the binding.
-        assert!(super::cmd_ok_binds_command(ok, "cargo  check -p   nexus_runtime_core"));
-
-        // Some other command succeeded -> must not bind.
-        let wrong = "[CMD_OK] Command: ls -la\nStatus: exit status: 0\n";
-        assert!(!super::cmd_ok_binds_command(wrong, "cargo check -p nexus_runtime_core"));
-
-        // Right command, failed status -> must not bind.
-        let failed =
-            "[CMD_OK] Command: cargo check -p nexus_runtime_core\nStatus: exit status: 101\n";
-        assert!(!super::cmd_ok_binds_command(failed, "cargo check -p nexus_runtime_core"));
-
-        // Literal "[CMD_OK]" text in prose is not an execution record.
-        let spoof = "discussion of [CMD_OK] markers in the runtime\n";
-        assert!(!super::cmd_ok_binds_command(spoof, "cargo check -p nexus_runtime_core"));
-
-        // Multi-record evidence: the matching record wins regardless of order.
-        let multi = format!("{}{}", wrong, ok);
-        assert!(super::cmd_ok_binds_command(&multi, "cargo check -p nexus_runtime_core"));
-
-        // Empty command can never bind.
-        assert!(!super::cmd_ok_binds_command(ok, "   "));
-    }
-
-    #[test]
     fn semantic_verification_classifier_coverage_table() {
         // Coverage table for `requires_semantic_verification`.
         //
@@ -964,10 +1138,7 @@ mod tests {
             ("Report the results", "base verb: report"),
             // Verbs/nouns frequently emitted by the LLM planner that are
             // NOT exercised by the sibling test.
-            (
-                "Review the implementation and explain the failure modes",
-                "review / explain",
-            ),
+            ("Review the implementation and explain the failure modes", "review / explain"),
             ("Assess the remediation strategy", "assess"),
             ("Evaluate the compiler output", "evaluate"),
             ("Summarize the audit findings", "summarize"),
@@ -979,26 +1150,14 @@ mod tests {
             // compares whole tokens case-insensitively; if the word list
             // contains only the base form, these will not match.
             ("Analyzing the call graph", "present participle: analyzing"),
-            (
-                "Investigating the failure mode",
-                "present participle: investigating",
-            ),
+            ("Investigating the failure mode", "present participle: investigating"),
             ("Reviewing the implementation", "present participle: reviewing"),
             ("Evaluating the compiler output", "present participle: evaluating"),
-            (
-                "Assessing the remediation strategy",
-                "present participle: assessing",
-            ),
+            ("Assessing the remediation strategy", "present participle: assessing"),
             // Compound objectives: a semantic word must still trigger even
             // when a physical verb appears earlier in the same objective.
-            (
-                "Read the file and analyze the implementation",
-                "compound: read + analyze",
-            ),
-            (
-                "Search for the symbol, then summarize the findings",
-                "compound: search + summarize",
-            ),
+            ("Read the file and analyze the implementation", "compound: read + analyze"),
+            ("Search for the symbol, then summarize the findings", "compound: search + summarize"),
         ];
 
         // Objectives that MUST NOT be classified as semantic: purely
@@ -1160,6 +1319,211 @@ mod tests {
         }
     }
 
+    fn composed_audit_mission(root_context: &str) -> String {
+        format!(
+            r#"OBJECTIVE: Perform a deterministic code audit of the provided Rust logic.
+ASSIGNED ROLE: CodeAnalyzer
+
+MANDATORY NODE SUCCESS CRITERIA:
+- SEARCH_CODE_OK:crates/runtime_core/src:Evidence
+
+NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced.
+
+ROOT DIRECTIVE CONTEXT:
+{}
+
+LINEAGE CONTEXT:
+[NO COMPLETED OUTPUT AVAILABLE]"#,
+            root_context
+        )
+    }
+
+    #[test]
+    fn root_context_output_labels_do_not_mint_mutation_conditions() {
+        let mission = composed_audit_mission(
+            r#"Then provide exactly this output format:
+ROOT_CAUSE: <both independent defects>
+TRACE: <...>
+FIX: <the minimal logical correction>
+Do not modify any files."#,
+        );
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", &mission);
+
+        assert!(
+            !contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::PatchMarkerAcquired
+                    | CompletionCondition::WriteMarkerAcquired
+                    | CompletionCondition::WritePathAcquired { .. }
+            )),
+            "root context must not mint mutation conditions: {:?}",
+            contract.conditions
+        );
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::SearchTermAcquired { term }
+                if term == "crates/runtime_core/src:Evidence"
+        )));
+        assert!(contract.read_only, "root-level 'Do not modify any files.' must set read_only");
+    }
+
+    #[test]
+    fn failed_audit_run_contract_is_actually_satisfiable() {
+        let mission = composed_audit_mission(
+            r#"Provide the output format with a FIX: line.
+Do not modify any files."#,
+        );
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", &mission);
+
+        let evidence = r#"[SEARCH_CODE_OK] Path: crates/runtime_core/src | Query: 'Evidence'
+MATCHES:
+lib.rs:1:enum Evidence
+"#;
+        assert!(
+            SubgoalCompletionEngine::evaluate(&contract, evidence, 0.5),
+            "conditions = {:?}",
+            contract.conditions
+        );
+    }
+
+    #[test]
+    fn fix_label_in_objective_alongside_declared_criteria_is_inert() {
+        let mission = r#"OBJECTIVE: Identify the defects and report FIX: the correction.
+
+MANDATORY NODE SUCCESS CRITERIA:
+SEARCH_CODE_OK:src:gate"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+        assert!(
+            !contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::PatchMarkerAcquired | CompletionCondition::WriteMarkerAcquired
+            )),
+            "conditions = {:?}",
+            contract.conditions
+        );
+    }
+
+    #[test]
+    fn do_not_modify_any_files_sets_read_only() {
+        let contract = SubgoalCompletionEngine::infer_contract(
+            "t",
+            "Audit the report. Do not modify any files.",
+        );
+        assert!(contract.read_only);
+        assert!(contract.required_artifact_paths.is_empty());
+    }
+
+    #[test]
+    fn lineage_output_cannot_impose_read_only_on_child_node() {
+        let mission = r#"OBJECTIVE: Write summary.md of the findings.
+ASSIGNED ROLE: CodeAnalyzer
+
+MANDATORY NODE SUCCESS CRITERIA:
+WRITE_OK:summary.md
+
+NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced.
+
+ROOT DIRECTIVE CONTEXT:
+Summarize the findings.
+
+LINEAGE CONTEXT:
+---
+[DEPENDENCY LINEAGE FROM task_0]:
+The upstream audit was read-only; do not modify any files.
+---
+"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(!contract.read_only, "lineage text must not impose read-only on the child");
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::WritePathAcquired { path } if path == "summary.md"
+        )));
+        assert_eq!(contract.required_artifact_paths.len(), 1);
+    }
+
+    #[test]
+    fn wrapped_command_node_preserves_original_criteria() {
+        let mission = r#"OBJECTIVE: Execute `cargo check -p math_utils` and report the actual command used and its output as verifiable evidence.
+
+MANDATORY NODE SUCCESS CRITERIA:
+CMD_OK
+
+Then complete the original objective:
+READ_OK:crates/runtime_core/src/lib.rs
+
+ROOT DIRECTIVE CONTEXT:
+Fix the build failure.
+
+LINEAGE CONTEXT:
+"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::CommandExecutionVerified { command }
+                    if command == "cargo check -p math_utils"
+            )),
+            "conditions = {:?}",
+            contract.conditions
+        );
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::ReadPathAcquired { path }
+                    if path == "crates/runtime_core/src/lib.rs"
+            )),
+            "conditions = {:?}",
+            contract.conditions
+        );
+    }
+
+    #[test]
+    fn mission_scopes_exclude_root_and_lineage() {
+        let mission = composed_audit_mission("FIX: the correction.\nDo not modify any files.");
+        let scopes = super::MissionScopes::parse(&mission);
+
+        assert!(scopes.inference_text().contains("SEARCH_CODE_OK:"));
+        assert!(!scopes.inference_text().contains("FIX:"), "leaked");
+        assert!(scopes.root_directive.contains("FIX:"));
+    }
+
+    #[test]
+    fn write_only_declared_contract_carries_no_belief_threshold() {
+        let mission = r#"MANDATORY NODE SUCCESS CRITERIA:
+WRITE_OK:out.md"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+        assert!(!contract
+            .conditions
+            .iter()
+            .any(|c| matches!(c, CompletionCondition::MinBeliefScore(_))));
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::WritePathAcquired { path } if path == "out.md"
+        )));
+    }
+
+    #[test]
+    fn declared_write_criterion_wins_over_root_read_only_restriction() {
+        let mission = r#"OBJECTIVE: Produce the summary artifact.
+
+MANDATORY NODE SUCCESS CRITERIA:
+WRITE_OK:summary.md
+
+ROOT DIRECTIVE CONTEXT:
+Do not modify any files.
+LINEAGE CONTEXT:
+"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(!contract.read_only);
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::WritePathAcquired { path } if path == "summary.md"
+        )));
+    }
+
     #[test]
     fn mission2_shape_reads_satisfied_once_the_command_is_evidenced() {
         let contract = mk(vec![CompletionCondition::CommandExecutionVerified {
@@ -1238,6 +1602,33 @@ mod tests {
             .conditions
             .iter()
             .any(|c| matches!(c, CompletionCondition::SearchMemoryMarkerAcquired)));
+    }
+
+    #[test]
+    fn case_8_search_code_plus_search_memory_without_reads_preserves_both() {
+        // Regression: when SEARCH_CODE_OK: and SEARCH_MEMORY_OK: are both
+        // present without READ_OK:/WRITE_OK:, infer_contract must not take
+        // the SearchMemory early-return and silently discard SEARCH_CODE_OK:.
+        let mission = "SEARCH_CODE_OK:foo\nSEARCH_MEMORY_OK:bar";
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::SearchTermAcquired { term } if term == "foo"
+            )),
+            "SEARCH_CODE_OK:foo must survive; conditions = {:?}",
+            contract.conditions
+        );
+
+        assert!(
+            contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CompletionCondition::SearchMemoryMarkerAcquired)),
+            "SEARCH_MEMORY_OK must survive; conditions = {:?}",
+            contract.conditions
+        );
     }
 
     #[test]
