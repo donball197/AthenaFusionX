@@ -725,320 +725,6 @@ impl CorticalLoop {
         }
     }
 
-    /// Deterministically enforce the Cortex strategy/action boundary.
-    ///
-    /// The Cortex selects the active strategy. The LLM Strategist may
-    /// operationalize that strategy, but may not silently substitute a
-    /// different native action.
-    fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
-        let strategy = strategy.trim();
-
-        // A Halt proposal's legitimacy is decided downstream by the real
-        // completion check (deterministic_contract_satisfied / handle_evaluate),
-        // which verifies actual evidence against the contract. Gating Halt here
-        // on matching the active strategy's literal token blocks the model from
-        // ever exiting once a strategy's evidence goal is met but the strategy
-        // string doesn't itself say "halt" -- previously carved out only for
-        // write_file: (see below); generalized after two more independent
-        // stalls hit the identical bug under read_file: and search_code:
-        // strategies (router.rs audit: 0/1 nodes, belief decayed 0.64->0.04;
-        // reflection_test.rs mission: 0/3 nodes).
-        if matches!(action, AgentAction::Halt { .. }) {
-            return true;
-        }
-
-        // HALT-PREFIX RECOVERY: a strategy that begins with "halt:" must not
-        // permanently block reconnaissance actions. Without this, a HaltDelivered
-        // analysis node that later requires source inspection can never escape
-        // the initial halt-prefixed hypothesis.
-        if strategy.starts_with("halt:") {
-            return matches!(
-                action,
-                AgentAction::SearchCode { .. }
-                    | AgentAction::ReadFile { .. }
-                    | AgentAction::ReadFileChunk { .. }
-                    | AgentAction::ReadFunction { .. }
-                    | AgentAction::SearchMemory { .. }
-            );
-        }
-
-        if let Some(expected_path) = strategy.strip_prefix("read_file:") {
-            // A `read_file:` strategy targets a specific file, not
-            // literally the single-shot ReadFile action. When that file
-            // exceeds the single-read size, the tool's own truncation
-            // notice instructs the Strategist to continue via
-            // `read_file_chunk` on the same path -- that is a legitimate
-            // operationalization of "inspect this file", not a strategy
-            // substitution. Confirmed root cause of a permanent
-            // STRATEGY VIOLATION loop (33 turns burned, belief decayed to
-            // 0.00, 0/12 DAG nodes) on any file too large for one read:
-            // every compliant ReadFileChunk continuation was rejected as
-            // incompatible, and the only "compatible" move (repeating the
-            // already-truncated ReadFile) tripped anti-loop dedup instead.
-            let expected_path = expected_path.trim();
-            return matches!(
-                action,
-                AgentAction::ReadFile { path, .. } if path.trim() == expected_path
-            ) || matches!(
-                action,
-                AgentAction::ReadFileChunk { path, .. } if path.trim() == expected_path
-            );
-        }
-
-        if let Some(rest) = strategy.strip_prefix("read_function:") {
-            let mut parts = rest.splitn(2, ':');
-            let expected_path = parts.next().unwrap_or("").trim();
-            let expected_function = parts.next().unwrap_or("").trim();
-
-            return matches!(
-                action,
-                AgentAction::ReadFunction {
-                    path,
-                    function_name,
-                    ..
-                } if path.trim() == expected_path
-                    && function_name.trim() == expected_function
-            );
-        }
-
-        if let Some(expected_path) = strategy.strip_prefix("read_file_chunk:") {
-            return matches!(
-                action,
-                AgentAction::ReadFileChunk { path, .. }
-                    if path.trim() == expected_path.trim()
-            );
-        }
-
-        if let Some(rest) = strategy.strip_prefix("search_code:") {
-            let mut parts = rest.splitn(2, ':');
-            let first = parts.next().unwrap_or("").trim();
-            let second = parts.next().map(|s| s.trim());
-
-            return match second {
-                Some(expected_query) => {
-                    // Well-formed "search_code:<path>:<query>" -- the shape
-                    // every deterministic branch (e.g. the SEARCH_CODE_OK:
-                    // compound-hypothesis fix) always emits.
-                    //
-                    // The path component is a DIRECTORY SCOPE, not a
-                    // single-file pin. The model may legitimately refine
-                    // it to a specific file within that scope; the query
-                    // is authoritative and must match exactly. Requiring
-                    // exact path equality rejected every refinement as a
-                    // STRATEGY VIOLATION -- confirmed root cause of the
-                    // audit mission's turn-1 abort, where the model
-                    // proposed `.../cortical_loop.rs` against a strategy
-                    // that scoped `.../src`.
-                    //
-                    // `..` is disallowed to keep the relaxation from
-                    // being usable for path traversal; the query still
-                    // has to match verbatim.
-                    let expected_path = first;
-                    let expected_path_norm = expected_path.trim_end_matches('/');
-                    let prefix = format!("{}/", expected_path_norm);
-                    // Query is a REFINEMENT, not a byte-exact contract.
-                    //
-                    // The DAG verifier (orchestrator_v2/verifier.rs,
-                    // criterion "SEARCH_CODE_OK:<term>") checks only that
-                    // the evidence block contains <term> as a substring
-                    // anywhere in the text -- including matched code
-                    // lines. It does not require the query string recorded
-                    // in the evidence to match the criterion verbatim.
-                    // The matcher was stricter than the verifier and
-                    // rejected legitimate paraphrases. Confirmed root
-                    // cause of the SEARCH_CODE_OK:fn test_ abort.
-                    //
-                    // Accept either direction of substring containment,
-                    // guarded by a 4-character minimum so a degenerate
-                    // query ("t", "_", "fn") cannot match everything.
-                    let actual_q = if let AgentAction::SearchCode { query, .. } = action {
-                        query.trim().to_lowercase()
-                    } else {
-                        String::new()
-                    };
-                    let expected_q = expected_query.trim().to_lowercase();
-                    let min_len = actual_q.len().min(expected_q.len());
-                    let query_matches = actual_q == expected_q
-                        || (min_len >= 4
-                            && (actual_q.contains(&expected_q) || expected_q.contains(&actual_q)));
-
-                    // Path check shared by the search itself and any
-                    // follow-up read under the same directory scope.
-                    let path_ok = |p: &str| -> bool {
-                        let pt = p.trim();
-                        // The Strategist may propose an absolute path (e.g.
-                        // "/root/AthenaFusionX/vendor/openfang/Cargo.toml")
-                        // even when the strategy's scope was recorded
-                        // relative to the workspace root (e.g.
-                        // "vendor/openfang"). The original check only
-                        // matched literal equality or a relative prefix,
-                        // so any absolute-path proposal against a
-                        // relative-scoped search_code strategy was
-                        // rejected as a STRATEGY VIOLATION regardless of
-                        // whether it was the obviously correct file.
-                        // Confirmed root cause of the OpenFang audit
-                        // mission's node_audit_openfang_workspace stall
-                        // (60 turns burned, best belief 0.15, 5/10 DAG
-                        // nodes): every read_file proposal targeting the
-                        // real vendor/openfang/Cargo.toml used an absolute
-                        // path and was rejected on every attempt.
-                        pt == expected_path
-                            || (pt.starts_with(&prefix) && !pt.contains(".."))
-                            || pt.ends_with(&format!("/{}", expected_path_norm))
-                            || (pt.contains(&format!("/{}/", expected_path_norm))
-                                && !pt.contains(".."))
-                    };
-
-                    // Accept the search action itself, AND accept a
-                    // read_file / read_file_chunk that inspects a file
-                    // under the searched directory. After locating a
-                    // symbol the model legitimately wants to read the
-                    // region it found; rejecting that as a strategy
-                    // substitution burned 4 turns of belief decay per
-                    // node. The verifier still requires
-                    // [SEARCH_CODE_OK] in evidence, so a read alone
-                    // cannot satisfy a SEARCH_CODE_OK criterion.
-                    match action {
-                        AgentAction::SearchCode { path, .. } => path_ok(path) && query_matches,
-                        AgentAction::ReadFileChunk { path, .. } => path_ok(path),
-                        AgentAction::ReadFile { path, .. } => path_ok(path),
-                        // Accept an ExecuteCommand that is a read-only
-                        // existence/inspection check referencing the search
-                        // target -- e.g. `ls -la <path>` or `test -f <path>`.
-                        // search_code cannot resolve a target outside a
-                        // source tree (e.g. /tmp), and the model correctly
-                        // diagnosed that mismatch; rejecting the pivot as a
-                        // strategy violation left it with no valid way to
-                        // confirm a non-source path's existence. Confirmed
-                        // root cause of the reflection_test.rs mission's
-                        // task_1 stall (0/3 nodes, belief decayed
-                        // 0.42->0.02).
-                        AgentAction::ExecuteCommand { command, .. } => {
-                            let cmd = command.trim();
-                            let is_inspection_cmd = ["ls ", "ls -", "stat ", "test ", "file "]
-                                .iter()
-                                .any(|verb| cmd.starts_with(verb));
-                            // The hypothesis generator sometimes emits
-                            // "search_code:<generic_scope>:<real_target>"
-                            // (e.g. defaulting path to a generic src scope
-                            // and putting the actual mission target in the
-                            // query slot) instead of the well-formed
-                            // path:query shape. Check the command against
-                            // either slot so a correct inspection command
-                            // targeting the real path (carried here in
-                            // expected_query) is not rejected merely
-                            // because the malformed hypothesis put it in
-                            // the wrong position. Confirmed root cause of
-                            // the reflection_test.rs mission's task_1
-                            // stall persisting after the first
-                            // ExecuteCommand fix: expected_path resolved
-                            // to a generic scope while the real target sat
-                            // in expected_query.
-                            let expected_query_lower = expected_query.trim().to_lowercase();
-                            is_inspection_cmd
-                                && (cmd.contains(expected_path)
-                                    || cmd.to_lowercase().contains(&expected_query_lower))
-                        }
-                        _ => false,
-                    }
-                }
-                None => {
-                    // Freeform "search_code:<query>" with no path component --
-                    // produced by the general 3-strategy LLM hypothesis
-                    // generator, which is not constrained to the path:query
-                    // shape the deterministic branches always use. Pinning an
-                    // empty/bogus path here is unsatisfiable by construction,
-                    // same failure family as the already-fixed search_memory:
-                    // exact-match bug. Confirmed root cause of a permanent
-                    // STRATEGY VIOLATION stall (60 turns, best belief 0.50,
-                    // 2/12 DAG nodes): STRATEGY_VIOLATION deliberately never
-                    // decays belief (operational failure != epistemic
-                    // contradiction), so a structurally malformed strategy
-                    // string had no way to ever pivot to a sibling hypothesis.
-                    // Require only that the query matches; path is free-form.
-                    let expected_query = first;
-                    matches!(
-                        action,
-                        AgentAction::SearchCode { query, .. } if query.trim() == expected_query
-                    )
-                }
-            };
-        }
-
-        if strategy.strip_prefix("search_memory:").is_some() {
-            // NOTE: search_memory strategies carry the full authoritative
-            // directive text (see EpistemicEngine::generate_hypotheses),
-            // not a literal query contract like search_code's path/query
-            // or patch_function's path/function_name. Requiring exact
-            // string equality here is unsatisfiable by construction --
-            // no model reproduces the full node prompt verbatim as its
-            // query -- and previously caused permanent STRATEGY VIOLATION
-            // loops on every legitimate SearchMemory proposal. Only the
-            // action *type* is authoritative; the query text is free-form.
-            return matches!(action, AgentAction::SearchMemory { .. });
-        }
-
-        if let Some(expected_command) = strategy.strip_prefix("execute_command:") {
-            return matches!(
-                action,
-                AgentAction::ExecuteCommand { command, .. }
-                    if command.trim() == expected_command.trim()
-            );
-        }
-
-        if let Some(expected_path) = strategy.strip_prefix("write_file:") {
-            return matches!(
-                action,
-                AgentAction::WriteFile { path, .. }
-                    if path.trim() == expected_path.trim()
-            );
-        }
-
-        if let Some(expected_path) = strategy.strip_prefix("replace_lines:") {
-            return matches!(
-                action,
-                AgentAction::ReplaceLines { path, .. }
-                    if path.trim() == expected_path.trim()
-            );
-        }
-
-        if let Some(expected_path) = strategy.strip_prefix("diff_patch:") {
-            return matches!(
-                action,
-                AgentAction::DiffPatch { path, .. }
-                    if path.trim() == expected_path.trim()
-            );
-        }
-
-        if let Some(rest) = strategy.strip_prefix("patch_function:") {
-            let mut parts = rest.splitn(2, ':');
-            let expected_path = parts.next().unwrap_or("").trim();
-            let _expected_function = parts.next().unwrap_or("").trim();
-
-            return matches!(
-                action,
-                AgentAction::PatchFunction {
-                    path,
-                    function_name,
-                    ..
-                } if path.trim() == expected_path
-                    && !function_name.trim().is_empty()
-            );
-        }
-
-        if let Some(expected_path) = strategy.strip_prefix("synthesize_report:") {
-            return matches!(
-                action,
-                AgentAction::SynthesizeReport { output_path, .. }
-                    if output_path.trim() == expected_path.trim()
-            );
-        }
-
-        // Strategies that are not explicit native actions are reasoning
-        // descriptions. They are not subject to a parameter-level binding.
-        true
-    }
-
     /// Returns true if executing `action` would produce evidence that
     /// satisfies a currently-unmet condition in the session contract.
     ///
@@ -1568,36 +1254,41 @@ impl CorticalLoop {
 
                         func_from_strategy.unwrap_or_else(|| {
                             let lower = mission.to_lowercase();
-                        let dead = |n: &str| {
-                            session.local_evidence.contains(&format!(
-                                "Symbol `{}` has no Tree-sitter body", n
-                            ))
-                        };
-                        // Prefer a symbol actually defined in the file read.
-                        let mut found: Option<String> = None;
-                        for line in session.local_evidence.lines() {
-                            if line.contains("Defined symbols:") && line.contains(path_str.as_str()) {
-                                for part in line.split("pub fn ").skip(1) {
-                                    let name: String = part
-                                        .chars()
-                                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                                        .collect();
-                                    if !name.is_empty() && !dead(&name) {
-                                        found = Some(name);
-                                        break;
+                            let dead = |n: &str| {
+                                session
+                                    .local_evidence
+                                    .contains(&format!("Symbol `{}` has no Tree-sitter body", n))
+                            };
+                            // Prefer a symbol actually defined in the file read.
+                            let mut found: Option<String> = None;
+                            for line in session.local_evidence.lines() {
+                                if line.contains("Defined symbols:")
+                                    && line.contains(path_str.as_str())
+                                {
+                                    for part in line.split("pub fn ").skip(1) {
+                                        let name: String = part
+                                            .chars()
+                                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                            .collect();
+                                        if !name.is_empty() && !dead(&name) {
+                                            found = Some(name);
+                                            break;
+                                        }
                                     }
                                 }
+                                if found.is_some() {
+                                    break;
+                                }
                             }
-                            if found.is_some() { break; }
-                        }
-                        found
-                            .or_else(|| {
-                                ["evaluate", "check_contract"]
-                                    .iter()
-                                    .find(|c| lower.contains(**c) && !dead(c))
-                                    .map(|s| (*s).to_string())
-                            })
-                            .unwrap_or_else(|| "evaluate".to_string())
+                            found
+                                .or_else(|| {
+                                    ["evaluate", "check_contract"]
+                                        .iter()
+                                        .find(|c| lower.contains(**c) && !dead(c))
+                                        .map(|s| (*s).to_string())
+                                })
+                                .unwrap_or_else(|| "evaluate".to_string())
+                        })
                     };
 
                     let mutation_strats = [
@@ -1625,12 +1316,7 @@ impl CorticalLoop {
                             continue;
                         }
                         let belief = if injected == 0 { 0.58 } else { 0.54 };
-                        let hid = session.graph.add_node(
-                            NodeKind::Hypothesis,
-                            strat,
-                            belief,
-                            100,
-                        );
+                        let hid = session.graph.add_node(NodeKind::Hypothesis, strat, belief, 100);
                         if injected == 0 {
                             session.best_hypothesis_id = Some(hid);
                             active_strategy = strat.clone();
@@ -1639,10 +1325,7 @@ impl CorticalLoop {
                                 strat
                             ));
                         } else {
-                            self.log(format!(
-                                "\x1b[90m  -> Injected strategy: {}\x1b[0m",
-                                strat
-                            ));
+                            self.log(format!("\x1b[90m  -> Injected strategy: {}\x1b[0m", strat));
                         }
                         injected += 1;
                     }
@@ -1657,8 +1340,6 @@ impl CorticalLoop {
             }
         }
         // --- end POST-READ MUTATION PIVOT ---
-
-
 
         // HALT-VETO RECOVERY (HaltDelivered strategy-prefix lock fix):
         //
@@ -1965,7 +1646,10 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         // proposals as STRATEGY VIOLATIONS. When write_phase_ready is
         // false, active_strategy == h_content and behavior is unchanged.
         if let Some(first_action) = actions.first() {
-            let strategy_ok = Self::action_matches_strategy(&active_strategy, first_action);
+            let strategy_ok = crate::cortical::strategy_match::action_matches_strategy(
+                &active_strategy,
+                first_action,
+            );
             let advances_unmet =
                 Self::action_advances_unmet_contract_condition(first_action, session, mission);
             if !strategy_ok && !advances_unmet {
@@ -3049,11 +2733,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
     /// callers intend. Decay never resurrects: it only floors at 0.0.
     /// The evaluation-failure rescue path remains
     /// `floor_hypothesis_belief_after_failure`.
-    fn decay_hypothesis_belief(
-        session: &mut EpistemicSession,
-        h_id: uuid::Uuid,
-        delta: f32,
-    ) {
+    fn decay_hypothesis_belief(session: &mut EpistemicSession, h_id: uuid::Uuid, delta: f32) {
         let _ = session.graph.decay(h_id, delta);
     }
 
@@ -3077,8 +2757,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         session.budget.record_call();
 
         let h_id = session.best_hypothesis_id.unwrap_or_default();
-        let h_content =
-            session.graph.content_of(h_id);
+        let h_content = session.graph.content_of(h_id);
         // HARD EPISTEMIC BOUNDARY:
         // The evaluator receives ONLY:
         //   - the exact action(s) that physically crossed the ActionGate
@@ -3491,8 +3170,11 @@ mod tests {
             reasoning: "regression test".to_string(),
         };
 
-        assert!(CorticalLoop::action_matches_strategy(&strategy, &matching));
-        assert!(!CorticalLoop::action_matches_strategy(&strategy, &wrong_action));
+        assert!(crate::cortical::strategy_match::action_matches_strategy(&strategy, &matching));
+        assert!(!crate::cortical::strategy_match::action_matches_strategy(
+            &strategy,
+            &wrong_action
+        ));
     }
 
     #[test]
