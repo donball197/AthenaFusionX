@@ -100,3 +100,5 @@ daemon.log
 vendor/openfang/
 server.log
 *.log
+*.bak.*
+*.sha256.*

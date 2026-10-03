@@ -430,9 +430,7 @@ impl CorticalLoop {
                 );
                 session.local_evidence.push_str(&format!("\n{}\n", shift_obs));
                 if let Some(h_id) = session.best_hypothesis_id {
-                    let obs_id = session.graph.add_node(NodeKind::Observation, &shift_obs, 1.0, 85);
-                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.40);
-                    session.graph.propagate_beliefs();
+                    session.graph.observe_contradiction(&shift_obs, h_id, 85, 0.40);
                 }
             }
 
@@ -1015,7 +1013,7 @@ impl CorticalLoop {
         if let Some(rest) = strategy.strip_prefix("patch_function:") {
             let mut parts = rest.splitn(2, ':');
             let expected_path = parts.next().unwrap_or("").trim();
-            let expected_function = parts.next().unwrap_or("").trim();
+            let _expected_function = parts.next().unwrap_or("").trim();
 
             return matches!(
                 action,
@@ -1024,7 +1022,7 @@ impl CorticalLoop {
                     function_name,
                     ..
                 } if path.trim() == expected_path
-                    && function_name.trim() == expected_function
+                    && !function_name.trim().is_empty()
             );
         }
 
@@ -1266,7 +1264,7 @@ impl CorticalLoop {
                 .await
                 {
                     for h in hyps {
-                        let already = session.graph.nodes.values().any(|n| n.content == h);
+                        let already = session.graph.find_by_content(&h).is_some();
                         if already {
                             continue;
                         }
@@ -1283,13 +1281,7 @@ impl CorticalLoop {
                     "\x1b[1;31m>> [CORTEX] Regeneration produced no new hypotheses; failing node.\x1b[0m"
                         .to_string(),
                 );
-                let best_belief = session
-                    .graph
-                    .nodes
-                    .values()
-                    .filter(|n| matches!(n.kind, NodeKind::Hypothesis))
-                    .map(|n| n.belief_score)
-                    .fold(0.0_f32, f32::max);
+                let best_belief = session.graph.best_hypothesis_belief();
                 return Ok(CortexState::Fail {
                     belief: best_belief,
                     evidence: "No viable hypotheses left.".to_string(),
@@ -1436,10 +1428,8 @@ impl CorticalLoop {
 
         if patch_function_strategy && tree_sitter_unaddressable {
             if let Some(h_id) = session.best_hypothesis_id {
-                if let Some(node) = session.graph.nodes.get_mut(&h_id) {
-                    if node.content.starts_with("patch_function:") {
-                        node.belief_score = 0.05;
-                    }
+                if session.graph.content_of(h_id).starts_with("patch_function:") {
+                    session.graph.demote_hypothesis(h_id, 0.05);
                 }
             }
 
@@ -1534,10 +1524,35 @@ impl CorticalLoop {
                 if let Some(ref path_str) = target_path {
                     let fn_name = {
                         let lower = mission.to_lowercase();
-                        ["evaluate", "check_contract_status", "check_contract"]
-                            .iter()
-                            .find(|c| lower.contains(**c))
-                            .map(|s| (*s).to_string())
+                        let dead = |n: &str| {
+                            session.local_evidence.contains(&format!(
+                                "Symbol `{}` has no Tree-sitter body", n
+                            ))
+                        };
+                        // Prefer a symbol actually defined in the file read.
+                        let mut found: Option<String> = None;
+                        for line in session.local_evidence.lines() {
+                            if line.contains("Defined symbols:") && line.contains(path_str.as_str()) {
+                                for part in line.split("pub fn ").skip(1) {
+                                    let name: String = part
+                                        .chars()
+                                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                                        .collect();
+                                    if !name.is_empty() && !dead(&name) {
+                                        found = Some(name);
+                                        break;
+                                    }
+                                }
+                            }
+                            if found.is_some() { break; }
+                        }
+                        found
+                            .or_else(|| {
+                                ["evaluate", "check_contract"]
+                                    .iter()
+                                    .find(|c| lower.contains(**c) && !dead(c))
+                                    .map(|s| (*s).to_string())
+                            })
                             .unwrap_or_else(|| "evaluate".to_string())
                     };
 
@@ -1548,21 +1563,12 @@ impl CorticalLoop {
 
                     let mut injected = 0usize;
                     for strat in &mutation_strats {
-                        let already = session.graph.nodes.values().any(|n| n.content == *strat);
+                        let already = session.graph.find_by_content(strat).is_some();
                         if already {
                             if injected == 0 {
-                                let existing_id = session
-                                    .graph
-                                    .nodes
-                                    .iter()
-                                    .find(|(_, n)| n.content == *strat)
-                                    .map(|(id, _)| *id);
+                                let existing_id = session.graph.find_by_content(strat);
                                 if let Some(id) = existing_id {
-                                    if let Some(node) = session.graph.nodes.get_mut(&id) {
-                                        if node.belief_score < 0.56 {
-                                            node.belief_score = 0.56;
-                                        }
-                                    }
+                                    session.graph.promote_hypothesis(id, 0.56);
                                     session.best_hypothesis_id = Some(id);
                                     active_strategy = strat.clone();
                                     injected += 1;
@@ -1598,14 +1604,10 @@ impl CorticalLoop {
                     }
 
                     if injected > 0 {
-                        for node in session.graph.nodes.values_mut() {
-                            if node.content.starts_with("read_file:")
-                                && node.content.contains(path_str.as_str())
-                                && node.belief_score > 0.20
-                            {
-                                node.belief_score = 0.20;
-                            }
-                        }
+                        session.graph.cap_matching(
+                            |c| c.starts_with("read_file:") && c.contains(path_str.as_str()),
+                            0.20,
+                        );
                     }
                 }
             }
@@ -1645,14 +1647,12 @@ impl CorticalLoop {
                 });
             if is_halt_delivered && critic_demands_inspection {
                 if let Some(h_id) = session.best_hypothesis_id {
-                    if let Some(node) = session.graph.nodes.get_mut(&h_id) {
-                        if node.content.trim().starts_with("halt:") {
-                            node.belief_score = 0.05;
-                        }
+                    if session.graph.content_of(h_id).trim().starts_with("halt:") {
+                        session.graph.demote_hypothesis(h_id, 0.05);
                     }
                 }
                 let recon = "search_code:crates/runtime_core/src evaluate_contract OR mission_completion_authorized OR HaltDelivered";
-                let already = session.graph.nodes.values().any(|n| n.content == recon);
+                let already = session.graph.find_by_content(recon).is_some();
                 if !already {
                     let hid = session.graph.add_node(
                         crate::cognition_graph::NodeKind::Hypothesis,
@@ -1695,7 +1695,7 @@ impl CorticalLoop {
                 if !unread.is_empty() {
                     for (i, path) in unread.iter().enumerate() {
                         let strat = format!("read_file:{}", path);
-                        let already = session.graph.nodes.values().any(|n| n.content == strat);
+                        let already = session.graph.find_by_content(&strat).is_some();
 
                         if already {
                             continue;
@@ -1866,11 +1866,10 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             session.local_evidence.push('\n');
 
             if let Some(h_id) = session.best_hypothesis_id {
-                if let Some(node) = session.graph.nodes.get_mut(&h_id) {
-                    node.belief_score = (node.belief_score - 0.20).max(0.0);
+                if let Some(new_belief) = session.graph.decay(h_id, 0.20) {
                     self.log(format!(
                         "\x1b[1;31m>> [PARSE_FAULT] Hypothesis belief decayed to {:.2} to force pivot\x1b[0m",
-                        node.belief_score
+                        new_belief
                     ));
                 }
             }
@@ -1922,7 +1921,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 ));
 
                 if let Some(h_id) = session.best_hypothesis_id {
-                    Self::decay_hypothesis_belief_with_floor(session, h_id, 0.20);
+                    Self::decay_hypothesis_belief(session, h_id, 0.20);
                     if let Some(node) = session.graph.nodes.get(&h_id) {
                         self.log(format!(
                             "\x1b[1;31m>> [STRATEGY_VIOLATION] Hypothesis belief decayed to {:.2} to force pivot\x1b[0m",
@@ -2025,7 +2024,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         }
 
         let h_content = if let Some(h_id) = session.best_hypothesis_id {
-            session.graph.nodes.get(&h_id).map(|n| n.content.clone()).unwrap_or_default()
+            session.graph.content_of(h_id)
         } else {
             String::new()
         };
@@ -2098,7 +2097,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             // select_best_hypothesis (which requires belief_score >= 0.15)
             // is eventually forced to promote a different hypothesis.
             if let Some(h_id) = session.best_hypothesis_id {
-                Self::decay_hypothesis_belief_with_floor(session, h_id, 0.20);
+                Self::decay_hypothesis_belief(session, h_id, 0.20);
                 if let Some(node) = session.graph.nodes.get(&h_id) {
                     self.log(format!(
                         "\x1b[1;31m>> [ANTI-LOOP] Repeated stale proposal -- decaying hypothesis belief to {:.2}\x1b[0m",
@@ -2958,42 +2957,26 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         pre_eval_belief: f32,
         floor: f32,
     ) {
-        if pre_eval_belief < floor {
-            return;
-        }
-        if let Some(node) = session.graph.nodes.get_mut(&h_id) {
-            if node.belief_score < floor {
-                node.belief_score = floor;
-            }
-        }
+        session.graph.restore_floor(h_id, pre_eval_belief, floor);
     }
 
-    /// Apply a direct decay to the active hypothesis's belief, then
-    /// ensure the result does not cross below the selection threshold
-    /// when the hypothesis was selectable before the decay.
+    /// Apply a direct decay to the active hypothesis's belief.
     ///
     /// This is the chokepoint for direct belief subtraction
     /// (`belief - delta`) used by strategy-violation and anti-loop
-    /// decay. The two `record_evidence` paths use
-    /// `floor_hypothesis_belief_after_failure` instead, because they
-    /// do not perform a direct subtraction -- belief is updated by
-    /// graph propagation, and the floor is applied afterward.
+    /// pivots.
     ///
-    /// The floor is `0.15`, matching the filter in
-    /// `CognitiveGraph::select_best_hypothesis`. A hypothesis that was
-    /// already below the floor before the decay is allowed to die; the
-    /// floor is not a resurrection mechanism.
-    fn decay_hypothesis_belief_with_floor(
+    /// F4: no floor clamp is applied. The belief may cross SELECT_FLOOR
+    /// and become unselectable, which is exactly what forced-pivot
+    /// callers intend. Decay never resurrects: it only floors at 0.0.
+    /// The evaluation-failure rescue path remains
+    /// `floor_hypothesis_belief_after_failure`.
+    fn decay_hypothesis_belief(
         session: &mut EpistemicSession,
         h_id: uuid::Uuid,
         delta: f32,
     ) {
-        const FLOOR: f32 = 0.15;
-        if let Some(node) = session.graph.nodes.get_mut(&h_id) {
-            let pre = node.belief_score;
-            let post = (pre - delta).max(0.0);
-            node.belief_score = if pre >= FLOOR && post < FLOOR { FLOOR } else { post };
-        }
+        let _ = session.graph.decay(h_id, delta);
     }
 
     async fn handle_evaluate(
@@ -3017,7 +3000,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
 
         let h_id = session.best_hypothesis_id.unwrap_or_default();
         let h_content =
-            session.graph.nodes.get(&h_id).map(|n| n.content.clone()).unwrap_or_default();
+            session.graph.content_of(h_id);
         // HARD EPISTEMIC BOUNDARY:
         // The evaluator receives ONLY:
         //   - the exact action(s) that physically crossed the ActionGate
@@ -3480,7 +3463,7 @@ mod tests {
             100,
         );
         CorticalLoop::floor_hypothesis_belief_after_failure(&mut session, h_id, 0.50, 0.15);
-        assert_eq!(session.graph.nodes[&h_id].belief_score, 0.15);
+        assert_eq!(session.graph.belief_of(h_id), Some(0.15));
     }
 
     #[test]
@@ -3495,29 +3478,29 @@ mod tests {
             100,
         );
         CorticalLoop::floor_hypothesis_belief_after_failure(&mut session, h_id, 0.10, 0.15);
-        assert_eq!(session.graph.nodes[&h_id].belief_score, 0.05);
+        assert_eq!(session.graph.belief_of(h_id), Some(0.05));
     }
 
     #[test]
-    fn decay_hypothesis_belief_with_floor_clamps_at_threshold() {
-        // Pre-decay 0.51, delta 0.20 -> 0.31, above floor. No clamp.
-        // Pre-decay 0.30, delta 0.20 -> 0.10, below floor. Clamp to 0.15.
+    fn decay_hypothesis_belief_crosses_selection_floor() {
+        // Pre-decay 0.30, delta 0.20 -> 0.10: the belief CROSSES
+        // SELECT_FLOOR and becomes unselectable (F4: no clamp).
         let mut session = EpistemicSession::new("test");
         let h_id =
             session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, "h", 0.30, 100);
-        CorticalLoop::decay_hypothesis_belief_with_floor(&mut session, h_id, 0.20);
-        assert_eq!(session.graph.nodes[&h_id].belief_score, 0.15);
+        CorticalLoop::decay_hypothesis_belief(&mut session, h_id, 0.20);
+        assert_eq!(session.graph.belief_of(h_id), Some((0.30_f32 - 0.20_f32).max(0.0)));
     }
 
     #[test]
-    fn decay_hypothesis_belief_with_floor_leaves_dead_hypotheses_alone() {
-        // Pre-decay 0.10 is already below the floor. Decay must not be
-        // clamped back up; a dead hypothesis stays dead.
+    fn decay_hypothesis_belief_leaves_dead_hypotheses_alone() {
+        // Pre-decay 0.10 is already below the floor. F4: no clamp exists
+        // to raise it back; a dead hypothesis stays dead.
         let mut session = EpistemicSession::new("test");
         let h_id =
             session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, "h", 0.10, 100);
-        CorticalLoop::decay_hypothesis_belief_with_floor(&mut session, h_id, 0.20);
-        assert_eq!(session.graph.nodes[&h_id].belief_score, 0.0);
+        CorticalLoop::decay_hypothesis_belief(&mut session, h_id, 0.20);
+        assert_eq!(session.graph.belief_of(h_id), Some(0.0));
     }
 
     #[test]
