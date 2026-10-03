@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+/// Selection floor shared by hypothesis selection and belief policy.
+/// Hypotheses below this score are not selectable.
+pub const SELECT_FLOOR: f32 = 0.15;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     Observation,
@@ -148,13 +152,139 @@ impl CognitiveGraph {
             .values()
             // ⚡ FIX: Filter out dead hypotheses (belief < 0.15).
             // v1.9: When BeliefVector is available on the node, prefer may_prove() over raw score.
-            .filter(|n| matches!(n.kind, NodeKind::Hypothesis) && n.belief_score >= 0.15)
+            .filter(|n| matches!(n.kind, NodeKind::Hypothesis) && n.belief_score >= SELECT_FLOOR)
             .max_by(|a, b| {
                 let score_a = a.belief_score / (a.computation_cost as f32).max(1.0);
                 let score_b = b.belief_score / (b.computation_cost as f32).max(1.0);
                 score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
             })
     }
+
+    /// Return the id of the first node whose content exactly matches
+    /// `content`.
+    pub fn find_by_content(&self, content: &str) -> Option<Uuid> {
+        self.nodes
+            .iter()
+            .find(|(_, node)| node.content == content)
+            .map(|(id, _)| *id)
+    }
+
+    /// Return node content, or an empty string when the id is unknown.
+    pub fn content_of(&self, id: Uuid) -> String {
+        self.nodes
+            .get(&id)
+            .map(|node| node.content.clone())
+            .unwrap_or_default()
+    }
+
+    /// Return the current belief score for a node.
+    pub fn belief_of(&self, id: Uuid) -> Option<f32> {
+        self.nodes
+            .get(&id)
+            .map(|node| node.belief_score)
+    }
+
+    /// Demote a hypothesis to an explicit policy-selected score.
+    ///
+    /// The caller decides WHY the hypothesis should be demoted
+    /// (dead symbol, critic veto, strategy violation, ...).
+    /// The graph owns the actual belief-state mutation.
+    pub fn demote_hypothesis(&mut self, id: Uuid, score: f32) -> bool {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.belief_score = score;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Promote a hypothesis to at least `minimum`.
+    pub fn promote_hypothesis(&mut self, id: Uuid, minimum: f32) -> bool {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            if node.belief_score < minimum {
+                node.belief_score = minimum;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Cap beliefs for every node whose content matches `pred`.
+    /// Bulk filter-and-cap only: the policy for WHICH strategies are
+    /// capped stays with the caller.
+    pub fn cap_matching(&mut self, pred: impl Fn(&str) -> bool, cap: f32) {
+        for node in self.nodes.values_mut() {
+            if pred(&node.content) && node.belief_score > cap {
+                node.belief_score = cap;
+            }
+        }
+    }
+
+    /// Apply unclamped belief decay.
+    ///
+    /// This intentionally permits crossing SELECT_FLOOR, which is what
+    /// forced-pivot callers intend. The clamped decay helper in
+    /// cortical_loop.rs is untouched here; unclamping it is F4 and lands
+    /// in Pass C.
+    pub fn decay(&mut self, id: Uuid, delta: f32) -> Option<f32> {
+        let node = self.nodes.get_mut(&id)?;
+        node.belief_score = (node.belief_score - delta).max(0.0);
+        Some(node.belief_score)
+    }
+
+    /// Restore a hypothesis to `floor` after evaluation failure, but only
+    /// if it was already at or above that floor before evaluation: the
+    /// floor is not a resurrection mechanism.
+    pub fn restore_floor(&mut self, id: Uuid, pre_eval_belief: f32, floor: f32) {
+        if pre_eval_belief < floor {
+            return;
+        }
+        if let Some(node) = self.nodes.get_mut(&id) {
+            if node.belief_score < floor {
+                node.belief_score = floor;
+            }
+        }
+    }
+
+    /// Return the highest belief among hypothesis nodes.
+    pub fn best_hypothesis_belief(&self) -> f32 {
+        self.nodes
+            .values()
+            .filter(|node| matches!(node.kind, NodeKind::Hypothesis))
+            .map(|node| node.belief_score)
+            .fold(0.0_f32, f32::max)
+    }
+
+    /// Record a contradicting observation against `target` and propagate
+    /// the resulting graph beliefs. Collapses the add_node + add_edge +
+    /// propagate_beliefs triple previously typed at seven call sites.
+    pub fn observe_contradiction(
+        &mut self,
+        content: &str,
+        target: Uuid,
+        cost: u32,
+        weight: f32,
+    ) -> Uuid {
+        let observation_id = self.add_node(
+            NodeKind::Observation,
+            content,
+            1.0,
+            cost,
+        );
+
+        self.add_edge(
+            observation_id,
+            target,
+            EdgeRelation::Contradicts,
+            weight,
+        );
+
+        self.propagate_beliefs();
+
+        observation_id
+    }
+
 }
 
 #[cfg(test)]
