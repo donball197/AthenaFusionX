@@ -469,12 +469,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "mistralai/mistral-nemotron",
-    "context": "32K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "mistralai/mixtral-8x22b-v0.1",
     "context": "32K in / 4K out",
     "category": "MISTRAL"

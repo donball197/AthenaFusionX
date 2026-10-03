@@ -1483,7 +1483,9 @@ impl CorticalLoop {
         // so strict action_matches_strategy does not reject mutation proposals
         // while active_strategy is still read_file.
         {
-            let read_ok_done = session.local_evidence.contains("[READ_OK]");
+            let read_ok_done = session.local_evidence.contains("[READ_OK]")
+                || session.local_evidence.contains("[READ_FUNCTION_OK]")
+                || session.local_evidence.contains("[READ_CHUNK_OK]");
             let patch_marker_needed = session.contract.is_mutation_task
                 || session.contract.conditions.iter().any(|c| {
                     let s = format!("{:?}", c);
@@ -1510,6 +1512,18 @@ impl CorticalLoop {
                             target_path = Some(p.to_string());
                             break;
                         }
+                    } else if let Some(rest) = t.strip_prefix("[READ_FUNCTION_OK]") {
+                        let p = rest.trim().split(':').next().unwrap_or("").trim();
+                        if !p.is_empty() && p.ends_with(".rs") {
+                            target_path = Some(p.to_string());
+                            break;
+                        }
+                    } else if let Some(rest) = t.strip_prefix("[READ_CHUNK_OK]") {
+                        let p = rest.trim().split_whitespace().next().unwrap_or("").trim();
+                        if !p.is_empty() && p.ends_with(".rs") {
+                            target_path = Some(p.to_string());
+                            break;
+                        }
                     }
                 }
                 if target_path.is_none() {
@@ -1518,12 +1532,42 @@ impl CorticalLoop {
                         if !p.is_empty() {
                             target_path = Some(p.to_string());
                         }
+                    } else if let Some(rest) = active_strategy.strip_prefix("read_function:") {
+                        let p = rest.trim().split(':').next().unwrap_or("").trim();
+                        if !p.is_empty() {
+                            target_path = Some(p.to_string());
+                        }
+                    } else if let Some(rest) = active_strategy.strip_prefix("read_file_chunk:") {
+                        let p = rest.trim().split(':').next().unwrap_or("").trim();
+                        if !p.is_empty() {
+                            target_path = Some(p.to_string());
+                        }
                     }
                 }
 
                 if let Some(ref path_str) = target_path {
                     let fn_name = {
-                        let lower = mission.to_lowercase();
+                        let mut func_from_strategy = None;
+                        if let Some(rest) = active_strategy.strip_prefix("read_function:") {
+                            let f = rest.trim().split(':').nth(1).unwrap_or("").trim();
+                            if !f.is_empty() {
+                                func_from_strategy = Some(f.to_string());
+                            }
+                        }
+                        if func_from_strategy.is_none() {
+                            for line in session.local_evidence.lines().rev() {
+                                if let Some(rest) = line.trim().strip_prefix("[READ_FUNCTION_OK]") {
+                                    let f = rest.trim().split(':').nth(1).unwrap_or("").trim();
+                                    if !f.is_empty() {
+                                        func_from_strategy = Some(f.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        func_from_strategy.unwrap_or_else(|| {
+                            let lower = mission.to_lowercase();
                         let dead = |n: &str| {
                             session.local_evidence.contains(&format!(
                                 "Symbol `{}` has no Tree-sitter body", n
@@ -1730,6 +1774,8 @@ impl CorticalLoop {
                 "{}\n\n[CRITIC VETO RECOVERY MANDATE]\nThe previous patch_function proposal was explicitly rejected by the Adversarial Critic. Do NOT repeat the rejected implementation or its `new_body`. Produce a materially different, mission-compliant patch_function action now. Preserve the inherited function signature. The current directive explicitly requires a clean, documented implementation, so the replacement MUST contain an appropriate documentation comment or equivalent source-level documentation while preserving the required `a + b` behavior. The next proposal MUST be a real source mutation, not a restatement or reformatting of the existing implementation.",
                 mission
             )
+        } else if status == ContractStatus::Satisfied && unwritten_targets.is_empty() {
+            format!("{}\n\n[PHASE MANDATE: COMPLETION VERIFIED]\nThe deterministic contract has been satisfied. You MUST now propose the `halt` action. Do not propose any further reconnaissance.", mission)
         } else {
             mission.to_string()
         };
@@ -1792,6 +1838,15 @@ impl CorticalLoop {
                 actions.push(AgentAction::Halt {
                     reasoning: "Model declared task complete".to_string(),
                 });
+            }
+        }
+
+        if status == ContractStatus::Satisfied && unwritten_targets.is_empty() {
+            if !actions.iter().any(|a| matches!(a, AgentAction::Halt { .. })) {
+                self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
+                actions = vec![AgentAction::Halt {
+                    reasoning: "Deterministic contract is satisfied.".to_string(),
+                }];
             }
         }
 
@@ -2134,6 +2189,29 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         }
 
         let actions = filtered_actions;
+
+        // Payload guard: patch_function replaces a whole function item, so
+        // new_body must contain that function's signature. Comment-only or
+        // body-only payloads are rejected before critic/executor.
+        for a in &actions {
+            if let AgentAction::PatchFunction { function_name, new_body, .. } = a {
+                let needle = format!("fn {}", function_name.trim());
+                if !new_body.contains(&needle) {
+                    self.log(format!(
+                        "\x1b[1;31m>> [PATCH PAYLOAD REJECTED]\x1b[0m new_body for `{}` has no `{}` item.",
+                        function_name, needle
+                    ));
+                    session.local_evidence.push_str(&format!(
+                        "[PATCH_PAYLOAD_REJECTED] new_body must be the COMPLETE function item including its signature (`{}`), with any doc comment above it. Comment-only or body-only payloads are invalid.\n",
+                        needle
+                    ));
+                    if let Some(h_id) = session.best_hypothesis_id {
+                        Self::decay_hypothesis_belief(session, h_id, 0.10);
+                    }
+                    return Ok(CortexState::Strategize);
+                }
+            }
+        }
 
         // Deterministic PATCH_FUNCTION mutation fact check.
         //

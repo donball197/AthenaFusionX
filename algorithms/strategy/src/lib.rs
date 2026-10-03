@@ -181,7 +181,7 @@ impl DirectiveStrategyCompiler {
 
         // Imperative patch target takes precedence over verification command.
         if let Some((path, function)) = Self::extract_patch_target(problem, problem_lower) {
-            return Some(vec![format!("patch_function:{}:{}", path, function)]);
+            return Some(Self::patch_strategies(&path, &function));
         }
 
         // Explicit command remains deterministic.
@@ -197,7 +197,7 @@ impl DirectiveStrategyCompiler {
 
             if !target.is_empty() {
                 if target.contains(':') {
-                    return Some(vec![format!("patch_function:{}", target)]);
+                    return Some(Self::patch_strategies_from_target(target));
                 }
 
                 let path = problem
@@ -218,7 +218,7 @@ impl DirectiveStrategyCompiler {
                     .unwrap_or("");
 
                 if !path.is_empty() {
-                    return Some(vec![format!("patch_function:{}:{}", path, target)]);
+                    return Some(Self::patch_strategies(path, target));
                 }
             }
         }
@@ -268,7 +268,7 @@ impl DirectiveStrategyCompiler {
                 }
 
                 if !func.is_empty() {
-                    return Some(vec![format!("patch_function:{}:{}", path, func)]);
+                    return Some(Self::patch_strategies(path, func));
                 }
             }
         }
@@ -297,6 +297,32 @@ impl DirectiveStrategyCompiler {
         }
 
         None
+    }
+
+    /// B (multi-strategy patch targets): a patch target must never lock the
+    /// cognition graph into a single hypothesis. Index 0 keeps the original
+    /// patch_function strategy (and therefore the deterministic 0.51 turn-1
+    /// tiebreak); indices 1.. are competing strategies that keep the node
+    /// alive when the patch target proves unaddressable.
+    fn patch_strategies(path: &str, function: &str) -> Vec<String> {
+        vec![
+            format!("patch_function:{}:{}", path, function),
+            format!("read_file:{}", path),
+            format!("replace_lines:{}", path),
+        ]
+    }
+
+    /// Split a compound `path:function` target (PATCH_FUNCTION_OK form).
+    fn patch_strategies_from_target(target: &str) -> Vec<String> {
+        let mut parts = target.splitn(2, ':');
+        let path = parts.next().unwrap_or("").trim();
+        let function = parts.next().unwrap_or("").trim();
+
+        if function.is_empty() {
+            vec![format!("patch_function:{}", target)]
+        } else {
+            Self::patch_strategies(path, function)
+        }
     }
 
     fn extract_patch_target(problem: &str, problem_lower: &str) -> Option<(String, String)> {
@@ -412,7 +438,14 @@ mod tests {
 
         let out = DirectiveStrategyCompiler::compile(&i).unwrap();
 
-        assert_eq!(out, vec!["patch_function:apps/math_utils/src/lib.rs:foo"]);
+        assert_eq!(
+            out,
+            vec![
+                "patch_function:apps/math_utils/src/lib.rs:foo",
+                "read_file:apps/math_utils/src/lib.rs",
+                "replace_lines:apps/math_utils/src/lib.rs",
+            ]
+        );
     }
 
     #[test]

@@ -201,6 +201,44 @@ def provider_endpoint(provider):
     return (None, None)
 
 
+def probe_chat_model(provider, model_id, tier, url, api_key,
+                     timeout=45, retries=1, probes=3, window=8.0):
+    import statistics
+    ok_count = 0
+    latencies = []
+    last_err = ""
+    spacing = window / max(probes - 1, 1) if probes > 1 else 0.0
+    for i in range(probes):
+        r = test_chat_model(provider, model_id, tier, url, api_key, timeout, retries)
+        if r["ok"]:
+            ok_count += 1
+            latencies.append(r["latency"])
+        elif r["error"]:
+            last_err = r["error"]
+        if i < probes - 1 and spacing > 0:
+            time.sleep(spacing)
+    if ok_count == probes:
+        stab = "STABLE"
+    elif ok_count > 0:
+        stab = "FLAKY"
+    else:
+        stab = "DOWN"
+    p50 = int(statistics.median(latencies)) if latencies else 0
+    agg = {
+        "provider": provider,
+        "model": model_id,
+        "tier": tier,
+        "status": 200 if ok_count else 0,
+        "latency": p50,
+        "ok": ok_count > 0,
+        "error": last_err[:120] if ok_count < probes else "",
+        "stability": stab,
+        "probe_successes": ok_count,
+        "probe_attempts": probes,
+    }
+    return agg
+
+
 def test_chat_model(provider, model_id, tier, url, api_key, timeout=45, retries=1):
     payload = json.dumps({
         "model": model_id,
@@ -304,6 +342,8 @@ def main():
     parser.add_argument("--timeout", type=int, default=0, help="Override timeout for all models")
     parser.add_argument("--retries", type=int, default=1, help="Retries for timeout/429/5xx")
     parser.add_argument("--max-workers", type=int, default=10, help="Parallel workers")
+    parser.add_argument("--probes", type=int, default=3, help="Pings per model to detect flapping")
+    parser.add_argument("--probe-window", type=float, default=8.0, help="Seconds between pings")
     parser.add_argument("--json", action="store_true", help="Dump JSON results")
     args = parser.parse_args()
 
@@ -353,7 +393,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = [
             executor.submit(
-                test_chat_model,
+                probe_chat_model,
                 m["provider"],
                 m["model"],
                 m["tier"],
@@ -361,6 +401,8 @@ def main():
                 key,
                 timeout,
                 args.retries,
+                args.probes,
+                args.probe_window,
             )
             for m, url, key, timeout in tasks
         ]
@@ -410,6 +452,9 @@ def main():
     ]
     if not planners:
         planners = [r for r in working if r["tier"] in ("PLANNER", "GENERAL")]
+    stable_ok = [r for r in working if r.get("stability") == "STABLE"]
+    if stable_ok:
+        planners = [r for r in planners if r in stable_ok] or planners
     planners.sort(key=lambda r: r["latency"])
 
     heavies = [
@@ -418,6 +463,8 @@ def main():
     ]
     if not heavies:
         heavies = [r for r in working if r["tier"] in ("HEAVY", "PRO", "GENERAL")]
+    if stable_ok:
+        heavies = [r for r in heavies if r in stable_ok] or heavies
     heavies.sort(key=lambda r: (-r.get("context", 0), r["latency"]))
 
     edges = [r for r in working if r["tier"] == "EDGE"]

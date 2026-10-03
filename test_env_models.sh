@@ -109,6 +109,7 @@ echo
 
 PASS_COUNT=0
 FAIL_COUNT=0
+WARN_COUNT=0
 SLOW_COUNT=0
 
 # --------------------------------------------------
@@ -235,6 +236,36 @@ test_model() {
 
         start_ms="$(date +%s%3N)"
 
+        payload="$(python3 - "$provider" "$model" <<'PY_PAYLOAD'
+import json
+import sys
+
+provider = sys.argv[1]
+model = sys.argv[2]
+
+payload = {
+    "model": model,
+    "messages": [
+        {"role": "user", "content": "Reply with exactly ONLINE"}
+    ],
+    "max_tokens": 16,
+    "temperature": 0,
+}
+
+if provider == "nvidia" and model.lower().startswith("z-ai/"):
+    payload["reasoning_effort"] = "low"
+    payload["max_tokens"] = 64
+elif provider == "nvidia":
+    payload["chat_template_kwargs"] = {
+        "enable_thinking": False,
+        "thinking": False,
+        "force_nonempty_content": True,
+    }
+
+print(json.dumps(payload))
+PY_PAYLOAD
+)"
+
         curl -sS \
             --connect-timeout 10 \
             --max-time "$timeout" \
@@ -243,14 +274,7 @@ test_model() {
             -X POST "$url" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${key}" \
-            -d "{
-                \"model\": \"${model}\",
-                \"messages\": [
-                    {\"role\":\"user\",\"content\":\"Reply with exactly ONLINE\"}
-                ],
-                \"max_tokens\": 16,
-                \"temperature\": 0
-            }" \
+            -d "$payload" \
             > "${tmp}.status" 2>/dev/null
 
         curl_rc=$?
@@ -314,16 +338,29 @@ PY
 
         if [ -n "$content" ]; then
             response_display="$content"
+
+            echo -e "  • Status   : ${GREEN}200 OK${NC} (${elapsed}ms, attempt ${attempt})"
+            echo -e "  • Response : \"${response_display:0:120}\""
+
+            if [ "$content" = "ONLINE" ]; then
+                echo -e "  • Behavior : ${GREEN}PASS — exact probe response${NC}"
+            else
+                WARN_COUNT=$((WARN_COUNT + 1))
+                echo -e "  • Behavior : ${YELLOW}WARN — usable content, but probe was not exactly ONLINE${NC}"
+            fi
+
+            PASS_COUNT=$((PASS_COUNT + 1))
+
         elif [ -n "$reasoning" ]; then
-            response_display="HTTP 200; reasoning-only response"
+            echo -e "  • Status   : ${RED}FAIL — reasoning-only response${NC} (${elapsed}ms, attempt ${attempt})"
+            echo -e "  • Response : reasoning_content present but content is empty"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+
         else
-            response_display="HTTP 200; no content field"
+            echo -e "  • Status   : ${RED}FAIL — empty content response${NC} (${elapsed}ms, attempt ${attempt})"
+            echo -e "  • Response : HTTP 200 but no usable content field"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
         fi
-
-        echo -e "  • Status   : ${GREEN}200 OK${NC} (${elapsed}ms, attempt ${attempt})"
-        echo -e "  • Response : \"${response_display:0:120}\""
-
-        PASS_COUNT=$((PASS_COUNT + 1))
 
         if [ "$elapsed" -ge 30000 ]; then
             SLOW_COUNT=$((SLOW_COUNT + 1))
@@ -425,7 +462,14 @@ PY
 
         echo -e "  • Status   : ${GREEN}200 OK${NC} (${EMBED_LATENCY}ms)"
         echo -e "  • Response : \"Verified ${DIM}-dim vector\""
-        PASS_COUNT=$((PASS_COUNT + 1))
+
+        if [ "$DIM" = "768" ]; then
+            echo -e "  • Contract : ${GREEN}PASS — expected 768 dimensions${NC}"
+            PASS_COUNT=$((PASS_COUNT + 1))
+        else
+            echo -e "  • Contract : ${RED}FAIL — expected 768 dimensions, got ${DIM}${NC}"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
     else
         echo -e "  • Status   : ${RED}FAILED (HTTP ${EMBED_CODE})${NC} (${EMBED_LATENCY}ms)"
         echo -e "  • Error    : Unable to generate embedding"
@@ -443,7 +487,10 @@ fi
 echo -e "${CYAN}=================================================="
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    if [ "$SLOW_COUNT" -gt 0 ]; then
+    if [ "$WARN_COUNT" -gt 0 ]; then
+        echo -e ">> PREFLIGHT VERDICT: ${YELLOW}READY — WARNINGS${NC}"
+        echo -e "   ${PASS_COUNT}/${TOTAL_TESTS} passed; ${WARN_COUNT} warning(s); ${SLOW_COUNT} slow response(s)"
+    elif [ "$SLOW_COUNT" -gt 0 ]; then
         echo -e ">> PREFLIGHT VERDICT: ${YELLOW}READY — SOME MODELS SLOW${NC}"
         echo -e "   ${PASS_COUNT}/${TOTAL_TESTS} passed; ${SLOW_COUNT} slow response(s)"
     else
@@ -451,8 +498,8 @@ if [ "$FAIL_COUNT" -eq 0 ]; then
         echo -e "   ${PASS_COUNT}/${TOTAL_TESTS} passed"
     fi
 else
-    echo -e ">> PREFLIGHT VERDICT: ${YELLOW}DEGRADED${NC}"
-    echo -e "   ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
+    echo -e ">> PREFLIGHT VERDICT: ${RED}DEGRADED${NC}"
+    echo -e "   ${PASS_COUNT} passed, ${FAIL_COUNT} failed, ${WARN_COUNT} warning(s)"
 fi
 
 echo -e "==================================================${NC}"

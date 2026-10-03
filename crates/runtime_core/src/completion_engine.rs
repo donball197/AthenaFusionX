@@ -590,8 +590,8 @@ impl SubgoalCompletionEngine {
             || objective.contains("PATCH_FUNCTION_OK:")
             || objective.contains("DIFF_PATCH_OK:")
             || objective.contains("REPLACE_LINES_OK:");
-        let read_only = detect_read_only(objective)
-            || (detect_read_only(scopes.root_directive) && !declared_mutation_criteria);
+        let read_only = !declared_mutation_criteria
+            && (detect_read_only(objective) || detect_read_only(scopes.root_directive));
 
         if let Some(contract) = declared_criteria_contract(node_id, objective, read_only) {
             return contract;
@@ -1248,6 +1248,24 @@ mod tests {
             contract.required_artifact_paths.is_empty(),
             "read-only mission must not carry required artifact paths"
         );
+    }
+
+    #[test]
+    fn declared_patch_criterion_overrides_objective_scope_restriction() {
+        let mission = r#"OBJECTIVE: Add a doc comment immediately above foo without changing its behavior or signature. Do not change any other code.
+
+MANDATORY NODE SUCCESS CRITERIA:
+PATCH_FUNCTION_OK:crates/foo.rs:foo
+"#;
+
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(!contract.read_only);
+        assert!(contract.is_mutation_task);
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::PatchMarkerAcquired
+        )));
     }
 
     #[test]

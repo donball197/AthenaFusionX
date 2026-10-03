@@ -102,3 +102,6 @@ server.log
 *.log
 *.bak.*
 *.sha256.*
+*.bak.*
+*~
+attic/

@@ -1,472 +1,65 @@
-[2m2026-09-27T19:49:09.108194Z[0m [32m INFO[0m [2mnexus_ide_backend::logger[0m[2m:[0m >> [LOGGER] Tracing substrate online
-[2m2026-09-27T19:49:09.108327Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m ==================================================
-[2m2026-09-27T19:49:09.108355Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> NEXUS SINGULARITY v4.0 — DAEMON ONLINE
-[2m2026-09-27T19:49:09.108379Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m ==================================================
+[2m2026-10-03T20:19:02.792811Z[0m [32m INFO[0m [2mnexus_ide_backend::logger[0m[2m:[0m >> [LOGGER] Tracing substrate online
+[2m2026-10-03T20:19:02.792910Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m ==================================================
+[2m2026-10-03T20:19:02.792937Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> NEXUS SINGULARITY v4.0 — DAEMON ONLINE
+[2m2026-10-03T20:19:02.792944Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m ==================================================
 [32m>> [SECURITY] Startup token written to .nexus_ui_token (0600)[0m
-[2m2026-09-27T19:49:59.407391Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/hello_sidecar.wasm"
-[2m2026-09-27T19:49:59.407892Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/logic_cell.wasm"
-[2m2026-09-27T19:49:59.408311Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/sum.wasm"
-[2m2026-09-27T19:49:59.408758Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> Core Subsystems online. Binding Axum API Gateway to 0.0.0.0:3000...
-[2m2026-09-27T19:50:03.406082Z[0m [32m INFO[0m [2mnexus_runtime_core::metrics[0m[2m:[0m Task counter incremented
-[2m2026-09-27T19:50:03.406877Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m \x1b[35m[EXECUTIVE CORTEX] Injecting new background goal: MISSION UPDATE (ARCHITECT MODE):
-
-You are the Lead Systems Engineer conducting an evidence-backed architectural audit of the peer Sovereign AI OS repository:
-
-https://github.com/RightNow-AI/openfang
-
-OBJECTIVE:
-Clone the repository into the local workspace, inspect its actual Rust source and configuration, compare its architecture against AthenaFusionX / Project Nexus Singularity, and produce a factual roadmap grounded in source evidence.
-
-IMPORTANT EXECUTION CONSTRAINTS:
-
-* Execute this mission through the autonomous DAG scheduler.
-* Use the CodeAnalyzer and RustDeveloper subagents where appropriate.
-* Do not invent, infer, or assume implementation details that are not supported by evidence from the cloned repository.
-* Distinguish documented claims from implementation evidence.
-* Do not modify the OpenFang repository.
-* Do not modify AthenaFusionX source code.
-* The only intended AthenaFusionX file modification is creation of the final roadmap document.
-* Before writing the roadmap, inspect the relevant OpenFang source files.
-* After writing the roadmap, verify that the file exists and contains the required sections.
-* Do not create temporary test files or other artifacts.
-
-STEP 1 — CLONE
-
-Use execute_command to run exactly:
-
-git clone https://github.com/RightNow-AI/openfang.git vendor/openfang
-
-Require physical command evidence showing successful completion before proceeding.
-
-STEP 2 — AUDIT THE OPENFANG WORKSPACE
-
-Inspect the actual workspace configuration under:
-
-vendor/openfang
-
-Determine from Cargo.toml and source evidence:
-
-* The actual number of workspace crates.
-* The names of the crates.
-* Their major dependency relationships.
-* Which crates constitute the kernel/runtime/substrate.
-* How agent execution, tools, memory, sandboxing, and scheduling are separated.
-
-Do not state that OpenFang has "14 crates" unless the repository evidence confirms that count.
-
-STEP 3 — WASM SANDBOX AUDIT
-
-Locate and inspect the actual Rust implementation of OpenFang's WASM sandbox under vendor/openfang.
-
-Determine:
-
-* Where WASM execution is created/configured.
-* Whether fuel metering is enabled.
-* How fuel limits are configured/enforced.
-* Whether epoch interruption is enabled.
-* How epoch deadlines/timeouts are enforced.
-* What happens when fuel or epoch limits are exceeded.
-* What security boundary exists between guest WASM and the host.
-* Any relevant capability restrictions, resource limits, or validation layers.
-
-Compare those concrete mechanisms with AthenaFusionX's:
-
-* VmoHandler
-* ARM64 execution constraints / ARM64 DNA
-* Runtime executor boundary
-* Existing security/policy enforcement
-
-Do not claim equivalence where the mechanisms are materially different.
-
-STEP 4 — MEMORY AUDIT
-
-Inspect the actual OpenFang implementation under vendor/openfang for:
-
-* SQLite persistence.
-* SQLite WAL configuration.
-* Memory schemas/tables.
-* Vector/embedding storage or indexing.
-* Memory insertion.
-* Memory retrieval/search.
-* Persistence/checkpoint behavior.
-* Any isolation, taint, authorization, or trust controls around memory.
-
-Compare the implementation against AthenaFusionX:
-
-* MemoryPalace
-* memory_search / FTS5
-* VectorVault / TurboQuantIndex
-* granite-311m-edge 384-dimensional embeddings
-* SqliteCheckpointer
-
-Clearly distinguish:
-
-1. mechanisms OpenFang actually implements,
-2. mechanisms AthenaFusionX actually implements,
-3. gaps or architectural differences.
-
-STEP 5 — HANDS / AUTONOMOUS CAPABILITY AUDIT
-
-Inspect the actual OpenFang implementation and documentation under vendor/openfang surrounding:
-
-* HAND.toml
-* Hands
-* scheduled capabilities
-* capability packages
-* execution/scheduling
-* permissions and boundaries.
-
-Determine how Hands relate to OpenFang's agent/kernel architecture.
-
-Compare that architecture with AthenaFusionX:
-
-Executive Cortex
-→ DAG
-→ Subagent
-→ MotorCommand
-→ RoboticExecutor
-
-Identify concrete similarities and differences without declaring one architecture superior.
-
-STEP 6 — SECURITY-LAYER CLAIM
-
-The original mission description references "16 distinct security layers."
-
-Do NOT accept that statement as fact without verification.
-
-Search vendor/openfang and its documentation for the actual security-layer implementation or documentation.
-
-If 16 distinct layers are explicitly documented, enumerate them and cite the relevant source paths.
-
-If the repository does not substantiate the claim, explicitly state that the claim could not be verified from the inspected evidence.
-
-Do not manufacture a 16-layer list.
-
-STEP 7 — ARCHITECTURAL MAPPING
-
-Construct an evidence-based mapping between OpenFang and AthenaFusionX.
-
-At minimum cover:
-
-OpenFang workspace/kernel
-↔
-AthenaFusionX nexus_runtime_core / nexus_substrate
-
-OpenFang WASM sandbox
-↔
-AthenaFusionX VmoHandler / ARM64 execution boundary
-
-OpenFang SQLite/vector memory
-↔
-AthenaFusionX MemoryPalace / VectorVault / SqliteCheckpointer
-
-OpenFang Hands/scheduler
-↔
-AthenaFusionX Executive Cortex / DAG / Subagent architecture
-
-For every mapping, identify:
-
-* concrete implementation,
-* architectural purpose,
-* important difference,
-* potential lesson for Nexus Singularity.
-
-STEP 8 — STRATEGIC ASSIMILATION
-
-Identify exactly 3 specific implementation details or security guardrails from OpenFang that are technically relevant for possible assimilation into Project Nexus Singularity.
-
-For each item provide:
-
-1. OpenFang source location.
-2. What the implementation actually does.
-3. Security/reliability/performance purpose.
-4. How it could map into AthenaFusionX.
-5. Whether it should be:
-
-   * directly adopted,
-   * adapted,
-   * or merely studied.
-
-Do not use subjective rankings or unsupported claims.
-
-STEP 9 — WRITE THE ROADMAP
-
-Use write_file to create:
-
-ROADMAP_OPENFANG_COMPARISON.md
-
-in the root of the AthenaFusionX repository.
-
-The document MUST contain these sections:
-
-# OpenFang vs AthenaFusionX Architectural Comparison
-
-## Executive Summary
-
-## 1. Architecture Mapping
-
-## 2. OpenFang Workspace and Kernel
-
-## 3. WASM Sandboxing and Execution Security
-
-## 4. Memory, SQLite WAL, and Vector Retrieval
-
-## 5. Hands vs Executive Cortex / DAG
-
-## 6. Security-Layer Verification
-
-## 7. Three Strategic Assimilation Targets
-
-## 8. Zero Fragmentation Implications
-
-## 9. Evidence and Source Paths
-
-## 10. Recommended Next Engineering Steps
-
-The roadmap must clearly distinguish verified implementation facts from analysis or recommendations.
-
-STEP 10 — FINAL VERIFICATION
-
-After write_file succeeds:
-
-* Verify ROADMAP_OPENFANG_COMPARISON.md exists.
-* Read the generated file.
-* Verify that all required sections are present.
-* Verify that the roadmap does not claim unverified OpenFang features as facts.
-* Verify that no OpenFang source files were modified.
-* Verify that no AthenaFusionX source files were modified.
-* Report the final verification evidence.
-
-SUCCESS CONDITION:
-
-The DAG is complete only when:
-
-1. OpenFang was successfully cloned into vendor/openfang.
-2. The relevant Rust/source evidence was actually inspected.
-3. The WASM, memory, Hands, workspace, and security claims were investigated.
-4. The comparison was grounded in observed evidence.
-5. ROADMAP_OPENFANG_COMPARISON.md was successfully written.
-6. The resulting roadmap was read back and verified.
-7. No unintended files were modified.\x1b[0m
-[2m2026-09-27T19:50:03.408593Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-3.5-flash-lite", "z-ai/glm-5.3", "gemma-4-e4b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:50:13.409990Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:50:23.407771Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:50:33.408117Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:50:43.407983Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=4 edges=1
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.5100 delta=0.3000 after=0.7565
+[2m2026-10-03T20:20:18.035012Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/hello_sidecar.wasm"
+[2m2026-10-03T20:20:18.035846Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/logic_cell.wasm"
+[2m2026-10-03T20:20:18.036155Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> [SIDECAR] Loading external cognitive module: "sidecars/sum.wasm"
+[2m2026-10-03T20:20:18.036641Z[0m [32m INFO[0m [2mnexus_ide_backend[0m[2m:[0m >> Core Subsystems online. Binding Axum API Gateway to 0.0.0.0:3000...
+[2m2026-10-03T20:20:22.787706Z[0m [32m INFO[0m [2mnexus_runtime_core::metrics[0m[2m:[0m Task counter incremented
+[2m2026-10-03T20:20:22.788193Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m \x1b[35m[EXECUTIVE CORTEX] Injecting new background goal: read_patch
+
+Inspect crates/runtime_core/src/cognition_graph.rs and add a doc comment immediately above the function `content_of` without changing its behavior or signature.
+
+You must first inspect the existing function so the edit matches the source exactly. Use the appropriate mutation method for adding text immediately above the function. Do not change any other code.
+
+Success criteria:
+READ_FUNCTION_OK:crates/runtime_core/src/cognition_graph.rs:content_of
+PATCH_FUNCTION_OK:crates/runtime_core/src/cognition_graph.rs:content_of\x1b[0m
+[MODEL TRACE] safe_api_call models=["gemini-3.5-flash-lite"]
+[MODEL TRACE] -> attempt model=gemini-3.5-flash-lite provider=google retry=0
+[2m2026-10-03T20:20:22.789882Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[MODEL TRACE] safe_api_call models=["z-ai/glm-5.3", "nvidia/nemotron-3-ultra-550b-a55b"]
+[MODEL TRACE] -> attempt model=z-ai/glm-5.3 provider=nvidia retry=0
+[MODEL TRACE] safe_api_call models=["z-ai/glm-5.3", "nvidia/nemotron-3-ultra-550b-a55b"]
+[MODEL TRACE] -> attempt model=z-ai/glm-5.3 provider=nvidia retry=0
+[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it", "gemini-2.5-flash-lite"]
+[MODEL TRACE] -> attempt model=gemma-4-e4b-it provider=nexus retry=0
+[2m2026-10-03T20:20:32.790048Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:20:42.789832Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[BELIEF TRACE] propagate start nodes=2 edges=1
+[BELIEF TRACE] hypothesis=c324f217-6b06-43aa-9b65-b7088098ea15 before=0.5100 delta=0.2000 after=0.6715
 [BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:50:53.408246Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:51:03.408294Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:51:13.408098Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=5 edges=2
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.7565 delta=0.5000 after=0.9635
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:51:23.408395Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:51:33.408502Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:51:43.408015Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:51:53.408532Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=6 edges=3
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.9635 delta=0.7000 after=0.9945
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:52:03.409664Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:52:13.407982Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:52:23.407816Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:52:33.408081Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=11 edges=4
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.9945 delta=0.7000 after=0.9992
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.5600 delta=0.2000 after=0.6790
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:52:43.409795Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[RETRY] gemini-robotics-er-2-preview truncated-response attempt 1/4: gemini-robotics-er-2-preview response truncated (MAX_TOKENS) after 152 chars -- retrying
-[2m2026-09-27T19:52:53.408156Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[RETRY] gemini-robotics-er-2-preview truncated-response attempt 2/4: gemini-robotics-er-2-preview response truncated (MAX_TOKENS) after 152 chars -- retrying
-[2m2026-09-27T19:53:03.407992Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[RETRY] gemini-robotics-er-2-preview truncated-response attempt 3/4: gemini-robotics-er-2-preview response truncated (MAX_TOKENS) after 152 chars -- retrying
-[2m2026-09-27T19:53:13.410342Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:53:23.409111Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[RETRY] gemini-robotics-er-2-preview truncated-response attempt 4/4: gemini-robotics-er-2-preview response truncated (MAX_TOKENS) after 152 chars -- retrying
-[2m2026-09-27T19:53:33.410400Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:53:43.407982Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:53:53.408553Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:54:03.409655Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[RETRY] gemini-robotics-er-2-preview truncated-response attempt 5/4: gemini-robotics-er-2-preview response truncated (MAX_TOKENS) after 152 chars -- retrying
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:54:13.408501Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:54:23.408459Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:54:33.408099Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=12 edges=5
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.9992 delta=0.9500 after=0.9999
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.6790 delta=0.2000 after=0.6969
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:54:43.408953Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:54:53.408840Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:55:03.408456Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:55:13.408755Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:55:23.408187Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=14 edges=6
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.6969 delta=0.2000 after=0.6995
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.7999 delta=1.1500 after=0.9700
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:55:33.410435Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:55:43.408051Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:55:53.408679Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:56:03.408156Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=15 edges=7
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.5700 delta=1.1500 after=0.9355
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.6995 delta=0.4000 after=0.8699
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:56:13.411953Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:56:23.408295Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=16 edges=8
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.7355 delta=1.1500 after=0.9603
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.8699 delta=0.0000 after=0.5555
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:56:33.410527Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:56:43.408654Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:56:53.408137Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=17 edges=9
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.5555 delta=0.0000 after=0.5083
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.7603 delta=1.4500 after=0.9640
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:57:03.408390Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:57:13.408435Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:57:23.408225Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:57:33.408052Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=18 edges=10
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.9640 delta=1.6500 after=0.9946
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.5083 delta=0.0000 after=0.5012
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:57:43.409193Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:57:53.407707Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:58:03.408478Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:58:13.408473Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=19 edges=11
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.9946 delta=1.8500 after=0.9992
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.5012 delta=0.0000 after=0.5002
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:58:23.408132Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[MODEL TRACE] safe_api_call models=["gemma-4-e4b-it"]
-[2m2026-09-27T19:58:33.408326Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:58:43.408210Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[BELIEF TRACE] propagate start nodes=20 edges=12
-[BELIEF TRACE] hypothesis=0b4d7c4a-e689-4dc9-a321-2d6ac3045d89 before=0.9992 delta=1.9500 after=0.9999
-[BELIEF TRACE] hypothesis=f0916524-5c61-45d6-9a5e-ffa3646fb43f before=0.5002 delta=0.0000 after=0.5000
-[BELIEF TRACE] propagate end
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:58:53.408803Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[MODEL TRACE] safe_api_call models=["gemini-robotics-er-2-preview", "google/gemma-4-31b-it"]
-[2m2026-09-27T19:59:03.407750Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:59:13.410122Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:59:23.408120Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:59:33.410190Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:59:43.409138Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T19:59:53.408004Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:00:03.413093Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:00:13.409375Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:00:23.409509Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:00:33.410706Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:00:43.412438Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:00:53.407970Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:01:03.408732Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:01:13.410642Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:01:23.408315Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:01:33.409513Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:01:43.408597Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:01:53.407969Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:02:03.410791Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:02:13.410270Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:02:23.408309Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:02:33.409794Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:02:43.410390Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:02:53.407929Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:03:03.409148Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:03:13.410241Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:03:23.408145Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:03:33.410277Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:03:43.409187Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:03:53.408526Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:04:03.410127Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:04:13.410072Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:04:23.408403Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:04:33.407910Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:04:43.411746Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:04:53.408351Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:05:03.408062Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:05:13.410334Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:05:23.408311Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:05:33.410824Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:05:43.408450Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:05:53.408345Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:06:03.409723Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:06:13.409683Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:06:23.408166Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:06:33.409320Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:06:43.408795Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:06:53.408596Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:07:03.409286Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:07:13.410669Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:07:23.407954Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:07:33.410450Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:07:43.409375Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:07:53.408392Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:08:03.409401Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:08:13.410433Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:08:23.408062Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:08:33.410369Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:08:43.410214Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:08:53.408274Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:09:03.409038Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:09:13.409993Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:09:23.408006Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:09:33.409937Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:09:43.409232Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:09:53.408330Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:10:03.408541Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:10:13.410112Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:10:23.409671Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:10:33.409750Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:10:43.410605Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:10:53.408128Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:11:03.407904Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
-[2m2026-09-27T20:11:13.410311Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[MODEL TRACE] safe_api_call models=["z-ai/glm-5.3", "nvidia/nemotron-3-ultra-550b-a55b"]
+[MODEL TRACE] -> attempt model=z-ai/glm-5.3 provider=nvidia retry=0
+[2m2026-10-03T20:20:52.791398Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[MODEL TRACE] safe_api_call models=["z-ai/glm-5.3", "nvidia/nemotron-3-ultra-550b-a55b"]
+[MODEL TRACE] -> attempt model=z-ai/glm-5.3 provider=nvidia retry=0
+[2m2026-10-03T20:21:02.791556Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[MODEL TRACE] safe_api_call models=["z-ai/glm-5.3", "nvidia/nemotron-3-ultra-550b-a55b"]
+[MODEL TRACE] -> attempt model=z-ai/glm-5.3 provider=nvidia retry=0
+[2m2026-10-03T20:21:12.789980Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:21:22.790705Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:21:32.790296Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:21:42.790563Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:21:52.790799Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:22:02.790202Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:22:12.791814Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:22:22.791586Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:22:32.790894Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:22:42.789773Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:22:52.790775Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:23:02.791664Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:23:12.789741Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:23:22.790462Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:23:32.790705Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:23:42.791163Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:23:52.790641Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:24:02.791429Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:24:12.790965Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:24:22.790940Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:24:32.790333Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:24:42.790470Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:24:52.790180Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
+[2m2026-10-03T20:25:02.792046Z[0m [32m INFO[0m [2mnexus_runtime_core::executive_cortex[0m[2m:[0m [EXECUTIVE CORTEX] Pulse check: Maintaining intent vector for 1 active goal(s)...
