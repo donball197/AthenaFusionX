@@ -5,8 +5,18 @@ pub(crate) fn compress_context(ctx: &str, max_chars: usize) -> String {
         return ctx.to_string();
     }
     let chunk_size = max_chars / 2;
-    let start = &ctx[..chunk_size];
-    let end = &ctx[ctx.len() - chunk_size..];
+    // Snap both cuts to UTF-8 char boundaries; byte-offset slicing panics
+    // when a multi-byte character straddles the cut.
+    let mut start_end = chunk_size;
+    while !ctx.is_char_boundary(start_end) {
+        start_end -= 1;
+    }
+    let mut end_start = ctx.len() - chunk_size;
+    while !ctx.is_char_boundary(end_start) {
+        end_start += 1;
+    }
+    let start = &ctx[..start_end];
+    let end = &ctx[end_start..];
     format!(
         "{}...\n\n[... {} CHARACTERS COMPRESSED ...]\n\n{}",
         start,
@@ -67,4 +77,34 @@ pub(crate) fn extract_explicit_search_memory_query(mission: &str) -> Option<Stri
 /// proposals (containing a "type" field) that failed validation return false.
 pub(crate) fn should_synthesize_halt(raw: &str) -> bool {
     raw.trim().to_lowercase().contains("halt") && !raw.contains("\"type\"")
+}
+
+#[cfg(test)]
+mod compress_tests {
+    use super::compress_context;
+
+    #[test]
+    fn ascii_behavior_unchanged() {
+        let ctx = "a".repeat(100);
+        let out = compress_context(&ctx, 20);
+        assert!(out.starts_with(&"a".repeat(10)));
+        assert!(out.ends_with(&"a".repeat(10)));
+        assert!(out.contains("80 CHARACTERS COMPRESSED"));
+    }
+
+    #[test]
+    fn short_input_passthrough() {
+        assert_eq!(compress_context("hello", 100), "hello");
+    }
+
+    #[test]
+    fn multibyte_at_cut_does_not_panic() {
+        // 2-byte chars; max_chars=51 -> chunk 25 (odd) lands mid-character.
+        let ctx = "é".repeat(100);
+        let out = compress_context(&ctx, 51);
+        assert!(out.contains("COMPRESSED"));
+        // 4-byte chars and mixed widths
+        let _ = compress_context(&"😀".repeat(100), 51);
+        let _ = compress_context(&format!("{}{}", "a".repeat(30), "日本語".repeat(40)), 37);
+    }
 }
