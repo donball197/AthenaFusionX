@@ -137,9 +137,27 @@ impl EpistemicEngine {
                         // the selected native strategy tool. This is intentionally
                         // opt-in so unrelated safe_api_call() callers are unchanged.
                         if let Some(tool_choice) = payload.get("forced_tool_choice") {
-                            p.as_object_mut()
-                                .unwrap()
-                                .insert("tool_choice".to_string(), tool_choice.clone());
+                            // Only force a tool the request actually declares;
+                            // otherwise the API rejects it with a 400.
+                            let forced_name = tool_choice
+                                .pointer("/function/name")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| tool_choice.as_str());
+                            let declared = p
+                                .get("tools")
+                                .and_then(|t| t.as_array())
+                                .map(|arr| {
+                                    arr.iter().any(|t| {
+                                        t.pointer("/function/name").and_then(|v| v.as_str())
+                                            == forced_name
+                                    })
+                                })
+                                .unwrap_or(false);
+                            if declared || forced_name.is_none() {
+                                p.as_object_mut()
+                                    .unwrap()
+                                    .insert("tool_choice".to_string(), tool_choice.clone());
+                            }
                         }
 
                         if let Some(mime) = payload

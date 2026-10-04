@@ -7,6 +7,7 @@ pub mod cognition_graph;
 pub mod conductor;
 pub mod cortex;
 pub mod cortical_loop;
+pub(crate) mod cortical;
 pub mod critic;
 pub mod diff;
 pub mod distributed_scheduler;
