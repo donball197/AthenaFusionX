@@ -1075,58 +1075,7 @@ impl CorticalLoop {
 
         self.apply_post_read_mutation_pivot(session, &mut active_strategy, mission, write_phase_ready);
 
-        // HALT-VETO RECOVERY (HaltDelivered strategy-prefix lock fix):
-        //
-        // When the contract is solely HaltDelivered and the critic has just
-        // vetoed a halt for lack of inspection evidence, the original
-        // "halt: ..." hypothesis becomes sticky. Demote it and inject a
-        // competing reconnaissance hypothesis so the node can escape.
-        {
-            let is_halt_delivered =
-                session.contract.conditions.iter().any(|c| {
-                    matches!(c, crate::completion_engine::CompletionCondition::HaltDelivered)
-                });
-            let critic_demands_inspection =
-                session.local_evidence.lines().rev().take(60).any(|l| {
-                    let lower = l.to_lowercase();
-                    (lower.contains("critic")
-                        || lower.contains("veto")
-                        || lower.contains("dialectic"))
-                        && (lower.contains("no source")
-                            || lower.contains("not inspected")
-                            || lower.contains("no [read_ok]")
-                            || lower.contains("no [search")
-                            || lower.contains("must search")
-                            || lower.contains("mandatory first step")
-                            || lower.contains("zero inspection")
-                            || lower.contains("locate and read")
-                            || lower.contains("first locate")
-                            || lower.contains("hallucination")
-                            || lower.contains("evidentiary support"))
-                });
-            if is_halt_delivered && critic_demands_inspection {
-                if let Some(h_id) = session.best_hypothesis_id {
-                    if session.graph.content_of(h_id).trim().starts_with("halt:") {
-                        session.graph.demote_hypothesis(h_id, 0.05);
-                    }
-                }
-                let recon = "search_code:crates/runtime_core/src evaluate_contract OR mission_completion_authorized OR HaltDelivered";
-                let already = session.graph.find_by_content(recon).is_some();
-                if !already {
-                    let hid = session.graph.add_node(
-                        crate::cognition_graph::NodeKind::Hypothesis,
-                        recon,
-                        0.56,
-                        100,
-                    );
-                    session.best_hypothesis_id = Some(hid);
-                    self.log(
-                        "\x1b[1;36m>> [CORTEX HALT-VETO RECOVERY]\x1b[0m Injected reconnaissance hypothesis after critic veto on HaltDelivered contract."
-                            .to_string(),
-                    );
-                }
-            }
-        }
+        self.apply_halt_veto_recovery(session);
 
         // POST-SEARCH EXPANSION (recon stall fix):
         //
