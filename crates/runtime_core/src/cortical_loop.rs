@@ -175,7 +175,7 @@ impl CorticalLoop {
         self.episode = episode;
     }
 
-    fn log(&self, msg: String) {
+    pub(crate) fn log(&self, msg: String) {
         let _ = self.tx.send(
             serde_json::json!({"type": "NEURAL_STREAM", "payload": format!("{}\n", msg)})
                 .to_string(),
@@ -1071,65 +1071,7 @@ impl CorticalLoop {
 
 );
 
-        // --- AST-UNADDRESSABLE RECOVERY (Tree-sitter body missing) ---
-        // When PatchFunction fails because the symbol has no Tree-sitter body,
-        // demote the dead patch_function hypothesis and pivot to read_file of
-        // the exact path named in the strategy. Do not guess a fallback path.
-        // Do not synthesize replace_lines until READ_OK evidence exists.
-        let tree_sitter_unaddressable = session.local_evidence.contains("has no Tree-sitter body")
-            || session.local_evidence.contains("has no Tree-sitter body in Rust");
-
-        if patch_function_strategy && tree_sitter_unaddressable {
-            if let Some(h_id) = session.best_hypothesis_id {
-                if session.graph.content_of(h_id).starts_with("patch_function:") {
-                    session.graph.demote_hypothesis(h_id, 0.05);
-                }
-            }
-
-            let path = active_strategy
-                .strip_prefix("patch_function:")
-                .and_then(|rest| rest.split(':').next())
-                .map(str::trim)
-                .filter(|p| !p.is_empty());
-
-            if let Some(path) = path {
-                let pivot_marker = format!("[AST_UNADDRESSABLE_PIVOTED]:{}", path);
-                let already_pivoted = session.local_evidence.contains(&pivot_marker);
-
-                let recon = format!("read_file:{}", path);
-                let hid = session
-                    .graph
-                    .nodes
-                    .iter()
-                    .find(|(_, n)| n.content == recon)
-                    .map(|(id, _)| *id)
-                    .unwrap_or_else(|| {
-                        session.graph.add_node(NodeKind::Hypothesis, &recon, 0.58, 100)
-                    });
-
-                // Always keep strategy/hypothesis coherent; log/mark only once.
-                session.best_hypothesis_id = Some(hid);
-                active_strategy = recon;
-
-                if !already_pivoted {
-                    session.local_evidence.push_str("\n");
-                    session.local_evidence.push_str(&pivot_marker);
-                    session.local_evidence.push('\n');
-                    self.log(
-                        "\x1b[1;36m>> [CORTEX AST-UNADDRESSABLE RECOVERY]\x1b[0m \
-                         Symbol has no Tree-sitter body; pivoting to read_file."
-                            .to_string(),
-                    );
-                }
-            } else {
-                self.log(
-                    "\x1b[1;31m>> [CORTEX AST-UNADDRESSABLE RECOVERY]\x1b[0m \
-                     Could not parse path from patch_function strategy; recovery aborted."
-                        .to_string(),
-                );
-            }
-        }
-        // --- end AST-UNADDRESSABLE RECOVERY ---
+        self.apply_ast_unaddressable_recovery(session, &mut active_strategy);
 
         // --- POST-READ MUTATION PIVOT ---
         // After READ_OK on a mutation mission, inject patch_function / replace_lines
