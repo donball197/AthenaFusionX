@@ -121,10 +121,10 @@ fn search_memory_strategy_requires_matching_search_memory_action() {
 
 #[test]
 fn parse_failure_never_manufactures_a_typed_halt() {
-    assert!(super::should_synthesize_halt("halt"));
-    assert!(super::should_synthesize_halt("The task is done, halt."));
-    assert!(!super::should_synthesize_halt(r#"[{"type":"halt","reasoning":{"a":1}}]"#));
-    assert!(!super::should_synthesize_halt("no stop word here"));
+    assert!(crate::cortical::util::should_synthesize_halt("halt"));
+    assert!(crate::cortical::util::should_synthesize_halt("The task is done, halt."));
+    assert!(!crate::cortical::util::should_synthesize_halt(r#"[{"type":"halt","reasoning":{"a":1}}]"#));
+    assert!(!crate::cortical::util::should_synthesize_halt("no stop word here"));
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn extract_named_target_read_ok() {
     // Reproduces the 2026-09-14 audit run's turn-1 mission text.
     let mission = "OBJECTIVE: inspect\n\nMANDATORY NODE SUCCESS CRITERIA:\nREAD_OK:crates/runtime_core/src/cortical_loop.rs\n\nNODE COMPLETION RULE: ...";
     assert_eq!(
-        CorticalLoop::extract_named_target(mission, "READ_OK:").as_deref(),
+        crate::cortical::util::extract_named_target(mission, "READ_OK:").as_deref(),
         Some("crates/runtime_core/src/cortical_loop.rs")
     );
 }
@@ -208,19 +208,19 @@ fn decay_hypothesis_belief_leaves_dead_hypotheses_alone() {
 #[test]
 fn extract_named_target_returns_none_when_absent() {
     let mission = "OBJECTIVE: inspect the code and report.";
-    assert_eq!(CorticalLoop::extract_named_target(mission, "READ_OK:"), None);
+    assert_eq!(crate::cortical::util::extract_named_target(mission, "READ_OK:"), None);
 }
 
 #[test]
 fn extract_named_target_strips_backticks_and_quotes() {
     let mission = "READ_OK:`crates/runtime_core/src/cortical_loop.rs`\n";
     assert_eq!(
-        CorticalLoop::extract_named_target(mission, "READ_OK:").as_deref(),
+        crate::cortical::util::extract_named_target(mission, "READ_OK:").as_deref(),
         Some("crates/runtime_core/src/cortical_loop.rs")
     );
     let mission2 = "READ_OK:\"crates/runtime_core/src/router.rs\"\n";
     assert_eq!(
-        CorticalLoop::extract_named_target(mission2, "READ_OK:").as_deref(),
+        crate::cortical::util::extract_named_target(mission2, "READ_OK:").as_deref(),
         Some("crates/runtime_core/src/router.rs")
     );
 }

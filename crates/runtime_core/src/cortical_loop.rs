@@ -219,21 +219,6 @@ impl CorticalLoop {
         }
     }
 
-    fn compress_context(ctx: &str, max_chars: usize) -> String {
-        if ctx.len() <= max_chars {
-            return ctx.to_string();
-        }
-        let chunk_size = max_chars / 2;
-        let start = &ctx[..chunk_size];
-        let end = &ctx[ctx.len() - chunk_size..];
-        format!(
-            "{}...\n\n[... {} CHARACTERS COMPRESSED ...]\n\n{}",
-            start,
-            ctx.len() - max_chars,
-            end
-        )
-    }
-
     pub async fn ignite(&mut self, mission: &str) -> Result<CortexOutcome> {
         self.ignite_with_evidence(mission, None).await
     }
@@ -352,7 +337,7 @@ impl CorticalLoop {
                 context_chunks.push(format!("\n[ANCESTOR NODE EVIDENCE]\n{}", evidence));
             }
         }
-        let world_context = Self::compress_context(&context_chunks.join("\n"), 2500);
+        let world_context = crate::cortical::util::compress_context(&context_chunks.join("\n"), 2500);
 
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
@@ -717,7 +702,7 @@ impl CorticalLoop {
                 continue;
             }
             let advances = match cond {
-                CC::ReadMarkerAcquired => match Self::extract_named_target(mission, "READ_OK:") {
+                CC::ReadMarkerAcquired => match crate::cortical::util::extract_named_target(mission, "READ_OK:") {
                     Some(target) => {
                         matches!(
                             action,
@@ -754,7 +739,7 @@ impl CorticalLoop {
                 CC::SearchMemoryMarkerAcquired => {
                     matches!(action, AgentAction::SearchMemory { .. })
                 }
-                CC::WriteMarkerAcquired => match Self::extract_named_target(mission, "WRITE_OK:") {
+                CC::WriteMarkerAcquired => match crate::cortical::util::extract_named_target(mission, "WRITE_OK:") {
                     Some(target) => {
                         matches!(
                             action,
@@ -781,7 +766,7 @@ impl CorticalLoop {
                     )
                 }
                 CC::PatchMarkerAcquired => {
-                    match Self::extract_named_target(mission, "PATCH_FUNCTION_OK:") {
+                    match crate::cortical::util::extract_named_target(mission, "PATCH_FUNCTION_OK:") {
                         Some(target) => {
                             let mut parts = target.splitn(2, ':');
                             let expected_path = parts.next().unwrap_or("").trim();
@@ -817,7 +802,7 @@ impl CorticalLoop {
                     matches!(action, AgentAction::ExecuteCommand { .. })
                 }
                 CC::ReadFunctionMarkerAcquired { .. } => {
-                    match Self::extract_named_target(mission, "READ_FUNCTION_OK:") {
+                    match crate::cortical::util::extract_named_target(mission, "READ_FUNCTION_OK:") {
                         Some(target) => {
                             let mut parts = target.splitn(2, ':');
                             let expected_path = parts.next().unwrap_or("").trim();
@@ -997,7 +982,7 @@ impl CorticalLoop {
             );
         }
 
-        let evidence_history = Self::compress_context(&session.collect_evidence(h_id), 3000);
+        let evidence_history = crate::cortical::util::compress_context(&session.collect_evidence(h_id), 3000);
 
         // Phase-aware mandate:
         //
@@ -1149,7 +1134,7 @@ impl CorticalLoop {
             // Synthesize a halt ONLY from prose-only output. A JSON proposal
             // that failed schema validation must fall through to the
             // parse-fault recovery path instead of manufacturing a halt.
-            if should_synthesize_halt(&raw_proposal) {
+            if crate::cortical::util::should_synthesize_halt(&raw_proposal) {
                 actions.push(AgentAction::Halt {
                     reasoning: "Model declared task complete".to_string(),
                 });
@@ -1262,7 +1247,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         // but it must not compress the requested semantic query into a
         // generic substitute such as "host metrics".
         if h_content.starts_with("search_memory:") {
-            if let Some(authoritative_query) = Self::extract_explicit_search_memory_query(mission) {
+            if let Some(authoritative_query) = crate::cortical::util::extract_explicit_search_memory_query(mission) {
                 if let Some(AgentAction::SearchMemory { query, .. }) = actions.first_mut() {
                     if query.trim() != authoritative_query {
                         self.log(format!(
@@ -1320,54 +1305,6 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         }
 
         Ok(CortexState::Critique { actions, proposal: raw_proposal, belief: current_belief })
-    }
-
-    /// Extract the target named on the first `<marker><target>` line of a
-    /// mission's MANDATORY NODE SUCCESS CRITERIA block. Returns None when the
-    /// mission does not name a target for that marker.
-    ///
-    /// Used by `action_advances_unmet_contract_condition` to keep the
-    /// multi-criteria safety net parameter-aware: a `READ_OK:<path>` criterion
-    /// must only be advanced by an action whose path matches the criterion,
-    /// not by any read on any file.
-    ///
-    /// The marker is matched literally (e.g. "READ_OK:") and the target is
-    /// the first non-empty line after the marker, trimmed of whitespace and
-    /// of surrounding backticks or double quotes. This mirrors the
-    /// extraction done by EpistemicEngine::generate_hypotheses for the same
-    /// criteria blocks.
-    fn extract_named_target(mission: &str, marker: &str) -> Option<String> {
-        let pos = mission.find(marker)?;
-        let remainder = &mission[pos + marker.len()..];
-        let target = remainder.lines().next()?.trim().trim_matches('`').trim_matches('"');
-        if target.is_empty() {
-            None
-        } else {
-            Some(target.to_string())
-        }
-    }
-
-    fn extract_explicit_search_memory_query(mission: &str) -> Option<String> {
-        let lower = mission.to_lowercase();
-
-        let marker = "recall prior memory specifically about";
-        let start = lower.find(marker)? + marker.len();
-
-        let remainder = mission.get(start..)?.trim_start();
-
-        let query = remainder
-            .split_once('.')
-            .map(|(q, _)| q)
-            .unwrap_or(remainder)
-            .trim()
-            .trim_end_matches(':')
-            .trim();
-
-        if query.is_empty() {
-            None
-        } else {
-            Some(query.to_string())
-        }
     }
 
     async fn handle_critic(
@@ -2679,12 +2616,6 @@ async fn classify_patch_action(action: &AgentAction) -> anyhow::Result<PatchClas
     } else {
         PatchClass::Idempotent { path: path.clone(), function_name: function_name.clone() }
     })
-}
-
-/// True only for prose-only proposals that mention "halt". Typed JSON
-/// proposals (containing a "type" field) that failed validation return false.
-fn should_synthesize_halt(raw: &str) -> bool {
-    raw.trim().to_lowercase().contains("halt") && !raw.contains("\"type\"")
 }
 
 #[cfg(test)]
