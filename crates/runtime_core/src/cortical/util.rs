@@ -1,5 +1,16 @@
 //! Pure helper functions extracted from cortical_loop.rs (no `self`, no state).
 
+/// A `run_tests` target is interpolated into a shell command line, so only
+/// a conservative character set is allowed (cargo package/test filters and
+/// simple flags). Shell metacharacters (; & | $ ` ( ) < > quotes, newlines)
+/// are rejected.
+pub(crate) fn is_safe_test_target(target: &str) -> bool {
+    target.len() <= 200
+        && target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | ':' | '.' | '/' | '='))
+}
+
 pub(crate) fn compress_context(ctx: &str, max_chars: usize) -> String {
     if ctx.len() <= max_chars {
         return ctx.to_string();
@@ -81,7 +92,18 @@ pub(crate) fn should_synthesize_halt(raw: &str) -> bool {
 
 #[cfg(test)]
 mod compress_tests {
-    use super::compress_context;
+    use super::{compress_context, is_safe_test_target};
+
+    #[test]
+    fn test_target_validation() {
+        for ok in ["", ".", "-p nexus_runtime_core", "-p nexus_runtime_core compress", "cortical::util -- --nocapture", "--lib"] {
+            assert!(is_safe_test_target(ok), "should allow {:?}", ok);
+        }
+        for bad in ["x; rm -rf ~", "a && b", "a | b", "$(id)", "`id`", "a\nb", "a > f", "'x'", "\"x\""] {
+            assert!(!is_safe_test_target(bad), "should reject {:?}", bad);
+        }
+        assert!(!is_safe_test_target(&"a".repeat(201)));
+    }
 
     #[test]
     fn ascii_behavior_unchanged() {

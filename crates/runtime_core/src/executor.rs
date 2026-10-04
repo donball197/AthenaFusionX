@@ -624,6 +624,12 @@ impl RoboticExecutor {
                 ))
             }
             MotorAction::RunTests { test_target } => {
+                if !crate::cortical::util::is_safe_test_target(&test_target) {
+                    return Ok(format!(
+                        "[TEST_REJECTED] test_target contains characters outside the allowed set: '{}'",
+                        test_target
+                    ));
+                }
                 let cmd = if test_target.is_empty() || test_target == "." {
                     "cargo test --workspace --color never 2>&1".to_string()
                 } else {
