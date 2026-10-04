@@ -692,20 +692,6 @@ impl CorticalLoop {
         }
     }
 
-    /// Canonical anti-loop key for an action.
-    ///
-    /// Two actions with the same key are treated as duplicates. For
-    /// `PatchFunction`, the key includes a hash of `new_body` so a
-    /// corrective retry on the same symbol with a different body is not
-    /// filtered as a repeat of an already-executed attempt.
-    ///
-    /// `reasoning` is excluded from identity for every variant except
-    /// `Halt`, whose answer text IS its content: a revised halt after a
-    /// rejection must not be filtered as a duplicate, so halt identity is
-    /// a hash of its full Debug text (which includes `reasoning`). This
-    /// exception is deliberate.
-    ///
-
     /// Returns true if executing `action` would produce evidence that
     /// satisfies a currently-unmet condition in the session contract.
     ///
