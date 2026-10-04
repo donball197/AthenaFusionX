@@ -87,6 +87,31 @@ pub struct CorticalLoop {
     episode: EpisodeContext,
 }
 
+/// Capability required to cross the ActionGate for an action.
+///
+/// This mapping must agree with the mutation classification used by the
+/// READ-ONLY enforcement block in `handle_execute`: any variant refused
+/// there as a mutation (`ReplaceLines`, `AtomicPatch` included) must
+/// route to `WriteSubstrate` here. Historically those two variants fell
+/// through to `_ => ReadSubstrate`, authorizing a write-type action as a
+/// read at the gate.
+pub(crate) fn capability_for(action: &AgentAction) -> Capability {
+    match action {
+        AgentAction::ExecuteCommand { .. } => Capability::ExecuteSystemCall,
+        AgentAction::WriteFile { .. }
+        | AgentAction::DiffPatch { .. }
+        | AgentAction::PatchFunction { .. }
+        | AgentAction::SynthesizeReport { .. }
+        | AgentAction::ReplaceLines { .. }
+        | AgentAction::AtomicPatch { .. } => Capability::WriteSubstrate,
+        AgentAction::ScrapeUrl { .. } | AgentAction::ReadFunction { .. } => {
+            Capability::ReadSubstrate
+        }
+        AgentAction::Halt { .. } => Capability::HaltCognition,
+        _ => Capability::ReadSubstrate,
+    }
+}
+
 impl CorticalLoop {
     /// Revert the active mutation set without losing remediation state when
     /// any individual checkout fails. A failed revert means the source may
@@ -95,7 +120,9 @@ impl CorticalLoop {
         let mut all_succeeded = true;
 
         for path in &session.active_mutation_paths {
-            if crate::podman::PodmanShield::execute(&format!("git checkout -- {}", path)).is_err() {
+            let quoted = format!("'{}'", path.replace('\'', "'\\''"));
+            if crate::podman::PodmanShield::execute(&format!("git checkout -- {}", quoted)).is_err()
+            {
                 all_succeeded = false;
             }
         }
@@ -671,9 +698,14 @@ impl CorticalLoop {
     /// Two actions with the same key are treated as duplicates. For
     /// `PatchFunction`, the key includes a hash of `new_body` so a
     /// corrective retry on the same symbol with a different body is not
-    /// filtered as a repeat of an already-executed attempt. `reasoning` is
-    /// deliberately excluded: it is model-produced prose and must not
-    /// affect the identity of the action.
+    /// filtered as a repeat of an already-executed attempt.
+    ///
+    /// `reasoning` is excluded from identity for every variant except
+    /// `Halt`, whose answer text IS its content: a revised halt after a
+    /// rejection must not be filtered as a duplicate, so halt identity is
+    /// a hash of its full Debug text (which includes `reasoning`). This
+    /// exception is deliberate.
+    ///
     /// Runtime adapter for the independent action-identity algorithm.
     ///
     /// AgentAction remains owned by runtime_core. The extracted algorithm
@@ -1232,7 +1264,7 @@ impl CorticalLoop {
                 }
 
                 if let Some(ref path_str) = target_path {
-                    let fn_name = {
+                    let fn_name: Option<String> = {
                         let mut func_from_strategy = None;
                         if let Some(rest) = active_strategy.strip_prefix("read_function:") {
                             let f = rest.trim().split(':').nth(1).unwrap_or("").trim();
@@ -1252,7 +1284,7 @@ impl CorticalLoop {
                             }
                         }
 
-                        func_from_strategy.unwrap_or_else(|| {
+                        func_from_strategy.or_else(|| {
                             let lower = mission.to_lowercase();
                             let dead = |n: &str| {
                                 session
@@ -1280,21 +1312,30 @@ impl CorticalLoop {
                                     break;
                                 }
                             }
-                            found
-                                .or_else(|| {
-                                    ["evaluate", "check_contract"]
-                                        .iter()
-                                        .find(|c| lower.contains(**c) && !dead(c))
-                                        .map(|s| (*s).to_string())
-                                })
-                                .unwrap_or_else(|| "evaluate".to_string())
+                            found.or_else(|| {
+                                ["evaluate", "check_contract"]
+                                    .iter()
+                                    .find(|c| lower.contains(**c) && !dead(c))
+                                    .map(|s| (*s).to_string())
+                            })
                         })
                     };
 
-                    let mutation_strats = [
-                        format!("patch_function:{}:{}", path_str, fn_name),
-                        format!("replace_lines:{}", path_str),
-                    ];
+                    let mutation_strats: Vec<String> = match &fn_name {
+                        Some(fn_name) => vec![
+                            format!("patch_function:{}:{}", path_str, fn_name),
+                            format!("replace_lines:{}", path_str),
+                        ],
+                        None => {
+                            self.log(
+                                "\x1b[1;31m>> [CORTEX POST-READ MUTATION PIVOT]\x1b[0m \
+                                 No function name grounded in evidence or mission text; \
+                                 offering path-grounded replace_lines only."
+                                    .to_string(),
+                            );
+                            vec![format!("replace_lines:{}", path_str)]
+                        }
+                    };
 
                     let mut injected = 0usize;
                     for strat in &mutation_strats {
@@ -2154,18 +2195,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             }
 
             let intent = IntentContract::new(&proposal, belief);
-            let capability = match &action {
-                AgentAction::ExecuteCommand { .. } => Capability::ExecuteSystemCall,
-                AgentAction::WriteFile { .. }
-                | AgentAction::DiffPatch { .. }
-                | AgentAction::PatchFunction { .. }
-                | AgentAction::SynthesizeReport { .. } => Capability::WriteSubstrate,
-                AgentAction::ScrapeUrl { .. } | AgentAction::ReadFunction { .. } => {
-                    Capability::ReadSubstrate
-                }
-                AgentAction::Halt { .. } => Capability::HaltCognition,
-                _ => Capability::ReadSubstrate,
-            };
+            let capability = capability_for(&action);
 
             if let AgentAction::AtomicPatch { patches, .. } = &action {
                 for p in patches {
