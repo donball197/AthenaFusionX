@@ -27,7 +27,6 @@ use crate::motor_cortex::MotorCortex;
 use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
-use nexus_reconnaissance_algorithms::ReconnaissancePlanner;
 
 #[derive(Debug)]
 pub enum CortexOutcome {
