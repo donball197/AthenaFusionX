@@ -27,7 +27,6 @@ use crate::motor_cortex::MotorCortex;
 use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
-use nexus_action_identity_algorithms::{action_key as calculate_action_key, ActionIdentityInput};
 use nexus_reconnaissance_algorithms::ReconnaissancePlanner;
 
 #[derive(Debug)]
@@ -706,56 +705,6 @@ impl CorticalLoop {
     /// a hash of its full Debug text (which includes `reasoning`). This
     /// exception is deliberate.
     ///
-    /// Runtime adapter for the independent action-identity algorithm.
-    ///
-    /// AgentAction remains owned by runtime_core. The extracted algorithm
-    /// receives only the fields that define canonical identity. Variants that
-    /// historically used the Debug fallback preserve that exact behavior.
-    fn action_key(action: &AgentAction) -> String {
-        let input = match action {
-            AgentAction::ReadFile { path, .. } => Some(ActionIdentityInput::ReadFile { path }),
-            AgentAction::ReadFunction { path, function_name, .. } => {
-                Some(ActionIdentityInput::ReadFunction { path, function_name })
-            }
-            AgentAction::ReadFileChunk { path, start_line, .. } => {
-                Some(ActionIdentityInput::ReadFileChunk { path, start_line: *start_line })
-            }
-            AgentAction::SearchCode { path, query, .. } => {
-                Some(ActionIdentityInput::SearchCode { path, query })
-            }
-            AgentAction::SearchMemory { query, .. } => {
-                Some(ActionIdentityInput::SearchMemory { query })
-            }
-            AgentAction::WriteFile { path, content, .. } => {
-                Some(ActionIdentityInput::WriteFile { path, content })
-            }
-            AgentAction::DiffPatch { path, .. } => Some(ActionIdentityInput::DiffPatch { path }),
-            AgentAction::PatchFunction { path, function_name, new_body, .. } => {
-                Some(ActionIdentityInput::PatchFunction { path, function_name, new_body })
-            }
-            AgentAction::SynthesizeReport { output_path, .. } => {
-                Some(ActionIdentityInput::SynthesizeReport { output_path })
-            }
-            AgentAction::ExecuteCommand { command, .. } => {
-                Some(ActionIdentityInput::ExecuteCommand { command })
-            }
-            _ => None,
-        };
-
-        // A halt carries its answer in `reasoning`. Key on a hash of the
-        // text so a revised halt after a rejection is not a "duplicate".
-        if let AgentAction::Halt { .. } = action {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            format!("{:?}", action).hash(&mut h);
-            return format!("halt:{:016x}", h.finish());
-        }
-
-        match input {
-            Some(input) => calculate_action_key(input),
-            None => format!("{:?}", action),
-        }
-    }
 
     /// Returns true if executing `action` would produce evidence that
     /// satisfies a currently-unmet condition in the session contract.
@@ -1817,7 +1766,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         let mut vetoed_keys: Vec<String> = Vec::new();
 
         for action in actions {
-            let action_key = Self::action_key(&action);
+            let action_key = crate::cortical::action_identity::action_key(&action);
 
             let attempt_count = session.global_action_attempt_count(&action_key);
 
@@ -2269,7 +2218,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
 
             // Build the canonical action key before MotorCortex::translate()
             // consumes the AgentAction.
-            let action_key = Self::action_key(&action);
+            let action_key = crate::cortical::action_identity::action_key(&action);
 
             // Captured before the move below so a failed execution's error
             // string can be scoped to the attempted path (see error-arm
@@ -3114,9 +3063,9 @@ mod tests {
             reasoning: "first".into(),
         };
 
-        let k_base = CorticalLoop::action_key(&base);
-        let k_same = CorticalLoop::action_key(&same_body);
-        let k_diff = CorticalLoop::action_key(&diff_body);
+        let k_base = crate::cortical::action_identity::action_key(&base);
+        let k_same = crate::cortical::action_identity::action_key(&same_body);
+        let k_diff = crate::cortical::action_identity::action_key(&diff_body);
 
         assert_eq!(k_base, k_same, "reasoning must not affect the anti-loop key");
         assert_ne!(k_base, k_diff, "different new_body must produce a different key");
