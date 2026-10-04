@@ -105,3 +105,10 @@ server.log
 *.bak.*
 *~
 attic/
+
+# local runtime logs and scratch tooling
+daemon.log
+cortical_loop_inventory.txt
+extract_strategy_match.sh
+model_preflight.py
+scout_models3.py
