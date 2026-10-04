@@ -3,3 +3,4 @@ pub(crate) mod recovery;
 pub(crate) mod strategy_match;
 pub mod util;
 pub mod capability;
+pub mod contract_advance;
