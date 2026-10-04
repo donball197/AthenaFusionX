@@ -344,3 +344,68 @@ impl CorticalLoop {
         }
     }
 }
+
+impl CorticalLoop {
+    /// POST-SEARCH EXPANSION (recon stall fix).
+    ///
+    /// After a successful SEARCH_CODE with MATCHES, inject read_file
+    /// hypotheses for un-read hit paths so reconnaissance does not stall.
+    ///
+    /// Extracted from `handle_strategize`; behavior is unchanged.
+    pub(crate) fn apply_post_search_expansion(
+        &self,
+        session: &mut EpistemicSession,
+        active_strategy: &mut String,
+        current_belief: f32,
+        write_phase_ready: bool,
+    ) {
+        //
+        // The deterministic parsing of SEARCH_CODE MATCHES evidence is
+        // delegated to the independent reconnaissance algorithm.
+        // Cortex remains the executive coordinator: it evaluates the
+        // contract, creates hypotheses, assigns belief, and selects the
+        // active strategy.
+        if !write_phase_ready
+            && session.local_evidence.contains("[SEARCH_CODE_OK]")
+            && session.local_evidence.contains("MATCHES:")
+        {
+            let contract_met = crate::completion_engine::SubgoalCompletionEngine::evaluate(
+                &session.contract,
+                &session.local_evidence,
+                current_belief,
+            );
+
+            if !contract_met {
+                let unread: Vec<String> = nexus_reconnaissance_algorithms::ReconnaissancePlanner::plan(&session.local_evidence, 4)
+                    .into_iter()
+                    .filter_map(|strategy| strategy.strip_prefix("read_file:").map(str::to_owned))
+                    .collect();
+
+                if !unread.is_empty() {
+                    for (i, path) in unread.iter().enumerate() {
+                        let strat = format!("read_file:{}", path);
+                        let already = session.graph.find_by_content(&strat).is_some();
+
+                        if already {
+                            continue;
+                        }
+
+                        let belief = if i == 0 { 0.56 } else { 0.53 };
+                        let hid = session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, &strat, belief, 100);
+
+                        if i == 0 {
+                            session.best_hypothesis_id = Some(hid);
+                            *active_strategy = strat.clone();
+                            self.log(format!(
+                                "\x1b[1;36m>> [CORTEX POST-SEARCH EXPANSION]\x1b[0m Prefer `{}` (search hits not yet read).",
+                                strat
+                            ));
+                        } else {
+                            self.log(format!("\x1b[90m  -> Injected strategy: {}\x1b[0m", strat));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
