@@ -1742,7 +1742,8 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             let mutation_path = match &action {
                 AgentAction::WriteFile { path, .. }
                 | AgentAction::DiffPatch { path, .. }
-                | AgentAction::PatchFunction { path, .. } => Some(path.clone()),
+                | AgentAction::PatchFunction { path, .. }
+                | AgentAction::ReplaceLines { path, .. } => Some(path.clone()),
                 AgentAction::SynthesizeReport { output_path, .. } => Some(output_path.clone()),
                 _ => None,
             };
