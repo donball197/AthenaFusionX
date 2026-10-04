@@ -1156,13 +1156,14 @@ impl CorticalLoop {
             }
         }
 
-        if status == ContractStatus::Satisfied && unwritten_targets.is_empty() {
-            if !actions.iter().any(|a| matches!(a, AgentAction::Halt { .. })) {
-                self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
-                actions = vec![AgentAction::Halt {
-                    reasoning: "Deterministic contract is satisfied.".to_string(),
-                }];
-            }
+        if status == ContractStatus::Satisfied
+            && unwritten_targets.is_empty()
+            && !actions.iter().any(|a| matches!(a, AgentAction::Halt { .. }))
+        {
+            self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
+            actions = vec![AgentAction::Halt {
+                reasoning: "Deterministic contract is satisfied.".to_string(),
+            }];
         }
 
         if actions.is_empty() {
@@ -1289,7 +1290,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             if !strategy_ok && !advances_unmet {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
-                    h_content,
+                    active_strategy,
                     first_action
                 ));
 
@@ -1334,7 +1335,6 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
     /// of surrounding backticks or double quotes. This mirrors the
     /// extraction done by EpistemicEngine::generate_hypotheses for the same
     /// criteria blocks.
-
     fn extract_named_target(mission: &str, marker: &str) -> Option<String> {
         let pos = mission.find(marker)?;
         let remainder = &mission[pos + marker.len()..];
@@ -2680,6 +2680,12 @@ async fn classify_patch_action(action: &AgentAction) -> anyhow::Result<PatchClas
     })
 }
 
+/// True only for prose-only proposals that mention "halt". Typed JSON
+/// proposals (containing a "type" field) that failed validation return false.
+fn should_synthesize_halt(raw: &str) -> bool {
+    raw.trim().to_lowercase().contains("halt") && !raw.contains("\"type\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::CorticalLoop;
@@ -2905,10 +2911,4 @@ mod tests {
             Some("crates/runtime_core/src/router.rs")
         );
     }
-}
-
-/// True only for prose-only proposals that mention "halt". Typed JSON
-/// proposals (containing a "type" field) that failed validation return false.
-fn should_synthesize_halt(raw: &str) -> bool {
-    raw.trim().to_lowercase().contains("halt") && !raw.contains("\"type\"")
 }

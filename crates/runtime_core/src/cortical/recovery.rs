@@ -60,7 +60,7 @@ impl CorticalLoop {
                 *active_strategy = recon;
 
                 if !already_pivoted {
-                    session.local_evidence.push_str("\n");
+                    session.local_evidence.push('\n');
                     session.local_evidence.push_str(&pivot_marker);
                     session.local_evidence.push('\n');
                     self.log(
@@ -118,12 +118,24 @@ impl CorticalLoop {
                 || session.local_evidence.contains("[REPLACE_LINES_OK]")
                 || session.local_evidence.contains("[WRITE_OK]");
 
-            if read_ok_done && patch_marker_needed && !already_mutated && !write_phase_ready {
+            let read_only_mission = session.contract.read_only || {
+                let m = mission.to_lowercase();
+                m.contains("read-only")
+                    || m.contains("do not modify")
+                    || m.contains("don't modify")
+            };
+
+            if read_ok_done
+                && patch_marker_needed
+                && !already_mutated
+                && !write_phase_ready
+                && !read_only_mission
+            {
                 let mut target_path: Option<String> = None;
                 for line in session.local_evidence.lines().rev() {
                     let t = line.trim();
                     if let Some(rest) = t.strip_prefix("[READ_OK]") {
-                        let p = rest.trim().split_whitespace().next().unwrap_or("").trim();
+                        let p = rest.split_whitespace().next().unwrap_or("").trim();
                         if !p.is_empty() && p.ends_with(".rs") {
                             target_path = Some(p.to_string());
                             break;
@@ -135,7 +147,7 @@ impl CorticalLoop {
                             break;
                         }
                     } else if let Some(rest) = t.strip_prefix("[READ_CHUNK_OK]") {
-                        let p = rest.trim().split_whitespace().next().unwrap_or("").trim();
+                        let p = rest.split_whitespace().next().unwrap_or("").trim();
                         if !p.is_empty() && p.ends_with(".rs") {
                             target_path = Some(p.to_string());
                             break;
