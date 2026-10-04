@@ -102,12 +102,36 @@ pub(crate) fn capability_for(action: &AgentAction) -> Capability {
         | AgentAction::SynthesizeReport { .. }
         | AgentAction::ReplaceLines { .. }
         | AgentAction::AtomicPatch { .. } => Capability::WriteSubstrate,
-        AgentAction::ScrapeUrl { .. } | AgentAction::ReadFunction { .. } => {
-            Capability::ReadSubstrate
-        }
         AgentAction::Halt { .. } => Capability::HaltCognition,
-        _ => Capability::ReadSubstrate,
+        // Read-class actions.
+        AgentAction::ReadFile { .. }
+        | AgentAction::ReadFileChunk { .. }
+        | AgentAction::ReadFunction { .. }
+        | AgentAction::SearchCode { .. }
+        | AgentAction::SearchMemory { .. }
+        | AgentAction::ScrapeUrl { .. } => Capability::ReadSubstrate,
+        // UNREVIEWED: these fell through the old `_ => ReadSubstrate` wildcard.
+        // Behavior preserved here; each needs a deliberate classification.
+        // No wildcard on purpose: a new AgentAction variant must fail to
+        // compile until it is classified.
+        AgentAction::PatchFile { .. }
+        | AgentAction::RunTests { .. }
+        | AgentAction::CalculateEntropy { .. }
+        | AgentAction::DelegateTask { .. }
+        | AgentAction::ExportReport { .. }
+        | AgentAction::FetchUiSnapshot { .. }
+        | AgentAction::GitRollback { .. }
+        | AgentAction::LazarusSnapshot { .. }
+        | AgentAction::SpawnSubagent { .. }
+        | AgentAction::VmoCreate { .. } => Capability::ReadSubstrate,
     }
+}
+
+/// Single source of truth for "does this action mutate the substrate".
+/// Derived from `capability_for` so the ActionGate capability and the
+/// READ-ONLY enforcement block in `handle_execute` cannot disagree.
+pub(crate) fn is_mutation(action: &AgentAction) -> bool {
+    matches!(capability_for(action), Capability::WriteSubstrate)
 }
 
 impl CorticalLoop {
@@ -1694,17 +1718,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             // continue to the next action. If every action in the batch
             // is refused, `latest_evidence` stays empty and the loop
             // returns to Strategize without executing anything.
-            if session.contract.read_only
-                && matches!(
-                    action,
-                    AgentAction::WriteFile { .. }
-                        | AgentAction::DiffPatch { .. }
-                        | AgentAction::PatchFunction { .. }
-                        | AgentAction::SynthesizeReport { .. }
-                        | AgentAction::ReplaceLines { .. }
-                        | AgentAction::AtomicPatch { .. }
-                )
-            {
+            if session.contract.read_only && is_mutation(&action) {
                 self.log(format!(
                     "\x1b[1;31m>> [READ-ONLY VIOLATION]\x1b[0m Mission declares read-only intent; refusing mutation action: {:?}",
                     action
