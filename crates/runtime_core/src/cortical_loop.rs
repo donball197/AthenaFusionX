@@ -27,7 +27,7 @@ use crate::motor_cortex::MotorCortex;
 use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
-use crate::cortical::capability::{capability_for, is_mutation};
+use crate::cortical::capability::capability_for;
 
 #[derive(Debug)]
 pub enum CortexOutcome {
@@ -1493,7 +1493,9 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             // continue to the next action. If every action in the batch
             // is refused, `latest_evidence` stays empty and the loop
             // returns to Strategize without executing anything.
-            if session.contract.read_only && is_mutation(&action) {
+            if session.contract.read_only
+                && crate::cortical::read_only_gate::violates_read_only(&action)
+            {
                 self.log(format!(
                     "\x1b[1;31m>> [READ-ONLY VIOLATION]\x1b[0m Mission declares read-only intent; refusing mutation action: {:?}",
                     action
