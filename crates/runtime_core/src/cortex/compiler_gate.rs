@@ -167,11 +167,34 @@ impl CompilerGate {
                 let mut error_preview = String::new();
 
                 for file in files {
+                    // rustc creates its temp files next to its output. With
+                    // `-o /dev/null` it tries to mkdir inside /dev, which fails
+                    // under proot ("couldn't create a temp dir: Permission
+                    // denied"), so every standalone check reported a compile
+                    // failure for valid code. Give it a real scratch directory.
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    let scratch = std::env::temp_dir()
+                        .join(format!("nexus_rustc_{}_{}", std::process::id(), nanos));
+                    if let Err(e) = std::fs::create_dir_all(&scratch) {
+                        return CompilerGateResult::ExecutionFault {
+                            error_message: format!(
+                                "Failed to create rustc scratch dir {}: {}",
+                                scratch.display(),
+                                e
+                            ),
+                        };
+                    }
                     let out = tokio::process::Command::new("rustc")
-                        .args(["--crate-type=lib", "--emit=metadata", "-o", "/dev/null"])
+                        .args(["--crate-type=lib", "--emit=metadata"])
+                        .arg("--out-dir")
+                        .arg(&scratch)
                         .arg(file)
                         .output()
                         .await;
+                    let _ = std::fs::remove_dir_all(&scratch);
 
                     match out {
                         Ok(o) if !o.status.success() => {
