@@ -134,6 +134,9 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
 pub(crate) fn violates_read_only(action: &AgentAction) -> bool {
     match action {
         AgentAction::ExecuteCommand { command, .. } => !is_read_only_safe_command(command),
+        // `run_tests` is an execution-side-effect operation, not a
+        // substrate-read operation. READ-ONLY missions must not invoke it.
+        AgentAction::RunTests { .. } => true,
         other => is_mutation(other),
     }
 }
@@ -183,5 +186,18 @@ mod tests {
         ] {
             assert!(!is_read_only_safe_command(bad), "should reject {:?}", bad);
         }
+    }
+
+    #[test]
+    fn run_tests_is_rejected_under_read_only() {
+        let action = AgentAction::RunTests {
+            test_target: "runtime_core".to_string(),
+            reasoning: "verify implementation".to_string(),
+        };
+
+        assert!(
+            violates_read_only(&action),
+            "RunTests must be rejected under READ_ONLY"
+        );
     }
 }

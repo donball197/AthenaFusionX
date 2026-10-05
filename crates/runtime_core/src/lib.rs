@@ -1,3 +1,5 @@
+pub mod cmd_match;
+pub mod coverage;
 pub mod agent_protocol;
 pub mod arbiter_agent;
 pub mod cli_utils;
@@ -73,7 +75,6 @@ pub mod motor_cortex;
 pub mod outcome_verifier;
 pub mod reflection_engine;
 pub mod tools;
-pub mod verification;
 pub use client::ApiClient;
 pub use config::NexusConfig;
 pub mod anti_loop;

@@ -158,18 +158,19 @@ impl OutcomeVerifier {
                                 && local_evidence.contains(function_name.as_str())))
                 }
                 CompletionCondition::CommandExecutionVerified { command } => {
-                    let expected = command.trim();
-
-                    local_evidence.lines().any(|line| {
-                        let Some(actual) = line.strip_prefix("[CMD_OK] Command:") else {
-                            return false;
-                        };
-
-                        actual.trim() == expected
-                            && local_evidence
-                                .lines()
-                                .any(|status_line| status_line.trim() == "Status: exit status: 0")
-                    })
+                    // Content-based identity (normalized + hashed): a legacy
+                    // [CMD_OK] block OR a [CMD_HASH] marker satisfies this,
+                    // so the condition stays satisfiable once anti-loop has
+                    // blocked re-executing the identical command.
+                    crate::cmd_match::command_condition_met(command, local_evidence)
+                        // Math-derivation fallback (completion_engine::
+                        // math_command_satisfied): the planner embeds the
+                        // ALL/ANY tables in the python3 -c string and quoting
+                        // variants break exact identity. Tables in evidence
+                        // plus a CLEAN EXIT count as equivalent proof --
+                        // never a failed command.
+                        || (crate::completion_engine::math_command_satisfied(local_evidence)
+                            && local_evidence.contains("exit status: 0"))
                 }
                 CompletionCondition::SourceCodeEvidenceRequired => {
                     // Has at least one distinct source path actually been examined?

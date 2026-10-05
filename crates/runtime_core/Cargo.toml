@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+nexus_evidence_requirements = { path = "../../algorithms/evidence_requirements" }
 openssl-sys = { version = "0.9", features = ["vendored"] }
 tempfile = "3"
 tokio = { workspace = true }
