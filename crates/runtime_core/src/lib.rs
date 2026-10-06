@@ -1,3 +1,4 @@
+pub mod halt_gate;
 pub mod cmd_match;
 pub mod coverage;
 pub mod agent_protocol;

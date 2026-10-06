@@ -150,6 +150,7 @@ impl OutcomeVerifier {
                 }
                 CompletionCondition::HaltDelivered => {
                     local_evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
+                        && crate::halt_gate::halt_range_gate(local_evidence).is_none()
                 }
                 CompletionCondition::ReadFunctionMarkerAcquired { path, function_name } => {
                     local_evidence.contains("[READ_FUNCTION_OK]")

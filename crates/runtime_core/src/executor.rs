@@ -349,7 +349,16 @@ impl RoboticExecutor {
                 }
 
                 let mut res =
-                    format!("[CMD_OK] Command: {}\nStatus: {}\n", command.trim(), out.status);
+                    format!(
+                        "[CMD_OK] Command: {}\nStatus: {}\n{}\n",
+                        command.trim(),
+                        out.status,
+                        if format!("{}", out.status).contains("exit status: 0") {
+                            crate::cmd_match::cmd_hash_marker(command.trim())
+                        } else {
+                            String::new()
+                        }
+                    );
                 if !stdout_trunc.trim().is_empty() {
                     res.push_str("STDOUT:\n");
                     res.push_str(&stdout_trunc);
@@ -529,19 +538,27 @@ impl RoboticExecutor {
                 let lines: Vec<&str> = content.lines().collect();
                 let total_lines = lines.len();
 
-                if start_line >= total_lines {
+                // start_line is 1-based (matches the coverage ledger and the
+                // model's own arithmetic). Slicing with the raw value skipped
+                // the first requested line while the label still claimed it.
+                // Tiny chunks make large-file audits unfinishable, so enforce
+                // a floor and a cap.
+                let start_idx = start_line.saturating_sub(1);
+                let max_lines = max_lines.clamp(250, 400);
+
+                if start_idx >= total_lines {
                     return Ok(format!(
                         "[READ_CHUNK_EOF] Reached end of file {}. Total lines: {}",
                         path, total_lines
                     ));
                 }
 
-                let end_line = std::cmp::min(start_line + max_lines, total_lines);
-                let chunk = lines[start_line..end_line].join("\n");
+                let end_line = std::cmp::min(start_idx + max_lines, total_lines);
+                let chunk = lines[start_idx..end_line].join("\n");
 
                 Ok(format!(
                     "[READ_CHUNK_OK] File: {} | Lines {}-{} of {}\nCONTENT:\n{}",
-                    path, start_line, end_line, total_lines, chunk
+                    path, start_idx + 1, end_line, total_lines, chunk
                 ))
             }
             MotorAction::SearchCode { path, query } => {
