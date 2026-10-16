@@ -57,8 +57,7 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
                     if !path.is_empty() && !content.is_empty() {
                         tracing::info!(">> [CORTEX INTERCEPT] Plucked raw artifact for {}", path);
-                        return Ok(vec![crate::agent_protocol::AgentAction::WriteFile {
-                            path,
+                        return Ok(vec![crate::agent_protocol::AgentAction::WriteFile { _thought_process: None, path,
                             content,
                             reasoning: "Intercepted via raw text block".to_string(),
                             confidence: 1.0,
@@ -97,6 +96,8 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         extracted.rfind(']'),
     ) {
         &extracted[s..=e]
+    } else if let (Some(s), Some(e)) = (extracted.find('['), extracted.rfind(']')) {
+        &extracted[s..=e]
     } else if let (Some(s), Some(e)) =
         (extracted.find("{\"").or_else(|| extracted.find("{\n")), extracted.rfind('}'))
     {
@@ -130,6 +131,50 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                     }
                 }
             }
+            // ReAct-style nesting: {"action": "x", "action_input": {...}}. Hoist the inner
+            // fields to the top level; explicit top-level keys win.
+            for nested_key in ["action_input", "input", "parameters", "params"] {
+                if let Some(inner) = obj.remove(nested_key) {
+                    if let Some(inner_obj) = inner.as_object() {
+                        for (k, v) in inner_obj {
+                            obj.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                    }
+                }
+            }
+
+            // {"halt": true, "reasoning": ...} and {"halt": {...}} shapes.
+            if !obj.contains_key("type") {
+                if let Some(halt_val) = obj.remove("halt") {
+                    obj.insert("type".to_string(), serde_json::Value::String("halt".to_string()));
+                    if let Some(inner_obj) = halt_val.as_object() {
+                        for (k, v) in inner_obj {
+                            obj.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                    }
+                }
+            }
+
+            // Halt reasoning given as an object of labeled sections: flatten to text.
+            if obj.get("type").and_then(serde_json::Value::as_str) == Some("halt") {
+                if let Some(sections) =
+                    obj.get("reasoning").and_then(serde_json::Value::as_object).cloned()
+                {
+                    let text = sections
+                        .iter()
+                        .map(|(k, v)| {
+                            format!(
+                                "{}: {}",
+                                k,
+                                v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    obj.insert("reasoning".to_string(), serde_json::Value::String(text));
+                }
+            }
+
             if let Some(cmd) = obj.remove("bash_command") {
                 obj.insert("command".to_string(), cmd);
             }
@@ -294,7 +339,7 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"src/lib.rs","start_line":1,"max_lines":50,"reasoning":"native form"}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
                 assert_eq!(path, "src/lib.rs");
                 assert_eq!(start_line, 1);
                 assert_eq!(max_lines, 50);
@@ -311,7 +356,7 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"crates/runtime_core/src/cortical_loop.rs","start_line":52,"end_line":100,"reasoning":"model emitted inclusive range"}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
                 assert!(path.ends_with("cortical_loop.rs"));
                 assert_eq!(start_line, 52);
                 assert_eq!(max_lines, 49, "end_line 100 inclusive - start 52 + 1");
@@ -330,7 +375,7 @@ mod tests {
         );
 
         match action {
-            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
                 assert!(path.ends_with("cortical_loop.rs"));
                 assert_eq!(start_line, 150);
                 assert_eq!(max_lines, 51, "end_line 200 inclusive - start 150 + 1");
@@ -346,7 +391,7 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"a.rs","start_line":7,"end_line":7,"reasoning":""}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk { _thought_process: None, start_line, max_lines, .. } => {
                 assert_eq!(start_line, 7);
                 assert_eq!(max_lines, 1);
             }
@@ -374,7 +419,7 @@ mod tests {
             r#"[{"type":"replace_lines","path":"a.rs","start_line":10,"end_line":20,"replacement":"new body","reasoning":""}]"#,
         );
         match action {
-            AgentAction::ReplaceLines { start_line, end_line, .. } => {
+            AgentAction::ReplaceLines { _thought_process: None, start_line, end_line, .. } => {
                 assert_eq!(start_line, 10);
                 assert_eq!(end_line, 20);
             }
@@ -387,7 +432,7 @@ mod tests {
         let payload = r##"[{"type":"write_file","path":"report.md","content":"```json\n[\n  {\n    \"type\": \"write_file\",\n    \"path\": \"report.md\",\n    \"content\": \"# Real Report Content\"\n  }\n]\n```","reasoning":"test"}]"##;
         let action = extract_single(payload);
         match action {
-            AgentAction::WriteFile { path, content, .. } => {
+            AgentAction::WriteFile { _thought_process: None, path, content, .. } => {
                 assert_eq!(path, "report.md");
                 assert_eq!(content, "# Real Report Content");
             }
@@ -400,7 +445,7 @@ mod tests {
         let payload = r###"{"type":"write_file","path":"summary.md","content":"{\"type\":\"write_file\",\"path\":\"summary.md\",\"content\":\"## Clean Architecture Summary\"}","reasoning":"test"}"###;
         let action = extract_single(payload);
         match action {
-            AgentAction::WriteFile { path, content, .. } => {
+            AgentAction::WriteFile { _thought_process: None, path, content, .. } => {
                 assert_eq!(path, "summary.md");
                 assert_eq!(content, "## Clean Architecture Summary");
             }
@@ -414,10 +459,58 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"src/lib.rs","offset":100,"limit":50,"reasoning":"pagination aliases"}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
                 assert_eq!(path, "src/lib.rs");
                 assert_eq!(start_line, 100);
                 assert_eq!(max_lines, 50);
+            }
+            other => panic!("expected ReadFileChunk, got {:?}", other),
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod react_shape_tests {
+    use super::extract_actions;
+    use crate::agent_protocol::AgentAction;
+
+    #[test]
+    fn action_input_nesting_is_hoisted() {
+        let raw = r#"{"action": "read_file_chunk", "action_input": {"filepath": "a.rs", "start_line": 10, "max_lines": 50}, "reasoning": "next chunk"}"#;
+        let acts = extract_actions(raw).expect("parses");
+        assert_eq!(acts.len(), 1);
+        assert!(matches!(acts[0], AgentAction::ReadFileChunk { .. }), "{:?}", acts);
+    }
+
+    #[test]
+    fn halt_object_shapes_are_normalized() {
+        let flat = r#"{"halt": true, "reasoning": "ROOT_CAUSE: a. TRACE: b. FIX: c."}"#;
+        let acts = extract_actions(flat).expect("parses");
+        assert!(matches!(acts.first(), Some(AgentAction::Halt { .. })), "{:?}", acts);
+
+        let nested = r#"{"halt": {"reasoning": {"ROOT_CAUSE": "a", "TRACE": "b", "FIX": "c"}}}"#;
+        let acts = extract_actions(nested).expect("parses");
+        assert!(matches!(acts.first(), Some(AgentAction::Halt { .. })), "{:?}", acts);
+    }
+}
+
+
+#[cfg(test)]
+mod conversational_recovery_tests {
+    use super::extract_actions;
+    use crate::agent_protocol::AgentAction;
+
+    #[test]
+    fn recovers_json_array_prefixed_with_conversational_text() {
+        let payload = r#"We need to continue audit. Need read remaining lines. Here is the action: [{"type":"read_file_chunk","path":"crates/runtime_core/src/cortical_loop.rs","start_line":1644,"max_lines":250,"reasoning":"continue audit"}]"#;
+        let actions = extract_actions(payload).expect("should extract embedded JSON array from conversational text");
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+                assert!(path.ends_with("cortical_loop.rs"));
+                assert_eq!(*start_line, 1644);
+                assert_eq!(*max_lines, 250);
             }
             other => panic!("expected ReadFileChunk, got {:?}", other),
         }

@@ -313,7 +313,7 @@ impl CorticalLoop {
                 context_chunks.push(format!("\n[ANCESTOR NODE EVIDENCE]\n{}", evidence));
             }
         }
-        let world_context = crate::cortical::util::compress_context(&context_chunks.join("\n"), 2500);
+        let world_context = crate::cortical::util::compress_context(&context_chunks.join("\n"), 6000);
 
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
@@ -364,16 +364,6 @@ impl CorticalLoop {
             }
             self.log(format!("\x1b[90m  -> Strategy: {}\x1b[0m", h));
         }
-
-        let is_mutation_task = session.contract.is_mutation_task
-            || mission.to_lowercase().contains("synthesize_report")
-            || mission.to_lowercase().contains(".md");
-        let is_write_task = is_mutation_task
-            || session.contract.objective.to_lowercase().contains("write")
-            || session.contract.objective.to_lowercase().contains("export")
-            || session.contract.objective.to_lowercase().contains(".md")
-            || session.contract.objective.to_lowercase().contains(".json")
-            || mission.to_lowercase().contains("synthesize_report");
 
         self.log(format!(
             "\x1b[90m  -> Contract: read_only={} mutation={} artifacts={:?}\n  -> Conditions: {:?}\x1b[0m",
@@ -549,8 +539,6 @@ impl CorticalLoop {
                         &mut session,
                         mission,
                         &world_context,
-                        is_mutation_task,
-                        is_write_task,
                     )
                     .await?
                 }
@@ -563,8 +551,6 @@ impl CorticalLoop {
                         actions,
                         proposal,
                         belief,
-                        is_mutation_task,
-                        is_write_task,
                     )
                     .await?
                 }
@@ -586,8 +572,6 @@ impl CorticalLoop {
                         proposal,
                         executed_action,
                         belief,
-                        is_mutation_task,
-                        is_write_task,
                         is_halt_action,
                         mutation_path,
                     )
@@ -661,7 +645,7 @@ impl CorticalLoop {
     /// extraction behaves in the future.
     fn write_phase_ready(
         contract: &crate::completion_engine::SubgoalContract,
-        unwritten_targets: &[&str],
+        unwritten_targets: &[String],
         recon_ready: bool,
     ) -> bool {
         !unwritten_targets.is_empty() && recon_ready && !contract.read_only
@@ -673,8 +657,6 @@ impl CorticalLoop {
         session: &mut EpistemicSession,
         mission: &str,
         world_context: &str,
-        is_mutation_task: bool,
-        is_write_task: bool,
     ) -> Result<CortexState> {
         let best_node = match session.graph.select_best_hypothesis().cloned() {
             Some(node) => node,
@@ -700,7 +682,13 @@ impl CorticalLoop {
                 .await
                 {
                     for h in hyps {
-                        let already = session.graph.find_by_content(&h).is_some();
+                        let h_norm = normalize_strategy(&h);
+                        let already = session.graph.find_by_content(&h).is_some()
+                            || session
+                                .graph
+                                .nodes
+                                .values()
+                                .any(|n| normalize_strategy(&n.content) == h_norm);
                         if already {
                             continue;
                         }
@@ -742,11 +730,9 @@ impl CorticalLoop {
         // still require reads, searches, source evidence, analysis, and/or
         // epistemic verification.
         let status = ContractEvaluator::evaluate(
-            is_mutation_task,
-            is_write_task,
+            &session.contract,
             &session.local_evidence,
             current_belief,
-            mission,
         );
 
         if status == ContractStatus::Satisfied {
@@ -781,7 +767,7 @@ impl CorticalLoop {
             );
         }
 
-        let evidence_history = crate::cortical::util::compress_context(&session.collect_evidence(h_id), 3000);
+        let evidence_history = crate::cortical::util::compress_context(&session.collect_evidence(h_id), 150000);
 
         // Phase-aware mandate:
         //
@@ -792,19 +778,19 @@ impl CorticalLoop {
         // Only after that gate passes may the strategist be encouraged
         // to produce the required deliverable.
 
-        let mission_contract =
-            crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", mission);
-
-        let unwritten_targets: Vec<&str> = mission_contract
+        // Owned strings: this must not borrow `session`, which is passed as
+        // `&mut` to the recovery hooks below.
+        let unwritten_targets: Vec<String> = session
+            .contract
             .required_artifact_paths
             .iter()
-            .map(|a| a.path.as_str())
+            .map(|a| a.path.clone())
             .filter(|p| !crate::evidence_markers::has_artifact_write(&session.local_evidence, p))
             .collect();
 
         let recon_ready =
             crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
-                &mission_contract,
+                &session.contract,
                 &session.local_evidence,
                 current_belief,
             );
@@ -827,7 +813,7 @@ impl CorticalLoop {
         // That function already force-selects the native tool for explicit
         // strategies, so the Cortex must supply the correct strategy here.
         let mut active_strategy = if write_phase_ready {
-            let target = unwritten_targets[0];
+            let target = &unwritten_targets[0];
             let strategy = format!("write_file:{}", target);
 
             self.log(format!(
@@ -836,23 +822,30 @@ impl CorticalLoop {
             ));
 
             strategy
+        } else if session.coverage.coverage_pct() >= 99.9
+            && session.contract.read_only
+            && session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap()).is_none()
+        {
+            let strategy = "halt".to_string();
+            self.log(format!(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Reconnaissance complete; forcing `halt` strategy for synthesis."
+            ));
+            strategy
         } else {
             h_content.clone()
         };
 
-        let critic_veto_present = session.local_evidence.contains("[CRITIC_VETO]");
         let patch_function_strategy = active_strategy.starts_with("patch_function:");
 
         self.log(format!(
-            "[CORTEX RECOVERY CHECK] strategy=`{}` patch_function={} critic_veto={} write_phase_ready={} evidence_bytes={}",
+            "[CORTEX RECOVERY CHECK] strategy=`{}` patch_function={} write_phase_ready={} evidence_bytes={} coverage={:.1}% gap={:?}",
             active_strategy,
             patch_function_strategy,
-            critic_veto_present,
             write_phase_ready,
-            session.local_evidence.len()
-        )
-
-);
+            session.local_evidence.len(),
+            session.coverage.coverage_pct(),
+            session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap())
+        ));
 
         self.apply_ast_unaddressable_recovery(session, &mut active_strategy);
 
@@ -862,22 +855,72 @@ impl CorticalLoop {
 
         self.apply_post_search_expansion(session, &mut active_strategy, current_belief, write_phase_ready);
 
+        // [COVERAGE MANDATE] precedence: any remaining unread range outranks
+        // the completion/halt mandate -- the strategist must read the gap
+        // before summarizing or halting (the deliverable verifier gates the
+        // halt's line claims on this same ledger). Write-phase and
+        // critic-veto recovery mandates keep precedence so an in-flight
+        // deliverable is never interrupted by a read directive.
+        let coverage_gap = session
+            .coverage
+            .largest_interior_gap()
+            .or_else(|| session.coverage.largest_gap());
+
+        // A pinned `read_file:<path>` strategy narrows the strategist's native tool set to
+        // read_file only, so a COVERAGE MANDATE that demands read_file_chunk cannot be
+        // followed. While a gap is outstanding, pin the chunked read instead.
+        if coverage_gap.is_some() && active_strategy.starts_with("read_file:") {
+            active_strategy = active_strategy.replacen("read_file:", "read_file_chunk:", 1);
+        }
+
         let enhanced_mission = if write_phase_ready {
             format!(
                 "{}\n\n[PHASE MANDATE: RECONNAISSANCE VERIFIED]\nThe deterministic reconnaissance contract has been satisfied. The required deliverable MUST now be produced at '{}' using the native `write_file` action.",
                 mission,
                 unwritten_targets[0]
             )
-        } else if active_strategy.starts_with("patch_function:") && critic_veto_present {
+        } else if let Some((gap_s, gap_e)) = coverage_gap {
             format!(
-                "{}\n\n[CRITIC VETO RECOVERY MANDATE]\nThe previous patch_function proposal was explicitly rejected by the Adversarial Critic. Do NOT repeat the rejected implementation or its `new_body`. Produce a materially different, mission-compliant patch_function action now. Preserve the inherited function signature. The current directive explicitly requires a clean, documented implementation, so the replacement MUST contain an appropriate documentation comment or equivalent source-level documentation while preserving the required `a + b` behavior. The next proposal MUST be a real source mutation, not a restatement or reformatting of the existing implementation.",
-                mission
+                "{}\n\n[COVERAGE MANDATE] Unread evidence range {}-{} of {}. Read this range before proposing any summary or halt. Use read_file_chunk with start_line={} and max_lines={}.",
+                mission,
+                gap_s,
+                gap_e,
+                session.coverage.total_lines().unwrap_or(0),
+                gap_s,
+                (gap_e as i64 - gap_s as i64 + 1)
             )
+        } else if session.coverage.coverage_pct() >= 99.9 && session.contract.read_only {
+            format!("{}\n\n[PHASE MANDATE: RECONNAISSANCE COMPLETE]\nYou have successfully read 100% of the target files. Do NOT propose any further read actions. You MUST now synthesize your findings and propose the `halt` action.", mission)
         } else if status == ContractStatus::Satisfied && unwritten_targets.is_empty() {
             format!("{}\n\n[PHASE MANDATE: COMPLETION VERIFIED]\nThe deterministic contract has been satisfied. You MUST now propose the `halt` action. Do not propose any further reconnaissance.", mission)
         } else {
             mission.to_string()
         };
+        // Deterministic outline for audit reports: read evidence carries no line
+        // numbers, so models estimate them (and disagree run to run).
+        let enhanced_mission = if session.contract.read_only
+            && session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap()).is_none()
+        {
+            let outline = crate::cortical::halt_claims::function_outline(&session.local_evidence, 20);
+            if outline.is_empty() { enhanced_mission } else { format!("{}\n\n{}", enhanced_mission, outline) }
+        } else {
+            enhanced_mission
+        };
+
+        let recent_vetoes: Vec<_> = session.local_evidence.lines()
+            .rev()
+            .take(30)
+            .filter(|l| l.contains("[LOOP_VETO]") || l.contains("[PARSE_FAULT]") || l.contains("[CRITIC_VETO") || l.contains("[CRITIC_REPEAT_VETO]") || l.contains("[STRATEGY_VIOLATION]") || l.contains("[HALT_REJECTED") || l.contains("[WRITE_CONFORMANCE_FAILED]"))
+            .collect();
+        
+        let enhanced_mission = if !recent_vetoes.is_empty() {
+            let mut rev_vetoes = recent_vetoes.clone();
+            rev_vetoes.reverse();
+            format!("{}\n\n[SYSTEM OVERRIDES - CRITICAL]\n{}", enhanced_mission, rev_vetoes.join("\n"))
+        } else {
+            enhanced_mission
+        };
+
         session.budget.record_call();
 
         let raw_proposal = match EpistemicEngine::propose_action(
@@ -893,6 +936,12 @@ impl CorticalLoop {
             Ok(p) => p,
             Err(e) => {
                 self.log(format!("\x1b[31m>> [STRATEGIST FAULT]\x1b[0m {}", e));
+                {
+                    let msg = e.to_string();
+                    if msg.contains("429") || msg.contains("Overloaded") {
+                        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    }
+                }
                 return Ok(CortexState::Strategize);
             }
         };
@@ -921,7 +970,7 @@ impl CorticalLoop {
             {
                 let reject = matches!(
                     &intercepted,
-                    AgentAction::SearchCode { query, .. } if query.trim().is_empty()
+                    AgentAction::SearchCode { _thought_process: None, query, .. } if query.trim().is_empty()
                 );
                 if !reject {
                     actions.push(intercepted);
@@ -934,20 +983,26 @@ impl CorticalLoop {
             // that failed schema validation must fall through to the
             // parse-fault recovery path instead of manufacturing a halt.
             if crate::cortical::util::should_synthesize_halt(&raw_proposal) {
-                actions.push(AgentAction::Halt {
-                    reasoning: "Model declared task complete".to_string(),
+                actions.push(AgentAction::Halt { _thought_process: None, reasoning: "Model declared task complete".to_string(),
                 });
             }
         }
 
         if status == ContractStatus::Satisfied
             && unwritten_targets.is_empty()
-            && !actions.iter().any(|a| matches!(a, AgentAction::Halt { .. }))
+            && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
+            // Never auto-halt while the read ledger still has an unread range:
+            // a truncated first read satisfies ReadPathAcquired long before the
+            // file has actually been read.
+            && session
+                .coverage
+                .largest_interior_gap()
+                .or_else(|| session.coverage.largest_gap())
+                .is_none()
         {
             self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
-            actions = vec![AgentAction::Halt {
-                reasoning: "Deterministic contract is satisfied.".to_string(),
+            actions = vec![AgentAction::Halt { _thought_process: None, reasoning: "Deterministic contract is satisfied.".to_string(),
             }];
         }
 
@@ -995,6 +1050,7 @@ impl CorticalLoop {
                 })
                 .and_then(|rest| rest.find('"').map(|end| rest[..end].to_string()));
 
+            let attempted_type = attempted_type.or_else(|| fallback_action_type(&raw_proposal));
             let schema_hint = attempted_type.as_deref().and_then(|t| {
                 crate::tools::schema::all_tool_declarations()
                     .into_iter()
@@ -1014,7 +1070,7 @@ impl CorticalLoop {
                 "[PARSE_FAULT] Proposal could not be deserialized as a valid AgentAction. \
 Raw proposal (truncated to 500 chars): {}\n\
 [PARSE_FAULT_ACTION] Re-propose using a valid AgentAction type with its required \
-fields. Do NOT repeat the rejected proposal verbatim.{}",
+fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for the action name and put ALL fields at the top level of the object (never nested under action_input or args).{}",
                 raw_proposal.chars().take(500).collect::<String>(),
                 schema_hint
             );
@@ -1047,7 +1103,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         // generic substitute such as "host metrics".
         if h_content.starts_with("search_memory:") {
             if let Some(authoritative_query) = crate::cortical::util::extract_explicit_search_memory_query(mission) {
-                if let Some(AgentAction::SearchMemory { query, .. }) = actions.first_mut() {
+                if let Some(AgentAction::SearchMemory { _thought_process: None, query, .. }) = actions.first_mut() {
                     if query.trim() != authoritative_query {
                         self.log(format!(
                             "[CORTEX] Preserving authoritative SearchMemory query: {}",
@@ -1072,7 +1128,24 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             );
             let advances_unmet =
                 crate::cortical::contract_advance::action_advances_unmet_contract_condition(first_action, session, mission);
-            if !strategy_ok && !advances_unmet {
+            // A critic veto may demand a different RECON action than the pinned
+            // strategy (e.g. "run one grep instead of chunked reads"). Without
+            // this, the veto and the strategy gate deadlock and the node dies
+            // with belief 0.00. Only non-mutating actions are admitted; every
+            // mutation still goes through the strict strategy match.
+            let veto_recon_ok = session.local_evidence.contains("[CRITIC_VETO]")
+                && match first_action {
+                    AgentAction::ReadFile { _thought_process: None, .. }
+                    | AgentAction::ReadFileChunk { _thought_process: None, .. }
+                    | AgentAction::ReadFunction { _thought_process: None, .. }
+                    | AgentAction::SearchCode { _thought_process: None, .. }
+                    | AgentAction::SearchMemory { _thought_process: None, .. } => true,
+                    AgentAction::ExecuteCommand { _thought_process: None, command, .. } => {
+                        crate::cortical::read_only_gate::is_read_only_safe_command(command)
+                    }
+                    _ => false,
+                };
+            if !strategy_ok && !advances_unmet && !veto_recon_ok {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
                     active_strategy,
@@ -1115,15 +1188,11 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         actions: Vec<AgentAction>,
         proposal: String,
         belief: f32,
-        is_mutation_task: bool,
-        is_write_task: bool,
     ) -> Result<CortexState> {
         let status = ContractEvaluator::evaluate(
-            is_mutation_task,
-            is_write_task,
+            &session.contract,
             &session.local_evidence,
             belief,
-            mission,
         );
 
         if status == ContractStatus::Satisfied {
@@ -1170,18 +1239,40 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             let bypass_antiloop_for_retention = session.compile_remediation.is_active()
                 && matches!(
                     action,
-                    AgentAction::PatchFunction { .. }
-                        | AgentAction::ReadFunction { .. }
-                        | AgentAction::ReadFileChunk { .. }
-                        | AgentAction::ReadFile { .. }
+                    AgentAction::PatchFunction { _thought_process: None, .. }
+                        | AgentAction::ReadFunction { _thought_process: None, .. }
+                        | AgentAction::ReadFileChunk { _thought_process: None, .. }
+                        | AgentAction::ReadFile { _thought_process: None, .. }
                 );
 
             if attempt_count >= 1 && !bypass_antiloop_for_retention {
-                self.log(format!(
-                    "\x1b[1;31m>> [ANTI-LOOP] Duplicate action [{}] filtered from batch.\x1b[0m",
-                    action_key
-                ));
-                vetoed_keys.push(action_key);
+                match crate::anti_loop::classify_duplicate(
+                    &action,
+                    &session.contract,
+                    &session.local_evidence,
+                ) {
+                    crate::anti_loop::FilterOutcome::ConditionSatisfied => {
+                        self.log(
+                            "\x1b[1;32m>> [ANTI-LOOP RESOLVED] Required command already executed; condition satisfied.\x1b[0m"
+                                .to_string(),
+                        );
+                        filtered_actions.push(action);
+                    }
+                    crate::anti_loop::FilterOutcome::AllowRetry => {
+                        self.log(
+                            "\x1b[1;33m>> [ANTI-LOOP] Duplicate required by contract with no marker; permitting retry.\x1b[0m"
+                                .to_string(),
+                        );
+                        filtered_actions.push(action);
+                    }
+                    crate::anti_loop::FilterOutcome::FilterAndDecay => {
+                        self.log(format!(
+                            "\x1b[1;31m>> [ANTI-LOOP] Duplicate action [{}] filtered from batch.\x1b[0m",
+                            action_key
+                        ));
+                        vetoed_keys.push(action_key);
+                    }
+                }
             } else {
                 if attempt_count >= 1 {
                     self.log(format!(
@@ -1224,6 +1315,29 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             session.local_evidence.push_str(&loop_obs);
             session.local_evidence.push('\n');
 
+            // STUCK-NODE BUDGET: repeated all-duplicate batches mean the strategist is
+            // re-proposing already-attempted actions with no new evidence. Fail the node
+            // honestly instead of spinning to the turn limit.
+            const LOOP_VETO_BUDGET: usize = 6;
+            let stuck_count = session
+                .local_evidence
+                .lines()
+                .filter(|l| l.starts_with("[LOOP_VETO] All proposed actions already attempted"))
+                .count();
+            if stuck_count >= LOOP_VETO_BUDGET {
+                self.log(format!(
+                    "\x1b[1;31m>> [STUCK NODE] {} all-duplicate proposal batches with no new evidence. Failing node early.\x1b[0m",
+                    stuck_count
+                ));
+                session.local_evidence.push_str(
+                    "[STUCK_NODE] Repeated duplicate proposals with no new evidence; the objective may be unachievable in this environment (missing dependency or unsupported platform).\n",
+                );
+                return Ok(CortexState::Fail {
+                    belief: session.graph.best_hypothesis_belief(),
+                    evidence: "Stuck: repeated duplicate proposals with no new evidence.".to_string(),
+                });
+            }
+
             self.log(
                 "[ANTI-LOOP RECOVERY] All actions in batch were duplicates; \
                  hypothesis belief decayed to force pivot. Re-entering Strategize."
@@ -1245,11 +1359,128 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
 
         let actions = filtered_actions;
 
+        // NEXUS_FIX_LEDGER_BYPASS: next unread chunk is deterministic pagination; skip the critic
+        if session.contract.read_only && actions.len() == 1 {
+            if let Some((gap_start, _)) = session
+                .coverage
+                .largest_interior_gap()
+                .or_else(|| session.coverage.largest_gap())
+            {
+                let is_next_chunk = matches!(
+                    &actions[0],
+                    AgentAction::ReadFileChunk { _thought_process: None, start_line, .. }
+                        if (*start_line as u64) == (gap_start as u64)
+                );
+                if is_next_chunk {
+                    self.log(
+                        "\x1b[1;36m>> [CRITIC BYPASS] Ledger-authoritative pagination; critic skipped.\x1b[0m"
+                            .to_string(),
+                    );
+                    session.last_critic_rejected_actions = None;
+                    return Ok(CortexState::Execute { actions, proposal, belief });
+                }
+            }
+        }
+
+        // HALT PRE-GATE (read-only audits): the LLM critic is not authoritative on
+        // halt reports (it has approved garbage and vetoed good reports from stale
+        // evidence text). Symbols, substance and cited line ranges are checked
+        // against the physical read ledger instead.
+        let halt_check = match actions.first() {
+            Some(AgentAction::Halt { reasoning, .. }) => Some(
+                crate::cortical::halt_claims::halt_defects(reasoning, &session.local_evidence),
+            ),
+            _ => None,
+        };
+        if session.contract.read_only && actions.len() == 1 {
+            if let Some(mut defects) = halt_check {
+                // Truncation guard: a report cut off mid-sentence (output token cap)
+                // must not pass on length alone.
+                if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
+                    let tail = reasoning.trim_end();
+                    if !tail.ends_with(|c: char| matches!(c, '.' | ')' | '!' | '`' | '"')) {
+                        defects.push(format!(
+                            "report appears truncated (ends with {:?}); finish the final sentence",
+                            tail.chars().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+                        ));
+                    }
+                }
+                // COVERAGE GATE: a halt report is not acceptable while most of the file is unread.
+                // The strategist's own claim of completeness is not evidence; the ledger is. This
+                // mirrors the prompt's >=90% rule and only applies once a file read has
+                // established a total line count.
+                if let Some(total) = session.coverage.total_lines() {
+                    let pct = session.coverage.coverage_pct();
+                    if pct < 90.0 {
+                        let gap = session
+                            .coverage
+                            .largest_interior_gap()
+                            .or_else(|| session.coverage.largest_gap());
+                        defects.push(format!(
+                            "only {:.1}% of the {} lines have been read{}; read the remaining range with read_file_chunk before halting",
+                            pct,
+                            total,
+                            gap.map(|(s, e)| format!(" (unread {}-{})", s, e)).unwrap_or_default()
+                        ));
+                    }
+                }
+
+                if defects.is_empty() {
+                    self.log("\x1b[1;36m>> [CRITIC BYPASS] Halt report passed deterministic symbol, substance and line-range checks; LLM critic skipped.\x1b[0m".to_string());
+                    session.last_critic_rejected_actions = None;
+                    return Ok(CortexState::Execute { actions, proposal, belief });
+                }
+                self.log(format!("\x1b[1;31m>> [HALT PRE-GATE] Rejecting halt: {:?}\x1b[0m", defects));
+                session.local_evidence.push_str(&format!(
+                    "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Fix these defects and re-propose the full audit: {}\n",
+                    defects.join("; ")
+                ));
+                return Ok(CortexState::Strategize);
+            }
+        }
+
+        // HARD CRITIC BOUNDARY:
+        // A critic veto applies to the exact structured action batch that
+        // the critic actually evaluated. Historical [CRITIC_VETO] text in
+        // local_evidence is feedback, not a timeless control latch.
+        //
+        // Compare only after anti-loop filtering because `actions` here is
+        // the exact batch that would otherwise cross the critic boundary.
+        // action_key() is the canonical action identity, including the
+        // PatchFunction new_body where applicable.
+        let current_action_keys = actions
+            .iter()
+            .map(crate::cortical::action_identity::action_key)
+            .collect::<Vec<_>>();
+
+        if session.last_critic_rejected_actions.as_ref() == Some(&current_action_keys) {
+            self.log(
+                "\x1b[1;31m>> [CRITIC REPEAT VETO] Exact previously rejected action batch proposed again; rejecting before critic re-evaluation.\x1b[0m"
+                    .to_string(),
+            );
+
+            session.local_evidence.push_str(
+                "[CRITIC_REPEAT_VETO] Exact action batch previously rejected by the Adversarial Critic was proposed again. Select a materially different action batch.\n",
+            );
+
+            if let Some(h_id) = session.best_hypothesis_id {
+                Self::decay_hypothesis_belief(session, h_id, 0.20);
+                if let Some(node) = session.graph.nodes.get(&h_id) {
+                    self.log(format!(
+                        "\x1b[1;31m>> [CRITIC_REPEAT_VETO] Hypothesis belief decayed to {:.2} to force pivot\x1b[0m",
+                        node.belief_score
+                    ));
+                }
+            }
+
+            return Ok(CortexState::Strategize);
+        }
+
         // Payload guard: patch_function replaces a whole function item, so
         // new_body must contain that function's signature. Comment-only or
         // body-only payloads are rejected before critic/executor.
         for a in &actions {
-            if let AgentAction::PatchFunction { function_name, new_body, .. } = a {
+            if let AgentAction::PatchFunction { _thought_process: None, function_name, new_body, .. } = a {
                 let needle = format!("fn {}", function_name.trim());
                 if !new_body.contains(&needle) {
                     self.log(format!(
@@ -1323,6 +1554,44 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
         session.budget.record_call();
 
+        // NEXUS_FIX_LEDGER_NOTE: deterministic read ledger as authoritative fact for the critic
+        let critic_evidence = match session
+            .coverage
+            .largest_interior_gap()
+            .or_else(|| session.coverage.largest_gap())
+        {
+            Some((gap_s, gap_e)) => format!(
+                "{}\n\n[COVERAGE LEDGER - AUTHORITATIVE] Deterministic read ledger: unread range {}-{} of {} (coverage {:.1}%). A read_file_chunk starting at line {} is the correct next step and MUST NOT be vetoed as skipping lines.",
+                session.local_evidence,
+                gap_s,
+                gap_e,
+                session.coverage.total_lines().unwrap_or(0),
+                session.coverage.coverage_pct(),
+                gap_s
+            ),
+            None => match session.coverage.total_lines() {
+                Some(total) => format!(
+                    "[COVERAGE LEDGER - AUTHORITATIVE] 100% of {} lines have been read; no unread range exists. Do NOT veto for unread lines.\n{}\n[COVERAGE LEDGER - AUTHORITATIVE] 100% of {} lines read.",
+                    total, session.local_evidence, total
+                ),
+                None => session.local_evidence.clone(),
+            },
+        };
+        // NEXUS_FIX_PATH_FACTS: filesystem ground truth for read-path vetoes
+        let path_facts: String = actions
+            .iter()
+            .filter_map(|a| match a {
+                AgentAction::ReadFile { _thought_process: None, path, .. } | AgentAction::ReadFileChunk { _thought_process: None, path, .. } => {
+                    Some(format!(
+                        "\n[FILESYSTEM FACT - AUTHORITATIVE] `{}` {} in the workspace.",
+                        path,
+                        if std::path::Path::new(path).exists() { "EXISTS" } else { "does NOT exist" }
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+        let critic_evidence = format!("{}{}", critic_evidence, path_facts);
         match EpistemicEngine::criticize_proposal(
             &self.client,
             &self.api_key,
@@ -1330,13 +1599,18 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             &h_content,
             &proposal,
             world_context,
-            &session.local_evidence,
+            &critic_evidence,
         )
         .await
         {
             Err(e) => {
                 self.log(format!("\x1b[33m>> [CRITIC BYPASS] Parser error ({}). Proceeding with execution.\x1b[0m", e));
-                Ok(CortexState::Execute { actions, proposal, belief })
+                if actions.iter().any(|a| matches!(a, AgentAction::Halt { .. })) {
+                    self.log("\x1b[1;31m>> [CRITIC UNAVAILABLE] Refusing to execute a halt without a critic verdict. Re-strategizing.\x1b[0m".to_string());
+                    return Ok(CortexState::Strategize);
+                }
+                    session.last_critic_rejected_actions = None;
+                    Ok(CortexState::Execute { actions, proposal, belief })
             }
             Ok(critic) => {
                 self.dump_debug(turn, "critic_output", &format!("{:?}", critic));
@@ -1367,7 +1641,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 // critic hallucinated a search_code proposal as a
                 // read_file and vetoed it as redundant.
                 let action_is_search =
-                    matches!(actions.first(), Some(AgentAction::SearchCode { .. }));
+                    matches!(actions.first(), Some(AgentAction::SearchCode { _thought_process: None, .. }));
                 let strategy_is_search = h_content.starts_with("search_code:");
                 let critic_veto_is_redundancy = critic_text.contains("redundant")
                     || critic_text.contains("already read")
@@ -1376,7 +1650,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                     || critic_text.contains("proceed immediately to patching");
 
                 let action_is_write =
-                    matches!(actions.first(), Some(AgentAction::WriteFile { .. }));
+                    matches!(actions.first(), Some(AgentAction::WriteFile { _thought_process: None, .. }));
                 let strategy_is_write = h_content.starts_with("write_file:");
                 let critic_veto_is_pre_recon = critic_text.contains("prior evidence")
                     || critic_text.contains("search_code")
@@ -1397,6 +1671,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] search_code preserved; anti-redundant-READ rule does not apply to search actions.\n",
                     );
+                        session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier <= -0.25
                     && action_is_write
@@ -1410,6 +1685,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] write_file action preserved against pre-recon veto; active strategy is authoritative.\n",
                     );
+                        session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier <= -0.25
                     && patch_mutation_verified
@@ -1422,17 +1698,36 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] PATCH_FUNCTION mutation verified by ReplaceFunctionBody; critic no-op classification rejected.\n",
                     );
+                        session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
-                } else if critic.confidence_modifier > -0.25 {
+                } else if critic.confidence_modifier > -0.25
+                    && !(action_is_write
+                        && critic.confidence_modifier < 0.0
+                        && (critic_text.contains("incomplete")
+                            || critic_text.contains("only writes")))
+                {
+                        session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else {
                     self.log("\x1b[33m>> [DIALECTIC FEEDBACK] Veto registered in graph. Re-strategizing...\x1b[0m".to_string());
+
+                    // Preserve the exact proposal identity that the critic
+                    // actually rejected. `actions` is already the filtered
+                    // batch presented to the critic, so this must not use the
+                    // original strategist batch.
+                    let rejected_action_keys = actions
+                        .iter()
+                        .map(crate::cortical::action_identity::action_key)
+                        .collect::<Vec<_>>();
+
+                    session.last_critic_rejected_actions = Some(rejected_action_keys);
+
                     // Feed the critic's rejection back into the next
                     // Strategize -> Propose cycle. Graph-only feedback is not
                     // sufficient because the strategist receives local_evidence.
                     let veto_feedback = format!(
-                        "\n[CRITIC_VETO]\n{}\n[CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
-                        critic.critique
+                        "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
+                        critic.critique.replace('\n', " ")
                     );
                     session.local_evidence.push_str(&veto_feedback);
 
@@ -1443,7 +1738,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                             1.0,
                             75,
                         );
-                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.40);
+                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, if action_is_write && strategy_is_write { 0.10 } else { 0.40 });
                         session.graph.propagate_beliefs();
                     }
                     Ok(CortexState::Strategize)
@@ -1519,7 +1814,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             let intent = IntentContract::new(&proposal, belief);
             let capability = capability_for(&action);
 
-            if let AgentAction::AtomicPatch { patches, .. } = &action {
+            if let AgentAction::AtomicPatch { _thought_process: None, patches, .. } = &action {
                 for p in patches {
                     mutation_paths.push(p.path.clone());
                     if p.path.ends_with(".rs") {
@@ -1528,7 +1823,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 }
             }
 
-            if let AgentAction::ExecuteCommand { command, .. } = &action {
+            if let AgentAction::ExecuteCommand { _thought_process: None, command, .. } = &action {
                 // Defensive: an arbitrary shell command (e.g. invoking an external
                 // tool like nexus_ast_tool) can mutate a .rs file without going
                 // through any recognized AgentAction write variant. If the command
@@ -1565,11 +1860,11 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 }
             }
             let mutation_path = match &action {
-                AgentAction::WriteFile { path, .. }
-                | AgentAction::DiffPatch { path, .. }
-                | AgentAction::PatchFunction { path, .. }
-                | AgentAction::ReplaceLines { path, .. } => Some(path.clone()),
-                AgentAction::SynthesizeReport { output_path, .. } => Some(output_path.clone()),
+                AgentAction::WriteFile { _thought_process: None, path, .. }
+                | AgentAction::DiffPatch { _thought_process: None, path, .. }
+                | AgentAction::PatchFunction { _thought_process: None, path, .. }
+                | AgentAction::ReplaceLines { _thought_process: None, path, .. } => Some(path.clone()),
+                AgentAction::SynthesizeReport { _thought_process: None, output_path, .. } => Some(output_path.clone()),
                 _ => None,
             };
 
@@ -1580,7 +1875,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 }
             }
 
-            if matches!(action, AgentAction::Halt { .. }) {
+            if matches!(action, AgentAction::Halt { _thought_process: None, .. }) {
                 last_is_halt = true;
             }
 
@@ -1600,13 +1895,13 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
             // completion conditions (e.g. ReadPathAcquired) recognize a
             // confirmed-absent target as valid inspection evidence.
             let attempted_path: Option<String> = match &action {
-                AgentAction::ReadFile { path, .. }
-                | AgentAction::ReadFileChunk { path, .. }
-                | AgentAction::WriteFile { path, .. }
-                | AgentAction::DiffPatch { path, .. }
-                | AgentAction::ReplaceLines { path, .. } => Some(path.trim().to_string()),
-                AgentAction::ReadFunction { path, .. }
-                | AgentAction::PatchFunction { path, .. } => Some(path.trim().to_string()),
+                AgentAction::ReadFile { _thought_process: None, path, .. }
+                | AgentAction::ReadFileChunk { _thought_process: None, path, .. }
+                | AgentAction::WriteFile { _thought_process: None, path, .. }
+                | AgentAction::DiffPatch { _thought_process: None, path, .. }
+                | AgentAction::ReplaceLines { _thought_process: None, path, .. } => Some(path.trim().to_string()),
+                AgentAction::ReadFunction { _thought_process: None, path, .. }
+                | AgentAction::PatchFunction { _thought_process: None, path, .. } => Some(path.trim().to_string()),
                 _ => None,
             };
 
@@ -1653,6 +1948,11 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 Err(e) => {
                     // attempted_path was captured before `action` was moved
                     // into MotorCortex::translate() above.
+                    // A rejected action wrote nothing: it must not reach the
+                    // post-mutation compile gate or the revert path.
+                    if let Some(p) = &attempted_path {
+                        mutation_paths.retain(|m| m != p);
+                    }
                     match &attempted_path {
                         Some(p) => format!("[ACTION FAILED] path={} OS rejected action: {}", p, e),
                         None => format!("[ACTION FAILED] OS rejected action: {}", e),
@@ -1699,6 +1999,40 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                 );
                 session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.90);
                 session.graph.propagate_beliefs();
+            }
+        }
+
+        // POST-WRITE CONFORMANCE GATE (Python deliverables).
+        // [WRITE_OK] proves a file was written, not that it satisfies the
+        // objective. Confirmed root cause of the sys_monitor.py false success:
+        // a one-line import stub produced [WRITE_OK], the path-only contract
+        // was satisfied, and the node completed with no further verification.
+        // Requirements named in the objective are checked deterministically
+        // against the file on disk; on failure the write evidence is discarded
+        // so the contract stays unsatisfied (and reflection never sees it).
+        if !session.contract.read_only && latest_evidence.contains("[WRITE_OK]") {
+            let objective = session.contract.objective.clone();
+            let mut failures: Vec<String> = Vec::new();
+            for p in mutation_paths.iter().filter(|p| p.ends_with(".py")) {
+                let Ok(content) = tokio::fs::read_to_string(p).await else { continue };
+                let mut defects = python_conformance_defects(&objective, p, &content);
+                if let Some(err) = python_syntax_error(p).await {
+                    defects.push(format!("syntax error: {}", err));
+                }
+                if !defects.is_empty() {
+                    failures.push(format!("`{}`: {}", p, defects.join("; ")));
+                }
+            }
+            if !failures.is_empty() {
+                let message = format!(
+                    "[WRITE_CONFORMANCE_FAILED] The file was written but does not satisfy the mission: {}. Rewrite the COMPLETE file in ONE write_file call so every requirement is met.",
+                    failures.join(" | ")
+                );
+                self.log(format!("\x1b[1;31m>> [WRITE CONFORMANCE] {}\x1b[0m", message));
+                session.local_evidence.truncate(evidence_checkpoint);
+                session.local_evidence.push_str(&message);
+                session.local_evidence.push('\n');
+                return Ok(CortexState::Strategize);
             }
         }
 
@@ -1782,36 +2116,6 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                     success_evidence.push('\n');
                     success_evidence.push_str(&success_marker);
 
-                    // Bridge to the DAG verifier's command criterion. The
-                    // compiler critic's package-scoped cargo check is
-                    // semantically equivalent to the cargo check a mission
-                    // would request. When the mission explicitly required
-                    // such a command, emit the exact [CMD_OK] marker so
-                    // CommandExecutionVerified (or legacy CMD_OK) is
-                    // satisfied without a redundant execute_command action.
-                    let required_cmd =
-                        crate::completion_engine::extract_required_command(&session.mission);
-
-                    let requirement_ok = match (&required_cmd, &target) {
-                        (Some(cmd), RustVerificationTarget::WorkspacePackages { packages, .. }) => {
-                            let c = cmd.trim();
-                            c.starts_with("cargo check")
-                                && packages.iter().any(|pkg| c.contains(pkg.as_str()))
-                        }
-                        (Some(_), RustVerificationTarget::StandaloneFiles { .. }) => false,
-                        (Some(_), RustVerificationTarget::NoVerificationNeeded) => false,
-                        (None, _) => true,
-                    };
-
-                    if requirement_ok {
-                        let cmd_string = required_cmd
-                            .unwrap_or_else(|| format!("cargo check -p {}", packages.join(" -p ")));
-                        success_evidence.push_str(&format!(
-                            "\n[CMD_OK] Command: {}\nStatus: exit status: 0\n",
-                            cmd_string.trim(),
-                        ));
-                    }
-
                     // Mirror to both current-turn evidence and the session
                     // evidence buffer. The top-of-loop completion check and
                     // the DAG verifier both read session.local_evidence; the
@@ -1857,10 +2161,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
 
                             let mut revert_all_succeeded = true;
                             for path in &mutation_paths {
-                                if crate::podman::PodmanShield::execute(&format!(
-                                    "git checkout -- {}",
-                                    path
-                                ))
+                                if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path])
                                 .is_err()
                                 {
                                     revert_all_succeeded = false;
@@ -1921,10 +2222,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
 
                             let mut revert_all_succeeded = true;
                             for path in &mutation_paths {
-                                if crate::podman::PodmanShield::execute(&format!(
-                                    "git checkout -- {}",
-                                    path
-                                ))
+                                if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path])
                                 .is_err()
                                 {
                                     revert_all_succeeded = false;
@@ -1982,10 +2280,7 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                             let mut revert_all_succeeded = true;
 
                             for path in &mutation_paths {
-                                if crate::podman::PodmanShield::execute(&format!(
-                                    "git checkout -- {}",
-                                    path
-                                ))
+                                if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path])
                                 .is_err()
                                 {
                                     revert_all_succeeded = false;
@@ -2098,8 +2393,6 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         _proposal: String,
         executed_action: String,
         belief: f32,
-        _is_mutation_task: bool,
-        _is_write_task: bool,
         is_halt_action: bool,
         mutation_path: Option<String>,
     ) -> Result<CortexState> {
@@ -2110,7 +2403,15 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
         session.budget.record_call();
 
         let h_id = session.best_hypothesis_id.unwrap_or_default();
-        let h_content = session.graph.content_of(h_id);
+        // The Cortex force-pins `halt` for read-only audits once coverage is complete,
+        // but the graph hypothesis still reads `read_file:...`. Judge the halt against
+        // what it was actually asked to do.
+        let graph_h_content = session.graph.content_of(h_id);
+        let h_content = if is_halt_action && session.contract.read_only {
+            "halt: deliver the complete read-only audit findings in the halt reasoning".to_string()
+        } else {
+            graph_h_content
+        };
         // HARD EPISTEMIC BOUNDARY:
         // The evaluator receives ONLY:
         //   - the exact action(s) that physically crossed the ActionGate
@@ -2147,6 +2448,19 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                         confidence_modifier: 0.35,
                     };
                     session.record_evidence(&evidence, &fallback_eval, h_id);
+                } else if ["[READ_CHUNK_OK]", "[READ_OK]", "[READ_FUNCTION_OK]", "[SEARCH_CODE_OK]"]
+                    .iter()
+                    .any(|m| evidence.contains(m))
+                {
+                    // An evaluator outage must not erase successful recon from the
+                    // graph view the strategist and critic read, or they diverge
+                    // from the coverage ledger (which reads local_evidence) and
+                    // deadlock on "gaps" that were already read.
+                    let neutral = crate::epistemic_engine::CriticResponse {
+                        critique: "Evaluator unavailable; recon evidence recorded with neutral modifier.".to_string(),
+                        confidence_modifier: 0.0,
+                    };
+                    session.record_evidence(&evidence, &neutral, h_id);
                 }
 
                 Ok(CortexState::Strategize)
@@ -2191,6 +2505,50 @@ fields. Do NOT repeat the rejected proposal verbatim.{}",
                         session.contract.required_artifact_paths.iter().map(|a| &a.path).collect::<Vec<_>>()));
                     session.local_evidence.push_str("\n[HALT_REJECTED] You cannot halt. The required output deliverable has not been written yet. You MUST write the final file now.\n");
                     return Ok(CortexState::Strategize);
+                }
+
+                // DETERMINISTIC HALT-CLAIM GATE (read-only audits): every backticked
+                // symbol in the report must exist in evidence actually read.
+                if is_halt_action && session.contract.read_only {
+                    let corpus = crate::cortical::halt_claims::verification_corpus(
+                        &session.local_evidence,
+                        &evidence,
+                    );
+                    let bad = crate::cortical::halt_claims::unverified_symbols(&executed_action, &corpus);
+                    if !bad.is_empty() {
+                        self.log(format!(
+                            "\x1b[1;31m>> [HALT CLAIM GATE] Unverified symbols in report: {:?}. Rejecting halt.\x1b[0m",
+                            bad
+                        ));
+                        session.local_evidence = session.local_evidence.replace(&evidence, "");
+                        session.local_evidence.push_str(&format!(
+                            "\n[HALT_REJECTED_SYMBOLS] Report named symbols not found in any file content read: {}. Re-read the relevant ranges and cite only functions that appear in the evidence.\n",
+                            bad.join(", ")
+                        ));
+                        return Ok(CortexState::Strategize);
+                    }
+                }
+
+                // HALT REPORT GATE: the report must be findings, not process or intent.
+                if is_halt_action && session.contract.read_only {
+                    let corpus = crate::cortical::halt_claims::verification_corpus(
+                        &session.local_evidence,
+                        &evidence,
+                    );
+                    let report = crate::cortical::halt_claims::report_text(&executed_action);
+                    let defects = crate::cortical::halt_claims::report_defects(&report, &corpus);
+                    if !defects.is_empty() {
+                        self.log(format!(
+                            "\x1b[1;31m>> [HALT REPORT GATE] Rejecting halt: {:?}\x1b[0m",
+                            defects
+                        ));
+                        session.local_evidence = session.local_evidence.replace(&evidence, "");
+                        session.local_evidence.push_str(&format!(
+                            "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Put the full audit there: each large function by name with its line range, plus concrete findings. Defects: {}\n",
+                            defects.join("; ")
+                        ));
+                        return Ok(CortexState::Strategize);
+                    }
                 }
 
                 let current_belief = session
@@ -2391,7 +2749,7 @@ enum PatchClass {
 }
 
 async fn classify_patch_action(action: &AgentAction) -> anyhow::Result<PatchClass> {
-    let AgentAction::PatchFunction { path, function_name, new_body, .. } = action else {
+    let AgentAction::PatchFunction { _thought_process: None, path, function_name, new_body, .. } = action else {
         return Ok(PatchClass::NotPatch);
     };
 
@@ -2408,6 +2766,319 @@ async fn classify_patch_action(action: &AgentAction) -> anyhow::Result<PatchClas
     } else {
         PatchClass::Idempotent { path: path.clone(), function_name: function_name.clone() }
     })
+}
+
+/// Deterministic conformance checks for a written Python file. Requirements are
+/// derived from the objective text:
+///   * `name()`                     -> file must define `def name(`
+///   * snake_case identifiers       -> must appear in the file
+///   * `import ONLY a, b and c`     -> only those top-level modules may be imported
+///   * `under|at most N lines`      -> line cap (all lines counted)
+/// Returns human-readable defects; empty means conformant.
+fn python_conformance_defects(objective: &str, path: &str, content: &str) -> Vec<String> {
+    let mut defects: Vec<String> = Vec::new();
+    let obj_lower = objective.to_ascii_lowercase();
+
+    // 1. functions named as `name()`
+    let mut required_fns: Vec<String> = Vec::new();
+    let mut from = 0usize;
+    while let Some(off) = objective[from..].find("()") {
+        let end = from + off;
+        let ident_rev: String = objective[..end]
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let name: String = ident_rev.chars().rev().collect();
+        let starts_ok = name.chars().next().map(|c| !c.is_ascii_digit()).unwrap_or(false);
+        let start = end - name.len();
+        let before = &objective[..start];
+        let is_attr_call = before.ends_with('.');
+        let defining = before.split_whitespace().rev().take(3).any(|w| {
+            let w = w
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_ascii_lowercase();
+            w == "def" || w == "function" || w == "method" || w.starts_with("defin")
+        });
+        if starts_ok && !is_attr_call && defining && !required_fns.contains(&name) {
+            required_fns.push(name);
+        }
+        from = end + 2;
+    }
+    for name in &required_fns {
+        let def_prefix = format!("def {}(", name);
+        let async_prefix = format!("async def {}(", name);
+        let defined = content.lines().any(|l| {
+            let t = l.trim_start();
+            t.starts_with(&def_prefix) || t.starts_with(&async_prefix)
+        });
+        if !defined {
+            defects.push(format!("missing `def {}(...)` required by the objective", name));
+        }
+    }
+
+    // 2. snake_case identifiers named in the objective must appear in the file
+    let path_stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let mut idents: Vec<String> = Vec::new();
+    for tok in objective.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        let tok = tok.trim_matches('_');
+        if tok.len() < 3 || !tok.contains('_') {
+            continue;
+        }
+        // marker tokens such as WRITE_OK
+        if tok.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+            continue;
+        }
+        if tok == path_stem || required_fns.iter().any(|f| f == tok) {
+            continue;
+        }
+        if !idents.iter().any(|i| i == tok) {
+            idents.push(tok.to_string());
+        }
+    }
+    for tok in &idents {
+        if !content.contains(tok.as_str()) {
+            defects.push(format!("missing identifier `{}` named in the objective", tok));
+        }
+    }
+
+    // 3. `import ONLY a, b and c` allowlist
+    if let Some(pos) = obj_lower.find("import only") {
+        let after = &objective[pos + "import only".len()..];
+        let sentence = after.split(". ").next().unwrap_or(after).trim().trim_end_matches('.');
+        let mut allowed: Vec<String> = Vec::new();
+        'items: for item in sentence.split(',') {
+            let words: Vec<&str> = item.split_whitespace().collect();
+            if words.is_empty() {
+                continue;
+            }
+            let mut i = if words[0].eq_ignore_ascii_case("and") { 1 } else { 0 };
+            let mut batch: Vec<String> = Vec::new();
+            let mut conforming = true;
+            while i < words.len() {
+                let w = words[i];
+                if !w.is_empty()
+                    && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                {
+                    batch.push(w.split('.').next().unwrap_or(w).to_string());
+                    i += 1;
+                    if i < words.len() {
+                        if words[i].eq_ignore_ascii_case("and") {
+                            i += 1;
+                        } else {
+                            conforming = false;
+                            break;
+                        }
+                    }
+                } else {
+                    conforming = false;
+                    break;
+                }
+            }
+            if !conforming || batch.is_empty() {
+                break 'items;
+            }
+            allowed.extend(batch);
+        }
+        if !allowed.is_empty() {
+            let mut bad: Vec<String> = Vec::new();
+            for line in content.lines() {
+                let t = line.trim_start();
+                let mut modules: Vec<String> = Vec::new();
+                if let Some(rest) = t.strip_prefix("import ") {
+                    for part in rest.split(';').next().unwrap_or("").split(',') {
+                        let m = part.trim().split_whitespace().next().unwrap_or("");
+                        modules.push(m.split('.').next().unwrap_or("").to_string());
+                    }
+                } else if let Some(rest) = t.strip_prefix("from ") {
+                    let m = rest.split_whitespace().next().unwrap_or("");
+                    if !m.starts_with('.') {
+                        modules.push(m.split('.').next().unwrap_or("").to_string());
+                    }
+                }
+                for m in modules {
+                    if !m.is_empty()
+                        && m != "__future__"
+                        && !allowed.contains(&m)
+                        && !bad.contains(&m)
+                    {
+                        bad.push(m);
+                    }
+                }
+            }
+            if !bad.is_empty() {
+                defects.push(format!("imports not allowed by the objective: {}", bad.join(", ")));
+            }
+        }
+    }
+
+    // 4. line cap
+    let words: Vec<String> = objective
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_lowercase())
+        .collect();
+    let mut max_lines: Option<usize> = None;
+    for (idx, w) in words.iter().enumerate() {
+        if w != "lines" || idx == 0 {
+            continue;
+        }
+        let Ok(n) = words[idx - 1].parse::<usize>() else { continue };
+        let prev = if idx >= 2 { words[idx - 2].as_str() } else { "" };
+        let prev2 = if idx >= 3 { words[idx - 3].as_str() } else { "" };
+        let limit = if matches!(
+            (prev2, prev),
+            (_, "under") | (_, "below") | ("fewer", "than") | ("less", "than")
+        ) {
+            Some(n.saturating_sub(1))
+        } else if matches!((prev2, prev), ("at", "most") | ("up", "to"))
+            || (prev2 == "more" && prev == "than" && idx >= 4 && words[idx - 4] == "no")
+        {
+            Some(n)
+        } else {
+            None
+        };
+        if let Some(l) = limit {
+            max_lines = Some(max_lines.map_or(l, |m| m.min(l)));
+        }
+    }
+    if let Some(limit) = max_lines {
+        let n_lines = content.lines().count();
+        if n_lines > limit {
+            defects.push(format!("{} lines exceeds the objective's limit of {}", n_lines, limit));
+        }
+    }
+
+    defects
+}
+
+/// `ast.parse` the file with python3 (no bytecode side effects). Returns None when the file
+/// parses, or when python3 is unavailable (the check is skipped, never blocking).
+async fn python_syntax_error(path: &str) -> Option<String> {
+    let out = tokio::process::Command::new("python3")
+        .args([
+            "-c",
+            "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read(), sys.argv[1])",
+            path,
+        ])
+        .output()
+        .await
+        .ok()?;
+    if out.status.success() {
+        None
+    } else {
+        Some(
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("syntax error")
+                .trim()
+                .to_string(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod conformance_tests {
+    use super::python_conformance_defects;
+
+    const OBJ: &str = "Write a Python script exactly named 'sys_monitor.py' in the current directory. The script must import ONLY json, sys, and psutil, define a function get_metrics() returning a dict with cpu_percent and memory_percent, print it as JSON, and remain under 20 lines.";
+
+    #[test]
+    fn rejects_import_only_stub() {
+        let d = python_conformance_defects(OBJ, "sys_monitor.py", "import json, sys, psutil");
+        assert!(d.iter().any(|x| x.contains("get_metrics")), "{d:?}");
+        assert!(d.iter().any(|x| x.contains("cpu_percent")), "{d:?}");
+        assert!(d.iter().any(|x| x.contains("memory_percent")), "{d:?}");
+    }
+
+    #[test]
+    fn accepts_conforming_script() {
+        let src = "import json\nimport sys\nimport psutil\n\ndef get_metrics():\n    return {\"cpu_percent\": psutil.cpu_percent(), \"memory_percent\": psutil.virtual_memory().percent}\n\nif __name__ == \"__main__\":\n    json.dump(get_metrics(), sys.stdout)\n";
+        let d = python_conformance_defects(OBJ, "sys_monitor.py", src);
+        assert!(d.is_empty(), "{d:?}");
+    }
+
+    #[test]
+    fn rejects_forbidden_import_and_long_file() {
+        let src = format!("import os\n{}", "x = 1\n".repeat(24));
+        let d = python_conformance_defects(OBJ, "sys_monitor.py", &src);
+        assert!(d.iter().any(|x| x.contains("imports not allowed")), "{d:?}");
+        assert!(d.iter().any(|x| x.contains("exceeds")), "{d:?}");
+    }
+}
+
+/// Normalizes a strategy string for duplicate detection: quotes dropped, whitespace
+/// collapsed, ASCII-lowercased. `execute_command "x"` and `execute_command 'x'` compare equal.
+fn normalize_strategy(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '`'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod conformance_regression_tests {
+    use super::python_conformance_defects;
+
+    #[test]
+    fn attribute_calls_in_objective_are_not_required_definitions() {
+        let obj = "Write a file named \"sys_monitor_v2.py\" containing EXACTLY this code:\nimport json\nimport os\ndef get_metrics():\n    return {\"load_avg\": os.getloadavg()}\nprint(json.dumps(get_metrics()))";
+        let src = "import json\nimport os\ndef get_metrics():\n    return {\"load_avg\": os.getloadavg()}\nprint(json.dumps(get_metrics()))\n";
+        let d = python_conformance_defects(obj, "sys_monitor_v2.py", src);
+        assert!(d.is_empty(), "{d:?}");
+    }
+
+    #[test]
+    fn stub_is_still_rejected_for_the_exact_code_objective() {
+        let obj = "Write a file named \"sys_monitor_v2.py\" containing EXACTLY this code:\nimport json\nimport os\ndef get_metrics():\n    return {\"load_avg\": os.getloadavg()}\nprint(json.dumps(get_metrics()))";
+        let d = python_conformance_defects(obj, "sys_monitor_v2.py", "import json import os def get_metrics(): return {");
+        assert!(d.iter().any(|x| x.contains("get_metrics")), "{d:?}");
+    }
+}
+
+/// Best-effort action name for proposals that use `action` / `tool` keys, ReAct nesting, or
+/// {"halt": ...} instead of `"type"`, so a parse fault can still name the real schema fields.
+fn fallback_action_type(raw: &str) -> Option<String> {
+    for key in ["\"action\"", "\"tool\""] {
+        if let Some(pos) = raw.find(key) {
+            let after = raw[pos + key.len()..].trim_start();
+            if let Some(rest) = after.strip_prefix(':') {
+                if let Some(rest) = rest.trim_start().strip_prefix('"') {
+                    if let Some(end) = rest.find('"') {
+                        return Some(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+    }
+    if raw.contains("\"halt\"") {
+        return Some("halt".to_string());
+    }
+    // bare function-call style text such as `read_file_chunk path 1244 250`
+    for name in [
+        "read_file_chunk",
+        "read_function",
+        "read_file",
+        "search_code",
+        "search_memory",
+        "write_file",
+        "diff_patch",
+        "patch_function",
+        "replace_lines",
+        "execute_command",
+    ] {
+        if raw.contains(name) {
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
