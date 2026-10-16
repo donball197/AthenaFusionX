@@ -9,8 +9,8 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 nexus_ide_backend = { path = "../../bins/ide_backend" }
 rayon = "1.8"
-wasmtime = "45.0.2"
-wasmtime-wasi = "45.0.2"
+wasmtime = "48.0.4"
+wasmtime-wasi = "48.0.4"
 
 [[bin]]
 name = "benchmark-runner"

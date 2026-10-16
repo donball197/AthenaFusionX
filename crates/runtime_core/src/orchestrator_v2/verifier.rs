@@ -116,43 +116,6 @@ impl Verifier {
         if !criteria.is_empty() {
             return Self::evaluate_contract_criteria(evidence, criteria);
         }
-        // Define hard-coded rules per node type.
-        // For simplicity, we use node_id prefixes; in production, use a proper rule registry.
-        if node_id.starts_with("clone_") || node_id.starts_with("clone_openfang") {
-            // Verify that /tmp/openfang exists
-            if evidence.contains("[CMD_OK]") && evidence.contains("/tmp/openfang") {
-                return VerificationResult::Success;
-            } else {
-                return VerificationResult::Retry(
-                    "Clone failed or /tmp/openfang not found".to_string(),
-                );
-            }
-        } else if node_id.starts_with("inspect_") || node_id.contains("workspace_topology") {
-            // Verify that Cargo.toml was read
-            if evidence.contains("[READ_OK]") && evidence.contains("/tmp/openfang/Cargo.toml") {
-                return VerificationResult::Success;
-            } else {
-                return VerificationResult::Retry("Cargo.toml not read".to_string());
-            }
-        } else if node_id.starts_with("analyze_") || node_id.contains("wasm_watchdog") {
-            // Verify that SECURITY.md was read
-            if evidence.contains("[READ_OK]") && evidence.contains("/tmp/openfang/SECURITY.md") {
-                return VerificationResult::Success;
-            } else {
-                return VerificationResult::Retry("SECURITY.md not read".to_string());
-            }
-        } else if node_id.starts_with("generate_") || node_id.contains("roadmap") {
-            // Verify that ROADMAP_OPENFANG_COMPARISON.md exists in the root
-            // We'll check evidence for a write_file action that created it.
-            if evidence.contains("[WRITE_OK]")
-                && evidence.contains("ROADMAP_OPENFANG_COMPARISON.md")
-            {
-                // Additional check: does the file contain required sections? (optional)
-                return VerificationResult::Success;
-            } else {
-                return VerificationResult::Retry("Roadmap file not written".to_string());
-            }
-        }
         // Unknown nodes fail closed. A verifier must never silently
         // authorize an unrecognized node.
         VerificationResult::Escalate(format!(
@@ -179,9 +142,11 @@ impl Verifier {
                 let mut parts = target.splitn(2, ':');
                 let path = parts.next().unwrap_or("").trim();
                 let func = parts.next().unwrap_or("").trim();
-                evidence.contains("[READ_FUNCTION_OK]")
-                    && (evidence.contains(target)
-                        || (evidence.contains(path) && evidence.contains(func)))
+                crate::evidence_markers::read_function_marker_satisfies(
+                    evidence,
+                    path,
+                    func,
+                )
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 crate::evidence_markers::search_term_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
@@ -204,8 +169,7 @@ impl Verifier {
                 // A bare [CMD_OK] substring is not proof of success. The
                 // verifier must require the marker on its own line followed
                 // by a zero exit status, matching the emission shape of both
-                // the executor's ExecuteCommand branch and the cortical
-                // loop's compiler-critic bridge:
+                // the executor's ExecuteCommand branch:
                 //     [CMD_OK] Command: <cmd>
                 //     Status: exit status: 0
                 //
@@ -318,6 +282,46 @@ mod tests {
         let evidence = "[PATCH_IDEMPOTENT_OK] src/math.rs:calculate_total\nPatchFunction already satisfied; source unchanged.";
 
         let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+    }
+
+    #[test]
+    fn read_function_rejects_marker_and_target_from_different_records() {
+        let criteria = vec![
+            "READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()
+        ];
+
+        let evidence = concat!(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/foo.rs:actual_a\n",
+            "File: crates/runtime_core/src/foo.rs | Function: actual_a\n",
+            "EXACT AST SOURCE:\n",
+            "fn actual_a() {}\n",
+            "Observed reference to crates/runtime_core/src/bar.rs\n",
+            "Discussion mentions target_b\n",
+        );
+
+        let result =
+            Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
+
+        assert!(matches!(result, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn read_function_accepts_exact_marker_record() {
+        let criteria = vec![
+            "READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()
+        ];
+
+        let evidence = concat!(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/bar.rs:target_b\n",
+            "File: crates/runtime_core/src/bar.rs | Function: target_b\n",
+            "EXACT AST SOURCE:\n",
+            "fn target_b() {}\n",
+        );
+
+        let result =
+            Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
+
         assert_eq!(result, VerificationResult::Success);
     }
 

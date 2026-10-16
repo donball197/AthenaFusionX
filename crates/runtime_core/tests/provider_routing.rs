@@ -37,6 +37,23 @@ fn deepseek_hits_nvidia() {
 }
 
 #[test]
+fn beam_model_hits_reflection() {
+    let r = resolve_provider("Beam-501B-A23B");
+    assert_eq!(r.provider_name, "reflection");
+    assert_eq!(r.auth, AuthStyle::Bearer);
+    assert_eq!(
+        r.endpoint,
+        "https://api.reflection.ai/openai/v1/chat/completions"
+    );
+}
+
+#[test]
+fn beam_routing_is_case_insensitive() {
+    let r = resolve_provider("BEAM-501B-A23B");
+    assert_eq!(r.provider_name, "reflection");
+}
+
+#[test]
 fn plain_gemma_does_not_guess_google_or_nvidia() {
     let r = resolve_provider("gemma-2-9b-it");
     assert_eq!(

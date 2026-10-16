@@ -153,23 +153,23 @@ impl OutcomeVerifier {
                         && crate::halt_gate::halt_range_gate(local_evidence).is_none()
                 }
                 CompletionCondition::ReadFunctionMarkerAcquired { path, function_name } => {
-                    local_evidence.contains("[READ_FUNCTION_OK]")
-                        && (local_evidence.contains(&format!("{}:{}", path, function_name))
-                            || (local_evidence.contains(path.as_str())
-                                && local_evidence.contains(function_name.as_str())))
+                    crate::evidence_markers::read_function_marker_satisfies(
+                        local_evidence,
+                        path,
+                        function_name,
+                    )
                 }
                 CompletionCondition::CommandExecutionVerified { command } => {
-                    // Content-based identity (normalized + hashed): a legacy
-                    // [CMD_OK] block OR a [CMD_HASH] marker satisfies this,
-                    // so the condition stays satisfiable once anti-loop has
-                    // blocked re-executing the identical command.
+                    // Ordinary command contracts are exact: the evidence must
+                    // bind to the requested command through CMD_OK/CMD_HASH.
                     crate::cmd_match::command_condition_met(command, local_evidence)
-                        // Math-derivation fallback (completion_engine::
-                        // math_command_satisfied): the planner embeds the
-                        // ALL/ANY tables in the python3 -c string and quoting
-                        // variants break exact identity. Tables in evidence
-                        // plus a CLEAN EXIT count as equivalent proof --
-                        // never a failed command.
+                }
+                CompletionCondition::MathematicalExecutionVerified { command } => {
+                    // Mathematical derivations deliberately permit the
+                    // compatibility path required by their generated
+                    // python3 -c command, but ONLY because the contract
+                    // explicitly identifies this node as mathematical.
+                    crate::cmd_match::command_condition_met(command, local_evidence)
                         || (crate::completion_engine::math_command_satisfied(local_evidence)
                             && local_evidence.contains("exit status: 0"))
                 }
@@ -352,6 +352,50 @@ mod tests {
             "[WRITE_OK] Successfully synthesized and wrote report to other.md\n",
             1.0,
             &conditions
+        ));
+    }
+
+    #[test]
+    fn read_function_rejects_marker_and_target_from_different_records() {
+        let condition = CompletionCondition::ReadFunctionMarkerAcquired {
+            path: "crates/runtime_core/src/bar.rs".into(),
+            function_name: "target_b".into(),
+        };
+
+        let evidence = concat!(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/foo.rs:actual_a\n",
+            "File: crates/runtime_core/src/foo.rs | Function: actual_a\n",
+            "EXACT AST SOURCE:\n",
+            "fn actual_a() {}\n",
+            "Observed reference to crates/runtime_core/src/bar.rs\n",
+            "Discussion mentions target_b\n",
+        );
+
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[condition],
+        ));
+    }
+
+    #[test]
+    fn read_function_accepts_exact_marker_record() {
+        let condition = CompletionCondition::ReadFunctionMarkerAcquired {
+            path: "crates/runtime_core/src/bar.rs".into(),
+            function_name: "target_b".into(),
+        };
+
+        let evidence = concat!(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/bar.rs:target_b\n",
+            "File: crates/runtime_core/src/bar.rs | Function: target_b\n",
+            "EXACT AST SOURCE:\n",
+            "fn target_b() {}\n",
+        );
+
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[condition],
         ));
     }
 
@@ -565,6 +609,90 @@ mod extraction_guards {
         assert!(!OutcomeVerifier::mission_completion_authorized("[WRITE_OK] out.md", 1.0, &[]));
 
         assert!(!OutcomeVerifier::mission_completion_authorized("[READ_OK] lib.rs", 1.0, &[]));
+    }
+
+    #[test]
+    fn math_evidence_does_not_satisfy_ordinary_command_contract() {
+        let condition = CompletionCondition::CommandExecutionVerified {
+            command: "uptime".to_string(),
+        };
+
+        let evidence = concat!(
+            "ALL TABLE\n",
+            "ANY TABLE\n",
+            "ALL_COMMUTATIVE True\n",
+            "ALL_IDEMPOTENT True\n",
+            "RC_ABSORBING_ALL True\n",
+            "ORDER_SC_GT_SP_GT_NP_GT_NN True\n",
+            "ANY_COMMUTATIVE True\n",
+            "ANY_IDEMPOTENT True\n",
+            "SC_ABSORBING_ANY True\n",
+            "DUALITY_ALL_36 True\n",
+            "DUAL_INVOLUTION True\n",
+            "Status: exit status: 0\n",
+        );
+
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[condition],
+        ));
+    }
+
+    #[test]
+    fn mathematical_execution_contract_accepts_math_compatibility_evidence() {
+        let condition = CompletionCondition::MathematicalExecutionVerified {
+            command: "python3 -c 'print(math)'".to_string(),
+        };
+
+        let evidence = concat!(
+            "ALL TABLE\n",
+            "ANY TABLE\n",
+            "ALL_COMMUTATIVE True\n",
+            "ALL_IDEMPOTENT True\n",
+            "RC_ABSORBING_ALL True\n",
+            "ORDER_SC_GT_SP_GT_NP_GT_NN True\n",
+            "ANY_COMMUTATIVE True\n",
+            "ANY_IDEMPOTENT True\n",
+            "SC_ABSORBING_ANY True\n",
+            "DUALITY_ALL_36 True\n",
+            "DUAL_INVOLUTION True\n",
+            "Status: exit status: 0\n",
+        );
+
+        assert!(OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[condition],
+        ));
+    }
+
+    #[test]
+    fn mathematical_execution_contract_rejects_failed_exit() {
+        let condition = CompletionCondition::MathematicalExecutionVerified {
+            command: "python3 -c 'print(math)'".to_string(),
+        };
+
+        let evidence = concat!(
+            "ALL TABLE\n",
+            "ANY TABLE\n",
+            "ALL_COMMUTATIVE True\n",
+            "ALL_IDEMPOTENT True\n",
+            "RC_ABSORBING_ALL True\n",
+            "ORDER_SC_GT_SP_GT_NP_GT_NN True\n",
+            "ANY_COMMUTATIVE True\n",
+            "ANY_IDEMPOTENT True\n",
+            "SC_ABSORBING_ANY True\n",
+            "DUALITY_ALL_36 True\n",
+            "DUAL_INVOLUTION True\n",
+            "Status: exit status: 1\n",
+        );
+
+        assert!(!OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[condition],
+        ));
     }
 
     #[test]

@@ -64,6 +64,39 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
     })
 }
 
+/// Returns true only when one physical READ_FUNCTION_OK marker record
+/// identifies the requested path and function together.
+///
+/// The path comparison uses the shared absolute/workspace-relative
+/// equivalence policy. The function name is an exact match. Evidence from
+/// separate records must never be combined to satisfy this predicate.
+pub fn read_function_marker_satisfies(
+    evidence: &str,
+    expected_path: &str,
+    expected_function: &str,
+) -> bool {
+    let expected_path = expected_path.trim();
+    let expected_function = expected_function.trim();
+
+    if expected_path.is_empty() || expected_function.is_empty() {
+        return false;
+    }
+
+    evidence.lines().any(|line| {
+        let Some(record) = line.trim_start().strip_prefix("[READ_FUNCTION_OK]") else {
+            return false;
+        };
+
+        let record = record.trim();
+        let Some((record_path, record_function)) = record.rsplit_once(':') else {
+            return false;
+        };
+
+        crate::evidence_paths::paths_equivalent(record_path.trim(), expected_path)
+            && record_function.trim() == expected_function
+    })
+}
+
 pub fn has_recon_marker(evidence: &str) -> bool {
     evidence.lines().any(|l| {
         l.starts_with("[READ_OK]")
@@ -99,6 +132,41 @@ mod tests {
     }
 
     #[test]
+    fn read_function_marker_requires_same_record() {
+        assert!(!read_function_marker_satisfies(
+            concat!(
+                "[READ_FUNCTION_OK] crates/runtime_core/src/foo.rs:actual_a\\n",
+                "File: crates/runtime_core/src/foo.rs | Function: actual_a\\n",
+                "Observed reference to crates/runtime_core/src/bar.rs\\n",
+                "Discussion mentions target_b\\n",
+            ),
+            "crates/runtime_core/src/bar.rs",
+            "target_b",
+        ));
+
+        assert!(read_function_marker_satisfies(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/bar.rs:target_b\n",
+            "crates/runtime_core/src/bar.rs",
+            "target_b",
+        ));
+    }
+
+    #[test]
+    fn read_function_marker_uses_path_equivalence() {
+        assert!(read_function_marker_satisfies(
+            "[READ_FUNCTION_OK] /root/AthenaFusionX/src/foo.rs:target\n",
+            "src/foo.rs",
+            "target",
+        ));
+
+        assert!(!read_function_marker_satisfies(
+            "[READ_FUNCTION_OK] vendor/foo.rs:target\\n",
+            "foo.rs",
+            "target",
+        ));
+    }
+
+    #[test]
     fn recon_detects_read_search_cmd() {
         assert!(has_recon_marker("[READ_OK] a\n"));
         assert!(has_recon_marker("[SEARCH_CODE_OK] Path: crates | Query: 'x'\n"));
@@ -129,8 +197,8 @@ mod tests {
     #[test]
     fn search_term_matches_quoted_query_with_path_scope() {
         let ev =
-            "[SEARCH_CODE_OK] Path: vendor/openfang | Query: 'Cargo.toml'\nMATCHES:\nworkspace member listing\n";
-        assert!(search_term_satisfied(ev, "vendor/openfang:Cargo.toml"));
+            "[SEARCH_CODE_OK] Path: vendor/external_repo | Query: 'Cargo.toml'\nMATCHES:\nworkspace member listing\n";
+        assert!(search_term_satisfied(ev, "vendor/external_repo:Cargo.toml"));
     }
 
     #[test]

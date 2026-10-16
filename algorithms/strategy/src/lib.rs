@@ -18,6 +18,10 @@ pub struct DirectiveInputs {
     pub has_explicit_success_criterion: bool,
     pub search_memory_explicit: bool,
 
+    /// Exact source file selected for bounded structural analysis.
+    /// None means this directive is not a deterministic structural-source task.
+    pub structural_analysis_target: Option<String>,
+
     pub read_targets: Vec<String>,
     pub required_command: Option<String>,
 
@@ -73,6 +77,19 @@ impl DirectiveStrategyCompiler {
 
             if !target.is_empty() && target.contains(':') {
                 return Some(vec![format!("read_function:{}", target)]);
+            }
+        }
+
+        // Structural analysis prefers bounded source discovery
+        // over blind file pagination.
+        if let Some(path) = input.structural_analysis_target.as_deref() {
+            if !input.has_explicit_success_criterion
+                && input.read_targets.is_empty()
+                && input.required_command.is_none()
+            {
+                return Some(vec![
+                    format!("search_code:{}:fn", path),
+                ]);
             }
         }
 
@@ -142,7 +159,7 @@ impl DirectiveStrategyCompiler {
                     }
                 }
 
-                // Workspace-relative path: vendor/openfang:Cargo.toml
+                // Workspace-relative path: vendor/external_repo:Cargo.toml
                 if let Some(colon) = line.rfind(':') {
                     let maybe_path = &line[..colon];
                     let maybe_term = line[colon + 1..].trim();
@@ -407,16 +424,48 @@ mod tests {
 
     #[test]
     fn search_code_relative_path_binds_exactly() {
-        let i = input("SEARCH_CODE_OK:vendor/openfang:Cargo.toml");
+        let i = input("SEARCH_CODE_OK:vendor/external_repo:Cargo.toml");
         let out = DirectiveStrategyCompiler::compile(&i).unwrap();
-        assert_eq!(out, vec!["search_code:vendor/openfang:Cargo.toml"]);
+        assert_eq!(out, vec!["search_code:vendor/external_repo:Cargo.toml"]);
     }
 
     #[test]
     fn search_code_absolute_path_binds_exactly() {
-        let i = input("SEARCH_CODE_OK:/root/AthenaFusionX/vendor/openfang:Cargo.toml");
+        let i = input("SEARCH_CODE_OK:/root/AthenaFusionX/vendor/external_repo:Cargo.toml");
         let out = DirectiveStrategyCompiler::compile(&i).unwrap();
-        assert_eq!(out, vec!["search_code:/root/AthenaFusionX/vendor/openfang:Cargo.toml"]);
+        assert_eq!(out, vec!["search_code:/root/AthenaFusionX/vendor/external_repo:Cargo.toml"]);
+    }
+
+
+    #[test]
+    fn structural_analysis_prefers_search() {
+        let mut i = input(
+            "Audit cortical_loop.rs and summarize its structure"
+        );
+
+        i.structural_analysis_target =
+            Some("crates/runtime_core/src/cortical_loop.rs".into());
+
+        let out = DirectiveStrategyCompiler::compile(&i).unwrap();
+
+        assert_eq!(
+            out,
+            vec![
+                "search_code:crates/runtime_core/src/cortical_loop.rs:fn",
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_read_beats_structural_analysis() {
+        let mut i = input("READ_OK:a.rs");
+
+        i.structural_analysis_target = Some("a.rs".into());
+        i.read_targets = vec!["a.rs".into()];
+
+        let out = DirectiveStrategyCompiler::compile(&i).unwrap();
+
+        assert_eq!(out, vec!["read_file:a.rs"]);
     }
 
     #[test]

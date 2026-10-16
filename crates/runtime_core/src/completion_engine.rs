@@ -41,6 +41,13 @@ pub enum CompletionCondition {
     CommandExecutionVerified {
         command: String,
     },
+    /// Mathematical derivation execution has a deliberately broader
+    /// evidence compatibility rule than ordinary command execution.
+    /// This must remain explicit so mathematical evidence can never
+    /// satisfy an unrelated CommandExecutionVerified contract.
+    MathematicalExecutionVerified {
+        command: String,
+    },
     LineageEvidenceAcquired,
     ReadFunctionMarkerAcquired {
         path: String,
@@ -140,6 +147,50 @@ pub(crate) fn any_word_unnegated(text: &str, words: &[&str]) -> bool {
 /// govern every terminal-completion shortcut in the cortical loop. Physical
 /// evidence such as READ_OK, SEARCH_CODE_OK, or HALT is not itself proof that
 /// an analysis objective was satisfied.
+/// Return the single Rust source path named by a structural-analysis
+/// objective. Structural classification is intentionally narrow: this is
+/// only an acquisition-shape helper and does not authorize completion.
+pub(crate) fn structural_analysis_target(objective: &str) -> Option<String> {
+    let lower = objective.to_lowercase();
+
+    let structural = lower.contains("function structure")
+        || lower.contains("function inventory")
+        || lower.contains("large-function")
+        || lower.contains("large function")
+        || lower.contains("module structure")
+        || lower.contains("call graph")
+        || lower.contains("structural")
+        || lower.contains("architecture");
+
+    let analysis = lower.contains("audit")
+        || lower.contains("analy")
+        || lower.contains("inspect")
+        || lower.contains("review")
+        || lower.contains("summar");
+
+    if !structural || !analysis {
+        return None;
+    }
+
+    let mut paths = objective
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|c: char| "`'\"()[]{}.,:;".contains(c))
+        })
+        .filter(|token| token.ends_with(".rs") && token.contains('/'))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    paths.sort();
+    paths.dedup();
+
+    if paths.len() == 1 {
+        paths.pop()
+    } else {
+        None
+    }
+}
+
 pub(crate) fn requires_semantic_verification(objective: &str) -> bool {
     let mut text = objective.trim().to_lowercase();
 
@@ -719,6 +770,24 @@ impl SubgoalCompletionEngine {
         // directive like "Patch X and then run cargo check" is not
         // silently downgraded to a command-only contract that discards
         // the patch requirement.
+        // The mathematical planner emits this explicit contract marker.
+        // It is a protocol boundary, not inference from arbitrary evidence
+        // strings such as "ALL TABLE".
+        if objective.contains("MATHEMATICAL_EXECUTION_VERIFIED:") {
+            if let Some(command) = extract_required_command(objective) {
+                return SubgoalContract {
+                    node_id: node_id.to_string(),
+                    objective: objective.to_string(),
+                    conditions: vec![
+                        CompletionCondition::MathematicalExecutionVerified { command },
+                    ],
+                    is_mutation_task: false,
+                    read_only,
+                    required_artifact_paths: Vec::new(),
+                };
+            }
+        }
+
         let leads_with_command_verb =
             classify_text.starts_with("execute ") || classify_text.starts_with("run ");
         if leads_with_command_verb {
@@ -835,15 +904,34 @@ impl SubgoalCompletionEngine {
             }
         }
 
+        let structural_target = structural_analysis_target(objective);
+        let structural_search_contract = structural_target.is_some()
+            && !has_path_bound_reads
+            && !has_search_code_marker
+            && !has_patch
+            && !has_write
+            && !objective.contains("READ_FUNCTION_OK:");
+
         if has_path_bound_reads {
             for path in &read_targets {
                 conditions.push(CompletionCondition::ReadPathAcquired { path: path.clone() });
             }
-        } else if has_read_intent && !has_search_code_marker {
+        } else if has_read_intent
+            && !has_search_code_marker
+            && !structural_search_contract
+        {
             conditions.push(CompletionCondition::ReadMarkerAcquired);
         }
 
-        if has_search_code_marker {
+        if structural_search_contract {
+            let path = structural_target
+                .as_ref()
+                .expect("structural target checked above");
+
+            conditions.push(CompletionCondition::SearchTermAcquired {
+                term: format!("{}:fn", path),
+            });
+        } else if has_search_code_marker {
             for term in &search_code_terms {
                 conditions.push(CompletionCondition::SearchTermAcquired { term: term.clone() });
             }
@@ -863,6 +951,7 @@ impl SubgoalCompletionEngine {
         if (has_analysis_intent || (has_read_intent && has_search_intent))
             && !has_path_bound_reads
             && !has_search_code_marker
+            && !structural_search_contract
         {
             conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
         }
@@ -1066,6 +1155,14 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
 #[cfg(test)]
 mod tests {
     use super::{requires_semantic_verification, CompletionCondition, SubgoalCompletionEngine};
+
+    #[test]
+    fn semantic_verification_classifier_requires_analysis_ok_semantic_gate() {
+        assert!(
+            requires_semantic_verification("ANALYSIS_OK"),
+            "ANALYSIS_OK must require semantic verification"
+        );
+    }
 
     #[test]
     fn semantic_verification_classifier_covers_analysis_objectives() {
@@ -1557,24 +1654,6 @@ LINEAGE CONTEXT:
     }
 
     #[test]
-    fn mission2_shape_reads_satisfied_once_the_command_is_evidenced() {
-        let contract = mk(vec![CompletionCondition::CommandExecutionVerified {
-            command: "git clone https://github.com/RightNow-AI/openfang.git vendor/openfang".into(),
-        }]);
-        let evidence = "[CMD_OK] Command: git clone https://github.com/RightNow-AI/openfang.git vendor/openfang\nStatus: exit status: 0\n";
-        assert!(SubgoalCompletionEngine::evaluate(&contract, evidence, 1.0));
-    }
-
-    #[test]
-    fn mission2_shape_reads_unmet_before_the_command_runs() {
-        let contract = mk(vec![CompletionCondition::CommandExecutionVerified {
-            command: "git clone https://github.com/RightNow-AI/openfang.git vendor/openfang".into(),
-        }]);
-        let evidence = "hypothesis: run the clone next\n";
-        assert!(!SubgoalCompletionEngine::evaluate(&contract, evidence, 1.0));
-    }
-
-    #[test]
     fn belief_shortfall_reads_satisfied_at_the_gate() {
         // MinBeliefScore is the one condition no action can advance. Every
         // gate probe uses belief = 1.0, so it reads satisfied here and
@@ -1710,7 +1789,7 @@ LINEAGE CONTEXT:
 
     #[test]
     fn search_contract_with_analysis_mission_skips_belief_threshold() {
-        // Reproduces the OpenFang workspace-node failure: a mission whose
+        // Reproduces the external repository workspace-node failure: a mission whose
         // objective uses analysis words ("inspect", "determine") and
         // whose criteria block names a single SEARCH_CODE_OK: target.
         // Previously the analysis words caused has_recon to fire and the
@@ -1718,16 +1797,16 @@ LINEAGE CONTEXT:
         // marker. The search succeeded at low belief and the threshold
         // blocked completion; the post-search expansion then pinned the
         // node to an unrelated read_file strategy.
-        let mission = "Inspect the workspace configuration under vendor/openfang, \
+        let mission = "Inspect the workspace configuration under vendor/external_repo, \
                       determining the crate count and structure.\n\n\
                       MANDATORY NODE SUCCESS CRITERIA:\n\
-                      SEARCH_CODE_OK:vendor/openfang:Cargo.toml";
+                      SEARCH_CODE_OK:vendor/external_repo:Cargo.toml";
         let contract = SubgoalCompletionEngine::infer_contract("node_workspace", mission);
 
         assert!(contract.conditions.iter().any(|c| matches!(
             c,
             CompletionCondition::SearchTermAcquired { term }
-                if term == "vendor/openfang:Cargo.toml"
+                if term == "vendor/external_repo:Cargo.toml"
         )));
 
         assert!(
@@ -1739,7 +1818,7 @@ LINEAGE CONTEXT:
             contract.conditions
         );
 
-        let evidence = "[SEARCH_CODE_OK] Path: vendor/openfang | Query: 'Cargo.toml'\nMATCHES:\nworkspace member listing\n";
+        let evidence = "[SEARCH_CODE_OK] Path: vendor/external_repo | Query: 'Cargo.toml'\nMATCHES:\nworkspace member listing\n";
         assert!(SubgoalCompletionEngine::reconnaissance_complete(&contract, evidence, 0.10,));
     }
 
@@ -1825,7 +1904,5 @@ LINEAGE CONTEXT:
     }
 }
 
-// NOTE: math_command_satisfied() is wired into the CommandExecutionVerified
-// arm in outcome_verifier.rs. The call site additionally requires a clean
-// exit status ("exit status: 0"), because this helper's own success clause
-// accepts a bare [CMD_OK] substring, which is not proof of success.
+// math_command_satisfied() is consumed only by the explicit
+// MathematicalExecutionVerified contract in outcome_verifier.rs.

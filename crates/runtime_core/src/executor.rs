@@ -635,6 +635,7 @@ impl RoboticExecutor {
                 new_lines.extend(after);
 
                 tokio::fs::write(&safe_path, new_lines.join("\n")).await?;
+                *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
                 Ok(format!(
                     "[REPLACE_LINES_OK] Replaced lines {}-{} in {}",
                     start_line, end_line, path
@@ -693,6 +694,7 @@ impl RoboticExecutor {
                     tokio::fs::write(&safe_path, patched).await?;
                     patched_files.push(patch.path);
                 }
+                *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
                 Ok(format!(
                     "[ATOMIC_PATCH_OK] Successfully patched {} files: {:?}",
                     patched_files.len(),
@@ -997,6 +999,7 @@ impl RoboticExecutor {
                 tokio::fs::write(&safe_path, new_content)
                     .await
                     .map_err(|e| anyhow!("Failed to write file: {}", e))?;
+                *self.action_cache.lock().await = crate::memory_cortex::ActionCache::new();
                 Ok(format!("Successfully patched file: {}", path))
             }
             MotorAction::SynthesizeReport { output_path, source_files } => {

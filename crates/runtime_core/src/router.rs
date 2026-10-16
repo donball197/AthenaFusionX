@@ -32,7 +32,7 @@ impl ContextBudget {
             max_file_chars: 8_000,
             max_obs_lines: 6,
             max_schema_chars: 1_200,
-            max_output_tokens: 4096,
+            max_output_tokens: 8192,
         }
     }
     pub fn doctor() -> Self {

@@ -109,121 +109,121 @@ mod tests {
     #[test]
     fn plans_unread_search_hits_in_order() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: Cargo.toml
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: Cargo.toml
 MATCHES:
-vendor/openfang/Cargo.toml:1:[package]
-vendor/openfang/src/main.rs:10:foo
+vendor/external_repo/Cargo.toml:1:[package]
+vendor/external_repo/src/main.rs:10:foo
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 4);
 
         assert_eq!(
             actual,
-            vec!["read_file:vendor/openfang/Cargo.toml", "read_file:vendor/openfang/src/main.rs",]
+            vec!["read_file:vendor/external_repo/Cargo.toml", "read_file:vendor/external_repo/src/main.rs",]
         );
     }
 
     #[test]
     fn excludes_already_read_paths() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: Cargo.toml
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: Cargo.toml
 MATCHES:
-vendor/openfang/Cargo.toml:1:[package]
-vendor/openfang/src/main.rs:10:foo
-[READ_OK] vendor/openfang/Cargo.toml
+vendor/external_repo/Cargo.toml:1:[package]
+vendor/external_repo/src/main.rs:10:foo
+[READ_OK] vendor/external_repo/Cargo.toml
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 4);
 
-        assert_eq!(actual, vec!["read_file:vendor/openfang/src/main.rs"]);
+        assert_eq!(actual, vec!["read_file:vendor/external_repo/src/main.rs"]);
     }
 
     #[test]
     fn recognizes_read_chunk_evidence() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: Cargo.toml
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: Cargo.toml
 MATCHES:
-vendor/openfang/Cargo.toml:1:[package]
-vendor/openfang/src/main.rs:10:foo
-[READ_CHUNK_OK] File: vendor/openfang/Cargo.toml
+vendor/external_repo/Cargo.toml:1:[package]
+vendor/external_repo/src/main.rs:10:foo
+[READ_CHUNK_OK] File: vendor/external_repo/Cargo.toml
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 4);
 
-        assert_eq!(actual, vec!["read_file:vendor/openfang/src/main.rs"]);
+        assert_eq!(actual, vec!["read_file:vendor/external_repo/src/main.rs"]);
     }
 
     #[test]
     fn deduplicates_search_hits() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: Cargo.toml
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: Cargo.toml
 MATCHES:
-vendor/openfang/Cargo.toml:1:[package]
-vendor/openfang/Cargo.toml:8:[workspace]
+vendor/external_repo/Cargo.toml:1:[package]
+vendor/external_repo/Cargo.toml:8:[workspace]
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 4);
 
-        assert_eq!(actual, vec!["read_file:vendor/openfang/Cargo.toml"]);
+        assert_eq!(actual, vec!["read_file:vendor/external_repo/Cargo.toml"]);
     }
 
     #[test]
     fn ignores_non_source_candidates() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: Cargo.toml
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: Cargo.toml
 MATCHES:
-vendor/openfang/image.png:1:binary
-vendor/openfang/Cargo.toml:1:[package]
-vendor/openfang/src/main.rs:10:foo
+vendor/external_repo/image.png:1:binary
+vendor/external_repo/Cargo.toml:1:[package]
+vendor/external_repo/src/main.rs:10:foo
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 4);
 
         assert_eq!(
             actual,
-            vec!["read_file:vendor/openfang/Cargo.toml", "read_file:vendor/openfang/src/main.rs",]
+            vec!["read_file:vendor/external_repo/Cargo.toml", "read_file:vendor/external_repo/src/main.rs",]
         );
     }
 
     #[test]
     fn respects_candidate_limit() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: source
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: source
 MATCHES:
-vendor/openfang/a.rs:1:a
-vendor/openfang/b.rs:1:b
-vendor/openfang/c.rs:1:c
+vendor/external_repo/a.rs:1:a
+vendor/external_repo/b.rs:1:b
+vendor/external_repo/c.rs:1:c
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 2);
 
         assert_eq!(
             actual,
-            vec!["read_file:vendor/openfang/a.rs", "read_file:vendor/openfang/b.rs",]
+            vec!["read_file:vendor/external_repo/a.rs", "read_file:vendor/external_repo/b.rs",]
         );
     }
 
     #[test]
     fn stops_at_next_evidence_marker() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: source
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: source
 MATCHES:
-vendor/openfang/a.rs:1:a
-[READ_OK] vendor/openfang/other.rs
-vendor/openfang/b.rs:1:b
+vendor/external_repo/a.rs:1:a
+[READ_OK] vendor/external_repo/other.rs
+vendor/external_repo/b.rs:1:b
 ";
 
         let actual = ReconnaissancePlanner::plan(evidence, 4);
 
-        assert_eq!(actual, vec!["read_file:vendor/openfang/a.rs"]);
+        assert_eq!(actual, vec!["read_file:vendor/external_repo/a.rs"]);
     }
 
     #[test]
     fn zero_limit_returns_no_strategies() {
         let evidence = "\
-[SEARCH_CODE_OK] Path: vendor/openfang | Query: source
+[SEARCH_CODE_OK] Path: vendor/external_repo | Query: source
 MATCHES:
-vendor/openfang/a.rs:1:a
+vendor/external_repo/a.rs:1:a
 ";
 
         assert!(ReconnaissancePlanner::plan(evidence, 0).is_empty());

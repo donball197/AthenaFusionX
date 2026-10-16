@@ -97,7 +97,6 @@ nexus_audit_target/
 daemon.log
 /tmp/
 .cargo/config.toml
-vendor/openfang/
 server.log
 *.log
 *.bak.*

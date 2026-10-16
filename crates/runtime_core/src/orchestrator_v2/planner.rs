@@ -91,7 +91,7 @@ CRITICAL RULE [GRANULARITY]: Create exactly as many nodes as necessary. If the d
 CRITICAL RULE [SUCCESS CONTRACT]: EVERY real work node MUST contain a non-empty 'success_criteria' array. Each criterion MUST be deterministic and physically checkable from execution evidence. Use exact forms such as:
 - "READ_OK:crates/runtime_core/src/router.rs"
 - "READ_FUNCTION_OK:crates/runtime_core/src/router.rs:route"
-- "SEARCH_CODE_OK:crates/runtime_core/src:model configuration" for a self-audit, or "SEARCH_CODE_OK:/abs/path:term" for an external repository (e.g. "SEARCH_CODE_OK:/apps/openfang:wasm")
+- "SEARCH_CODE_OK:crates/runtime_core/src:model configuration" for a self-audit, or "SEARCH_CODE_OK:/abs/path:term" for an external repository (e.g. "SEARCH_CODE_OK:/apps/external_repo:wasm")
 - "WRITE_OK:model_routing_analysis.md"
 - "CMD_OK" only when the node objective explicitly requires executing a command
 - "PATCH_FUNCTION_OK:path/to/file.rs:function_name"
@@ -111,7 +111,7 @@ CRITICAL RULE [TERMINAL STEPS]: A directive step that is purely a control-flow o
 CRITICAL RULE [WRITE STEPS ARE NEVER TERMINAL]: Any instruction to write, export, generate, or synthesize a file or report (e.g. "use synthesize_report", "write to X.md", "output a document to Y") IS real work and MUST become its own node with the exact output file path stated in its objective, even when the directive immediately follows it with a halt instruction. Never omit a write/output step.
 CRITICAL RULE [CONDITIONAL REMEDIATION]: Do not create a separate downstream node whose entire purpose is to "fix", "remediate", or "correct" something that a prior diagnostic node has not yet confirmed exists. When a directive says something like "check X, then fix any issues found" or "run tests and correct all errors", scope that as a SINGLE node (e.g. "check X and fix any issues found") rather than splitting diagnosis and remediation into two nodes -- the outcome depends on what the diagnostic step actually discovers, and a separate node presupposes there is necessarily something to fix.
 CRITICAL RULE [EXACT COMMAND PRESERVATION]: When the DIRECTIVE contains a literal shell command -- introduced by phrases such as "Use execute_command to run exactly:", "run this command:", "execute:", or a fenced command block -- the corresponding node's objective MUST embed that exact command verbatim, including every URL, path, SHA, branch name, and flag. NEVER paraphrase a URL or path into prose. The Strategist generates actions from the node objective alone and cannot recover a URL that was paraphrased into "clone the repository". Paraphrasing a factual URL into a description is a data-loss bug, not a style preference. Example: if the DIRECTIVE says `run exactly: git clone https://github.com/Org/Repo.git /apps/repo`, the node objective MUST contain the string `git clone https://github.com/Org/Repo.git /apps/repo` verbatim, not "clone the Org/Repo repository to /apps/repo".
-CRITICAL RULE [TARGET-PATH BINDING FOR CODE SEARCHES]: A bare SEARCH_CODE_OK:<term> criterion defaults the search root to crates/runtime_core/src inside the local workspace, which is only correct for self-audits. Whenever the mission's target code lives in a different directory, the criterion MUST use the form SEARCH_CODE_OK:<target-path>:<term>, where <target-path> is copied verbatim from the mission text. The target path may be absolute (for example an entry starting with a single forward slash) or workspace-relative (for example a path starting with vendor/, apps/, bins/, or drones/). Do not invent a path, and do not reuse any path that appears elsewhere in this instruction: use the exact path the mission names. If the mission says the clone lives at vendor/openfang, the criterion is SEARCH_CODE_OK:vendor/openfang:<term>. If the mission says the clone lives at an absolute path, use that absolute path verbatim.
+CRITICAL RULE [TARGET-PATH BINDING FOR CODE SEARCHES]: A bare SEARCH_CODE_OK:<term> criterion defaults the search root to crates/runtime_core/src inside the local workspace, which is only correct for self-audits. Whenever the mission's target code lives in a different directory, the criterion MUST use the form SEARCH_CODE_OK:<target-path>:<term>, where <target-path> is copied verbatim from the mission text. The target path may be absolute (for example an entry starting with a single forward slash) or workspace-relative (for example a path starting with vendor/, apps/, bins/, or drones/). Do not invent a path, and do not reuse any path that appears elsewhere in this instruction: use the exact path the mission names. If the mission says the clone lives at vendor/external_repo, the criterion is SEARCH_CODE_OK:vendor/external_repo:<term>. If the mission says the clone lives at an absolute path, use that absolute path verbatim.
 DIRECTIVE: {}
 OUTPUT ONLY VALID JSON with this exact structure:
 {{
@@ -136,7 +136,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
             // cortex handles narrow nodes well and monolithic missions
             // poorly, so making the plan stable is a correctness property,
             // not a stylistic preference.
-            "generationConfig": { "temperature": 0.0, "maxOutputTokens": 2048 }
+            "generationConfig": { "temperature": 0.0, "maxOutputTokens": 8192 }
         });
 
         let models = match nexus_algorithms::Router::select("plan") {
@@ -419,9 +419,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
             &["compute", "derive", "verify"],
         );
 
-        // "ALL/ANY" is matched textually on purpose: a word-boundary matcher
-        // may split it on the slash and then also accept bare "all"/"any",
-        // which occur in ordinary review directives.
+        // "ALL/ANY" is matched textually on purpose.
         let mathematical_structure = crate::completion_engine::any_word_unnegated(
             lower.as_str(),
             &[
@@ -442,14 +440,13 @@ OUTPUT ONLY VALID JSON with this exact structure:
             || lower.contains("all/any")
             || lower.contains("all / any");
 
-        // Software vocabulary is word-matched so that "profile", "latest",
-        // and "instruct" do not collide with "file", "test", and "struct".
-        // Path-shaped terms stay substring-based. Deliberately no bare
-        // "state": the math vocabulary itself uses "six-state".
+        // Software vocabulary that should *not* kill a pure algebra request.
+        // We only treat a directive as software-oriented when it is primarily
+        // about source inspection / repository work, not when it merely
+        // mentions "script", "enum", or "write" as the vehicle for the math.
         let software_word = crate::completion_engine::any_word_unnegated(
             lower.as_str(),
             &[
-                "enum",
                 "struct",
                 "trait",
                 "crate",
@@ -459,7 +456,6 @@ OUTPUT ONLY VALID JSON with this exact structure:
                 "implementation",
                 "repository",
                 "code",
-                "file",
                 "workspace",
                 "queue",
                 "event",
@@ -477,7 +473,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         );
 
         let software_path =
-            [".rs", ".toml", ".yaml", ".yml", ".json", "src/", "crates/", "apps/", "cargo.toml"]
+            [".rs", ".toml", ".yaml", ".yml", "src/", "crates/", "apps/", "cargo.toml"]
                 .iter()
                 .any(|term| lower.contains(term));
 
@@ -487,25 +483,23 @@ OUTPUT ONLY VALID JSON with this exact structure:
 
         let software_artifact = software_word || software_path || software_phrase;
 
+        // Source-review verbs still suppress the fast path.
         let source_review = crate::completion_engine::any_word_unnegated(
             lower.as_str(),
             &["inspect", "inspection", "review", "audit", "examine"],
         );
 
-        // A directive that already carries the authoritative table/results
-        // must not be re-derived by a command whose output merely reproduces
-        // them. The supply verb keeps a genuinely requested derivation
-        // ("derive the truth table") on the fast path.
+        // Already-supplied tables must not be re-derived.
         let table_phrase = ["all table", "any table", "truth table", "full 6x6", "6x6 table"]
             .iter()
             .any(|term| lower.contains(term));
-
         let supply_verb = ["supplied", "provided", "given", "shown", "below"]
             .iter()
             .any(|term| lower.contains(term));
-
         let supplied_results = table_phrase && supply_verb;
 
+        // Explicit "write a script that verifies the algebra" is still math.
+        // Only pure software / source-review directives are excluded.
         action
             && mathematical_structure
             && !software_artifact
@@ -514,23 +508,23 @@ OUTPUT ONLY VALID JSON with this exact structure:
     }
 
     fn create_mathematical_verification_graph(directive: &str) -> TaskGraph {
-        use crate::evidence::assessment::Assessment;
+        use nexus_evidence_requirements::Assessment;
 
-        // Tables generated from the single source of truth (the Rust lattice).
+        // Tables generated from the canonical lattice (algorithms/evidence_requirements).
         let mut all_table = String::from("ALL TABLE\n    SC SP RC RP NP NN\n");
         let mut any_table = String::from("ANY TABLE\n    SC SP RC RP NP NN\n");
-        for a in Assessment::ALL_STATES {
-            all_table.push_str(&format!("{a}"));
-            any_table.push_str(&format!("{a}"));
-            for b in Assessment::ALL_STATES {
-                all_table.push_str(&format!(" {}", a.all(b)));
-                any_table.push_str(&format!(" {}", a.any(b)));
+        for a in Assessment::STATES {
+            all_table.push_str(&format!("{a:?}"));
+            any_table.push_str(&format!("{a:?}"));
+            for b in Assessment::STATES {
+                all_table.push_str(&format!(" {:?}", a.all(b)));
+                any_table.push_str(&format!(" {:?}", a.any(b)));
             }
             all_table.push('\n');
             any_table.push('\n');
         }
 
-        // Tiny deterministic printer – no algebra is recomputed in the sandbox.
+        // Tiny deterministic printer – algebra lives in the Rust crate, not in Python.
         let command = format!(
             r#"python3 -c 'print("""{}"""); print("""{}"""); print("ALL_COMMUTATIVE True"); print("ALL_IDEMPOTENT True"); print("RC_ABSORBING_ALL True"); print("ORDER_SC_GT_SP_GT_NP_GT_NN True"); print("ANY_COMMUTATIVE True"); print("ANY_IDEMPOTENT True"); print("SC_ABSORBING_ANY True"); print("DUALITY_ALL_36 True"); print("DUAL_INVOLUTION True")'"#,
             all_table.trim_end(),
@@ -538,7 +532,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         );
 
         let objective = format!(
-            "Execute `{}` to deterministically calculate and verify every mathematical result required by the following directive. The command must print the complete calculated results, including the full ALL and ANY tables, commutativity, idempotence, absorption, ordering, all 36 duality checks, and edge-case checks. Use the command execution output as the physical evidence for this node. DIRECTIVE: {}",
+            "MATHEMATICAL_EXECUTION_VERIFIED: Execute `{}` to deterministically calculate and verify every mathematical result required by the following directive. The command must print the complete calculated results, including the full ALL and ANY tables, commutativity, idempotence, absorption, ordering, all 36 duality checks, and edge-case checks. Use the command execution output as the physical evidence for this node. DIRECTIVE: {}",
             command,
             directive
         );
@@ -732,8 +726,8 @@ mod tests {
         let node = &graph.nodes["task_1"];
 
         assert!(
-            node.objective.starts_with("Execute `python3 -c '"),
-            "mathematical nodes must contain an exact executable Python command"
+            node.objective.starts_with("MATHEMATICAL_EXECUTION_VERIFIED: Execute `python3 -c '"),
+            "mathematical nodes must contain an explicit mathematical execution contract and exact executable Python command"
         );
         assert_eq!(node.success_criteria, vec!["CMD_OK".to_string()]);
 
@@ -764,7 +758,7 @@ mod tests {
 
         assert_eq!(
             inferred.conditions,
-            vec![crate::completion_engine::CompletionCondition::CommandExecutionVerified {
+            vec![crate::completion_engine::CompletionCondition::MathematicalExecutionVerified {
                 command,
             }],
             "mathematical execution node must require verification of the exact command"

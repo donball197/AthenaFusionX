@@ -235,7 +235,7 @@ async fn execute_physical(Json(action): Json<AgentAction>) -> impl IntoResponse 
         nexus_runtime_core::agent_protocol::AgentAction::SearchMemory { query, .. } => {
             nexus_runtime_core::motor_cortex::MotorAction::SearchMemory { query }
         }
-        nexus_runtime_core::agent_protocol::AgentAction::Halt { reasoning } => {
+        nexus_runtime_core::agent_protocol::AgentAction::Halt { reasoning, .. } => {
             nexus_runtime_core::motor_cortex::MotorAction::Halt { reasoning }
         }
         _ => nexus_runtime_core::motor_cortex::MotorAction::Halt {

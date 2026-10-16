@@ -192,6 +192,7 @@ mod tests {
     fn run_tests_is_rejected_under_read_only() {
         let action = AgentAction::RunTests {
             test_target: "runtime_core".to_string(),
+            _thought_process: None,
             reasoning: "verify implementation".to_string(),
         };
 

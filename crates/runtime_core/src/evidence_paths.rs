@@ -171,8 +171,8 @@ mod tests {
     #[test]
     fn equivalence_bridges_only_abs_vs_relative() {
         assert!(paths_equivalent(
-            "/root/AthenaFusionX/vendor/openfang/Cargo.toml",
-            "vendor/openfang/Cargo.toml"
+            "/root/AthenaFusionX/vendor/external_repo/Cargo.toml",
+            "vendor/external_repo/Cargo.toml"
         ));
         assert!(paths_equivalent("./vendor/a.rs", "vendor/a.rs"));
         assert!(paths_equivalent("/root/x/a.rs", "/root/x/a.rs"));

@@ -11,18 +11,21 @@ fn patch_function_key_is_body_sensitive() {
         path: "apps/math_utils/src/lib.rs".into(),
         function_name: "add".into(),
         new_body: "pub fn add(a: i32, b: i32) -> i32 { a + b }".into(),
+        _thought_process: None,
         reasoning: "first".into(),
     };
     let same_body = AgentAction::PatchFunction {
         path: "apps/math_utils/src/lib.rs".into(),
         function_name: "add".into(),
         new_body: "pub fn add(a: i32, b: i32) -> i32 { a + b }".into(),
+        _thought_process: None,
         reasoning: "retry with different reasoning".into(),
     };
     let diff_body = AgentAction::PatchFunction {
         path: "apps/math_utils/src/lib.rs".into(),
         function_name: "add".into(),
         new_body: "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}".into(),
+        _thought_process: None,
         reasoning: "first".into(),
     };
 
@@ -49,6 +52,7 @@ async fn classify_patch_action_detects_real_mutation() {
         path: path.to_string_lossy().into_owned(),
         function_name: "add".into(),
         new_body: "pub fn add(a: i32, b: i32) -> i32 { a + b }".into(),
+        _thought_process: None,
         reasoning: "test".into(),
     };
 
@@ -74,6 +78,7 @@ async fn classify_patch_action_detects_idempotent_body() {
         path: path.to_string_lossy().into_owned(),
         function_name: "add".into(),
         new_body: "pub fn add(a: i32, b: i32) -> i32 { a + b }".into(),
+        _thought_process: None,
         reasoning: "test".into(),
     };
 
@@ -89,7 +94,7 @@ async fn classify_patch_action_detects_idempotent_body() {
 
 #[tokio::test]
 async fn classify_patch_action_ignores_non_patch_actions() {
-    let action = AgentAction::ReadFile { path: "whatever.rs".into(), reasoning: "test".into() };
+    let action = AgentAction::ReadFile { path: "whatever.rs".into(), _thought_process: None, reasoning: "test".into() };
     assert!(matches!(
         super::classify_patch_action(&action).await.unwrap(),
         super::PatchClass::NotPatch
@@ -104,11 +109,13 @@ fn search_memory_strategy_requires_matching_search_memory_action() {
 
     let matching = AgentAction::SearchMemory {
         query: query.to_string(),
+        _thought_process: None,
         reasoning: "regression test".to_string(),
     };
 
     let wrong_action = AgentAction::ReadFile {
         path: query.to_string(),
+        _thought_process: None,
         reasoning: "regression test".to_string(),
     };
 
@@ -146,8 +153,8 @@ fn read_only_contract_never_enters_write_phase() {
     let contract =
         crate::completion_engine::SubgoalCompletionEngine::infer_contract("t", mission);
 
-    let unwritten: Vec<&str> =
-        contract.required_artifact_paths.iter().map(|a| a.path.as_str()).collect();
+    let unwritten: Vec<String> =
+        contract.required_artifact_paths.iter().map(|a| a.path.clone()).collect();
 
     assert!(!CorticalLoop::write_phase_ready(&contract, &unwritten, true));
 }

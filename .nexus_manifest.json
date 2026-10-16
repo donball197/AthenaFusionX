@@ -193,6 +193,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-4-argon",
+    "context": "1.0M in / 32.8K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-flash-latest",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
@@ -202,6 +208,12 @@
     "name": "gemini-flash-lite-latest",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-nano-banana-2.1",
+    "context": "65.5K in / 65.5K out",
+    "category": "GENERAL"
   },
   {
     "provider": "Google",
@@ -481,12 +493,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "moonshotai/kimi-k3",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nv-mistralai/mistral-nemo-12b-instruct",
     "context": "32K in / 4K out",
     "category": "MISTRAL"
@@ -619,6 +625,12 @@
   },
   {
     "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+    "context": "4K in / 4K out",
+    "category": "VISION"
+  },
+  {
+    "provider": "Nvidia",
     "name": "nvidia/nemotron-4-340b-instruct",
     "context": "128K in / 4K out",
     "category": "NEMOTRON"
@@ -673,12 +685,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/riva-translate-4b-instruct-v1.1",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/riva-translate-4b-instruct-v2",
     "context": "Unknown",
     "category": "GENERAL"
@@ -706,6 +712,12 @@
     "name": "snowflake/arctic-embed-l",
     "context": "8K in / N/A",
     "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "stepfun-ai/step-5-preview",
+    "context": "Unknown",
+    "category": "GENERAL"
   },
   {
     "provider": "Nvidia",

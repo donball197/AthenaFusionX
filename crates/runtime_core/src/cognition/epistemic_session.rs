@@ -148,6 +148,13 @@ pub struct EpistemicSession {
     pub best_hypothesis_id: Option<Uuid>,
     pub consecutive_mutation_vetoes: u32,
     pub tuples: Vec<EpistemicTuple>,
+    #[serde(skip)]
+    pub coverage: crate::coverage::CoverageLedger,
+    /// Action identities for the exact proposal batch most recently rejected
+    /// by the critic. This is transient control state; local_evidence remains
+    /// the historical record of the veto.
+    #[serde(skip)]
+    pub last_critic_rejected_actions: Option<Vec<String>>,
 }
 
 impl EpistemicSession {
@@ -159,6 +166,7 @@ impl EpistemicSession {
             budget: CognitiveBudget::default_for_node(),
             graph: CognitiveGraph::new(),
             local_evidence: String::new(),
+            coverage: crate::coverage::CoverageLedger::default(),
             executed_actions: HashMap::new(),
             global_action_attempts: HashMap::new(),
             compile_remediation: crate::compile_remediation::CompileRemediationState::default(),
@@ -167,6 +175,7 @@ impl EpistemicSession {
             best_hypothesis_id: None,
             consecutive_mutation_vetoes: 0,
             tuples: Vec::new(),
+            last_critic_rejected_actions: None,
         }
     }
 
@@ -186,6 +195,7 @@ impl EpistemicSession {
 
                 self.local_evidence.push_str(&distilled_prop);
                 self.local_evidence.push('\n');
+                self.coverage.ingest(&self.local_evidence); // idempotent
 
                 if let Some(h_id) = self.best_hypothesis_id {
                     let obs_id =

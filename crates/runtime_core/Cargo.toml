@@ -25,8 +25,8 @@ tree-sitter = "0.23"
 tree-sitter-rust = "0.23"
 bitflags = "2.4"
 sysinfo = { workspace = true }
-wasmtime = { version = "45.0.2", features = ["component-model"] }
-wasmtime-wasi = { version = "45.0.2" }
+wasmtime = "48.0.4"
+wasmtime-wasi = "48.0.4"
 
 nexus_substrate = { path = "../nexus_substrate" }
 nexus_model_hub = { path = "../nexus_model_hub" }

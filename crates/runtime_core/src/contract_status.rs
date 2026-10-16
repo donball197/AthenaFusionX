@@ -12,15 +12,11 @@ pub struct ContractEvaluator;
 
 impl ContractEvaluator {
     pub fn evaluate(
-        is_mutation_task: bool,
-        is_write_task: bool,
+        contract: &crate::completion_engine::SubgoalContract,
         local_evidence: &str,
         current_belief: f32,
-        mission: &str,
     ) -> ContractStatus {
-        let mission_contract =
-            crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", mission);
-        let missing: Vec<&str> = mission_contract
+        let missing: Vec<&str> = contract
             .required_artifact_paths
             .iter()
             .map(|a| a.path.as_str())
@@ -38,7 +34,7 @@ impl ContractEvaluator {
         // IMPORTANT: An artifact write proves only that the mutation/write action
         // succeeded. It does NOT prove that the enclosing objective is satisfied.
         // Compound objectives must continue through their full evidence contract.
-        if (is_mutation_task || is_write_task) && !has_mutation {
+        if contract.is_mutation_task && !has_mutation {
             return if has_recon {
                 ContractStatus::PartialEvidence
             } else {
@@ -53,7 +49,7 @@ impl ContractEvaluator {
         // short-circuit the classification.
         let contract_satisfied = missing.is_empty()
             && crate::completion_engine::SubgoalCompletionEngine::evaluate(
-                &mission_contract,
+                contract,
                 local_evidence,
                 current_belief,
             );

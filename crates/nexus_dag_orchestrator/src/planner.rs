@@ -16,7 +16,20 @@ pub struct DagPlanner;
 impl DagPlanner {
     fn resolve_provider() -> (String, String, String) {
         let model = env::var("NEXUS_PLANNER_MODEL").unwrap_or_else(|_| "nexus".to_string());
-        if let Ok(gateway) = env::var("NEXUS_API_GATEWAY") {
+        if model.to_ascii_lowercase().starts_with("beam")
+            || model.to_ascii_lowercase().contains("reflection")
+        {
+            let base = env::var("REFLECTION_BASE_URL")
+                .unwrap_or_else(|_| "https://api.reflection.ai/openai/v1".to_string());
+            let clean = base.trim_end_matches('/');
+            let endpoint = if clean.ends_with("/chat/completions") {
+                clean.to_string()
+            } else {
+                format!("{}/chat/completions", clean)
+            };
+            let api_key = env::var("REFLECTION_API_KEY").unwrap_or_default();
+            (endpoint, api_key, model)
+        } else if let Ok(gateway) = env::var("NEXUS_API_GATEWAY") {
             let api_key = env::var("NEXUS_API_KEY").unwrap_or_else(|_| "local-node".to_string());
             let endpoint = format!("{}/v1/chat/completions", gateway.trim_end_matches("/"));
             (endpoint, api_key, model)

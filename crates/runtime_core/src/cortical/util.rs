@@ -87,7 +87,16 @@ pub(crate) fn extract_explicit_search_memory_query(mission: &str) -> Option<Stri
 /// True only for prose-only proposals that mention "halt". Typed JSON
 /// proposals (containing a "type" field) that failed validation return false.
 pub(crate) fn should_synthesize_halt(raw: &str) -> bool {
-    raw.trim().to_lowercase().contains("halt") && !raw.contains("\"type\"")
+    let t = raw.trim();
+    // JSON-shaped output (even malformed) is a parse fault, never prose: the caller must fall
+    // through to parse-fault recovery. A halt-shaped object like {"halt": true, ...} used to
+    // become a 28-char synthetic halt that discarded the model's real report.
+    let json_shaped = t.starts_with('{')
+        || t.starts_with('[')
+        || t.contains("```")
+        || t.contains("{\"")
+        || t.contains("[{");
+    t.to_lowercase().contains("halt") && !t.contains("\"type\"") && !json_shaped
 }
 
 #[cfg(test)]
@@ -128,5 +137,22 @@ mod compress_tests {
         // 4-byte chars and mixed widths
         let _ = compress_context(&"😀".repeat(100), 51);
         let _ = compress_context(&format!("{}{}", "a".repeat(30), "日本語".repeat(40)), 37);
+    }
+}
+
+
+#[cfg(test)]
+mod synth_halt_tests {
+    use super::should_synthesize_halt;
+
+    #[test]
+    fn json_shaped_proposals_never_synthesize() {
+        assert!(!should_synthesize_halt(r#"{"halt": true, "reasoning": "done"}"#));
+        assert!(!should_synthesize_halt("[{\"action\": \"x\", \"reasoning\": \"before halting\"}]"));
+    }
+
+    #[test]
+    fn prose_halt_still_synthesizes() {
+        assert!(should_synthesize_halt("The task is complete, I will halt."));
     }
 }

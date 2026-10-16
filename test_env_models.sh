@@ -33,11 +33,19 @@ set +a
 
 NVIDIA_URL="${NVIDIA_ENDPOINT:-https://integrate.api.nvidia.com/v1/chat/completions}"
 GOOGLE_URL="${GOOGLE_ENDPOINT:-https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}"
+REFLECTION_BASE="${REFLECTION_BASE_URL:-https://api.reflection.ai/openai/v1}"
+REFLECTION_BASE="${REFLECTION_BASE%/}"
+if [[ "$REFLECTION_BASE" == */chat/completions ]]; then
+    REFLECTION_URL="$REFLECTION_BASE"
+else
+    REFLECTION_URL="${REFLECTION_BASE}/chat/completions"
+fi
 EDGE_GW="${OPENAI_BASE_URL:-${NEXUS_API_GATEWAY:-http://192.168.4.223:9379/v1}}"
 EMBED_URL="${NEXUS_EMBEDDING_URL:-http://127.0.0.1:9380/v1/embeddings}"
 
 NVIDIA_TIMEOUT="${NEXUS_NVIDIA_PREFLIGHT_TIMEOUT:-60}"
 GOOGLE_TIMEOUT="${NEXUS_GOOGLE_PREFLIGHT_TIMEOUT:-35}"
+REFLECTION_TIMEOUT="${NEXUS_REFLECTION_PREFLIGHT_TIMEOUT:-60}"
 EDGE_TIMEOUT="${NEXUS_EDGE_PREFLIGHT_TIMEOUT:-60}"
 EMBED_TIMEOUT="${NEXUS_EMBED_PREFLIGHT_TIMEOUT:-15}"
 
@@ -62,9 +70,16 @@ else
     echo -e "  GOOGLE/GEMINI KEY : ${YELLOW}NOT SET${NC}"
 fi
 
-echo "  NVIDIA endpoint : ${NVIDIA_URL}"
-echo "  Google endpoint : ${GOOGLE_URL}"
-echo "  Edge gateway    : ${EDGE_GW}"
+if [ -n "${REFLECTION_API_KEY:-}" ]; then
+    echo "  REFLECTION_API_KEY : SET"
+else
+    echo -e "  REFLECTION_API_KEY : ${YELLOW}NOT SET${NC}"
+fi
+
+echo "  NVIDIA endpoint     : ${NVIDIA_URL}"
+echo "  Google endpoint     : ${GOOGLE_URL}"
+echo "  Reflection endpoint : ${REFLECTION_URL}"
+echo "  Edge gateway        : ${EDGE_GW}"
 echo "  Embed endpoint  : ${EMBED_URL}"
 
 # --------------------------------------------------
@@ -126,6 +141,13 @@ resolve_provider() {
         return
     fi
 
+    # Beam/Reflection must be classified before the NVIDIA fallback.
+    if [[ "$model_lower" == *"beam"* ||
+          "$model_lower" == *"reflection"* ]]; then
+        echo "reflection"
+        return
+    fi
+
     if [[ "$model_lower" == *"gemini"* ]]; then
         echo "google"
         return
@@ -156,8 +178,9 @@ resolve_provider() {
 provider_name() {
     case "$1" in
         nvidia) echo "NVIDIA NIM Cloud" ;;
-        google) echo "Google Cloud API" ;;
-        edge)   echo "Local S23 LiteRT-LM (Edge)" ;;
+        google)     echo "Google Cloud API" ;;
+        reflection) echo "Reflection Cloud API" ;;
+        edge)       echo "Local S23 LiteRT-LM (Edge)" ;;
         *)      echo "Unknown" ;;
     esac
 }
@@ -165,7 +188,8 @@ provider_name() {
 provider_url() {
     case "$1" in
         nvidia) echo "$NVIDIA_URL" ;;
-        google) echo "$GOOGLE_URL" ;;
+        google)     echo "$GOOGLE_URL" ;;
+        reflection) echo "$REFLECTION_URL" ;;
         edge)
             local clean="${EDGE_GW%/}"
             if [[ "$clean" == */chat/completions ]]; then
@@ -181,8 +205,9 @@ provider_url() {
 provider_key() {
     case "$1" in
         nvidia) echo "${NVIDIA_API_KEY:-}" ;;
-        google) echo "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ;;
-        edge)   echo "${OPENAI_API_KEY:-local-s23-device}" ;;
+        google)     echo "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ;;
+        reflection) echo "${REFLECTION_API_KEY:-}" ;;
+        edge)       echo "${OPENAI_API_KEY:-local-s23-device}" ;;
         *)      echo "" ;;
     esac
 }
@@ -190,8 +215,9 @@ provider_key() {
 provider_timeout() {
     case "$1" in
         nvidia) echo "$NVIDIA_TIMEOUT" ;;
-        google) echo "$GOOGLE_TIMEOUT" ;;
-        edge)   echo "$EDGE_TIMEOUT" ;;
+        google)     echo "$GOOGLE_TIMEOUT" ;;
+        reflection) echo "$REFLECTION_TIMEOUT" ;;
+        edge)       echo "$EDGE_TIMEOUT" ;;
         *)      echo 30 ;;
     esac
 }
@@ -315,7 +341,7 @@ import sys
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
         d = json.load(f)
-    value = d["choices"][0]["message"].get("content")
+    value = d["choices"][0]["message"].get("content") or d["choices"][0]["message"].get("reasoning_content", "")
     print(value.replace("\n", " ") if value else "")
 except Exception:
     pass

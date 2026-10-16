@@ -125,7 +125,8 @@ pub(crate) fn action_advances_unmet_contract_condition(
             CC::CommandMarkerAcquired => {
                 matches!(action, AgentAction::ExecuteCommand { .. })
             }
-            CC::CommandExecutionVerified { .. } => {
+            CC::CommandExecutionVerified { .. }
+            | CC::MathematicalExecutionVerified { .. } => {
                 matches!(action, AgentAction::ExecuteCommand { .. })
             }
             CC::ReadFunctionMarkerAcquired { .. } => {

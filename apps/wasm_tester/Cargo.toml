@@ -7,7 +7,7 @@ version = "0.1.0"
 [dependencies]
 nexus_runtime_core = { path = "../../crates/runtime_core" }
 tokio = { version = "1", features = ["full"] }
-wasmtime = "45.0.2"
+wasmtime = "48.0.4"
 
 
 

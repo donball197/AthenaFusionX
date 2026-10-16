@@ -239,10 +239,13 @@ pub async fn send_task(
                             .to_string(),
                         );
 
-                        let lesson_text = format!(
+                        let lesson_text: String = format!(
                             "[VERIFIED_SUCCESS_LESSON] Objective: {} | {}",
                             node.objective, lesson
-                        );
+                        )
+                        .chars()
+                        .take(4000)
+                        .collect();
 
                         let emb = nexus_substrate::vector_bridge::get_embedding(
                             &ctx.api_key,

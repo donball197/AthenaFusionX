@@ -24,7 +24,7 @@ impl GraphOfThoughts {
 
         let payload = json!({
             "contents": [{ "role": "user", "parts": [{ "text": prompt }] }],
-            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 1024 }
+            "generationConfig": { "temperature": 0.1, "maxOutputTokens": 8192 }
         });
 
         // ⚡ MODEL CASCADE: Try Heavy Reasoning first, fallback to Fast/Stable

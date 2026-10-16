@@ -45,6 +45,24 @@ pub fn resolve_provider(model_name: &str) -> ProviderResolved {
         };
     }
 
+    // Reflection Beam: explicit model selection.
+    if model.starts_with("beam") || model.contains("reflection") {
+        let base = env::var("REFLECTION_BASE_URL")
+            .unwrap_or_else(|_| "https://api.reflection.ai/openai/v1".to_string());
+        let clean = base.trim_end_matches('/');
+        let endpoint = if clean.ends_with("/chat/completions") {
+            clean.to_string()
+        } else {
+            format!("{}/chat/completions", clean)
+        };
+        return ProviderResolved {
+            endpoint,
+            api_key: env::var("REFLECTION_API_KEY").unwrap_or_default(),
+            auth: AuthStyle::Bearer,
+            provider_name: "reflection",
+        };
+    }
+
     // 2. Google Cloud
     if model.contains("gemini")
         || model.contains("lyria")
