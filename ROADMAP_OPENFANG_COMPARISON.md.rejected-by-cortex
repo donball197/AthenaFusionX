@@ -1,9 +1,0 @@
-```json
-[
-  {
-    "type": "execute_command",
-    "command": "git clone https://github.com/RightNow-AI/openfang.git /apps/openfang",
-    "reasoning": "Cloning the OpenFang repository to the /apps/openfang directory as the first step in the architectural audit process."
-  }
-]
-```
