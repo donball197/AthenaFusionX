@@ -121,8 +121,11 @@ impl EpistemicEngine {
                             "model": model_endpoint,
                             "messages": [{"role": "user", "content": text}],
                             "max_tokens": requested_max_tokens,
-                            "temperature": 0.0
+                            "temperature": (match retries { 0 => 0.0_f64, 1 => 0.3, 2 => 0.6, _ => 0.8 })
                         });
+                        if model_endpoint.contains("Beam") && retries >= 1 {
+                            p["reasoning_effort"] = serde_json::json!("low");
+                        }
 
                         if let Some(funcs) = payload
                             .pointer("/tools/0/functionDeclarations")
@@ -337,13 +340,37 @@ impl EpistemicEngine {
                         {
                             final_text = content.to_string();
                         }
+                        // Forced tool_choice returns the action in tool_calls with content null.
                         if final_text.trim().is_empty() {
-                            if let Some(rc) = body
-                                .pointer("/choices/0/message/reasoning_content")
-                                .and_then(|v| v.as_str())
+                            if let Some(calls) = body
+                                .pointer("/choices/0/message/tool_calls")
+                                .and_then(|v| v.as_array())
                             {
-                                final_text = rc.to_string();
+                                let actions: Vec<Value> = calls
+                                    .iter()
+                                    .filter_map(|c| {
+                                        let name = c.pointer("/function/name")?.as_str()?;
+                                        let args_str = c.pointer("/function/arguments")?.as_str()?;
+                                        let mut args: Value = serde_json::from_str(args_str).ok()?;
+                                        args.as_object_mut()?
+                                            .insert("type".to_string(), Value::String(name.to_string()));
+                                        Some(args)
+                                    })
+                                    .collect();
+                                if !actions.is_empty() {
+                                    final_text = serde_json::to_string(&actions).unwrap_or_default();
+                                }
                             }
+                        }
+                        if final_text.trim().is_empty() {
+                            eprintln!(
+                                "[EMPTY_CONTENT] model={} finish_reason={} rc_len={} has_tool_calls={}",
+                                model_endpoint,
+                                body.pointer("/choices/0/finish_reason").and_then(|v| v.as_str()).unwrap_or("?"),
+                                body.pointer("/choices/0/message/reasoning_content")
+                                    .and_then(|v| v.as_str()).map(str::len).unwrap_or(0),
+                                body.pointer("/choices/0/message/tool_calls").is_some()
+                            );
                         }
                     }
                     _ => {}
@@ -383,7 +410,7 @@ impl EpistemicEngine {
 
                 if final_text.trim().is_empty() {
                     retries += 1;
-                    if retries > 4 {
+                    if retries > 2 {
                         break;
                     }
                     tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32) * 2)).await;
@@ -475,6 +502,16 @@ impl EpistemicEngine {
 
     pub(crate) fn compress_preserving_reads(evidence: &str, head: usize, tail: usize) -> String {
         const MAX_PINNED_REGION: usize = 30_000;
+        const MAX_PINNED_TOTAL: usize = 100_000;
+        let n_read_regions = evidence
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("[READ_OK]") || t.starts_with("[READ_CHUNK_OK]")
+            })
+            .count()
+            .max(1);
+        let per_region_cap = (MAX_PINNED_TOTAL / n_read_regions).clamp(3_000, MAX_PINNED_REGION);
 
         let starts_read_region = |line: &str| {
             let t = line.trim_start();
@@ -518,18 +555,18 @@ impl EpistemicEngine {
                 let mut region = String::new();
                 while i < lines.len() {
                     let cur = lines[i];
-                    if !region.is_empty() && ends_region(cur) {
+                    if !region.is_empty() && (ends_region(cur) || starts_read_region(cur)) {
                         break;
                     }
                     region.push_str(cur);
                     region.push('\n');
                     i += 1;
                 }
-                let pinned = if region.chars().count() > MAX_PINNED_REGION {
-                    let kept: String = region.chars().take(MAX_PINNED_REGION).collect();
+                let pinned = if region.chars().count() > per_region_cap {
+                    let kept: String = region.chars().take(per_region_cap).collect();
                     format!(
                         "{}\n[... READ BODY CAPPED AT {} CHARS IN JUDGE WINDOW ...]",
-                        kept, MAX_PINNED_REGION
+                        kept, per_region_cap
                     )
                 } else {
                     region.trim_end_matches('\n').to_string()
@@ -940,7 +977,7 @@ CRITICAL MULTI-PASS RULES FOR LARGE FILES (MANDATORY):
 4. Only after the above condition is met may you emit a halt / final_answer.
 5. Use chunks of up to 250 lines. Never re-read a range already present in the evidence.
 
-- COMPLETION PROTOCOL: When your analysis or recon is complete, DO NOT output markdown and DO NOT attempt to rewrite the file. You MUST output a JSON `halt` action and place your complete final explanation in the "reasoning" field. If the mission specifies an output format (for example ROOT_CAUSE / TRACE / FIX), the reasoning field MUST use exactly those labeled sections, each containing concrete findings with file and line references; never write only a statement that the analysis is complete.
+- COMPLETION PROTOCOL: When your analysis or recon is complete, DO NOT output markdown and DO NOT attempt to rewrite the file. You MUST output a JSON `halt` action and place your complete final explanation in the "reasoning" field. If the mission specifies an output format (for example ROOT_CAUSE / TRACE / FIX), the reasoning field MUST use exactly those labeled sections, each containing concrete findings with file and line references; never write only a statement that the analysis is complete. Wrap every function, struct and symbol name you cite in backticks. Wrap every function, struct and symbol name you cite in backticks.
 
 ORIGINAL DIRECTIVE: {}
 STRATEGY: {}
@@ -1264,7 +1301,16 @@ OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
         action: &str,
         evidence: &str,
     ) -> Result<CriticResponse> {
-        let truncated_evidence: String = Self::compress_preserving_reads(evidence, 1000, 1500);
+        let truncated_evidence: String = {
+            let n = evidence.chars().count();
+            if n <= 2500 {
+                evidence.to_string()
+            } else {
+                let head: String = evidence.chars().take(1000).collect();
+                let tail: String = evidence.chars().skip(n - 1500).collect();
+                format!("{}\n[... EVIDENCE ELIDED FOR EVALUATOR ...]\n{}", head, tail)
+            }
+        };
         let prompt = format!(
             r#"You are the Scientific Evaluator.
 STRATEGY: {}
@@ -1681,5 +1727,28 @@ NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced."#;
             strategies.iter().any(|s| s == "read_file:crates/runtime_core/src/cortical_loop.rs"),
             "read_file must still be present as a fallback"
         );
+    }
+}
+
+#[cfg(test)]
+mod batched_read_window_tests {
+    use super::EpistemicEngine;
+
+    #[test]
+    fn back_to_back_read_chunks_are_windowed_separately() {
+        let mut ev = String::new();
+        for i in 0..9 {
+            ev.push_str(&format!(
+                "[READ_CHUNK_OK] File: x.rs | Lines {}-{} of 900\nCONTENT:\nmarker_{}\n",
+                i * 100 + 1,
+                (i + 1) * 100,
+                i
+            ));
+            ev.push_str(&"line\n".repeat(8000));
+        }
+        let out = EpistemicEngine::compress_preserving_reads(&ev, 64, 64);
+        for i in 0..9 {
+            assert!(out.contains(&format!("marker_{}", i)), "chunk {} was dropped", i);
+        }
     }
 }

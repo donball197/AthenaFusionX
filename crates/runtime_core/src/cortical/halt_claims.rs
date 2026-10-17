@@ -52,6 +52,10 @@ pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
         } else {
             word_present(corpus, &format!("fn {}", name))
                 || corpus.contains(&format!("{}(", name))
+                // Variables, fields and string literals (e.g. `mutation_paths`,
+                // `python3`) are legitimate backticked claims; they only need to
+                // appear in the evidence. Invented names still fail.
+                || word_present(corpus, name)
         };
         if !found && !bad.iter().any(|b| b == name) {
             bad.push(name.to_string());
@@ -76,6 +80,16 @@ mod tests {
     fn accepts_real_symbols() {
         let r = "`ignite`, `handle_execute()`, `PatchClass::Mutation`";
         assert!(unverified_symbols(r, SRC).is_empty());
+    }
+
+    #[test]
+    fn accepts_variables_and_string_literals_present_in_source() {
+        let src = format!("{}let mut mutation_paths = Vec::new();\nCommand::new(\"python3\");\n", SRC);
+        assert!(unverified_symbols("`mutation_paths`, `python3`", &src).is_empty());
+        assert_eq!(
+            unverified_symbols("`never_defined_anywhere`", &src),
+            vec!["never_defined_anywhere"]
+        );
     }
 
     #[test]

@@ -1078,7 +1078,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             session.local_evidence.push('\n');
 
             if let Some(h_id) = session.best_hypothesis_id {
-                if let Some(new_belief) = session.graph.decay(h_id, 0.20) {
+                if let Some(new_belief) = session.graph.decay(h_id, 0.05) {
                     self.log(format!(
                         "\x1b[1;31m>> [PARSE_FAULT] Hypothesis belief decayed to {:.2} to force pivot\x1b[0m",
                         new_belief

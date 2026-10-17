@@ -274,13 +274,13 @@ payload = {
     "messages": [
         {"role": "user", "content": "Reply with exactly ONLINE"}
     ],
-    "max_tokens": 16,
+    "max_tokens": 512,
     "temperature": 0,
 }
 
 if provider == "nvidia" and model.lower().startswith("z-ai/"):
     payload["reasoning_effort"] = "low"
-    payload["max_tokens"] = 64
+    payload["max_tokens"] = 1024
 elif provider == "nvidia":
     payload["chat_template_kwargs"] = {
         "enable_thinking": False,
@@ -341,7 +341,7 @@ import sys
 try:
     with open(sys.argv[1], encoding="utf-8") as f:
         d = json.load(f)
-    value = d["choices"][0]["message"].get("content") or d["choices"][0]["message"].get("reasoning_content", "")
+    value = d["choices"][0]["message"].get("content") or ""
     print(value.replace("\n", " ") if value else "")
 except Exception:
     pass
