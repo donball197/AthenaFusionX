@@ -1,5 +1,281 @@
 [
   {
+    "provider": "Google",
+    "name": "antigravity-preview-05-2026",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "antigravity-preview-09-2026",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "antigravity-preview-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "deep-research-max-preview-04-2026",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "deep-research-preview-04-2026",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "deep-research-pro-preview-12-2025",
+    "context": "131.1K in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-computer-use-preview-10-2025",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash-image",
+    "context": "32.8K in / 32.8K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash-lite",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-flash-preview-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-pro",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-2.5-pro-preview-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3-flash-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3-pro-image",
+    "context": "131.1K in / 32.8K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3-pro-image-preview",
+    "context": "131.1K in / 32.8K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-image",
+    "context": "65.5K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-image-preview",
+    "context": "65.5K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-lite",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-lite-image",
+    "context": "65.5K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-lite-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-flash-tts-preview",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-pro-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.1-pro-preview-customtools",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.5-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.5-flash-lite",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.5-transcribe",
+    "context": "98.3K in / 32.8K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.6-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.7-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.8-flash",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.8-flash-lite-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-3.8-flash-tts",
+    "context": "8.2K in / 16.4K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-4-argon",
+    "context": "1.0M in / 32.8K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-flash-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-flash-lite-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-nano-banana-2.1",
+    "context": "65.5K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-omni-1.1-flash",
+    "context": "131.1K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-omni-flash-preview",
+    "context": "131.1K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-pro-latest",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-robotics-er-2-preview",
+    "context": "131.1K in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemma-4-26b-a4b-it",
+    "context": "262.1K in / 32.8K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Google",
+    "name": "gemma-4-31b-it",
+    "context": "262.1K in / 32.8K out",
+    "category": "GEMMA"
+  },
+  {
+    "provider": "Google",
+    "name": "lyria-3-clip-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "lyria-3-pro-preview",
+    "context": "1.0M in / 65.5K out",
+    "category": "PRO"
+  },
+  {
+    "provider": "Google",
+    "name": "lyria-3.5",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "nano-banana-pro-preview",
+    "context": "131.1K in / 32.8K out",
+    "category": "PRO"
+  },
+  {
     "provider": "Nvidia",
     "name": "01-ai/yi-large",
     "context": "32K in / 4K out",
