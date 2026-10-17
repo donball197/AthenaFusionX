@@ -501,8 +501,11 @@ impl EpistemicEngine {
     }
 
     pub(crate) fn compress_preserving_reads(evidence: &str, head: usize, tail: usize) -> String {
+        Self::compress_preserving_reads_budget(evidence, head, tail, 100_000)
+    }
+
+    pub(crate) fn compress_preserving_reads_budget(evidence: &str, head: usize, tail: usize, max_pinned_total: usize) -> String {
         const MAX_PINNED_REGION: usize = 30_000;
-        const MAX_PINNED_TOTAL: usize = 100_000;
         let n_read_regions = evidence
             .lines()
             .filter(|l| {
@@ -511,7 +514,7 @@ impl EpistemicEngine {
             })
             .count()
             .max(1);
-        let per_region_cap = (MAX_PINNED_TOTAL / n_read_regions).clamp(3_000, MAX_PINNED_REGION);
+        let per_region_cap = (max_pinned_total / n_read_regions).clamp(3_000, MAX_PINNED_REGION);
 
         let starts_read_region = |line: &str| {
             let t = line.trim_start();
@@ -1380,7 +1383,7 @@ OUTPUT ONLY VALID JSON:
         action: &str,
         evidence: &str,
     ) -> Result<crate::cognition_graph::VerificationReport> {
-        let truncated_evidence: String = Self::compress_preserving_reads(evidence, 3000, 11000);
+        let truncated_evidence: String = Self::compress_preserving_reads_budget(evidence, 3000, 11000, 200_000);
         // The halt text IS the claim source for read-only analysis halts; the
         // claim-check below must see the full claims. The old 2000-char cap
         // silently truncated ROOT_CAUSE/TRACE/FIX answers mid-claim, leaving
@@ -1749,6 +1752,27 @@ mod batched_read_window_tests {
         let out = EpistemicEngine::compress_preserving_reads(&ev, 64, 64);
         for i in 0..9 {
             assert!(out.contains(&format!("marker_{}", i)), "chunk {} was dropped", i);
+        }
+    }
+}
+
+#[cfg(test)]
+mod judge_budget_tests {
+    use super::EpistemicEngine;
+
+    #[test]
+    fn larger_budget_keeps_chunk_tails() {
+        let mut ev = String::new();
+        for i in 0..10 {
+            ev.push_str(&format!("[READ_CHUNK_OK] File: x.rs | Lines {}-{} of 4000\nCONTENT:\n", i * 400 + 1, (i + 1) * 400));
+            ev.push_str(&"line\n".repeat(3000));
+            ev.push_str(&format!("tail_marker_{}\n", i));
+        }
+        let small = EpistemicEngine::compress_preserving_reads(&ev, 64, 64);
+        let big = EpistemicEngine::compress_preserving_reads_budget(&ev, 64, 64, 200_000);
+        assert!(!small.contains("tail_marker_9"), "default budget should cap tails");
+        for i in 0..10 {
+            assert!(big.contains(&format!("tail_marker_{}", i)), "tail {} lost", i);
         }
     }
 }

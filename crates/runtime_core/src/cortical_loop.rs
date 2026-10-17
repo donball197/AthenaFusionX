@@ -988,6 +988,15 @@ impl CorticalLoop {
             }
         }
 
+        // Strip leaked chat-template control tokens (`<|end|><|start|>...`) from halt text.
+        for a in actions.iter_mut() {
+            if let AgentAction::Halt { reasoning, .. } = a {
+                if let Some(i) = reasoning.find("<|") {
+                    reasoning.truncate(i);
+                }
+            }
+        }
+
         if status == ContractStatus::Satisfied
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
