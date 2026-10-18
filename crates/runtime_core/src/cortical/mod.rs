@@ -12,3 +12,5 @@ pub(crate) mod patch_classification;
 pub(crate) mod compiler_reconciler;
 
 pub(crate) mod critic_filter;
+
+pub(crate) mod prompt_builder;
