@@ -43,3 +43,9 @@ fn direct_binary_form_is_unchanged() {
 fn non_ascii_objective_does_not_panic() {
     let _ = extract_required_command("Überprüfe das command: ls -la");
 }
+
+#[test]
+fn distant_directive_colon_is_not_a_command() {
+    let objective = "MATHEMATICAL_EXECUTION_VERIFIED: Execute `python3 -c 'print(1)'` to deterministically calculate and verify every mathematical result required by the following directive. The command must print the complete calculated results, including the full ALL and ANY tables, commutativity, idempotence, absorption, ordering, all 36 duality checks, and edge-case checks. Use the command execution output as the physical evidence for this node. DIRECTIVE: Verify the six-state ALL/ANY algebra.";
+    assert_eq!(extract_required_command(objective).as_deref(), Some("python3 -c 'print(1)'"));
+}

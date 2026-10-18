@@ -369,7 +369,13 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
         //    "run exactly this command: echo 'x' > f". Taken verbatim to end
         //    of line. Trailing prose would make evidence matching fail closed.
         let line = after.lines().next().unwrap_or("");
-        if let Some(colon) = line.find(':') {
+        if let Some(colon) = line.find(':').filter(|&c| {
+            // The colon must introduce the command in the same clause: close
+            // to the word "command", no sentence break, no backtick between.
+            // A distant colon ("... DIRECTIVE: <prose>") is not a command.
+            let between = &line[..c];
+            between.chars().count() <= 100 && !between.contains(". ") && !between.contains('`')
+        }) {
             let command = line[colon + 1..].trim();
             let starts_like_command = command
                 .chars()
