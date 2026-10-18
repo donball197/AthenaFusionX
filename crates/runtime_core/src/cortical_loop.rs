@@ -27,6 +27,7 @@ use crate::cortical::capability::capability_for;
 use crate::cortical::compiler_reconciler::CompilerVerificationOutcome;
 use crate::cortical::critic_filter::AntiLoopOutcome;
 use crate::cortical::prompt_builder::build_enhanced_mission;
+use crate::cortical::terminal_gate::TerminalGate;
 use crate::cortical::python_conformance::{python_conformance_defects, python_syntax_error};
 
 #[derive(Debug)]
@@ -416,39 +417,16 @@ impl CorticalLoop {
                 // Deterministic physical evidence is authoritative.
                 // Check the completion contract before allowing the cognitive
                 // budget guard to terminate an already-completed subgoal.
-                let deterministic_contract_satisfied =
-                    crate::completion_engine::SubgoalCompletionEngine::evaluate(
-                        &session.contract,
-                        &session.local_evidence,
-                        current_belief,
-                    );
+                let term_gate = TerminalGate::evaluate(&session, current_belief);
 
-                // An active compile-remediation episode means the source on
-                // disk is not proven to compile. Even if the static contract
-                // conditions are satisfied by historical evidence (for example
-                // by a [PATCH_FUNCTION_OK] marker that a subsequent compiler
-                // check invalidated), do not authorize completion while
-                // remediation is in flight. The state machine is reset only
-                // when a subsequent compile succeeds or a confirmed revert
-                // resolves the episode.
-                let compile_remediation_resolved = !session.compile_remediation.is_active();
-
-                if deterministic_contract_satisfied && !compile_remediation_resolved {
+                if term_gate.contract_satisfied && !term_gate.compile_remediation_resolved {
                     self.log(
                         "\x1b[1;33m>> [CORTEX] Contract satisfied by static evidence, but an unresolved compile failure is active. Continuing remediation.\x1b[0m"
                             .to_string(),
                     );
                 }
 
-                let requires_semantic_verification =
-                    crate::completion_engine::requires_semantic_verification(
-                        &session.contract.objective,
-                    );
-
-                if deterministic_contract_satisfied
-                    && compile_remediation_resolved
-                    && !requires_semantic_verification
-                {
+                if term_gate.is_autonomous_completion_satisfied() {
                     self.log(
                         "\x1b[1;36m>> [CORTEX TERMINAL] Physical success contract already satisfied. No additional cognitive turn required.\x1b[0m"
                             .to_string(),
