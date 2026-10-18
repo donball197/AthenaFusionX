@@ -1,5 +1,3 @@
-#![allow(clippy::too_many_arguments)]
-#![allow(unreachable_code)]
 use anyhow::Result;
 use nexus_substrate::episode::{EpisodeContext, RecallScope};
 use reqwest::Client;
@@ -36,6 +34,20 @@ pub enum CortexOutcome {
     TurnsExhausted { best_belief: f32, evidence: String },
 }
 
+struct CriticInput {
+    actions: Vec<AgentAction>,
+    proposal: String,
+    belief: f32,
+}
+
+struct EvaluationInput {
+    evidence: String,
+    executed_action: String,
+    belief: f32,
+    is_halt_action: bool,
+    mutation_path: Option<String>,
+}
+
 enum CortexState {
     Strategize,
     Critique {
@@ -50,7 +62,6 @@ enum CortexState {
     },
     Evaluate {
         evidence: String,
-        proposal: String,
         executed_action: String,
         belief: f32,
         is_halt_action: bool,
@@ -95,8 +106,7 @@ impl CorticalLoop {
         let mut all_succeeded = true;
 
         for path in &session.active_mutation_paths {
-            let quoted = format!("'{}'", path.replace('\'', "'\\''"));
-            if crate::podman::PodmanShield::execute(&format!("git checkout -- {}", quoted)).is_err()
+            if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path]).is_err()
             {
                 all_succeeded = false;
             }
@@ -526,9 +536,7 @@ impl CorticalLoop {
                         &mut session,
                         mission,
                         &world_context,
-                        actions,
-                        proposal,
-                        belief,
+                        CriticInput { actions, proposal, belief },
                     )
                     .await?
                 }
@@ -537,7 +545,6 @@ impl CorticalLoop {
                 }
                 CortexState::Evaluate {
                     evidence,
-                    proposal,
                     executed_action,
                     belief,
                     is_halt_action,
@@ -546,12 +553,13 @@ impl CorticalLoop {
                     self.handle_evaluate(
                         &mut session,
                         mission,
-                        evidence,
-                        proposal,
-                        executed_action,
-                        belief,
-                        is_halt_action,
-                        mutation_path,
+                        EvaluationInput {
+                            evidence,
+                            executed_action,
+                            belief,
+                            is_halt_action,
+                            mutation_path,
+                        },
                     )
                     .await?
                 }
@@ -805,9 +813,10 @@ impl CorticalLoop {
             && session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap()).is_none()
         {
             let strategy = "halt".to_string();
-            self.log(format!(
+            self.log(
                 "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Reconnaissance complete; forcing `halt` strategy for synthesis."
-            ));
+                    .to_string(),
+            );
             strategy
         } else {
             h_content.clone()
@@ -1133,10 +1142,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         session: &mut EpistemicSession,
         mission: &str,
         world_context: &str,
-        actions: Vec<AgentAction>,
-        proposal: String,
-        belief: f32,
+        input: CriticInput,
     ) -> Result<CortexState> {
+        let CriticInput { actions, proposal, belief } = input;
+
         let status = ContractEvaluator::evaluate(
             &session.contract,
             &session.local_evidence,
@@ -1203,7 +1212,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 // must not pass on length alone.
                 if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
                     let tail = reasoning.trim_end();
-                    if !tail.ends_with(|c: char| matches!(c, '.' | ')' | '!' | '`' | '"')) {
+                    if !tail.ends_with(['.', ')', '!', '`', '"']) {
                         defects.push(format!(
                             "report appears truncated (ends with {:?}); finish the final sentence",
                             tail.chars().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<String>()
@@ -1619,6 +1628,11 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             let intent = IntentContract::new(&proposal, belief);
             let capability = capability_for(&action);
 
+            // Candidate paths are scoped to this action. They are
+            // rolled back if the action is rejected or execution fails.
+            let mutation_paths_checkpoint = mutation_paths.len();
+            let rust_files_mutated_checkpoint = rust_files_mutated;
+
             if let AgentAction::AtomicPatch { _thought_process: None, patches, .. } = &action {
                 for p in patches {
                     mutation_paths.push(p.path.clone());
@@ -1680,13 +1694,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 }
             }
 
-            if matches!(action, AgentAction::Halt { _thought_process: None, .. }) {
-                last_is_halt = true;
-            }
-
             // Serialize the exact AgentAction before MotorCortex::translate()
             // consumes it. This is the authoritative action record that will
             // cross the execution/evaluation boundary.
+            let action_is_halt =
+                matches!(&action, AgentAction::Halt { _thought_process: None, .. });
+
             let executed_action_json = serde_json::to_string(&action)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize executed AgentAction: {}", e))?;
 
@@ -1714,6 +1727,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 MotorCortex::translate(&intent, None, action, capability, proposal.clone());
 
             if let Err(gate_err) = self.action_gate.approve(&motor_cmd) {
+                mutation_paths.truncate(mutation_paths_checkpoint);
+                rust_files_mutated = rust_files_mutated_checkpoint;
                 self.log(format!("\x1b[1;31m>> [ACTION GATE REJECTED]: {}\x1b[0m", gate_err));
                 if let Some(h_id) = session.best_hypothesis_id {
                     let obs_id = session.graph.add_node(
@@ -1749,15 +1764,19 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 )
                 .await
             {
-                Ok(ev) => ev,
+                Ok(ev) => {
+                    // The latest successfully executed action determines
+                    // whether this batch ended with a HALT action.
+                    last_is_halt = action_is_halt;
+                    ev
+                }
                 Err(e) => {
-                    // attempted_path was captured before `action` was moved
-                    // into MotorCortex::translate() above.
-                    // A rejected action wrote nothing: it must not reach the
-                    // post-mutation compile gate or the revert path.
-                    if let Some(p) = &attempted_path {
-                        mutation_paths.retain(|m| m != p);
-                    }
+                    // The executor did not confirm success. Discard this
+                    // action's candidate paths so they cannot independently
+                    // trigger compilation or become a revert target.
+                    mutation_paths.truncate(mutation_paths_checkpoint);
+                    rust_files_mutated = rust_files_mutated_checkpoint;
+
                     match &attempted_path {
                         Some(p) => format!("[ACTION FAILED] path={} OS rejected action: {}", p, e),
                         None => format!("[ACTION FAILED] OS rejected action: {}", e),
@@ -1819,7 +1838,16 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             let objective = session.contract.objective.clone();
             let mut failures: Vec<String> = Vec::new();
             for p in mutation_paths.iter().filter(|p| p.ends_with(".py")) {
-                let Ok(content) = tokio::fs::read_to_string(p).await else { continue };
+                let content = match tokio::fs::read_to_string(p).await {
+                    Ok(content) => content,
+                    Err(err) => {
+                        failures.push(format!(
+                            "`{}`: unable to read file for conformance verification: {}",
+                            p, err
+                        ));
+                        continue;
+                    }
+                };
                 let mut defects = python_conformance_defects(&objective, p, &content);
                 if let Some(err) = python_syntax_error(p).await {
                     defects.push(format!("syntax error: {}", err));
@@ -1834,10 +1862,42 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     failures.join(" | ")
                 );
                 self.log(format!("\x1b[1;31m>> [WRITE CONFORMANCE] {}\x1b[0m", message));
-                session.local_evidence.truncate(evidence_checkpoint);
+                // Invalidate the specific failed write(s) so completion
+                // conditions cannot treat them as satisfied. Unrelated
+                // evidence is preserved. The failure marker blocks HALT.
+                for fail in &failures {
+                    // failures entries look like `path`: defect details
+                    let path_part = fail.split(':').next().unwrap_or("").trim().trim_matches('`');
+                    if path_part.is_empty() {
+                        continue;
+                    }
+                    let mut kept = String::new();
+                    for line in session.local_evidence.lines() {
+                        let drop = line.contains("[WRITE_OK]") && line.contains(path_part);
+                        if !drop {
+                            kept.push_str(line);
+                            kept.push('\n');
+                        }
+                    }
+                    session.local_evidence = kept;
+                }
                 session.local_evidence.push_str(&message);
                 session.local_evidence.push('\n');
                 return Ok(CortexState::Strategize);
+            }
+
+            // All candidate Python paths passed conformance. Remove stale
+            // failure records only after this successful verification.
+            if mutation_paths.iter().any(|p| p.ends_with(".py")) {
+                session.local_evidence = session
+                    .local_evidence
+                    .lines()
+                    .filter(|line| !line.starts_with("[WRITE_CONFORMANCE_FAILED]"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !session.local_evidence.is_empty() {
+                    session.local_evidence.push('\n');
+                }
             }
         }
 
@@ -1876,7 +1936,6 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
 
         Ok(CortexState::Evaluate {
             evidence: latest_evidence,
-            proposal: proposal.clone(),
             executed_action: executed_actions.join("\n"),
             belief,
             is_halt_action: last_is_halt,
@@ -1890,13 +1949,16 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         &mut self,
         session: &mut EpistemicSession,
         mission: &str,
-        evidence: String,
-        _proposal: String,
-        executed_action: String,
-        belief: f32,
-        is_halt_action: bool,
-        mutation_path: Option<String>,
+        input: EvaluationInput,
     ) -> Result<CortexState> {
+        let EvaluationInput {
+            evidence,
+            executed_action,
+            belief,
+            is_halt_action,
+            mutation_path,
+        } = input;
+
         self.log(
             "\x1b[33m>> [CORTEX] Evaluating physical evidence against strategy...\x1b[0m"
                 .to_string(),
@@ -1967,13 +2029,47 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 Ok(CortexState::Strategize)
             }
             Ok(eval) => {
+                if is_halt_action
+                    && session.local_evidence.lines().any(|line| {
+                        line.starts_with("[WRITE_CONFORMANCE_FAILED]")
+                    })
+                {
+                    self.log(
+                        "\x1b[1;33m>> [CORTEX] HALT rejected: unresolved Python write-conformance failure.\x1b[0m"
+                            .to_string(),
+                    );
+                    session.local_evidence.push_str(
+                        "[HALT_REJECTED] A Python deliverable failed conformance. Correct the file and pass conformance verification before halting.\n",
+                    );
+                    return Ok(CortexState::Strategize);
+                }
+
                 // Search relevance must inspect the action that actually
                 // executed, never the strategist's natural-language proposal.
                 let executed_action_lower = executed_action.to_ascii_lowercase();
                 let is_search_like = executed_action_lower.contains("search_code")
                     || executed_action_lower.contains("search_memory");
                 if is_search_like {
-                    let query_hint = executed_action.chars().take(200).collect::<String>();
+                    let query_hint = executed_action
+                        .lines()
+                        .filter_map(|line| serde_json::from_str::<AgentAction>(line).ok())
+                        .filter_map(|action| match action {
+                            AgentAction::SearchCode { query, .. }
+                            | AgentAction::SearchMemory { query, .. } => Some(query),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    if query_hint.trim().is_empty() {
+                        self.log(
+                            "[SEARCH RELEVANCE] No query could be extracted from executed action JSON."
+                                .to_string(),
+                        );
+                        session.record_evidence(&evidence, &eval, h_id);
+                        return Ok(CortexState::Strategize);
+                    }
+
                     let rel = score_search_relevance(&query_hint, &evidence);
                     if !should_raise_belief(rel, 0.45) {
                         let mut eval = eval;
@@ -2021,7 +2117,11 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             "\x1b[1;31m>> [HALT CLAIM GATE] Unverified symbols in report: {:?}. Rejecting halt.\x1b[0m",
                             bad
                         ));
-                        session.local_evidence = session.local_evidence.replace(&evidence, "");
+                        if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                            session
+                                .local_evidence
+                                .replace_range(pos..pos + evidence.len(), "");
+                        }
                         session.local_evidence.push_str(&format!(
                             "\n[HALT_REJECTED_SYMBOLS] Report named symbols not found in any file content read: {}. Re-read the relevant ranges and cite only functions that appear in the evidence.\n",
                             bad.join(", ")
@@ -2043,7 +2143,11 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             "\x1b[1;31m>> [HALT REPORT GATE] Rejecting halt: {:?}\x1b[0m",
                             defects
                         ));
-                        session.local_evidence = session.local_evidence.replace(&evidence, "");
+                        if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                            session
+                                .local_evidence
+                                .replace_range(pos..pos + evidence.len(), "");
+                        }
                         session.local_evidence.push_str(&format!(
                             "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Put the full audit there: each large function by name with its line range, plus concrete findings. Defects: {}\n",
                             defects.join("; ")
@@ -2214,7 +2318,11 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             // mutated on disk; removing the evidence would
                             // erase the only record that a mutation occurred.
                             session.active_mutation_paths.retain(|p| p != path);
-                            session.local_evidence = session.local_evidence.replace(&evidence, "");
+                            if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                                session
+                                    .local_evidence
+                                    .replace_range(pos..pos + evidence.len(), "");
+                            }
                         } else {
                             session.local_evidence.push_str(
                                 "[NEGATIVE_CONFIDENCE_REVERT_FAILED] Mutation revert did not succeed. Evidence preserved and active mutation path retained.\n",
