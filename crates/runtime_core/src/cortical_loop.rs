@@ -462,6 +462,17 @@ impl CorticalLoop {
                             Self::rollback_active_mutations(&mut session);
                         }
 
+                        {
+                            let diag_gate = TerminalGate::evaluate(&session, current_belief);
+                            self.log(format!(
+                                "\x1b[1;35m>> [CORTEX DIAG] TurnsExhausted: contract_satisfied={} compile_resolved={} semantic_required={} belief={:.2} evidence_bytes={}\x1b[0m",
+                                diag_gate.contract_satisfied,
+                                diag_gate.compile_remediation_resolved,
+                                crate::completion_engine::requires_semantic_verification(&session.contract.objective),
+                                current_belief,
+                                session.local_evidence.len()
+                            ));
+                        }
                         return Ok(CortexOutcome::TurnsExhausted {
                             best_belief: current_belief,
                             evidence: session.collect_evidence(best_node.id),
@@ -607,6 +618,17 @@ impl CorticalLoop {
                     // passing it up to the DAG verifier causes every
                     // criterion to fail even when the physical work was
                     // actually completed successfully.
+                    {
+                        let diag_gate = TerminalGate::evaluate(&session, belief);
+                        self.log(format!(
+                            "\x1b[1;35m>> [CORTEX DIAG] TurnsExhausted: contract_satisfied={} compile_resolved={} semantic_required={} belief={:.2} evidence_bytes={}\x1b[0m",
+                            diag_gate.contract_satisfied,
+                            diag_gate.compile_remediation_resolved,
+                            crate::completion_engine::requires_semantic_verification(&session.contract.objective),
+                            belief,
+                            session.local_evidence.len()
+                        ));
+                    }
                     return Ok(CortexOutcome::TurnsExhausted {
                         best_belief: belief,
                         evidence: session.local_evidence.clone(),
