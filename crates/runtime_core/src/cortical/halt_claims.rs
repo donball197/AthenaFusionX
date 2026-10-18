@@ -150,7 +150,7 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
         }
     }
     if verified.len() < 3 {
-        out.push(format!("only {} verified `fn` names cited; need >= 3", verified.len()));
+        out.push(format!("only {} verified `fn` names cited; need >= 3 (enclose each function name in backticks, e.g. `fn_name`)", verified.len()));
     }
     out
 }

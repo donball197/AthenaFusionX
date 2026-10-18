@@ -2112,9 +2112,20 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             .to_string(),
                     );
 
+                    let sanitized_history = session
+                        .local_evidence
+                        .lines()
+                        .filter(|line| {
+                            !line.contains("[HALT_REJECTED")
+                                && !line.contains("[LOOP_VETO]")
+                                && !line.contains("[CRITIC_REPEAT_VETO]")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
                     let verification_evidence = format!(
                         "CURRENT-TURN PHYSICAL EVIDENCE:\n{}\n\n                         HISTORICAL TASK EVIDENCE (CONTEXT ONLY):\n{}",
-                        evidence, session.local_evidence
+                        evidence, sanitized_history
                     );
 
                     match EpistemicEngine::verify_outcome(
