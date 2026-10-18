@@ -318,32 +318,65 @@ pub(crate) fn is_host_observation_objective(objective: &str) -> bool {
 }
 
 pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
-    let lower = objective.to_lowercase();
+    // ASCII lowercase keeps byte offsets identical to `objective`.
+    let lower = objective.to_ascii_lowercase();
 
-    // Prefer an explicit command following "command", enclosed in backticks.
-    if let Some(command_pos) = lower.find("command") {
-        let after = &objective[command_pos + "command".len()..];
+    // Prefer an explicit command introduced by the standalone word
+    // "command". Occurrences embedded in identifiers (`execute_command`)
+    // name a tool, not the command to run, and are skipped.
+    for (command_pos, _) in lower.match_indices("command") {
+        let end = command_pos + "command".len();
+        let boundary_before = lower[..command_pos]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        let boundary_after = lower[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '-'));
+        if !(boundary_before && boundary_after) {
+            continue;
+        }
+        let after = &objective[end..];
 
+        // 1. Backtick-delimited command.
         if let Some(start) = after.find('`') {
             let remainder = &after[start + 1..];
-            if let Some(end) = remainder.find('`') {
-                let command = remainder[..end].trim();
+            if let Some(close) = remainder.find('`') {
+                let command = remainder[..close].trim();
                 if !command.is_empty() {
                     return Some(command.to_string());
                 }
             }
         }
 
-        // Also accept a command introduced by a simple quoted string.
+        // 2. Quoted command immediately after the word (`command "uptime"`,
+        //    `command: 'uptime'`). A quote deeper in the text belongs to the
+        //    command's own payload and must not be taken as the command.
+        let lead = after.trim_start().trim_start_matches(':').trim_start();
         for quote in ['"', '\''] {
-            if let Some(start) = after.find(quote) {
-                let remainder = &after[start + quote.len_utf8()..];
-                if let Some(end) = remainder.find(quote) {
-                    let command = remainder[..end].trim();
+            if let Some(remainder) = lead.strip_prefix(quote) {
+                if let Some(close) = remainder.find(quote) {
+                    let command = remainder[..close].trim();
                     if !command.is_empty() {
                         return Some(command.to_string());
                     }
                 }
+            }
+        }
+
+        // 3. Unquoted command after a colon on the same line, e.g.
+        //    "run exactly this command: echo 'x' > f". Taken verbatim to end
+        //    of line. Trailing prose would make evidence matching fail closed.
+        let line = after.lines().next().unwrap_or("");
+        if let Some(colon) = line.find(':') {
+            let command = line[colon + 1..].trim();
+            let starts_like_command = command
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || matches!(c, '.' | '/' | '~'));
+            if starts_like_command {
+                return Some(command.to_string());
             }
         }
     }

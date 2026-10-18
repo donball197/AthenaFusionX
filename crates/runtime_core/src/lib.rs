@@ -88,3 +88,6 @@ pub mod sovereign_core;
 pub mod mcp;
 pub mod sum_tree_buffer;
 pub mod virtual_fs;
+
+#[cfg(test)]
+mod extract_command_tests;

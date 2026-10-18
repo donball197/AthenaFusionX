@@ -56,7 +56,7 @@ impl DagPlanner {
             return Err("Planner API key is missing from .env".into());
         }
 
-        let mut system_prompt = String::from("You are the Nexus Executive Cortex. Break the user's objective into a Directed Acyclic Graph (DAG) of discrete micro-agent tasks. Output ONLY a raw JSON array of objects. Do not include markdown formatting, backticks, or conversational text. Schema: [{\"id\": \"task_1\", \"description\": \"Action required...\", \"required_tier\": \"light\" or \"heavy\", \"dependencies\": [\"array_of_task_ids_this_waits_on\"]}]");
+        let mut system_prompt = String::from("You are the Nexus Executive Cortex. Break the user's objective into a Directed Acyclic Graph (DAG) of discrete micro-agent tasks. Output ONLY a raw JSON array of objects. Do not include markdown code fences or conversational text. If the user gives an exact shell command, copy it verbatim into the task description inside single backticks. Schema: [{\"id\": \"task_1\", \"description\": \"Action required...\", \"required_tier\": \"light\" or \"heavy\", \"dependencies\": [\"array_of_task_ids_this_waits_on\"]}]");
 
         let mentions_file_output = objective.contains(".md")
             || objective.contains(".json")
