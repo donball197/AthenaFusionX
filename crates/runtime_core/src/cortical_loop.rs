@@ -25,6 +25,7 @@ use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
 use crate::cortical::capability::capability_for;
 use crate::cortical::compiler_reconciler::CompilerVerificationOutcome;
+use crate::cortical::critic_filter::AntiLoopOutcome;
 use crate::cortical::python_conformance::{python_conformance_defects, python_syntax_error};
 
 #[derive(Debug)]
@@ -1215,156 +1216,13 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             String::new()
         };
 
-        // Check Anti-Loop on actions before calling Critic.
-        // Filter duplicates individually -- a single stale action in a
-        // multi-action proposal must not discard sibling actions that
-        // have never crossed the execution boundary.
-        let mut filtered_actions: Vec<AgentAction> = Vec::with_capacity(actions.len());
-        let mut vetoed_keys: Vec<String> = Vec::new();
-
-        for action in actions {
-            let action_key = crate::cortical::action_identity::action_key(&action);
-
-            let attempt_count = session.global_action_attempt_count(&action_key);
-
-            // STRICT ANTI-LOOP:
-            // An identical action that has already crossed the execution
-            // boundary is not new evidence. Drop it from the batch, but
-            // let never-attempted sibling actions in the same proposal
-            // proceed -- one stale action must not starve the rest.
-            //
-            // EXCEPTION — active compile remediation:
-            // While a retention episode is open, the on-disk source is
-            // known to have changed since the previously-recorded
-            // attempt (the compiler failure left the source in a state
-            // that the same patch would now correct). A repeated
-            // PatchFunction is therefore a materially different action
-            // against a different pre-image, even though its new_body
-            // hashes identically. Permit it through the anti-loop filter
-            // so the corrective patch the retention path instructs the
-            // strategist to produce can actually execute.
-            let bypass_antiloop_for_retention = session.compile_remediation.is_active()
-                && matches!(
-                    action,
-                    AgentAction::PatchFunction { _thought_process: None, .. }
-                        | AgentAction::ReadFunction { _thought_process: None, .. }
-                        | AgentAction::ReadFileChunk { _thought_process: None, .. }
-                        | AgentAction::ReadFile { _thought_process: None, .. }
-                );
-
-            if attempt_count >= 1 && !bypass_antiloop_for_retention {
-                match crate::anti_loop::classify_duplicate(
-                    &action,
-                    &session.contract,
-                    &session.local_evidence,
-                ) {
-                    crate::anti_loop::FilterOutcome::ConditionSatisfied => {
-                        self.log(
-                            "\x1b[1;32m>> [ANTI-LOOP RESOLVED] Required command already executed; condition satisfied.\x1b[0m"
-                                .to_string(),
-                        );
-                        filtered_actions.push(action);
-                    }
-                    crate::anti_loop::FilterOutcome::AllowRetry => {
-                        self.log(
-                            "\x1b[1;33m>> [ANTI-LOOP] Duplicate required by contract with no marker; permitting retry.\x1b[0m"
-                                .to_string(),
-                        );
-                        filtered_actions.push(action);
-                    }
-                    crate::anti_loop::FilterOutcome::FilterAndDecay => {
-                        self.log(format!(
-                            "\x1b[1;31m>> [ANTI-LOOP] Duplicate action [{}] filtered from batch.\x1b[0m",
-                            action_key
-                        ));
-                        vetoed_keys.push(action_key);
-                    }
-                }
-            } else {
-                if attempt_count >= 1 {
-                    self.log(format!(
-                        "\x1b[1;33m>> [ANTI-LOOP] Permitting repeated action [{}] during active compile remediation.\x1b[0m",
-                        action_key
-                    ));
-                }
-                filtered_actions.push(action);
+        let actions = match self.filter_anti_loop(session, actions) {
+            AntiLoopOutcome::Proceed(acts) => acts,
+            AntiLoopOutcome::NeedsStrategize => return Ok(CortexState::Strategize),
+            AntiLoopOutcome::StuckNodeFailed { belief, evidence } => {
+                return Ok(CortexState::Fail { belief, evidence });
             }
-
-            // IMPORTANT:
-            // Do NOT count the action here. This is the critic stage.
-            // The counter will be recorded only after the action passes
-            // the ActionGate and is actually sent to the executor.
-        }
-
-        if filtered_actions.is_empty() {
-            // Every action in the batch was a duplicate. Returning to
-            // Strategize alone does nothing here: belief is normally only
-            // updated after real evidence comes back from execution, so
-            // the current hypothesis would just be re-selected as "best"
-            // again next turn, unchanged. Apply a real belief penalty so
-            // select_best_hypothesis (which requires belief_score >= 0.15)
-            // is eventually forced to promote a different hypothesis.
-            if let Some(h_id) = session.best_hypothesis_id {
-                Self::decay_hypothesis_belief(session, h_id, 0.20);
-                if let Some(node) = session.graph.nodes.get(&h_id) {
-                    self.log(format!(
-                        "\x1b[1;31m>> [ANTI-LOOP] Repeated stale proposal -- decaying hypothesis belief to {:.2}\x1b[0m",
-                        node.belief_score
-                    ));
-                }
-            }
-
-            let loop_obs = format!(
-                "[LOOP_VETO] All proposed actions already attempted: {}. \
-                 Must choose different action(s).",
-                vetoed_keys.join(", ")
-            );
-            session.local_evidence.push_str(&loop_obs);
-            session.local_evidence.push('\n');
-
-            // STUCK-NODE BUDGET: repeated all-duplicate batches mean the strategist is
-            // re-proposing already-attempted actions with no new evidence. Fail the node
-            // honestly instead of spinning to the turn limit.
-            const LOOP_VETO_BUDGET: usize = 6;
-            let stuck_count = session
-                .local_evidence
-                .lines()
-                .filter(|l| l.starts_with("[LOOP_VETO] All proposed actions already attempted"))
-                .count();
-            if stuck_count >= LOOP_VETO_BUDGET {
-                self.log(format!(
-                    "\x1b[1;31m>> [STUCK NODE] {} all-duplicate proposal batches with no new evidence. Failing node early.\x1b[0m",
-                    stuck_count
-                ));
-                session.local_evidence.push_str(
-                    "[STUCK_NODE] Repeated duplicate proposals with no new evidence; the objective may be unachievable in this environment (missing dependency or unsupported platform).\n",
-                );
-                return Ok(CortexState::Fail {
-                    belief: session.graph.best_hypothesis_belief(),
-                    evidence: "Stuck: repeated duplicate proposals with no new evidence.".to_string(),
-                });
-            }
-
-            self.log(
-                "[ANTI-LOOP RECOVERY] All actions in batch were duplicates; \
-                 hypothesis belief decayed to force pivot. Re-entering Strategize."
-                    .to_string(),
-            );
-
-            return Ok(CortexState::Strategize);
-        }
-
-        if !vetoed_keys.is_empty() {
-            let loop_obs = format!(
-                "[LOOP_VETO] Dropped already-attempted action(s) from batch: {}. \
-                 Proceeding with remaining valid action(s).",
-                vetoed_keys.join(", ")
-            );
-            session.local_evidence.push_str(&loop_obs);
-            session.local_evidence.push('\n');
-        }
-
-        let actions = filtered_actions;
+        };
 
         // NEXUS_FIX_LEDGER_BYPASS: next unread chunk is deterministic pagination; skip the critic
         if session.contract.read_only && actions.len() == 1 {

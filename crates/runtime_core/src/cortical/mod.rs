@@ -10,3 +10,5 @@ pub(crate) mod python_conformance;
 pub(crate) mod patch_classification;
 
 pub(crate) mod compiler_reconciler;
+
+pub(crate) mod critic_filter;
