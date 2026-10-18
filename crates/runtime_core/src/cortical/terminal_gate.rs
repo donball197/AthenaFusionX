@@ -3,6 +3,7 @@
 use crate::cognition::epistemic_session::EpistemicSession;
 
 /// Authoritative evaluator for terminal completion conditions across cognitive states.
+#[allow(dead_code)]
 pub struct TerminalGate {
     pub contract_satisfied: bool,
     pub compile_remediation_resolved: bool,
