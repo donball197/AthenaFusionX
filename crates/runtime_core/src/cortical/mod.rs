@@ -8,3 +8,5 @@ pub mod read_only_gate;
 pub mod halt_claims;
 pub(crate) mod python_conformance;
 pub(crate) mod patch_classification;
+
+pub(crate) mod compiler_reconciler;
