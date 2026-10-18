@@ -53,6 +53,26 @@ impl DirectiveStrategyCompiler {
             && !problem_lower.contains("read-only")
             && !problem_lower.contains("audit only")
         {
+            // An explicit `WRITE_OK:<path>` criterion names the artifact
+            // authoritatively. It outranks the heuristic scan below, which
+            // takes the first path-like token and can pick an input file
+            // mentioned in prose ("... discovered from secret.json").
+            if let Some(pos) = problem.find("WRITE_OK:") {
+                let first = problem[pos + "WRITE_OK:".len()..]
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                let clean = first.trim_matches(|c: char| {
+                    !c.is_alphanumeric() && c != '/' && c != '.' && c != '_'
+                });
+                if !clean.is_empty() {
+                    return Some(vec![format!("write_file:{}", clean)]);
+                }
+            }
+
             for token in problem.split_whitespace() {
                 let clean = token.trim_matches(|c: char| {
                     !c.is_alphanumeric() && c != '/' && c != '.' && c != '_'
@@ -87,9 +107,7 @@ impl DirectiveStrategyCompiler {
                 && input.read_targets.is_empty()
                 && input.required_command.is_none()
             {
-                return Some(vec![
-                    format!("search_code:{}:fn", path),
-                ]);
+                return Some(vec![format!("search_code:{}:fn", path)]);
             }
         }
 
@@ -436,24 +454,15 @@ mod tests {
         assert_eq!(out, vec!["search_code:/root/AthenaFusionX/vendor/external_repo:Cargo.toml"]);
     }
 
-
     #[test]
     fn structural_analysis_prefers_search() {
-        let mut i = input(
-            "Audit cortical_loop.rs and summarize its structure"
-        );
+        let mut i = input("Audit cortical_loop.rs and summarize its structure");
 
-        i.structural_analysis_target =
-            Some("crates/runtime_core/src/cortical_loop.rs".into());
+        i.structural_analysis_target = Some("crates/runtime_core/src/cortical_loop.rs".into());
 
         let out = DirectiveStrategyCompiler::compile(&i).unwrap();
 
-        assert_eq!(
-            out,
-            vec![
-                "search_code:crates/runtime_core/src/cortical_loop.rs:fn",
-            ]
-        );
+        assert_eq!(out, vec!["search_code:crates/runtime_core/src/cortical_loop.rs:fn",]);
     }
 
     #[test]
@@ -511,5 +520,45 @@ mod tests {
     fn no_deterministic_directive_returns_none() {
         let i = input("Analyze the architecture and propose several approaches.");
         assert!(DirectiveStrategyCompiler::compile(&i).is_none());
+    }
+}
+
+#[cfg(test)]
+mod write_target_precedence_tests {
+    use super::*;
+
+    fn inputs(problem: &str) -> DirectiveInputs {
+        DirectiveInputs {
+            problem: problem.to_string(),
+            problem_lower: problem.to_lowercase(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn explicit_write_ok_beats_input_file_named_in_prose() {
+        let problem = "OBJECTIVE: Use the write_file tool to create auth.py containing the token discovered from secret.json in the format:\ndef get_token():\n    return \"ATHENA_777_OMEGA\"\nSUCCESS CRITERIA: WRITE_OK:auth.py";
+        assert_eq!(
+            DirectiveStrategyCompiler::compile(&inputs(problem)),
+            Some(vec!["write_file:auth.py".to_string()])
+        );
+    }
+
+    #[test]
+    fn token_scan_still_used_without_write_ok() {
+        let problem = "Use write_file to create notes.md with a short summary";
+        assert_eq!(
+            DirectiveStrategyCompiler::compile(&inputs(problem)),
+            Some(vec!["write_file:notes.md".to_string()])
+        );
+    }
+
+    #[test]
+    fn write_ok_with_trailing_prose_yields_a_clean_path() {
+        let problem = "Use write_file to create calculator.rs. WRITE_OK:calculator.rs (mandatory)";
+        assert_eq!(
+            DirectiveStrategyCompiler::compile(&inputs(problem)),
+            Some(vec!["write_file:calculator.rs".to_string()])
+        );
     }
 }
