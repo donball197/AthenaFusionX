@@ -52,7 +52,12 @@ impl CorticalLoop {
                     .find(|(_, n)| n.content == recon)
                     .map(|(id, _)| *id)
                     .unwrap_or_else(|| {
-                        session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, &recon, 0.58, 100)
+                        session.graph.add_node(
+                            crate::cognition_graph::NodeKind::Hypothesis,
+                            &recon,
+                            0.58,
+                            100,
+                        )
                     });
 
                 // Always keep strategy/hypothesis coherent; log/mark only once.
@@ -120,9 +125,7 @@ impl CorticalLoop {
 
             let read_only_mission = session.contract.read_only || {
                 let m = mission.to_lowercase();
-                m.contains("read-only")
-                    || m.contains("do not modify")
-                    || m.contains("don't modify")
+                m.contains("read-only") || m.contains("do not modify") || m.contains("don't modify")
             };
 
             if read_ok_done
@@ -267,7 +270,12 @@ impl CorticalLoop {
                             continue;
                         }
                         let belief = if injected == 0 { 0.58 } else { 0.54 };
-                        let hid = session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, strat, belief, 100);
+                        let hid = session.graph.add_node(
+                            crate::cognition_graph::NodeKind::Hypothesis,
+                            strat,
+                            belief,
+                            100,
+                        );
                         if injected == 0 {
                             session.best_hypothesis_id = Some(hid);
                             *active_strategy = strat.clone();
@@ -388,7 +396,11 @@ impl CorticalLoop {
             );
 
             if !contract_met {
-                let unread: Vec<String> = nexus_reconnaissance_algorithms::ReconnaissancePlanner::plan(&session.local_evidence, 4)
+                let unread: Vec<String> =
+                    nexus_reconnaissance_algorithms::ReconnaissancePlanner::plan(
+                        &session.local_evidence,
+                        4,
+                    )
                     .into_iter()
                     .filter_map(|strategy| strategy.strip_prefix("read_file:").map(str::to_owned))
                     .collect();
@@ -403,7 +415,12 @@ impl CorticalLoop {
                         }
 
                         let belief = if i == 0 { 0.56 } else { 0.53 };
-                        let hid = session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, &strat, belief, 100);
+                        let hid = session.graph.add_node(
+                            crate::cognition_graph::NodeKind::Hypothesis,
+                            &strat,
+                            belief,
+                            100,
+                        );
 
                         if i == 0 {
                             session.best_hypothesis_id = Some(hid);
@@ -423,7 +440,7 @@ impl CorticalLoop {
 }
 
 impl CorticalLoop {
-/// Prevent a single failed action from driving the active hypothesis
+    /// Prevent a single failed action from driving the active hypothesis
     /// below the selection threshold. If the hypothesis was selectable
     /// before this evaluation (`pre_eval_belief >= floor`), clamp its
     /// post-evaluation score back up to the floor.
@@ -460,7 +477,11 @@ impl CorticalLoop {
     /// callers intend. Decay never resurrects: it only floors at 0.0.
     /// The evaluation-failure rescue path remains
     /// `floor_hypothesis_belief_after_failure`.
-    pub(crate) fn decay_hypothesis_belief(session: &mut EpistemicSession, h_id: uuid::Uuid, delta: f32) {
+    pub(crate) fn decay_hypothesis_belief(
+        session: &mut EpistemicSession,
+        h_id: uuid::Uuid,
+        delta: f32,
+    ) {
         let _ = session.graph.decay(h_id, delta);
     }
 }

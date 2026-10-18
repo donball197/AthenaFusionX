@@ -348,17 +348,16 @@ impl RoboticExecutor {
                     stderr_trunc = format!("[... TRUNCATED TO SAVE TOKENS ...]\n{}", safe_tail);
                 }
 
-                let mut res =
-                    format!(
-                        "[CMD_OK] Command: {}\nStatus: {}\n{}\n",
-                        command.trim(),
-                        out.status,
-                        if format!("{}", out.status).contains("exit status: 0") {
-                            crate::cmd_match::cmd_hash_marker(command.trim())
-                        } else {
-                            String::new()
-                        }
-                    );
+                let mut res = format!(
+                    "[CMD_OK] Command: {}\nStatus: {}\n{}\n",
+                    command.trim(),
+                    out.status,
+                    if format!("{}", out.status).contains("exit status: 0") {
+                        crate::cmd_match::cmd_hash_marker(command.trim())
+                    } else {
+                        String::new()
+                    }
+                );
                 if !stdout_trunc.trim().is_empty() {
                     res.push_str("STDOUT:\n");
                     res.push_str(&stdout_trunc);
@@ -558,7 +557,11 @@ impl RoboticExecutor {
 
                 Ok(format!(
                     "[READ_CHUNK_OK] File: {} | Lines {}-{} of {}\nCONTENT:\n{}",
-                    path, start_idx + 1, end_line, total_lines, chunk
+                    path,
+                    start_idx + 1,
+                    end_line,
+                    total_lines,
+                    chunk
                 ))
             }
             MotorAction::SearchCode { path, query } => {

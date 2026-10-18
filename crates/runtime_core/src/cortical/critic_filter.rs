@@ -118,7 +118,8 @@ impl CorticalLoop {
                 );
                 return AntiLoopOutcome::StuckNodeFailed {
                     belief: session.graph.best_hypothesis_belief(),
-                    evidence: "Stuck: repeated duplicate proposals with no new evidence.".to_string(),
+                    evidence: "Stuck: repeated duplicate proposals with no new evidence."
+                        .to_string(),
                 };
             }
 

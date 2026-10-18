@@ -8,7 +8,10 @@ pub(crate) enum PatchClass {
 }
 
 pub(crate) async fn classify_patch_action(action: &AgentAction) -> anyhow::Result<PatchClass> {
-    let AgentAction::PatchFunction { _thought_process: None, path, function_name, new_body, .. } = action else {
+    let AgentAction::PatchFunction {
+        _thought_process: None, path, function_name, new_body, ..
+    } = action
+    else {
         return Ok(PatchClass::NotPatch);
     };
 

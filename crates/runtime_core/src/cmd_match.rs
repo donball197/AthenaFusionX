@@ -39,11 +39,7 @@ pub fn command_condition_met(cmd: &str, evidence: &str) -> bool {
 }
 
 fn hash_marker_present(want: &str, evidence: &str) -> bool {
-    evidence.lines().any(|l| {
-        l.trim()
-            .strip_prefix("[CMD_HASH] ")
-            .is_some_and(|h| h.trim() == want)
-    })
+    evidence.lines().any(|l| l.trim().strip_prefix("[CMD_HASH] ").is_some_and(|h| h.trim() == want))
 }
 
 /// Legacy path: `[CMD_OK] Command: <cmd...>` may span multiple lines (as with

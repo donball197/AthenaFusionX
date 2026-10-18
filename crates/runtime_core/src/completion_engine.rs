@@ -98,7 +98,6 @@ impl CognitiveBudget {
     }
 }
 
-
 /// For mathematical-derivation nodes the planner embeds the full ALL/ANY
 /// tables inside the command string.  After a successful execution the
 /// evidence contains those same tables.  We treat the contract as satisfied
@@ -174,9 +173,7 @@ pub(crate) fn structural_analysis_target(objective: &str) -> Option<String> {
 
     let mut paths = objective
         .split_whitespace()
-        .map(|token| {
-            token.trim_matches(|c: char| "`'\"()[]{}.,:;".contains(c))
-        })
+        .map(|token| token.trim_matches(|c: char| "`'\"()[]{}.,:;".contains(c)))
         .filter(|token| token.ends_with(".rs") && token.contains('/'))
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -778,9 +775,9 @@ impl SubgoalCompletionEngine {
                 return SubgoalContract {
                     node_id: node_id.to_string(),
                     objective: objective.to_string(),
-                    conditions: vec![
-                        CompletionCondition::MathematicalExecutionVerified { command },
-                    ],
+                    conditions: vec![CompletionCondition::MathematicalExecutionVerified {
+                        command,
+                    }],
                     is_mutation_task: false,
                     read_only,
                     required_artifact_paths: Vec::new(),
@@ -916,21 +913,15 @@ impl SubgoalCompletionEngine {
             for path in &read_targets {
                 conditions.push(CompletionCondition::ReadPathAcquired { path: path.clone() });
             }
-        } else if has_read_intent
-            && !has_search_code_marker
-            && !structural_search_contract
-        {
+        } else if has_read_intent && !has_search_code_marker && !structural_search_contract {
             conditions.push(CompletionCondition::ReadMarkerAcquired);
         }
 
         if structural_search_contract {
-            let path = structural_target
-                .as_ref()
-                .expect("structural target checked above");
+            let path = structural_target.as_ref().expect("structural target checked above");
 
-            conditions.push(CompletionCondition::SearchTermAcquired {
-                term: format!("{}:fn", path),
-            });
+            conditions
+                .push(CompletionCondition::SearchTermAcquired { term: format!("{}:fn", path) });
         } else if has_search_code_marker {
             for term in &search_code_terms {
                 conditions.push(CompletionCondition::SearchTermAcquired { term: term.clone() });
@@ -1373,10 +1364,10 @@ PATCH_FUNCTION_OK:crates/foo.rs:foo
 
         assert!(!contract.read_only);
         assert!(contract.is_mutation_task);
-        assert!(contract.conditions.iter().any(|c| matches!(
-            c,
-            CompletionCondition::PatchMarkerAcquired
-        )));
+        assert!(contract
+            .conditions
+            .iter()
+            .any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired)));
     }
 
     #[test]

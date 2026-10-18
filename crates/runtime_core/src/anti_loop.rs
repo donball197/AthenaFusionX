@@ -52,10 +52,7 @@ pub fn classify_duplicate(
         }
     }
     if let AgentAction::WriteFile { path, .. } = action {
-        let required = contract
-            .required_artifact_paths
-            .iter()
-            .any(|a| a.path == *path);
+        let required = contract.required_artifact_paths.iter().any(|a| a.path == *path);
         if required && !crate::evidence_markers::has_artifact_write(evidence, path) {
             return FilterOutcome::AllowRetry; // earlier write failed
         }

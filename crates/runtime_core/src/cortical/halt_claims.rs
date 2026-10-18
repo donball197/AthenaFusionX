@@ -2,9 +2,8 @@
 //! the evidence the session actually read. Pure: no logging, no I/O.
 
 const SKIP: &[&str] = &[
-    "u8", "u16", "u32", "u64", "usize", "i32", "i64", "f32", "f64", "bool", "str",
-    "self", "Self", "mut", "true", "false", "async", "await", "fn", "pub", "let",
-    "None", "Some", "Ok", "Err",
+    "u8", "u16", "u32", "u64", "usize", "i32", "i64", "f32", "f64", "bool", "str", "self", "Self",
+    "mut", "true", "false", "async", "await", "fn", "pub", "let", "None", "Some", "Ok", "Err",
 ];
 
 fn is_word_char(c: char) -> bool {
@@ -84,7 +83,8 @@ mod tests {
 
     #[test]
     fn accepts_variables_and_string_literals_present_in_source() {
-        let src = format!("{}let mut mutation_paths = Vec::new();\nCommand::new(\"python3\");\n", SRC);
+        let src =
+            format!("{}let mut mutation_paths = Vec::new();\nCommand::new(\"python3\");\n", SRC);
         assert!(unverified_symbols("`mutation_paths`, `python3`", &src).is_empty());
         assert_eq!(
             unverified_symbols("`never_defined_anywhere`", &src),
@@ -123,8 +123,13 @@ pub fn report_text(executed_action: &str) -> String {
 }
 
 const INTENT_PHRASES: &[&str] = &[
-    "i must read", "i will now", "i will produce", "i must now",
-    "has not been read", "have only read", "before halting",
+    "i must read",
+    "i will now",
+    "i will produce",
+    "i must now",
+    "has not been read",
+    "have only read",
+    "before halting",
 ];
 
 /// Defects that make a halt text a non-report. Empty = acceptable.
@@ -221,7 +226,11 @@ pub fn read_lines(evidence: &str) -> BTreeMap<usize, String> {
             St::Idle => {}
             St::Expect(s, e) => {
                 let t = line.trim();
-                st = if t == "CONTENT:" || t == "FULL FILE CONTENT:" { St::Body(s, e) } else { St::Idle };
+                st = if t == "CONTENT:" || t == "FULL FILE CONTENT:" {
+                    St::Body(s, e)
+                } else {
+                    St::Idle
+                };
             }
             St::Body(n, e) => {
                 if e.is_some_and(|e| n > e) {
@@ -259,7 +268,11 @@ fn fn_name_on(text: &str) -> Option<String> {
     }
     let rest = t.strip_prefix("fn ")?;
     let name: String = rest.chars().take_while(|c| is_word_char(*c)).collect();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn indent_of(s: &str) -> usize {
@@ -308,7 +321,13 @@ pub fn function_outline(evidence: &str, min_lines: usize) -> String {
     );
     for s in spans.iter().take(60) {
         let e = s.end.unwrap_or(s.start);
-        out.push_str(&format!("- `{}`: lines {}-{} ({} lines)\n", s.name, s.start, e, e + 1 - s.start));
+        out.push_str(&format!(
+            "- `{}`: lines {}-{} ({} lines)\n",
+            s.name,
+            s.start,
+            e,
+            e + 1 - s.start
+        ));
     }
     out
 }

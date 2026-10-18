@@ -12,6 +12,12 @@ use crate::anti_loop::{score_search_relevance, should_raise_belief};
 use crate::cognition::epistemic_session::EpistemicSession;
 use crate::cognition_graph::{EdgeRelation, NodeKind};
 use crate::contract_status::{ContractEvaluator, ContractStatus};
+use crate::cortical::capability::capability_for;
+use crate::cortical::compiler_reconciler::CompilerVerificationOutcome;
+use crate::cortical::critic_filter::AntiLoopOutcome;
+use crate::cortical::prompt_builder::build_enhanced_mission;
+use crate::cortical::python_conformance::{python_conformance_defects, python_syntax_error};
+use crate::cortical::terminal_gate::TerminalGate;
 use crate::distributed_scheduler::DistributedScheduler;
 use crate::epistemic_engine::EpistemicEngine;
 use crate::executor::RoboticExecutor;
@@ -21,12 +27,6 @@ use crate::motor_cortex::MotorCortex;
 use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
-use crate::cortical::capability::capability_for;
-use crate::cortical::compiler_reconciler::CompilerVerificationOutcome;
-use crate::cortical::critic_filter::AntiLoopOutcome;
-use crate::cortical::prompt_builder::build_enhanced_mission;
-use crate::cortical::terminal_gate::TerminalGate;
-use crate::cortical::python_conformance::{python_conformance_defects, python_syntax_error};
 
 #[derive(Debug)]
 pub enum CortexOutcome {
@@ -324,7 +324,8 @@ impl CorticalLoop {
                 context_chunks.push(format!("\n[ANCESTOR NODE EVIDENCE]\n{}", evidence));
             }
         }
-        let world_context = crate::cortical::util::compress_context(&context_chunks.join("\n"), 6000);
+        let world_context =
+            crate::cortical::util::compress_context(&context_chunks.join("\n"), 6000);
 
         if let Some(evidence) = ancestor_evidence {
             if !evidence.trim().is_empty() {
@@ -522,13 +523,7 @@ impl CorticalLoop {
 
             state = match state {
                 CortexState::Strategize => {
-                    self.handle_strategize(
-                        turn,
-                        &mut session,
-                        mission,
-                        &world_context,
-                    )
-                    .await?
+                    self.handle_strategize(turn, &mut session, mission, &world_context).await?
                 }
                 CortexState::Critique { actions, proposal, belief } => {
                     self.handle_critic(
@@ -670,11 +665,9 @@ impl CorticalLoop {
                     for h in hyps {
                         let h_norm = crate::cortical::util::normalize_strategy(&h);
                         let already = session.graph.find_by_content(&h).is_some()
-                            || session
-                                .graph
-                                .nodes
-                                .values()
-                                .any(|n| crate::cortical::util::normalize_strategy(&n.content) == h_norm);
+                            || session.graph.nodes.values().any(|n| {
+                                crate::cortical::util::normalize_strategy(&n.content) == h_norm
+                            });
                         if already {
                             continue;
                         }
@@ -715,11 +708,8 @@ impl CorticalLoop {
         // WRITE_OK means the write action succeeded. The enclosing node may
         // still require reads, searches, source evidence, analysis, and/or
         // epistemic verification.
-        let status = ContractEvaluator::evaluate(
-            &session.contract,
-            &session.local_evidence,
-            current_belief,
-        );
+        let status =
+            ContractEvaluator::evaluate(&session.contract, &session.local_evidence, current_belief);
 
         if status == ContractStatus::Satisfied {
             let command_only_contract = session.contract.conditions.len() == 1
@@ -753,7 +743,8 @@ impl CorticalLoop {
             );
         }
 
-        let evidence_history = crate::cortical::util::compress_context(&session.collect_evidence(h_id), 150000);
+        let evidence_history =
+            crate::cortical::util::compress_context(&session.collect_evidence(h_id), 150000);
 
         // Phase-aware mandate:
         //
@@ -810,7 +801,11 @@ impl CorticalLoop {
             strategy
         } else if session.coverage.coverage_pct() >= 99.9
             && session.contract.read_only
-            && session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap()).is_none()
+            && session
+                .coverage
+                .largest_interior_gap()
+                .or_else(|| session.coverage.largest_gap())
+                .is_none()
         {
             let strategy = "halt".to_string();
             self.log(
@@ -836,11 +831,21 @@ impl CorticalLoop {
 
         self.apply_ast_unaddressable_recovery(session, &mut active_strategy);
 
-        self.apply_post_read_mutation_pivot(session, &mut active_strategy, mission, write_phase_ready);
+        self.apply_post_read_mutation_pivot(
+            session,
+            &mut active_strategy,
+            mission,
+            write_phase_ready,
+        );
 
         self.apply_halt_veto_recovery(session);
 
-        self.apply_post_search_expansion(session, &mut active_strategy, current_belief, write_phase_ready);
+        self.apply_post_search_expansion(
+            session,
+            &mut active_strategy,
+            current_belief,
+            write_phase_ready,
+        );
 
         // [COVERAGE MANDATE] precedence: any remaining unread range outranks
         // the completion/halt mandate -- the strategist must read the gap
@@ -848,10 +853,8 @@ impl CorticalLoop {
         // halt's line claims on this same ledger). Write-phase and
         // critic-veto recovery mandates keep precedence so an in-flight
         // deliverable is never interrupted by a read directive.
-        let coverage_gap = session
-            .coverage
-            .largest_interior_gap()
-            .or_else(|| session.coverage.largest_gap());
+        let coverage_gap =
+            session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap());
 
         // A pinned `read_file:<path>` strategy narrows the strategist's native tool set to
         // read_file only, so a COVERAGE MANDATE that demands read_file_chunk cannot be
@@ -931,7 +934,9 @@ impl CorticalLoop {
             // that failed schema validation must fall through to the
             // parse-fault recovery path instead of manufacturing a halt.
             if crate::cortical::util::should_synthesize_halt(&raw_proposal) {
-                actions.push(AgentAction::Halt { _thought_process: None, reasoning: "Model declared task complete".to_string(),
+                actions.push(AgentAction::Halt {
+                    _thought_process: None,
+                    reasoning: "Model declared task complete".to_string(),
                 });
             }
         }
@@ -959,7 +964,9 @@ impl CorticalLoop {
                 .is_none()
         {
             self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
-            actions = vec![AgentAction::Halt { _thought_process: None, reasoning: "Deterministic contract is satisfied.".to_string(),
+            actions = vec![AgentAction::Halt {
+                _thought_process: None,
+                reasoning: "Deterministic contract is satisfied.".to_string(),
             }];
         }
 
@@ -1007,7 +1014,8 @@ impl CorticalLoop {
                 })
                 .and_then(|rest| rest.find('"').map(|end| rest[..end].to_string()));
 
-            let attempted_type = attempted_type.or_else(|| crate::cortical::util::fallback_action_type(&raw_proposal));
+            let attempted_type = attempted_type
+                .or_else(|| crate::cortical::util::fallback_action_type(&raw_proposal));
             let schema_hint = attempted_type.as_deref().and_then(|t| {
                 crate::tools::schema::all_tool_declarations()
                     .into_iter()
@@ -1059,8 +1067,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         // but it must not compress the requested semantic query into a
         // generic substitute such as "host metrics".
         if h_content.starts_with("search_memory:") {
-            if let Some(authoritative_query) = crate::cortical::util::extract_explicit_search_memory_query(mission) {
-                if let Some(AgentAction::SearchMemory { _thought_process: None, query, .. }) = actions.first_mut() {
+            if let Some(authoritative_query) =
+                crate::cortical::util::extract_explicit_search_memory_query(mission)
+            {
+                if let Some(AgentAction::SearchMemory { _thought_process: None, query, .. }) =
+                    actions.first_mut()
+                {
                     if query.trim() != authoritative_query {
                         self.log(format!(
                             "[CORTEX] Preserving authoritative SearchMemory query: {}",
@@ -1084,7 +1096,11 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 first_action,
             );
             let advances_unmet =
-                crate::cortical::contract_advance::action_advances_unmet_contract_condition(first_action, session, mission);
+                crate::cortical::contract_advance::action_advances_unmet_contract_condition(
+                    first_action,
+                    session,
+                    mission,
+                );
             // A critic veto may demand a different RECON action than the pinned
             // strategy (e.g. "run one grep instead of chunked reads"). Without
             // this, the veto and the strategy gate deadlock and the node dies
@@ -1146,11 +1162,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
     ) -> Result<CortexState> {
         let CriticInput { actions, proposal, belief } = input;
 
-        let status = ContractEvaluator::evaluate(
-            &session.contract,
-            &session.local_evidence,
-            belief,
-        );
+        let status =
+            ContractEvaluator::evaluate(&session.contract, &session.local_evidence, belief);
 
         if status == ContractStatus::Satisfied {
             self.log(
@@ -1175,10 +1188,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
 
         // NEXUS_FIX_LEDGER_BYPASS: next unread chunk is deterministic pagination; skip the critic
         if session.contract.read_only && actions.len() == 1 {
-            if let Some((gap_start, _)) = session
-                .coverage
-                .largest_interior_gap()
-                .or_else(|| session.coverage.largest_gap())
+            if let Some((gap_start, _)) =
+                session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap())
             {
                 let is_next_chunk = matches!(
                     &actions[0],
@@ -1201,9 +1212,9 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         // evidence text). Symbols, substance and cited line ranges are checked
         // against the physical read ledger instead.
         let halt_check = match actions.first() {
-            Some(AgentAction::Halt { reasoning, .. }) => Some(
-                crate::cortical::halt_claims::halt_defects(reasoning, &session.local_evidence),
-            ),
+            Some(AgentAction::Halt { reasoning, .. }) => {
+                Some(crate::cortical::halt_claims::halt_defects(reasoning, &session.local_evidence))
+            }
             _ => None,
         };
         if session.contract.read_only && actions.len() == 1 {
@@ -1215,7 +1226,13 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     if !tail.ends_with(['.', ')', '!', '`', '"']) {
                         defects.push(format!(
                             "report appears truncated (ends with {:?}); finish the final sentence",
-                            tail.chars().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+                            tail.chars()
+                                .rev()
+                                .take(12)
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                                .collect::<String>()
                         ));
                     }
                 }
@@ -1244,7 +1261,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     session.last_critic_rejected_actions = None;
                     return Ok(CortexState::Execute { actions, proposal, belief });
                 }
-                self.log(format!("\x1b[1;31m>> [HALT PRE-GATE] Rejecting halt: {:?}\x1b[0m", defects));
+                self.log(format!(
+                    "\x1b[1;31m>> [HALT PRE-GATE] Rejecting halt: {:?}\x1b[0m",
+                    defects
+                ));
                 session.local_evidence.push_str(&format!(
                     "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Fix these defects and re-propose the full audit: {}\n",
                     defects.join("; ")
@@ -1262,10 +1282,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         // the exact batch that would otherwise cross the critic boundary.
         // action_key() is the canonical action identity, including the
         // PatchFunction new_body where applicable.
-        let current_action_keys = actions
-            .iter()
-            .map(crate::cortical::action_identity::action_key)
-            .collect::<Vec<_>>();
+        let current_action_keys =
+            actions.iter().map(crate::cortical::action_identity::action_key).collect::<Vec<_>>();
 
         if session.last_critic_rejected_actions.as_ref() == Some(&current_action_keys) {
             self.log(
@@ -1294,7 +1312,13 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         // new_body must contain that function's signature. Comment-only or
         // body-only payloads are rejected before critic/executor.
         for a in &actions {
-            if let AgentAction::PatchFunction { _thought_process: None, function_name, new_body, .. } = a {
+            if let AgentAction::PatchFunction {
+                _thought_process: None,
+                function_name,
+                new_body,
+                ..
+            } = a
+            {
                 let needle = format!("fn {}", function_name.trim());
                 if !new_body.contains(&needle) {
                     self.log(format!(
@@ -1395,13 +1419,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         let path_facts: String = actions
             .iter()
             .filter_map(|a| match a {
-                AgentAction::ReadFile { _thought_process: None, path, .. } | AgentAction::ReadFileChunk { _thought_process: None, path, .. } => {
-                    Some(format!(
-                        "\n[FILESYSTEM FACT - AUTHORITATIVE] `{}` {} in the workspace.",
-                        path,
-                        if std::path::Path::new(path).exists() { "EXISTS" } else { "does NOT exist" }
-                    ))
-                }
+                AgentAction::ReadFile { _thought_process: None, path, .. }
+                | AgentAction::ReadFileChunk { _thought_process: None, path, .. } => Some(format!(
+                    "\n[FILESYSTEM FACT - AUTHORITATIVE] `{}` {} in the workspace.",
+                    path,
+                    if std::path::Path::new(path).exists() { "EXISTS" } else { "does NOT exist" }
+                )),
                 _ => None,
             })
             .collect();
@@ -1423,8 +1446,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     self.log("\x1b[1;31m>> [CRITIC UNAVAILABLE] Refusing to execute a halt without a critic verdict. Re-strategizing.\x1b[0m".to_string());
                     return Ok(CortexState::Strategize);
                 }
-                    session.last_critic_rejected_actions = None;
-                    Ok(CortexState::Execute { actions, proposal, belief })
+                session.last_critic_rejected_actions = None;
+                Ok(CortexState::Execute { actions, proposal, belief })
             }
             Ok(critic) => {
                 self.dump_debug(turn, "critic_output", &format!("{:?}", critic));
@@ -1454,8 +1477,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 // cause of the audit mission's turn-14 abort, where the
                 // critic hallucinated a search_code proposal as a
                 // read_file and vetoed it as redundant.
-                let action_is_search =
-                    matches!(actions.first(), Some(AgentAction::SearchCode { _thought_process: None, .. }));
+                let action_is_search = matches!(
+                    actions.first(),
+                    Some(AgentAction::SearchCode { _thought_process: None, .. })
+                );
                 let strategy_is_search = h_content.starts_with("search_code:");
                 let critic_veto_is_redundancy = critic_text.contains("redundant")
                     || critic_text.contains("already read")
@@ -1463,8 +1488,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     || critic_text.contains("proceed immediately to writing")
                     || critic_text.contains("proceed immediately to patching");
 
-                let action_is_write =
-                    matches!(actions.first(), Some(AgentAction::WriteFile { _thought_process: None, .. }));
+                let action_is_write = matches!(
+                    actions.first(),
+                    Some(AgentAction::WriteFile { _thought_process: None, .. })
+                );
                 let strategy_is_write = h_content.starts_with("write_file:");
                 let critic_veto_is_pre_recon = critic_text.contains("prior evidence")
                     || critic_text.contains("search_code")
@@ -1485,7 +1512,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] search_code preserved; anti-redundant-READ rule does not apply to search actions.\n",
                     );
-                        session.last_critic_rejected_actions = None;
+                    session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier <= -0.25
                     && action_is_write
@@ -1499,7 +1526,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] write_file action preserved against pre-recon veto; active strategy is authoritative.\n",
                     );
-                        session.last_critic_rejected_actions = None;
+                    session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier <= -0.25
                     && patch_mutation_verified
@@ -1512,7 +1539,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] PATCH_FUNCTION mutation verified by ReplaceFunctionBody; critic no-op classification rejected.\n",
                     );
-                        session.last_critic_rejected_actions = None;
+                    session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier > -0.25
                     && !(action_is_write
@@ -1520,7 +1547,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                         && (critic_text.contains("incomplete")
                             || critic_text.contains("only writes")))
                 {
-                        session.last_critic_rejected_actions = None;
+                    session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else {
                     self.log("\x1b[33m>> [DIALECTIC FEEDBACK] Veto registered in graph. Re-strategizing...\x1b[0m".to_string());
@@ -1552,7 +1579,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             1.0,
                             75,
                         );
-                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, if action_is_write && strategy_is_write { 0.10 } else { 0.40 });
+                        session.graph.add_edge(
+                            obs_id,
+                            h_id,
+                            EdgeRelation::Contradicts,
+                            if action_is_write && strategy_is_write { 0.10 } else { 0.40 },
+                        );
                         session.graph.propagate_beliefs();
                     }
                     Ok(CortexState::Strategize)
@@ -1682,8 +1714,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 AgentAction::WriteFile { _thought_process: None, path, .. }
                 | AgentAction::DiffPatch { _thought_process: None, path, .. }
                 | AgentAction::PatchFunction { _thought_process: None, path, .. }
-                | AgentAction::ReplaceLines { _thought_process: None, path, .. } => Some(path.clone()),
-                AgentAction::SynthesizeReport { _thought_process: None, output_path, .. } => Some(output_path.clone()),
+                | AgentAction::ReplaceLines { _thought_process: None, path, .. } => {
+                    Some(path.clone())
+                }
+                AgentAction::SynthesizeReport { _thought_process: None, output_path, .. } => {
+                    Some(output_path.clone())
+                }
                 _ => None,
             };
 
@@ -1717,9 +1753,13 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 | AgentAction::ReadFileChunk { _thought_process: None, path, .. }
                 | AgentAction::WriteFile { _thought_process: None, path, .. }
                 | AgentAction::DiffPatch { _thought_process: None, path, .. }
-                | AgentAction::ReplaceLines { _thought_process: None, path, .. } => Some(path.trim().to_string()),
+                | AgentAction::ReplaceLines { _thought_process: None, path, .. } => {
+                    Some(path.trim().to_string())
+                }
                 AgentAction::ReadFunction { _thought_process: None, path, .. }
-                | AgentAction::PatchFunction { _thought_process: None, path, .. } => Some(path.trim().to_string()),
+                | AgentAction::PatchFunction { _thought_process: None, path, .. } => {
+                    Some(path.trim().to_string())
+                }
                 _ => None,
             };
 
@@ -1943,21 +1983,14 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         })
     }
 
-
-
     async fn handle_evaluate(
         &mut self,
         session: &mut EpistemicSession,
         mission: &str,
         input: EvaluationInput,
     ) -> Result<CortexState> {
-        let EvaluationInput {
-            evidence,
-            executed_action,
-            belief,
-            is_halt_action,
-            mutation_path,
-        } = input;
+        let EvaluationInput { evidence, executed_action, belief, is_halt_action, mutation_path } =
+            input;
 
         self.log(
             "\x1b[33m>> [CORTEX] Evaluating physical evidence against strategy...\x1b[0m"
@@ -2020,7 +2053,9 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     // from the coverage ledger (which reads local_evidence) and
                     // deadlock on "gaps" that were already read.
                     let neutral = crate::epistemic_engine::CriticResponse {
-                        critique: "Evaluator unavailable; recon evidence recorded with neutral modifier.".to_string(),
+                        critique:
+                            "Evaluator unavailable; recon evidence recorded with neutral modifier."
+                                .to_string(),
                         confidence_modifier: 0.0,
                     };
                     session.record_evidence(&evidence, &neutral, h_id);
@@ -2030,9 +2065,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             }
             Ok(eval) => {
                 if is_halt_action
-                    && session.local_evidence.lines().any(|line| {
-                        line.starts_with("[WRITE_CONFORMANCE_FAILED]")
-                    })
+                    && session
+                        .local_evidence
+                        .lines()
+                        .any(|line| line.starts_with("[WRITE_CONFORMANCE_FAILED]"))
                 {
                     self.log(
                         "\x1b[1;33m>> [CORTEX] HALT rejected: unresolved Python write-conformance failure.\x1b[0m"
@@ -2111,16 +2147,15 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                         &session.local_evidence,
                         &evidence,
                     );
-                    let bad = crate::cortical::halt_claims::unverified_symbols(&executed_action, &corpus);
+                    let bad =
+                        crate::cortical::halt_claims::unverified_symbols(&executed_action, &corpus);
                     if !bad.is_empty() {
                         self.log(format!(
                             "\x1b[1;31m>> [HALT CLAIM GATE] Unverified symbols in report: {:?}. Rejecting halt.\x1b[0m",
                             bad
                         ));
                         if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
-                            session
-                                .local_evidence
-                                .replace_range(pos..pos + evidence.len(), "");
+                            session.local_evidence.replace_range(pos..pos + evidence.len(), "");
                         }
                         session.local_evidence.push_str(&format!(
                             "\n[HALT_REJECTED_SYMBOLS] Report named symbols not found in any file content read: {}. Re-read the relevant ranges and cite only functions that appear in the evidence.\n",
@@ -2144,9 +2179,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             defects
                         ));
                         if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
-                            session
-                                .local_evidence
-                                .replace_range(pos..pos + evidence.len(), "");
+                            session.local_evidence.replace_range(pos..pos + evidence.len(), "");
                         }
                         session.local_evidence.push_str(&format!(
                             "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Put the full audit there: each large function by name with its line range, plus concrete findings. Defects: {}\n",
@@ -2319,9 +2352,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             // erase the only record that a mutation occurred.
                             session.active_mutation_paths.retain(|p| p != path);
                             if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
-                                session
-                                    .local_evidence
-                                    .replace_range(pos..pos + evidence.len(), "");
+                                session.local_evidence.replace_range(pos..pos + evidence.len(), "");
                             }
                         } else {
                             session.local_evidence.push_str(

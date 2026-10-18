@@ -7,16 +7,23 @@ use crate::agent_protocol::AgentAction;
 use crate::cortical::capability::is_mutation;
 
 const SAFE_COMMANDS: &[&str] = &[
-    "grep", "egrep", "fgrep", "cat", "ls", "wc", "head", "tail", "find", "sort", "stat",
-    "pwd", "echo", "test", "tr", "cut", "nl", "diff", "basename", "dirname", "realpath", "git",
+    "grep", "egrep", "fgrep", "cat", "ls", "wc", "head", "tail", "find", "sort", "stat", "pwd",
+    "echo", "test", "tr", "cut", "nl", "diff", "basename", "dirname", "realpath", "git",
 ];
 const SAFE_GIT: &[&str] = &[
-    "log", "diff", "show", "status", "ls-files", "grep", "blame", "rev-parse", "rev-list",
+    "log",
+    "diff",
+    "show",
+    "status",
+    "ls-files",
+    "grep",
+    "blame",
+    "rev-parse",
+    "rev-list",
     "describe",
 ];
-const BAD_FIND: &[&str] = &[
-    "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls",
-];
+const BAD_FIND: &[&str] =
+    &["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"];
 
 fn norm(tok: &str) -> String {
     tok.chars().filter(|c| !matches!(c, '"' | '\'' | '\\')).collect()
@@ -196,9 +203,6 @@ mod tests {
             reasoning: "verify implementation".to_string(),
         };
 
-        assert!(
-            violates_read_only(&action),
-            "RunTests must be rejected under READ_ONLY"
-        );
+        assert!(violates_read_only(&action), "RunTests must be rejected under READ_ONLY");
     }
 }

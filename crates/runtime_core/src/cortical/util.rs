@@ -6,9 +6,9 @@
 /// are rejected.
 pub(crate) fn is_safe_test_target(target: &str) -> bool {
     target.len() <= 200
-        && target
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | ':' | '.' | '/' | '='))
+        && target.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | ':' | '.' | '/' | '=')
+        })
 }
 
 pub(crate) fn compress_context(ctx: &str, max_chars: usize) -> String {
@@ -28,12 +28,7 @@ pub(crate) fn compress_context(ctx: &str, max_chars: usize) -> String {
     }
     let start = &ctx[..start_end];
     let end = &ctx[end_start..];
-    format!(
-        "{}...\n\n[... {} CHARACTERS COMPRESSED ...]\n\n{}",
-        start,
-        ctx.len() - max_chars,
-        end
-    )
+    format!("{}...\n\n[... {} CHARACTERS COMPRESSED ...]\n\n{}", start, ctx.len() - max_chars, end)
 }
 
 /// Extract the target named on the first `<marker><target>` line of a
@@ -105,10 +100,19 @@ mod compress_tests {
 
     #[test]
     fn test_target_validation() {
-        for ok in ["", ".", "-p nexus_runtime_core", "-p nexus_runtime_core compress", "cortical::util -- --nocapture", "--lib"] {
+        for ok in [
+            "",
+            ".",
+            "-p nexus_runtime_core",
+            "-p nexus_runtime_core compress",
+            "cortical::util -- --nocapture",
+            "--lib",
+        ] {
             assert!(is_safe_test_target(ok), "should allow {:?}", ok);
         }
-        for bad in ["x; rm -rf ~", "a && b", "a | b", "$(id)", "`id`", "a\nb", "a > f", "'x'", "\"x\""] {
+        for bad in
+            ["x; rm -rf ~", "a && b", "a | b", "$(id)", "`id`", "a\nb", "a > f", "'x'", "\"x\""]
+        {
             assert!(!is_safe_test_target(bad), "should reject {:?}", bad);
         }
         assert!(!is_safe_test_target(&"a".repeat(201)));
@@ -140,7 +144,6 @@ mod compress_tests {
     }
 }
 
-
 #[cfg(test)]
 mod synth_halt_tests {
     use super::should_synthesize_halt;
@@ -148,7 +151,9 @@ mod synth_halt_tests {
     #[test]
     fn json_shaped_proposals_never_synthesize() {
         assert!(!should_synthesize_halt(r#"{"halt": true, "reasoning": "done"}"#));
-        assert!(!should_synthesize_halt("[{\"action\": \"x\", \"reasoning\": \"before halting\"}]"));
+        assert!(!should_synthesize_halt(
+            "[{\"action\": \"x\", \"reasoning\": \"before halting\"}]"
+        ));
     }
 
     #[test]

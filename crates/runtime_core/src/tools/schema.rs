@@ -310,27 +310,39 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
     };
 
     match tool_name {
-        "execute_command" => Ok(AgentAction::ExecuteCommand { _thought_process: None, command: get_str("command")?,
+        "execute_command" => Ok(AgentAction::ExecuteCommand {
+            _thought_process: None,
+            command: get_str("command")?,
             reasoning: get_str("reasoning")?,
             confidence: 0.95,
         }),
-        "read_file" => {
-            Ok(AgentAction::ReadFile { _thought_process: None, path: get_str("path")?, reasoning: get_str("reasoning")? })
-        }
-        "read_function" => Ok(AgentAction::ReadFunction { _thought_process: None, path: get_str("path")?,
+        "read_file" => Ok(AgentAction::ReadFile {
+            _thought_process: None,
+            path: get_str("path")?,
+            reasoning: get_str("reasoning")?,
+        }),
+        "read_function" => Ok(AgentAction::ReadFunction {
+            _thought_process: None,
+            path: get_str("path")?,
             function_name: get_str("function_name")?,
             reasoning: get_str("reasoning")?,
         }),
-        "read_file_chunk" => Ok(AgentAction::ReadFileChunk { _thought_process: None, path: get_str("path")?,
+        "read_file_chunk" => Ok(AgentAction::ReadFileChunk {
+            _thought_process: None,
+            path: get_str("path")?,
             start_line: get_int("start_line")?,
             max_lines: get_int("max_lines")?,
             reasoning: get_str("reasoning")?,
         }),
-        "search_code" => Ok(AgentAction::SearchCode { _thought_process: None, path: get_str("path")?,
+        "search_code" => Ok(AgentAction::SearchCode {
+            _thought_process: None,
+            path: get_str("path")?,
             query: get_str("query")?,
             reasoning: get_str("reasoning")?,
         }),
-        "write_file" => Ok(AgentAction::WriteFile { _thought_process: None, path: get_str("path")?,
+        "write_file" => Ok(AgentAction::WriteFile {
+            _thought_process: None,
+            path: get_str("path")?,
             content: get_str("content")?,
             reasoning: get_str("reasoning")?,
             confidence: 0.95,
@@ -339,7 +351,9 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
             let patches_val = args.get("patches").ok_or("Missing patches field".to_string())?;
             let patches: Vec<crate::agent_protocol::FilePatch> =
                 serde_json::from_value(patches_val.clone()).unwrap_or_default();
-            Ok(AgentAction::AtomicPatch { _thought_process: None, patches,
+            Ok(AgentAction::AtomicPatch {
+                _thought_process: None,
+                patches,
                 reasoning: args
                     .get("reasoning")
                     .and_then(|v| v.as_str())
@@ -347,23 +361,33 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
                     .to_string(),
             })
         }
-        "diff_patch" => Ok(AgentAction::DiffPatch { _thought_process: None, path: get_str("path")?,
+        "diff_patch" => Ok(AgentAction::DiffPatch {
+            _thought_process: None,
+            path: get_str("path")?,
             search: get_str("search")?,
             replace: get_str("replace")?,
             reasoning: get_str("reasoning")?,
         }),
-        "patch_function" => Ok(AgentAction::PatchFunction { _thought_process: None, path: get_str("path")?,
+        "patch_function" => Ok(AgentAction::PatchFunction {
+            _thought_process: None,
+            path: get_str("path")?,
             function_name: get_str("function_name")?,
             new_body: get_str("new_body")?,
             reasoning: get_str("reasoning")?,
         }),
-        "run_tests" => Ok(AgentAction::RunTests { _thought_process: None, test_target: get_str("test_target")?,
+        "run_tests" => Ok(AgentAction::RunTests {
+            _thought_process: None,
+            test_target: get_str("test_target")?,
             reasoning: get_str("reasoning")?,
         }),
-        "search_memory" => Ok(AgentAction::SearchMemory { _thought_process: None, query: get_str("query")?,
+        "search_memory" => Ok(AgentAction::SearchMemory {
+            _thought_process: None,
+            query: get_str("query")?,
             reasoning: get_str("reasoning")?,
         }),
-        "scrape_url" => Ok(AgentAction::ScrapeUrl { _thought_process: None, url: get_str("url")?,
+        "scrape_url" => Ok(AgentAction::ScrapeUrl {
+            _thought_process: None,
+            url: get_str("url")?,
             prompt: get_str("prompt")?,
             reasoning: get_str("reasoning")?,
         }),
@@ -378,7 +402,9 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
                 .and_then(|v| v.as_str())
                 .unwrap_or("report.md")
                 .to_string();
-            Ok(AgentAction::SynthesizeReport { _thought_process: None, output_path: out_path,
+            Ok(AgentAction::SynthesizeReport {
+                _thought_process: None,
+                output_path: out_path,
                 source_files,
                 reasoning: args
                     .get("reasoning")
@@ -387,7 +413,9 @@ pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<Agen
                     .to_string(),
             })
         }
-        "halt" => Ok(AgentAction::Halt { _thought_process: None, reasoning: get_str("reasoning")? }),
+        "halt" => {
+            Ok(AgentAction::Halt { _thought_process: None, reasoning: get_str("reasoning")? })
+        }
         other => Err(format!("Unrecognized tool identifier received: {}", other)),
     }
 }

@@ -5,7 +5,9 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
 
     if let Some(cmd) = action_str.strip_prefix("execute_command") {
         let clean_cmd = cmd.trim().trim_matches('\'').trim_matches('"').to_string();
-        return Some(AgentAction::ExecuteCommand { _thought_process: None, command: clean_cmd,
+        return Some(AgentAction::ExecuteCommand {
+            _thought_process: None,
+            command: clean_cmd,
             reasoning: "Intercepted fallback execute_command".to_string(),
             confidence: 0.9,
         });
@@ -20,7 +22,9 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
             } else {
                 String::new()
             };
-            return Some(AgentAction::SearchCode { _thought_process: None, path,
+            return Some(AgentAction::SearchCode {
+                _thought_process: None,
+                path,
                 query,
                 reasoning: "Intercepted fallback search_code".to_string(),
             });
@@ -28,7 +32,9 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
     }
 
     if let Some(path) = action_str.strip_prefix("read_file ") {
-        return Some(AgentAction::ReadFile { _thought_process: None, path: path.trim().trim_matches('`').trim_matches('"').to_string(),
+        return Some(AgentAction::ReadFile {
+            _thought_process: None,
+            path: path.trim().trim_matches('`').trim_matches('"').to_string(),
             reasoning: "Intercepted fallback read_file".to_string(),
         });
     }
@@ -43,7 +49,9 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
             parts.next().unwrap_or("").trim().trim_matches('`').trim_matches('"').to_string();
 
         if !url.is_empty() && !prompt.is_empty() {
-            return Some(AgentAction::ScrapeUrl { _thought_process: None, url,
+            return Some(AgentAction::ScrapeUrl {
+                _thought_process: None,
+                url,
                 prompt,
                 reasoning: "Intercepted fallback scrape_url".to_string(),
             });
@@ -73,7 +81,9 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         let query =
             labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"]).unwrap_or_default();
 
-        return Some(AgentAction::SearchCode { _thought_process: None, path,
+        return Some(AgentAction::SearchCode {
+            _thought_process: None,
+            path,
             query,
             reasoning: "Intercepted labeled search_code".to_string(),
         });
@@ -95,7 +105,9 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
                 "path:",
             ],
         ) {
-            return Some(AgentAction::ReadFile { _thought_process: None, path,
+            return Some(AgentAction::ReadFile {
+                _thought_process: None,
+                path,
                 reasoning: "Intercepted labeled read_file".to_string(),
             });
         }
@@ -113,7 +125,9 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         );
 
         if let (Some(url), Some(prompt)) = (url, prompt) {
-            return Some(AgentAction::ScrapeUrl { _thought_process: None, url,
+            return Some(AgentAction::ScrapeUrl {
+                _thought_process: None,
+                url,
                 prompt,
                 reasoning: "Intercepted labeled scrape_url".to_string(),
             });
@@ -128,7 +142,9 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
             text,
             &["[COMMAND]:", "[COMMAND]", "[EXECUTE_COMMAND]:", "Command:", "command:"],
         ) {
-            return Some(AgentAction::ExecuteCommand { _thought_process: None, command: cmd.trim().trim_matches('`').to_string(),
+            return Some(AgentAction::ExecuteCommand {
+                _thought_process: None,
+                command: cmd.trim().trim_matches('`').to_string(),
                 reasoning: "Intercepted labeled execute_command".to_string(),
                 confidence: 0.85,
             });
@@ -142,7 +158,9 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
     if has_action_label(text, &["[TOOL]:", "Tool:", "[ACTION]:", "Action:"])
         && lower_action_label(text).trim() == "halt"
     {
-        return Some(AgentAction::Halt { _thought_process: None, reasoning: "Model explicitly labeled a halt action".to_string(),
+        return Some(AgentAction::Halt {
+            _thought_process: None,
+            reasoning: "Model explicitly labeled a halt action".to_string(),
         });
     }
 

@@ -22,7 +22,9 @@ impl TerminalGate {
         let is_command_only = session.contract.conditions.len() == 1
             && matches!(
                 session.contract.conditions.first(),
-                Some(crate::completion_engine::CompletionCondition::CommandExecutionVerified { .. })
+                Some(
+                    crate::completion_engine::CompletionCondition::CommandExecutionVerified { .. }
+                )
             );
         let requires_semantic_verification =
             crate::completion_engine::requires_semantic_verification(&session.contract.objective);

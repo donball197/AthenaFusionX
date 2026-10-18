@@ -176,8 +176,11 @@ impl CompilerGate {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_nanos())
                         .unwrap_or(0);
-                    let scratch = std::env::temp_dir()
-                        .join(format!("nexus_rustc_{}_{}", std::process::id(), nanos));
+                    let scratch = std::env::temp_dir().join(format!(
+                        "nexus_rustc_{}_{}",
+                        std::process::id(),
+                        nanos
+                    ));
                     if let Err(e) = std::fs::create_dir_all(&scratch) {
                         return CompilerGateResult::ExecutionFault {
                             error_message: format!(

@@ -68,8 +68,7 @@ async fn classify_patch_action_detects_real_mutation() {
 
 #[tokio::test]
 async fn classify_patch_action_detects_idempotent_body() {
-    let dir =
-        std::env::temp_dir().join(format!("nexus_test_idempotent_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("nexus_test_idempotent_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("lib.rs");
     std::fs::write(&path, "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n").unwrap();
@@ -94,7 +93,11 @@ async fn classify_patch_action_detects_idempotent_body() {
 
 #[tokio::test]
 async fn classify_patch_action_ignores_non_patch_actions() {
-    let action = AgentAction::ReadFile { path: "whatever.rs".into(), _thought_process: None, reasoning: "test".into() };
+    let action = AgentAction::ReadFile {
+        path: "whatever.rs".into(),
+        _thought_process: None,
+        reasoning: "test".into(),
+    };
     assert!(matches!(
         super::classify_patch_action(&action).await.unwrap(),
         super::PatchClass::NotPatch
@@ -120,17 +123,16 @@ fn search_memory_strategy_requires_matching_search_memory_action() {
     };
 
     assert!(crate::cortical::strategy_match::action_matches_strategy(&strategy, &matching));
-    assert!(!crate::cortical::strategy_match::action_matches_strategy(
-        &strategy,
-        &wrong_action
-    ));
+    assert!(!crate::cortical::strategy_match::action_matches_strategy(&strategy, &wrong_action));
 }
 
 #[test]
 fn parse_failure_never_manufactures_a_typed_halt() {
     assert!(crate::cortical::util::should_synthesize_halt("halt"));
     assert!(crate::cortical::util::should_synthesize_halt("The task is done, halt."));
-    assert!(!crate::cortical::util::should_synthesize_halt(r#"[{"type":"halt","reasoning":{"a":1}}]"#));
+    assert!(!crate::cortical::util::should_synthesize_halt(
+        r#"[{"type":"halt","reasoning":{"a":1}}]"#
+    ));
     assert!(!crate::cortical::util::should_synthesize_halt("no stop word here"));
 }
 
@@ -150,8 +152,7 @@ fn read_only_contract_never_enters_write_phase() {
     // predicate here. If !contract.read_only is ever removed from
     // CorticalLoop::write_phase_ready, this test fails.
     let mission = "READ-ONLY audit.";
-    let contract =
-        crate::completion_engine::SubgoalCompletionEngine::infer_contract("t", mission);
+    let contract = crate::completion_engine::SubgoalCompletionEngine::infer_contract("t", mission);
 
     let unwritten: Vec<String> =
         contract.required_artifact_paths.iter().map(|a| a.path.clone()).collect();
@@ -195,8 +196,7 @@ fn decay_hypothesis_belief_crosses_selection_floor() {
     // Pre-decay 0.30, delta 0.20 -> 0.10: the belief CROSSES
     // SELECT_FLOOR and becomes unselectable (F4: no clamp).
     let mut session = EpistemicSession::new("test");
-    let h_id =
-        session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, "h", 0.30, 100);
+    let h_id = session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, "h", 0.30, 100);
     CorticalLoop::decay_hypothesis_belief(&mut session, h_id, 0.20);
     assert_eq!(session.graph.belief_of(h_id), Some((0.30_f32 - 0.20_f32).max(0.0)));
 }
@@ -206,8 +206,7 @@ fn decay_hypothesis_belief_leaves_dead_hypotheses_alone() {
     // Pre-decay 0.10 is already below the floor. F4: no clamp exists
     // to raise it back; a dead hypothesis stays dead.
     let mut session = EpistemicSession::new("test");
-    let h_id =
-        session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, "h", 0.10, 100);
+    let h_id = session.graph.add_node(crate::cognition_graph::NodeKind::Hypothesis, "h", 0.10, 100);
     CorticalLoop::decay_hypothesis_belief(&mut session, h_id, 0.20);
     assert_eq!(session.graph.belief_of(h_id), Some(0.0));
 }

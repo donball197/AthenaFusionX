@@ -57,7 +57,9 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
                     if !path.is_empty() && !content.is_empty() {
                         tracing::info!(">> [CORTEX INTERCEPT] Plucked raw artifact for {}", path);
-                        return Ok(vec![crate::agent_protocol::AgentAction::WriteFile { _thought_process: None, path,
+                        return Ok(vec![crate::agent_protocol::AgentAction::WriteFile {
+                            _thought_process: None,
+                            path,
                             content,
                             reasoning: "Intercepted via raw text block".to_string(),
                             confidence: 1.0,
@@ -339,7 +341,13 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"src/lib.rs","start_line":1,"max_lines":50,"reasoning":"native form"}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk {
+                _thought_process: None,
+                path,
+                start_line,
+                max_lines,
+                ..
+            } => {
                 assert_eq!(path, "src/lib.rs");
                 assert_eq!(start_line, 1);
                 assert_eq!(max_lines, 50);
@@ -356,7 +364,13 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"crates/runtime_core/src/cortical_loop.rs","start_line":52,"end_line":100,"reasoning":"model emitted inclusive range"}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk {
+                _thought_process: None,
+                path,
+                start_line,
+                max_lines,
+                ..
+            } => {
                 assert!(path.ends_with("cortical_loop.rs"));
                 assert_eq!(start_line, 52);
                 assert_eq!(max_lines, 49, "end_line 100 inclusive - start 52 + 1");
@@ -375,7 +389,13 @@ mod tests {
         );
 
         match action {
-            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk {
+                _thought_process: None,
+                path,
+                start_line,
+                max_lines,
+                ..
+            } => {
                 assert!(path.ends_with("cortical_loop.rs"));
                 assert_eq!(start_line, 150);
                 assert_eq!(max_lines, 51, "end_line 200 inclusive - start 150 + 1");
@@ -391,7 +411,9 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"a.rs","start_line":7,"end_line":7,"reasoning":""}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { _thought_process: None, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk {
+                _thought_process: None, start_line, max_lines, ..
+            } => {
                 assert_eq!(start_line, 7);
                 assert_eq!(max_lines, 1);
             }
@@ -459,7 +481,13 @@ mod tests {
             r#"[{"type":"read_file_chunk","path":"src/lib.rs","offset":100,"limit":50,"reasoning":"pagination aliases"}]"#,
         );
         match action {
-            AgentAction::ReadFileChunk { _thought_process: None, path, start_line, max_lines, .. } => {
+            AgentAction::ReadFileChunk {
+                _thought_process: None,
+                path,
+                start_line,
+                max_lines,
+                ..
+            } => {
                 assert_eq!(path, "src/lib.rs");
                 assert_eq!(start_line, 100);
                 assert_eq!(max_lines, 50);
@@ -468,7 +496,6 @@ mod tests {
         }
     }
 }
-
 
 #[cfg(test)]
 mod react_shape_tests {
@@ -495,7 +522,6 @@ mod react_shape_tests {
     }
 }
 
-
 #[cfg(test)]
 mod conversational_recovery_tests {
     use super::extract_actions;
@@ -504,7 +530,8 @@ mod conversational_recovery_tests {
     #[test]
     fn recovers_json_array_prefixed_with_conversational_text() {
         let payload = r#"We need to continue audit. Need read remaining lines. Here is the action: [{"type":"read_file_chunk","path":"crates/runtime_core/src/cortical_loop.rs","start_line":1644,"max_lines":250,"reasoning":"continue audit"}]"#;
-        let actions = extract_actions(payload).expect("should extract embedded JSON array from conversational text");
+        let actions = extract_actions(payload)
+            .expect("should extract embedded JSON array from conversational text");
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {

@@ -64,7 +64,10 @@ impl EpistemicEngine {
         let total_models = models.len();
         for (model_idx, model_endpoint) in models.iter().enumerate() {
             if model_idx + 1 < total_models && Self::model_cooling(model_endpoint) {
-                eprintln!("[MODEL TRACE] skipping {} (cooldown after repeated overload)", model_endpoint);
+                eprintln!(
+                    "[MODEL TRACE] skipping {} (cooldown after repeated overload)",
+                    model_endpoint
+                );
                 continue;
             }
             let resolved = resolve_provider(model_endpoint);
@@ -350,15 +353,20 @@ impl EpistemicEngine {
                                     .iter()
                                     .filter_map(|c| {
                                         let name = c.pointer("/function/name")?.as_str()?;
-                                        let args_str = c.pointer("/function/arguments")?.as_str()?;
-                                        let mut args: Value = serde_json::from_str(args_str).ok()?;
-                                        args.as_object_mut()?
-                                            .insert("type".to_string(), Value::String(name.to_string()));
+                                        let args_str =
+                                            c.pointer("/function/arguments")?.as_str()?;
+                                        let mut args: Value =
+                                            serde_json::from_str(args_str).ok()?;
+                                        args.as_object_mut()?.insert(
+                                            "type".to_string(),
+                                            Value::String(name.to_string()),
+                                        );
                                         Some(args)
                                     })
                                     .collect();
                                 if !actions.is_empty() {
-                                    final_text = serde_json::to_string(&actions).unwrap_or_default();
+                                    final_text =
+                                        serde_json::to_string(&actions).unwrap_or_default();
                                 }
                             }
                         }
@@ -457,9 +465,12 @@ impl EpistemicEngine {
     /// tier. The strategist keeps its own strict 2500-char edge budget on
     /// purpose (4K-context persona); only judgment layers pin reads.
 
-    fn overload_state() -> &'static std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>> {
-        static S: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>>> =
-            std::sync::OnceLock::new();
+    fn overload_state(
+    ) -> &'static std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>>
+    {
+        static S: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>>,
+        > = std::sync::OnceLock::new();
         S.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
     }
 
@@ -494,7 +505,10 @@ impl EpistemicEngine {
         while let Some(a) = out.find("<thought>") {
             match out[a..].find("</thought>") {
                 Some(rel) => out.replace_range(a..a + rel + "</thought>".len(), ""),
-                None => { out.truncate(a); break; }
+                None => {
+                    out.truncate(a);
+                    break;
+                }
             }
         }
         out.trim().to_string()
@@ -504,7 +518,12 @@ impl EpistemicEngine {
         Self::compress_preserving_reads_budget(evidence, head, tail, 100_000)
     }
 
-    pub(crate) fn compress_preserving_reads_budget(evidence: &str, head: usize, tail: usize, max_pinned_total: usize) -> String {
+    pub(crate) fn compress_preserving_reads_budget(
+        evidence: &str,
+        head: usize,
+        tail: usize,
+        max_pinned_total: usize,
+    ) -> String {
         const MAX_PINNED_REGION: usize = 30_000;
         let n_read_regions = evidence
             .lines()
@@ -644,10 +663,10 @@ impl EpistemicEngine {
             .filter(|c| {
                 !c.trim().is_empty()
                     && !c.lines().any(|l| {
-                    // NEXUS_FIX_VISIBLE_HISTORY: only real feedback markers (line start) drop a chunk
-                    let t = l.trim_start();
-                    t.starts_with("[CRITIC_VETO]") || t.starts_with("[HALT_REJECTED]")
-                })
+                        // NEXUS_FIX_VISIBLE_HISTORY: only real feedback markers (line start) drop a chunk
+                        let t = l.trim_start();
+                        t.starts_with("[CRITIC_VETO]") || t.starts_with("[HALT_REJECTED]")
+                    })
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -952,7 +971,9 @@ Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS.
             crate::tools::schema::CognitivePhase::Reconnaissance
         };
         let evidence_limit: usize = std::env::var("NEXUS_STRATEGIST_EVIDENCE_CHARS")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(24000);
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(24000);
         // Strict 2,500 character ceiling to guarantee prompt stays under 3,000 tokens total
         let bounded_evidence = if evidence_so_far.chars().count() > evidence_limit {
             let tail: String = evidence_so_far
@@ -1383,7 +1404,8 @@ OUTPUT ONLY VALID JSON:
         action: &str,
         evidence: &str,
     ) -> Result<crate::cognition_graph::VerificationReport> {
-        let truncated_evidence: String = Self::compress_preserving_reads_budget(evidence, 3000, 11000, 200_000);
+        let truncated_evidence: String =
+            Self::compress_preserving_reads_budget(evidence, 3000, 11000, 200_000);
         // The halt text IS the claim source for read-only analysis halts; the
         // claim-check below must see the full claims. The old 2000-char cap
         // silently truncated ROOT_CAUSE/TRACE/FIX answers mid-claim, leaving
@@ -1764,7 +1786,11 @@ mod judge_budget_tests {
     fn larger_budget_keeps_chunk_tails() {
         let mut ev = String::new();
         for i in 0..10 {
-            ev.push_str(&format!("[READ_CHUNK_OK] File: x.rs | Lines {}-{} of 4000\nCONTENT:\n", i * 400 + 1, (i + 1) * 400));
+            ev.push_str(&format!(
+                "[READ_CHUNK_OK] File: x.rs | Lines {}-{} of 4000\nCONTENT:\n",
+                i * 400 + 1,
+                (i + 1) * 400
+            ));
             ev.push_str(&"line\n".repeat(3000));
             ev.push_str(&format!("tail_marker_{}\n", i));
         }

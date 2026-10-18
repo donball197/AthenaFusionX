@@ -8,7 +8,11 @@
 ///   * `under|at most N lines`      -> line cap (all lines counted)
 ///
 /// Returns human-readable defects; empty means conformant.
-pub(crate) fn python_conformance_defects(objective: &str, path: &str, content: &str) -> Vec<String> {
+pub(crate) fn python_conformance_defects(
+    objective: &str,
+    path: &str,
+    content: &str,
+) -> Vec<String> {
     let mut defects: Vec<String> = Vec::new();
     let obj_lower = objective.to_ascii_lowercase();
 
@@ -28,9 +32,7 @@ pub(crate) fn python_conformance_defects(objective: &str, path: &str, content: &
         let before = &objective[..start];
         let is_attr_call = before.ends_with('.');
         let defining = before.split_whitespace().rev().take(3).any(|w| {
-            let w = w
-                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
-                .to_ascii_lowercase();
+            let w = w.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_lowercase();
             w == "def" || w == "function" || w == "method" || w.starts_with("defin")
         });
         if starts_ok && !is_attr_call && defining && !required_fns.contains(&name) {
@@ -51,11 +53,8 @@ pub(crate) fn python_conformance_defects(objective: &str, path: &str, content: &
     }
 
     // 2. snake_case identifiers named in the objective must appear in the file
-    let path_stem = std::path::Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
+    let path_stem =
+        std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let mut idents: Vec<String> = Vec::new();
     for tok in objective.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         let tok = tok.trim_matches('_');
@@ -259,7 +258,11 @@ mod conformance_regression_tests {
     #[test]
     fn stub_is_still_rejected_for_the_exact_code_objective() {
         let obj = "Write a file named \"sys_monitor_v2.py\" containing EXACTLY this code:\nimport json\nimport os\ndef get_metrics():\n    return {\"load_avg\": os.getloadavg()}\nprint(json.dumps(get_metrics()))";
-        let d = python_conformance_defects(obj, "sys_monitor_v2.py", "import json import os def get_metrics(): return {");
+        let d = python_conformance_defects(
+            obj,
+            "sys_monitor_v2.py",
+            "import json import os def get_metrics(): return {",
+        );
         assert!(d.iter().any(|x| x.contains("get_metrics")), "{d:?}");
     }
 }

@@ -41,10 +41,7 @@ fn beam_model_hits_reflection() {
     let r = resolve_provider("Beam-501B-A23B");
     assert_eq!(r.provider_name, "reflection");
     assert_eq!(r.auth, AuthStyle::Bearer);
-    assert_eq!(
-        r.endpoint,
-        "https://api.reflection.ai/openai/v1/chat/completions"
-    );
+    assert_eq!(r.endpoint, "https://api.reflection.ai/openai/v1/chat/completions");
 }
 
 #[test]

@@ -29,21 +29,23 @@ pub(crate) fn action_advances_unmet_contract_condition(
             continue;
         }
         let advances = match cond {
-            CC::ReadMarkerAcquired => match crate::cortical::util::extract_named_target(mission, "READ_OK:") {
-                Some(target) => {
-                    matches!(
+            CC::ReadMarkerAcquired => {
+                match crate::cortical::util::extract_named_target(mission, "READ_OK:") {
+                    Some(target) => {
+                        matches!(
+                            action,
+                            AgentAction::ReadFile { path, .. } if path.trim() == target
+                        ) || matches!(
+                            action,
+                            AgentAction::ReadFileChunk { path, .. } if path.trim() == target
+                        )
+                    }
+                    None => matches!(
                         action,
-                        AgentAction::ReadFile { path, .. } if path.trim() == target
-                    ) || matches!(
-                        action,
-                        AgentAction::ReadFileChunk { path, .. } if path.trim() == target
-                    )
+                        AgentAction::ReadFile { .. } | AgentAction::ReadFileChunk { .. }
+                    ),
                 }
-                None => matches!(
-                    action,
-                    AgentAction::ReadFile { .. } | AgentAction::ReadFileChunk { .. }
-                ),
-            },
+            }
             CC::ReadPathAcquired { path: target } => {
                 matches!(
                     action,
@@ -66,22 +68,24 @@ pub(crate) fn action_advances_unmet_contract_condition(
             CC::SearchMemoryMarkerAcquired => {
                 matches!(action, AgentAction::SearchMemory { .. })
             }
-            CC::WriteMarkerAcquired => match crate::cortical::util::extract_named_target(mission, "WRITE_OK:") {
-                Some(target) => {
-                    matches!(
+            CC::WriteMarkerAcquired => {
+                match crate::cortical::util::extract_named_target(mission, "WRITE_OK:") {
+                    Some(target) => {
+                        matches!(
+                            action,
+                            AgentAction::WriteFile { path, .. } if path.trim() == target
+                        ) || matches!(
+                            action,
+                            AgentAction::SynthesizeReport { output_path, .. }
+                                if output_path.trim() == target
+                        )
+                    }
+                    None => matches!(
                         action,
-                        AgentAction::WriteFile { path, .. } if path.trim() == target
-                    ) || matches!(
-                        action,
-                        AgentAction::SynthesizeReport { output_path, .. }
-                            if output_path.trim() == target
-                    )
+                        AgentAction::WriteFile { .. } | AgentAction::SynthesizeReport { .. }
+                    ),
                 }
-                None => matches!(
-                    action,
-                    AgentAction::WriteFile { .. } | AgentAction::SynthesizeReport { .. }
-                ),
-            },
+            }
             CC::WritePathAcquired { path: target } => {
                 matches!(
                     action,
@@ -125,8 +129,7 @@ pub(crate) fn action_advances_unmet_contract_condition(
             CC::CommandMarkerAcquired => {
                 matches!(action, AgentAction::ExecuteCommand { .. })
             }
-            CC::CommandExecutionVerified { .. }
-            | CC::MathematicalExecutionVerified { .. } => {
+            CC::CommandExecutionVerified { .. } | CC::MathematicalExecutionVerified { .. } => {
                 matches!(action, AgentAction::ExecuteCommand { .. })
             }
             CC::ReadFunctionMarkerAcquired { .. } => {

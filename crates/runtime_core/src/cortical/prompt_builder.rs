@@ -41,15 +41,25 @@ pub fn build_enhanced_mission(
     // Deterministic outline for audit reports: read evidence carries no line numbers,
     // so models estimate them (and disagree run to run).
     let enhanced = if session.contract.read_only
-        && session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap()).is_none()
+        && session
+            .coverage
+            .largest_interior_gap()
+            .or_else(|| session.coverage.largest_gap())
+            .is_none()
     {
         let outline = crate::cortical::halt_claims::function_outline(&session.local_evidence, 20);
-        if outline.is_empty() { enhanced } else { format!("{}\n\n{}", enhanced, outline) }
+        if outline.is_empty() {
+            enhanced
+        } else {
+            format!("{}\n\n{}", enhanced, outline)
+        }
     } else {
         enhanced
     };
 
-    let recent_vetoes: Vec<_> = session.local_evidence.lines()
+    let recent_vetoes: Vec<_> = session
+        .local_evidence
+        .lines()
         .rev()
         .take(30)
         .filter(|l| {

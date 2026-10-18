@@ -371,11 +371,7 @@ mod tests {
             "Discussion mentions target_b\n",
         );
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &[condition],
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition],));
     }
 
     #[test]
@@ -392,11 +388,7 @@ mod tests {
             "fn target_b() {}\n",
         );
 
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &[condition],
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition],));
     }
 
     #[test]
@@ -613,9 +605,8 @@ mod extraction_guards {
 
     #[test]
     fn math_evidence_does_not_satisfy_ordinary_command_contract() {
-        let condition = CompletionCondition::CommandExecutionVerified {
-            command: "uptime".to_string(),
-        };
+        let condition =
+            CompletionCondition::CommandExecutionVerified { command: "uptime".to_string() };
 
         let evidence = concat!(
             "ALL TABLE\n",
@@ -632,11 +623,7 @@ mod extraction_guards {
             "Status: exit status: 0\n",
         );
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &[condition],
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition],));
     }
 
     #[test]
@@ -660,11 +647,7 @@ mod extraction_guards {
             "Status: exit status: 0\n",
         );
 
-        assert!(OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &[condition],
-        ));
+        assert!(OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition],));
     }
 
     #[test]
@@ -688,11 +671,7 @@ mod extraction_guards {
             "Status: exit status: 1\n",
         );
 
-        assert!(!OutcomeVerifier::mission_completion_authorized(
-            evidence,
-            1.0,
-            &[condition],
-        ));
+        assert!(!OutcomeVerifier::mission_completion_authorized(evidence, 1.0, &[condition],));
     }
 
     #[test]

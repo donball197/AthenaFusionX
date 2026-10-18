@@ -42,7 +42,9 @@ impl CoverageLedger {
             // Skip to the FULL FILE CONTENT: header if present.
             let mut j = i + 1;
             while j < lines.len() && !lines[j].starts_with("FULL FILE CONTENT:") {
-                if lines[j].starts_with('[') { break; } // no content block
+                if lines[j].starts_with('[') {
+                    break;
+                } // no content block
                 j += 1;
             }
             if j >= lines.len() || !lines[j].starts_with("FULL FILE CONTENT:") {
@@ -59,7 +61,9 @@ impl CoverageLedger {
                     total = parse_total_lines(l);
                     break;
                 }
-                if l.starts_with('[') && l.contains("] ") { break; } // next marker
+                if l.starts_with('[') && l.contains("] ") {
+                    break;
+                } // next marker
                 shown += 1;
                 k += 1;
             }
@@ -208,7 +212,9 @@ mod tests {
         let mut l = CoverageLedger::default();
         // Truncated full read: 51 content lines shown before the truncation
         // note, then the only chunk read was 100-150.
-        let mut full = String::from("[READ_OK] crates/runtime_core/src/cortical_loop.rs\nFULL FILE CONTENT:\n");
+        let mut full = String::from(
+            "[READ_OK] crates/runtime_core/src/cortical_loop.rs\nFULL FILE CONTENT:\n",
+        );
         for i in 1..=51 {
             full.push_str(&format!("line {i}\n"));
         }

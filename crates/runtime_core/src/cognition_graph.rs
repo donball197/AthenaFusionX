@@ -163,25 +163,17 @@ impl CognitiveGraph {
     /// Return the id of the first node whose content exactly matches
     /// `content`.
     pub fn find_by_content(&self, content: &str) -> Option<Uuid> {
-        self.nodes
-            .iter()
-            .find(|(_, node)| node.content == content)
-            .map(|(id, _)| *id)
+        self.nodes.iter().find(|(_, node)| node.content == content).map(|(id, _)| *id)
     }
 
     /// Return node content, or an empty string when the id is unknown.
     pub fn content_of(&self, id: Uuid) -> String {
-        self.nodes
-            .get(&id)
-            .map(|node| node.content.clone())
-            .unwrap_or_default()
+        self.nodes.get(&id).map(|node| node.content.clone()).unwrap_or_default()
     }
 
     /// Return the current belief score for a node.
     pub fn belief_of(&self, id: Uuid) -> Option<f32> {
-        self.nodes
-            .get(&id)
-            .map(|node| node.belief_score)
+        self.nodes.get(&id).map(|node| node.belief_score)
     }
 
     /// Demote a hypothesis to an explicit policy-selected score.
@@ -266,25 +258,14 @@ impl CognitiveGraph {
         cost: u32,
         weight: f32,
     ) -> Uuid {
-        let observation_id = self.add_node(
-            NodeKind::Observation,
-            content,
-            1.0,
-            cost,
-        );
+        let observation_id = self.add_node(NodeKind::Observation, content, 1.0, cost);
 
-        self.add_edge(
-            observation_id,
-            target,
-            EdgeRelation::Contradicts,
-            weight,
-        );
+        self.add_edge(observation_id, target, EdgeRelation::Contradicts, weight);
 
         self.propagate_beliefs();
 
         observation_id
     }
-
 }
 
 #[cfg(test)]

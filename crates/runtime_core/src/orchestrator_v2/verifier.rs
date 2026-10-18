@@ -142,11 +142,7 @@ impl Verifier {
                 let mut parts = target.splitn(2, ':');
                 let path = parts.next().unwrap_or("").trim();
                 let func = parts.next().unwrap_or("").trim();
-                crate::evidence_markers::read_function_marker_satisfies(
-                    evidence,
-                    path,
-                    func,
-                )
+                crate::evidence_markers::read_function_marker_satisfies(evidence, path, func)
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 crate::evidence_markers::search_term_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
@@ -287,9 +283,7 @@ mod tests {
 
     #[test]
     fn read_function_rejects_marker_and_target_from_different_records() {
-        let criteria = vec![
-            "READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()
-        ];
+        let criteria = vec!["READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()];
 
         let evidence = concat!(
             "[READ_FUNCTION_OK] crates/runtime_core/src/foo.rs:actual_a\n",
@@ -300,17 +294,14 @@ mod tests {
             "Discussion mentions target_b\n",
         );
 
-        let result =
-            Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
+        let result = Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
 
         assert!(matches!(result, VerificationResult::Retry(_)));
     }
 
     #[test]
     fn read_function_accepts_exact_marker_record() {
-        let criteria = vec![
-            "READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()
-        ];
+        let criteria = vec!["READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()];
 
         let evidence = concat!(
             "[READ_FUNCTION_OK] crates/runtime_core/src/bar.rs:target_b\n",
@@ -319,8 +310,7 @@ mod tests {
             "fn target_b() {}\n",
         );
 
-        let result =
-            Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
+        let result = Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
 
         assert_eq!(result, VerificationResult::Success);
     }

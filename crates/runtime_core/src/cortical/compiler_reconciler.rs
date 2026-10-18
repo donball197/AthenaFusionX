@@ -1,6 +1,5 @@
 // crates/runtime_core/src/cortical/compiler_reconciler.rs
 
-use anyhow::Result;
 use crate::cognition::epistemic_session::EpistemicSession;
 use crate::cognition_graph::{EdgeRelation, NodeKind};
 use crate::compile_remediation::{
@@ -8,6 +7,7 @@ use crate::compile_remediation::{
 };
 use crate::cortex::compiler_gate::{CompilerGate, CompilerGateResult, RustVerificationTarget};
 use crate::cortical_loop::CorticalLoop;
+use anyhow::Result;
 
 pub(crate) enum CompilerVerificationOutcome {
     Passed,
@@ -62,8 +62,7 @@ impl CorticalLoop {
                 ));
             }
             RustVerificationTarget::StandaloneFiles { files } => {
-                let names: Vec<String> =
-                    files.iter().map(|f| f.display().to_string()).collect();
+                let names: Vec<String> = files.iter().map(|f| f.display().to_string()).collect();
                 self.log(format!(
                     "\x1b[36m>> [COMPILER CRITIC] Running standalone rustc verification through CompilerGate for [{}]...\x1b[0m",
                     names.join(", ")
@@ -129,8 +128,11 @@ impl CorticalLoop {
 
                         let mut revert_all_succeeded = true;
                         for path in mutation_paths {
-                            if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path])
-                                .is_err()
+                            if crate::podman::PodmanShield::execute_argv(
+                                "git",
+                                &["checkout", "--", path],
+                            )
+                            .is_err()
                             {
                                 revert_all_succeeded = false;
                             }
@@ -165,12 +167,7 @@ impl CorticalLoop {
                                 90,
                             );
 
-                            session.graph.add_edge(
-                                obs_id,
-                                h_id,
-                                EdgeRelation::Contradicts,
-                                0.99,
-                            );
+                            session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
 
                             session.graph.propagate_beliefs();
                         }
@@ -186,8 +183,11 @@ impl CorticalLoop {
 
                         let mut revert_all_succeeded = true;
                         for path in mutation_paths {
-                            if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path])
-                                .is_err()
+                            if crate::podman::PodmanShield::execute_argv(
+                                "git",
+                                &["checkout", "--", path],
+                            )
+                            .is_err()
                             {
                                 revert_all_succeeded = false;
                             }
@@ -240,8 +240,11 @@ impl CorticalLoop {
                         let mut revert_all_succeeded = true;
 
                         for path in mutation_paths {
-                            if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path])
-                                .is_err()
+                            if crate::podman::PodmanShield::execute_argv(
+                                "git",
+                                &["checkout", "--", path],
+                            )
+                            .is_err()
                             {
                                 revert_all_succeeded = false;
                             }
@@ -268,12 +271,7 @@ impl CorticalLoop {
                                 90,
                             );
 
-                            session.graph.add_edge(
-                                obs_id,
-                                h_id,
-                                EdgeRelation::Contradicts,
-                                0.99,
-                            );
+                            session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.99);
 
                             session.graph.propagate_beliefs();
                         }

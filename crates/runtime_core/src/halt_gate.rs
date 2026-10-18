@@ -77,9 +77,7 @@ pub fn halt_range_gate(evidence: &str) -> Option<String> {
     for (s, e) in cited {
         // A range beyond the file is a false claim by definition.
         if e > total {
-            return Some(format!(
-                "halt cites lines {s}-{e} but the file has only {total} lines"
-            ));
+            return Some(format!("halt cites lines {s}-{e} but the file has only {total} lines"));
         }
         if !ledger.covers(s, e) {
             return Some(format!("halt cites lines {s}-{e} that were never fully read"));
