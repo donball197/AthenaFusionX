@@ -20,7 +20,7 @@ fn word_present(hay: &str, needle: &str) -> bool {
     hay.match_indices(needle).any(|(i, _)| {
         let before = hay[..i].chars().next_back();
         let after = hay[i + needle.len()..].chars().next();
-        !before.map_or(false, is_word_char) && !after.map_or(false, is_word_char)
+        !before.is_some_and(is_word_char) && !after.is_some_and(is_word_char)
     })
 }
 
@@ -47,7 +47,7 @@ pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
         if !is_ident(name) || SKIP.contains(&name) {
             continue;
         }
-        let found = if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+        let found = if name.chars().next().is_some_and(|c| c.is_uppercase()) {
             word_present(corpus, name)
         } else {
             word_present(corpus, &format!("fn {}", name))
@@ -142,7 +142,7 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
     for span in report.split('`').skip(1).step_by(2) {
         let name = span.trim().trim_end_matches("()").rsplit("::").next().unwrap_or("");
         if is_ident(name)
-            && name.chars().next().map_or(false, |c| c.is_lowercase() || c == '_')
+            && name.chars().next().is_some_and(|c| c.is_lowercase() || c == '_')
             && word_present(corpus, &format!("fn {}", name))
             && !verified.contains(&name)
         {
@@ -224,7 +224,7 @@ pub fn read_lines(evidence: &str) -> BTreeMap<usize, String> {
                 st = if t == "CONTENT:" || t == "FULL FILE CONTENT:" { St::Body(s, e) } else { St::Idle };
             }
             St::Body(n, e) => {
-                if e.map_or(false, |e| n > e) {
+                if e.is_some_and(|e| n > e) {
                     st = St::Idle;
                 } else {
                     map.entry(n).or_insert_with(|| line.to_string());
@@ -297,7 +297,7 @@ pub fn function_outline(evidence: &str, min_lines: usize) -> String {
     let lines = read_lines(evidence);
     let mut spans: Vec<FnSpan> = function_spans(&lines)
         .into_iter()
-        .filter(|s| s.end.map_or(false, |e| e + 1 - s.start >= min_lines))
+        .filter(|s| s.end.is_some_and(|e| e + 1 - s.start >= min_lines))
         .collect();
     if spans.is_empty() {
         return String::new();
@@ -318,7 +318,7 @@ fn words_at(hay: &str, needle: &str) -> Vec<usize> {
         .filter(|&(i, _)| {
             let before = hay[..i].chars().next_back();
             let after = hay[i + needle.len()..].chars().next();
-            !before.map_or(false, is_word_char) && !after.map_or(false, is_word_char)
+            !before.is_some_and(is_word_char) && !after.is_some_and(is_word_char)
         })
         .map(|(i, _)| i)
         .collect()
@@ -360,14 +360,14 @@ pub fn range_defects(report: &str, spans: &[FnSpan], min_len: usize) -> Vec<Stri
         seen.push(sp.name.as_str());
         for pos in words_at(report, &sp.name) {
             let line_start = report[..pos].rfind('\n').map_or(0, |i| i + 1);
-            if report[line_start..pos].matches('`').count() % 2 == 0 {
+            if report[line_start..pos].matches('`').count().is_multiple_of(2) {
                 continue;
             }
             let line: &str = report[pos..].lines().next().unwrap_or("");
             let window: String = line.chars().take(300).collect();
             if let Some((a, b)) = range_after(&window) {
                 let ok = spans.iter().filter(|x| x.name == sp.name).any(|x| {
-                    x.end.map_or(false, |e| a.abs_diff(x.start) <= 25 && b.abs_diff(e) <= 40)
+                    x.end.is_some_and(|e| a.abs_diff(x.start) <= 25 && b.abs_diff(e) <= 40)
                 });
                 if !ok {
                     out.push(format!(

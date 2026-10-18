@@ -6,6 +6,7 @@
 ///   * snake_case identifiers       -> must appear in the file
 ///   * `import ONLY a, b and c`     -> only those top-level modules may be imported
 ///   * `under|at most N lines`      -> line cap (all lines counted)
+///
 /// Returns human-readable defects; empty means conformant.
 pub(crate) fn python_conformance_defects(objective: &str, path: &str, content: &str) -> Vec<String> {
     let mut defects: Vec<String> = Vec::new();
@@ -123,7 +124,7 @@ pub(crate) fn python_conformance_defects(objective: &str, path: &str, content: &
                 let mut modules: Vec<String> = Vec::new();
                 if let Some(rest) = t.strip_prefix("import ") {
                     for part in rest.split(';').next().unwrap_or("").split(',') {
-                        let m = part.trim().split_whitespace().next().unwrap_or("");
+                        let m = part.split_whitespace().next().unwrap_or("");
                         modules.push(m.split('.').next().unwrap_or("").to_string());
                     }
                 } else if let Some(rest) = t.strip_prefix("from ") {

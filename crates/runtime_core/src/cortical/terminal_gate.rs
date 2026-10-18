@@ -41,6 +41,7 @@ impl TerminalGate {
             && !self.requires_semantic_verification
     }
 
+    #[allow(dead_code)] // sibling of is_autonomous_completion_satisfied without the remediation gate; intentionally unwired
     pub fn is_pure_command_satisfied(&self) -> bool {
         self.contract_satisfied && self.is_command_only && !self.requires_semantic_verification
     }

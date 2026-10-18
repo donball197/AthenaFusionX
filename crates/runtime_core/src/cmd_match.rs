@@ -42,7 +42,7 @@ fn hash_marker_present(want: &str, evidence: &str) -> bool {
     evidence.lines().any(|l| {
         l.trim()
             .strip_prefix("[CMD_HASH] ")
-            .map_or(false, |h| h.trim() == want)
+            .is_some_and(|h| h.trim() == want)
     })
 }
 
