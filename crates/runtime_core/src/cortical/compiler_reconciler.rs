@@ -128,12 +128,7 @@ impl CorticalLoop {
 
                         let mut revert_all_succeeded = true;
                         for path in mutation_paths {
-                            if crate::podman::PodmanShield::execute_argv(
-                                "git",
-                                &["checkout", "--", path],
-                            )
-                            .is_err()
-                            {
+                            if crate::revert::revert_mutation_path(path).is_err() {
                                 revert_all_succeeded = false;
                             }
                         }
@@ -183,12 +178,7 @@ impl CorticalLoop {
 
                         let mut revert_all_succeeded = true;
                         for path in mutation_paths {
-                            if crate::podman::PodmanShield::execute_argv(
-                                "git",
-                                &["checkout", "--", path],
-                            )
-                            .is_err()
-                            {
+                            if crate::revert::revert_mutation_path(path).is_err() {
                                 revert_all_succeeded = false;
                             }
                         }
@@ -240,12 +230,7 @@ impl CorticalLoop {
                         let mut revert_all_succeeded = true;
 
                         for path in mutation_paths {
-                            if crate::podman::PodmanShield::execute_argv(
-                                "git",
-                                &["checkout", "--", path],
-                            )
-                            .is_err()
-                            {
+                            if crate::revert::revert_mutation_path(path).is_err() {
                                 revert_all_succeeded = false;
                             }
                         }

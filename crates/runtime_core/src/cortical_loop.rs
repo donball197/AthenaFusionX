@@ -106,8 +106,7 @@ impl CorticalLoop {
         let mut all_succeeded = true;
 
         for path in &session.active_mutation_paths {
-            if crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", path]).is_err()
-            {
+            if crate::revert::revert_mutation_path(path).is_err() {
                 all_succeeded = false;
             }
         }
@@ -2338,11 +2337,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     if let Some(path) = &mutation_path {
                         // argv form: a path containing shell metacharacters
                         // cannot be interpreted as a second command.
-                        let revert_ok = crate::podman::PodmanShield::execute_argv(
-                            "git",
-                            &["checkout", "--", path],
-                        )
-                        .is_ok();
+                        let revert_ok = crate::revert::revert_mutation_path(path).is_ok();
 
                         if revert_ok {
                             // Only on a confirmed successful revert may the
