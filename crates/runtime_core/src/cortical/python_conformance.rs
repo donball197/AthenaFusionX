@@ -68,6 +68,9 @@ pub(crate) fn python_conformance_defects(
         if tok == path_stem || required_fns.iter().any(|f| f == tok) {
             continue;
         }
+        if TOOL_NAMES.contains(&tok) {
+            continue;
+        }
         if !idents.iter().any(|i| i == tok) {
             idents.push(tok.to_string());
         }
@@ -213,6 +216,35 @@ pub(crate) async fn python_syntax_error(path: &str) -> Option<String> {
     }
 }
 
+/// Action/tool names. The objective names these as instructions ("use the
+/// write_file tool"), not as identifiers the produced file must contain.
+const TOOL_NAMES: &[&str] = &[
+    "atomic_patch",
+    "calculate_entropy",
+    "delegate_task",
+    "diff_patch",
+    "execute_command",
+    "export_report",
+    "fetch_ui_snapshot",
+    "git_rollback",
+    "halt",
+    "lazarus_snapshot",
+    "patch_file",
+    "patch_function",
+    "read_file",
+    "read_file_chunk",
+    "read_function",
+    "replace_lines",
+    "run_tests",
+    "scrape_url",
+    "search_code",
+    "search_memory",
+    "spawn_subagent",
+    "synthesize_report",
+    "vmo_create",
+    "write_file",
+];
+
 #[cfg(test)]
 mod conformance_tests {
     use super::python_conformance_defects;
@@ -246,6 +278,21 @@ mod conformance_tests {
 #[cfg(test)]
 mod conformance_regression_tests {
     use super::python_conformance_defects;
+
+    #[test]
+    fn tool_names_in_the_objective_are_not_required_identifiers() {
+        let objective = "Use the write_file tool to create auth.py containing the token discovered from secret.json in the format:\ndef get_token():\n    return \"ATHENA_777_OMEGA\"";
+        let content = "def get_token():\n    return \"ATHENA_777_OMEGA\"\n";
+        let defects = python_conformance_defects(objective, "auth.py", content);
+        assert!(defects.is_empty(), "unexpected defects: {:?}", defects);
+    }
+
+    #[test]
+    fn real_snake_case_identifiers_are_still_required() {
+        let objective = "Create calc.py that must use the name total_sum";
+        let defects = python_conformance_defects(objective, "calc.py", "x = 1\n");
+        assert!(defects.iter().any(|d| d.contains("total_sum")), "defects: {:?}", defects);
+    }
 
     #[test]
     fn attribute_calls_in_objective_are_not_required_definitions() {
