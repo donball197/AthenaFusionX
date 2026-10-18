@@ -421,3 +421,46 @@ impl CorticalLoop {
         }
     }
 }
+
+impl CorticalLoop {
+/// Prevent a single failed action from driving the active hypothesis
+    /// below the selection threshold. If the hypothesis was selectable
+    /// before this evaluation (`pre_eval_belief >= floor`), clamp its
+    /// post-evaluation score back up to the floor.
+    ///
+    /// This preserves anti-loop behavior -- repeated failures still decay
+    /// the hypothesis through subsequent turns -- while ensuring a single
+    /// `PATH_NOT_FOUND`, `[ACTION FAILED]`, or strongly negative LLM
+    /// evaluation does not remove the hypothesis from the candidate set
+    /// on the same turn the failure occurred. `select_best_hypothesis`
+    /// filters hypotheses with `belief_score < 0.15`; without this floor
+    /// one failed action can exhaust a node before it can try a different
+    /// approach.
+    ///
+    /// The floor is not applied when the hypothesis was already below the
+    /// threshold before this evaluation: a hypothesis that is already
+    /// dead should not be resurrected by a single turn's accounting.
+    pub(crate) fn floor_hypothesis_belief_after_failure(
+        session: &mut EpistemicSession,
+        h_id: uuid::Uuid,
+        pre_eval_belief: f32,
+        floor: f32,
+    ) {
+        session.graph.restore_floor(h_id, pre_eval_belief, floor);
+    }
+
+    /// Apply a direct decay to the active hypothesis's belief.
+    ///
+    /// This is the chokepoint for direct belief subtraction
+    /// (`belief - delta`) used by strategy-violation and anti-loop
+    /// pivots.
+    ///
+    /// F4: no floor clamp is applied. The belief may cross SELECT_FLOOR
+    /// and become unselectable, which is exactly what forced-pivot
+    /// callers intend. Decay never resurrects: it only floors at 0.0.
+    /// The evaluation-failure rescue path remains
+    /// `floor_hypothesis_belief_after_failure`.
+    pub(crate) fn decay_hypothesis_belief(session: &mut EpistemicSession, h_id: uuid::Uuid, delta: f32) {
+        let _ = session.graph.decay(h_id, delta);
+    }
+}

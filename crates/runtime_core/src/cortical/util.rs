@@ -156,3 +156,53 @@ mod synth_halt_tests {
         assert!(should_synthesize_halt("The task is complete, I will halt."));
     }
 }
+
+/// Normalizes a strategy string for duplicate detection: quotes dropped, whitespace
+/// collapsed, ASCII-lowercased. `execute_command "x"` and `execute_command 'x'` compare equal.
+pub(crate) fn normalize_strategy(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '`'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+/// Best-effort action name for proposals that use `action` / `tool` keys, ReAct nesting, or
+/// {"halt": ...} instead of `"type"`, so a parse fault can still name the real schema fields.
+pub(crate) fn fallback_action_type(raw: &str) -> Option<String> {
+    for key in ["\"action\"", "\"tool\""] {
+        if let Some(pos) = raw.find(key) {
+            let after = raw[pos + key.len()..].trim_start();
+            if let Some(rest) = after.strip_prefix(':') {
+                if let Some(rest) = rest.trim_start().strip_prefix('"') {
+                    if let Some(end) = rest.find('"') {
+                        return Some(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+    }
+    if raw.contains("\"halt\"") {
+        return Some("halt".to_string());
+    }
+    // bare function-call style text such as `read_file_chunk path 1244 250`
+    for name in [
+        "read_file_chunk",
+        "read_function",
+        "read_file",
+        "search_code",
+        "search_memory",
+        "write_file",
+        "diff_patch",
+        "patch_function",
+        "replace_lines",
+        "execute_command",
+    ] {
+        if raw.contains(name) {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
