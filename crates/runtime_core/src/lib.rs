@@ -96,3 +96,6 @@ pub(crate) mod revert;
 pub(crate) mod halt_support;
 #[cfg(test)]
 mod semantic_gate_tests;
+
+#[cfg(test)]
+mod write_noop_tests;

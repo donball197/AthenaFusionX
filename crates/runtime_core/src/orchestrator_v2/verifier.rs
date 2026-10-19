@@ -151,16 +151,7 @@ impl Verifier {
                 evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
                 let target = path.trim();
-                let synthesized =
-                    format!("Successfully synthesized and wrote report to {}", target);
-                evidence.lines().any(|l| {
-                    l.strip_prefix("[WRITE_OK]")
-                        .map(|rest| {
-                            let rest = rest.trim();
-                            rest == target || rest == synthesized
-                        })
-                        .unwrap_or(false)
-                })
+                crate::evidence_markers::write_path_satisfied(evidence, target)
             } else if criterion == "CMD_OK" {
                 // A bare [CMD_OK] substring is not proof of success. The
                 // verifier must require the marker on its own line followed

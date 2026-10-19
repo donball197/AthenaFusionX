@@ -115,16 +115,7 @@ impl OutcomeVerifier {
                     // sentence, not a bare path, so exact-equality against
                     // the remainder of the line would reject a write that
                     // physically succeeded.
-                    let synthesized =
-                        format!("Successfully synthesized and wrote report to {}", expected);
-                    local_evidence.lines().any(|l| {
-                        if let Some(rest) = l.strip_prefix("[WRITE_OK]") {
-                            let rest = rest.trim();
-                            rest == expected || rest == synthesized
-                        } else {
-                            false
-                        }
-                    })
+                    crate::evidence_markers::write_path_satisfied(local_evidence, expected)
                 }
                 CompletionCondition::PatchMarkerAcquired => {
                     crate::evidence_markers::has_patch_satisfied_marker(local_evidence)

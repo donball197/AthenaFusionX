@@ -12,6 +12,33 @@ pub fn has_mutation_marker(evidence: &str) -> bool {
     })
 }
 
+/// True when `evidence` holds a line-anchored success record for writing `path`:
+///   [WRITE_OK] <path>
+///   [WRITE_OK] Successfully synthesized and wrote report to <path>
+///   [WRITE_NOOP] <path> -- content identical to existing file
+/// A no-op means the file already holds exactly the requested content, so the
+/// end state the directive asked for is true. It is accepted here only: it is
+/// not a mutation (`has_mutation_marker` still rejects it).
+pub fn write_path_satisfied(evidence: &str, path: &str) -> bool {
+    let target = path.trim();
+    let synthesized = format!("Successfully synthesized and wrote report to {}", target);
+    evidence.lines().any(|l| {
+        if let Some(rest) = l.strip_prefix("[WRITE_OK]") {
+            let rest = rest.trim();
+            rest == target || rest == synthesized
+        } else if let Some(rest) = l.strip_prefix("[WRITE_NOOP]") {
+            let rest = rest.trim();
+            let rest = rest
+                .strip_suffix("-- content identical to existing file")
+                .map(str::trim_end)
+                .unwrap_or(rest);
+            rest == target
+        } else {
+            false
+        }
+    })
+}
+
 /// Successful recon / read / search / command markers.
 /// True when `evidence` contains a [SEARCH_CODE_OK] block whose recorded
 /// `Query:` field satisfies the `path:term` (or bare `term`) expectation.
