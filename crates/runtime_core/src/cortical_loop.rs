@@ -2063,6 +2063,25 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         let eval_evidence_context =
             format!("PHYSICAL EVIDENCE PRODUCED BY THOSE ACTION(S):\\n{}", evidence);
 
+        // HALT TURNS ONLY: a halt's own evidence is just the [HALT] line, so the
+        // evaluator cannot see the success markers that justify it, and the HALT
+        // RULE in its prompt ("this turn or earlier in context") never applies.
+        // Append the recent success-marker lines from the session. Every other
+        // turn keeps the strict current-turn-only boundary above.
+        let eval_evidence_context = if is_halt_action {
+            let support = crate::halt_support::success_marker_lines(&session.local_evidence, 6);
+            if support.is_empty() {
+                eval_evidence_context
+            } else {
+                format!(
+                    "{}\nSESSION SUCCESS MARKERS (earlier in this node):\n{}",
+                    eval_evidence_context, support
+                )
+            }
+        } else {
+            eval_evidence_context
+        };
+
         match EpistemicEngine::evaluate_evidence(
             &self.client,
             &self.api_key,

@@ -93,5 +93,6 @@ pub mod virtual_fs;
 mod extract_command_tests;
 pub(crate) mod revert;
 
+pub(crate) mod halt_support;
 #[cfg(test)]
 mod semantic_gate_tests;
