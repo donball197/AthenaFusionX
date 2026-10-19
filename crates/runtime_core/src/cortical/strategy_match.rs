@@ -6,6 +6,50 @@
 
 use crate::agent_protocol::AgentAction;
 
+/// Path equivalence for strategy/action comparison. The strategist often
+/// proposes an absolute path for a workspace-relative strategy
+/// (`write_file:x.rs` vs `/repo/x.rs`); that is the same file and must not be
+/// a STRATEGY VIOLATION. Paths containing a `..` component are never
+/// normalized and match only on exact string equality.
+fn same_path(actual: &str, expected: &str) -> bool {
+    let a = actual.trim();
+    let e = expected.trim();
+    if a == e {
+        return true;
+    }
+    let norm = |p: &str| -> Option<String> {
+        if p.split('/').any(|c| c == "..") {
+            return None;
+        }
+        let mut rest = p;
+        while let Some(r) = rest.strip_prefix("./") {
+            rest = r;
+        }
+        Some(rest.to_string())
+    };
+    let (Some(a), Some(e)) = (norm(a), norm(e)) else {
+        return false;
+    };
+    if a == e {
+        return true;
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => {
+            let cwd = cwd.to_string_lossy().to_string();
+            let cwd = cwd.trim_end_matches('/');
+            let abs = |p: &str| -> String {
+                if p.starts_with('/') {
+                    p.to_string()
+                } else {
+                    format!("{}/{}", cwd, p)
+                }
+            };
+            abs(&a) == abs(&e)
+        }
+        Err(_) => false,
+    }
+}
+
 /// Deterministically enforce the Cortex strategy/action boundary.
 pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
     let strategy = strategy.trim();
@@ -29,10 +73,10 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         let expected_path = expected_path.trim();
         return matches!(
             action,
-            AgentAction::ReadFile { path, .. } if path.trim() == expected_path
+            AgentAction::ReadFile { path, .. } if same_path(path, expected_path)
         ) || matches!(
             action,
-            AgentAction::ReadFileChunk { path, .. } if path.trim() == expected_path
+            AgentAction::ReadFileChunk { path, .. } if same_path(path, expected_path)
         );
     }
 
@@ -47,7 +91,7 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
                 path,
                 function_name,
                 ..
-            } if path.trim() == expected_path
+            } if same_path(path, expected_path)
                 && function_name.trim() == expected_function
         );
     }
@@ -56,7 +100,7 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         return matches!(
             action,
             AgentAction::ReadFileChunk { path, .. }
-                if path.trim() == expected_path.trim()
+                if same_path(path, expected_path)
         );
     }
 
@@ -133,7 +177,7 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         return matches!(
             action,
             AgentAction::WriteFile { path, .. }
-                if path.trim() == expected_path.trim()
+                if same_path(path, expected_path)
         );
     }
 
@@ -141,7 +185,7 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         return matches!(
             action,
             AgentAction::ReplaceLines { path, .. }
-                if path.trim() == expected_path.trim()
+                if same_path(path, expected_path)
         );
     }
 
@@ -149,7 +193,7 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         return matches!(
             action,
             AgentAction::DiffPatch { path, .. }
-                if path.trim() == expected_path.trim()
+                if same_path(path, expected_path)
         );
     }
 
@@ -164,7 +208,7 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
                 path,
                 function_name,
                 ..
-            } if path.trim() == expected_path
+            } if same_path(path, expected_path)
                 && !function_name.trim().is_empty()
         );
     }
@@ -178,4 +222,45 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
     }
 
     true
+}
+
+#[cfg(test)]
+mod same_path_tests {
+    use super::same_path;
+
+    fn cwd() -> String {
+        std::env::current_dir().unwrap().to_string_lossy().trim_end_matches('/').to_string()
+    }
+
+    #[test]
+    fn identical_and_dot_slash_paths_match() {
+        assert!(same_path("x.rs", "x.rs"));
+        assert!(same_path("./x.rs", "x.rs"));
+        assert!(same_path(" x.rs ", "x.rs"));
+    }
+
+    #[test]
+    fn absolute_path_under_cwd_matches_relative() {
+        let abs = format!("{}/x.rs", cwd());
+        assert!(same_path(&abs, "x.rs"));
+        assert!(same_path("x.rs", &abs));
+    }
+
+    #[test]
+    fn absolute_path_elsewhere_does_not_match() {
+        assert!(!same_path("/etc/x.rs", "x.rs"));
+        assert!(!same_path(&format!("{}/other/x.rs", cwd()), "x.rs"));
+    }
+
+    #[test]
+    fn dotdot_components_are_never_normalized() {
+        assert!(!same_path("../x.rs", "x.rs"));
+        assert!(!same_path(&format!("{}/../x.rs", cwd()), "x.rs"));
+        assert!(same_path("../x.rs", "../x.rs"));
+    }
+
+    #[test]
+    fn different_files_do_not_match() {
+        assert!(!same_path("a.rs", "b.rs"));
+    }
 }
