@@ -572,8 +572,22 @@ impl CorticalLoop {
                     return Ok(CortexOutcome::CompletionProposed { belief, evidence })
                 }
                 CortexState::Fail { belief, .. } => {
+                    // A successful rollback deletes or restores the mutated
+                    // files, so evidence recorded for those mutations (e.g.
+                    // [WRITE_OK]) no longer describes the disk. It must not
+                    // be used to declare the node complete.
+                    let mut reverted_mutations = false;
                     if session.compile_remediation.is_active() {
-                        Self::rollback_active_mutations(&mut session);
+                        // Read before the call: a successful rollback clears it.
+                        let had_paths = !session.active_mutation_paths.is_empty();
+                        let rollback_ok = Self::rollback_active_mutations(&mut session);
+                        reverted_mutations = had_paths && rollback_ok;
+                        if reverted_mutations {
+                            self.log(
+                                "\x1b[1;33m>> [CORTEX] Fail branch reverted active mutations; accumulated evidence for them is stale and cannot satisfy the contract.\x1b[0m"
+                                    .to_string(),
+                            );
+                        }
                     }
 
                     // handle_strategize's own no-hypothesis branch routes
@@ -601,7 +615,10 @@ impl CorticalLoop {
                             &session.contract.objective,
                         );
 
-                    if contract_satisfied_by_evidence && !requires_semantic_verification {
+                    if contract_satisfied_by_evidence
+                        && !requires_semantic_verification
+                        && !reverted_mutations
+                    {
                         self.log(
                             "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated physical evidence already satisfies the contract. Node complete.\x1b[0m"
                                 .to_string(),
