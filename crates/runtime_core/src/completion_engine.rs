@@ -189,6 +189,34 @@ pub(crate) fn structural_analysis_target(objective: &str) -> Option<String> {
 }
 
 pub(crate) fn requires_semantic_verification(objective: &str) -> bool {
+    /// Replaces file-name tokens ("report.py", "data.json", "src/lib.rs")
+    /// with spaces. `any_word_unnegated` splits on punctuation, so a file
+    /// name like report.py would otherwise contribute the word "report" and
+    /// make a plain write directive look like a semantic-analysis task.
+    fn strip_file_name_tokens(text: &str) -> String {
+        text.split_whitespace()
+            .map(|tok| {
+                let t = tok
+                    .trim_matches(|c: char| {
+                        !(c.is_alphanumeric() || matches!(c, '_' | '/' | '.' | '-'))
+                    })
+                    .trim_end_matches('.');
+                match t.rsplit_once('.') {
+                    Some((stem, ext))
+                        if !stem.is_empty()
+                            && stem.chars().any(|c| c.is_alphabetic())
+                            && (1..=5).contains(&ext.len())
+                            && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+                    {
+                        " "
+                    }
+                    _ => tok,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     let mut text = objective.trim().to_lowercase();
 
     if let Some(stripped) = text.strip_prefix("objective:") {
@@ -208,8 +236,9 @@ pub(crate) fn requires_semantic_verification(objective: &str) -> bool {
         return false;
     }
 
+    let scrubbed = strip_file_name_tokens(&text);
     any_word_unnegated(
-        &text,
+        &scrubbed,
         &[
             // --- additional base forms not previously covered ---
             "review",

@@ -92,3 +92,6 @@ pub mod virtual_fs;
 #[cfg(test)]
 mod extract_command_tests;
 pub(crate) mod revert;
+
+#[cfg(test)]
+mod semantic_gate_tests;
