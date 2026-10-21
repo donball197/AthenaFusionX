@@ -43,7 +43,17 @@ impl CorticalLoop {
                         | AgentAction::ReadFile { _thought_process: None, .. }
                 );
 
-            if attempt_count >= 1 && !bypass_antiloop_for_retention {
+            // A repeated WriteFile is not a duplicate if its previous effect is
+            // gone (reverted, or never landed): the target is physically absent.
+            // Capped so an identical write that keeps failing still trips the veto.
+            let write_target_absent = attempt_count <= 2
+                && matches!(
+                    &action,
+                    AgentAction::WriteFile { _thought_process: None, path, .. }
+                        if !std::path::Path::new(path.trim()).exists()
+                );
+
+            if attempt_count >= 1 && !bypass_antiloop_for_retention && !write_target_absent {
                 match crate::anti_loop::classify_duplicate(
                     &action,
                     &session.contract,
@@ -74,7 +84,7 @@ impl CorticalLoop {
             } else {
                 if attempt_count >= 1 {
                     self.log(format!(
-                        "\x1b[1;33m>> [ANTI-LOOP] Permitting repeated action [{}] during active compile remediation.\x1b[0m",
+                        "\x1b[1;33m>> [ANTI-LOOP] Permitting repeated action [{}] (retention bypass or absent write target).\x1b[0m",
                         action_key
                     ));
                 }
@@ -102,11 +112,23 @@ impl CorticalLoop {
             session.local_evidence.push('\n');
 
             const LOOP_VETO_BUDGET: usize = 6;
-            let stuck_count = session
-                .local_evidence
-                .lines()
-                .filter(|l| l.starts_with("[LOOP_VETO] All proposed actions already attempted"))
-                .count();
+            // Count only vetoes since the last physical success marker: an
+            // interleaved [..._OK] means the node made progress, so the budget
+            // measures consecutive stalls, not lifetime vetoes.
+            let mut stuck_count = 0usize;
+            for l in session.local_evidence.lines().rev() {
+                if l.starts_with("[LOOP_VETO] All proposed actions already attempted") {
+                    stuck_count += 1;
+                } else if l
+                    .trim_start()
+                    .strip_prefix('[')
+                    .and_then(|r| r.split(']').next())
+                    .map(|m| m.ends_with("_OK"))
+                    .unwrap_or(false)
+                {
+                    break;
+                }
+            }
 
             if stuck_count >= LOOP_VETO_BUDGET {
                 self.log(format!(
