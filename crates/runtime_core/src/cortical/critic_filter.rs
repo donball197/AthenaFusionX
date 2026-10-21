@@ -46,12 +46,7 @@ impl CorticalLoop {
             // A repeated WriteFile is not a duplicate if its previous effect is
             // gone (reverted, or never landed): the target is physically absent.
             // Capped so an identical write that keeps failing still trips the veto.
-            let write_target_absent = attempt_count <= 2
-                && matches!(
-                    &action,
-                    AgentAction::WriteFile { _thought_process: None, path, .. }
-                        if !std::path::Path::new(path.trim()).exists()
-                );
+            let write_target_absent = is_retryable_absent_write(&action, attempt_count);
 
             if attempt_count >= 1 && !bypass_antiloop_for_retention && !write_target_absent {
                 match crate::anti_loop::classify_duplicate(
@@ -112,23 +107,7 @@ impl CorticalLoop {
             session.local_evidence.push('\n');
 
             const LOOP_VETO_BUDGET: usize = 6;
-            // Count only vetoes since the last physical success marker: an
-            // interleaved [..._OK] means the node made progress, so the budget
-            // measures consecutive stalls, not lifetime vetoes.
-            let mut stuck_count = 0usize;
-            for l in session.local_evidence.lines().rev() {
-                if l.starts_with("[LOOP_VETO] All proposed actions already attempted") {
-                    stuck_count += 1;
-                } else if l
-                    .trim_start()
-                    .strip_prefix('[')
-                    .and_then(|r| r.split(']').next())
-                    .map(|m| m.ends_with("_OK"))
-                    .unwrap_or(false)
-                {
-                    break;
-                }
-            }
+            let stuck_count = consecutive_loop_vetoes(&session.local_evidence);
 
             if stuck_count >= LOOP_VETO_BUDGET {
                 self.log(format!(
@@ -165,5 +144,125 @@ impl CorticalLoop {
         }
 
         AntiLoopOutcome::Proceed(filtered_actions)
+    }
+}
+
+/// A repeated WriteFile is not a duplicate if its previous effect is gone
+/// (reverted, or never landed): the target is physically absent. Capped so an
+/// identical write that keeps failing still trips the veto.
+fn is_retryable_absent_write(action: &AgentAction, attempt_count: u32) -> bool {
+    attempt_count <= 2
+        && matches!(
+            action,
+            AgentAction::WriteFile { _thought_process: None, path, .. }
+                if !std::path::Path::new(path.trim()).exists()
+        )
+}
+
+/// Number of all-duplicate LOOP_VETO lines since the last physical success
+/// marker (`[..._OK]`). An interleaved success means the node made progress,
+/// so the stuck budget measures consecutive stalls, not lifetime vetoes.
+fn consecutive_loop_vetoes(evidence: &str) -> usize {
+    let mut count = 0usize;
+    for l in evidence.lines().rev() {
+        if l.starts_with("[LOOP_VETO] All proposed actions already attempted") {
+            count += 1;
+        } else if l
+            .trim_start()
+            .strip_prefix('[')
+            .and_then(|r| r.split(']').next())
+            .map(|m| m.ends_with("_OK"))
+            .unwrap_or(false)
+        {
+            break;
+        }
+    }
+    count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VETO: &str =
+        "[LOOP_VETO] All proposed actions already attempted: k. Must choose different action(s).";
+
+    #[test]
+    fn empty_evidence_is_zero() {
+        assert_eq!(consecutive_loop_vetoes(""), 0);
+    }
+
+    #[test]
+    fn counts_trailing_vetoes() {
+        let ev = format!("{VETO}\n{VETO}\n{VETO}\n");
+        assert_eq!(consecutive_loop_vetoes(&ev), 3);
+    }
+
+    #[test]
+    fn success_marker_resets_the_budget() {
+        let ev = format!("{VETO}\n{VETO}\n[WRITE_OK] path=a.rs\n{VETO}\n");
+        assert_eq!(consecutive_loop_vetoes(&ev), 1);
+    }
+
+    #[test]
+    fn six_vetoes_interleaved_with_progress_do_not_trip_the_budget() {
+        let mut ev = String::new();
+        for _ in 0..6 {
+            ev.push_str(VETO);
+            ev.push('\n');
+            ev.push_str("[READ_OK] path=a.rs\n");
+        }
+        assert!(consecutive_loop_vetoes(&ev) < 6);
+    }
+
+    #[test]
+    fn six_consecutive_vetoes_do_trip_the_budget() {
+        let mut ev = String::from("[COMPILE_OK] fine\n");
+        for _ in 0..6 {
+            ev.push_str(VETO);
+            ev.push('\n');
+        }
+        assert_eq!(consecutive_loop_vetoes(&ev), 6);
+    }
+
+    #[test]
+    fn non_success_markers_do_not_reset() {
+        let ev = format!(
+            "{VETO}\n[CRITIC_VETO] x\n[STRATEGY_VIOLATION] y\n[HALT_REJECTED] z\n{VETO}\n"
+        );
+        assert_eq!(consecutive_loop_vetoes(&ev), 2);
+    }
+
+    fn write_action(path: &str) -> AgentAction {
+        serde_json::from_value(
+            serde_json::json!({"type": "write_file", "path": path, "content": "x"}),
+        )
+        .expect("write_file JSON must deserialize as AgentAction")
+    }
+
+    #[test]
+    fn absent_write_target_is_retryable_up_to_the_cap() {
+        let a = write_action("/nonexistent_antiloop_dir/nope.rs");
+        assert!(is_retryable_absent_write(&a, 1));
+        assert!(is_retryable_absent_write(&a, 2));
+        assert!(!is_retryable_absent_write(&a, 3));
+    }
+
+    #[test]
+    fn existing_write_target_is_a_real_duplicate() {
+        let p = std::env::temp_dir().join("antiloop_existing_target_test.txt");
+        std::fs::write(&p, "x").unwrap();
+        let a = write_action(&p.to_string_lossy());
+        assert!(!is_retryable_absent_write(&a, 1));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn non_write_actions_never_bypass() {
+        let a: AgentAction = serde_json::from_value(
+            serde_json::json!({"type": "read_file", "path": "/nonexistent_antiloop_dir/x.rs"}),
+        )
+        .expect("read_file JSON must deserialize as AgentAction");
+        assert!(!is_retryable_absent_write(&a, 1));
     }
 }

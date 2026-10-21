@@ -467,17 +467,7 @@ impl CorticalLoop {
                             Self::rollback_active_mutations(&mut session);
                         }
 
-                        {
-                            let diag_gate = TerminalGate::evaluate(&session, current_belief);
-                            self.log(format!(
-                                "\x1b[1;35m>> [CORTEX DIAG] TurnsExhausted: contract_satisfied={} compile_resolved={} semantic_required={} belief={:.2} evidence_bytes={}\x1b[0m",
-                                diag_gate.contract_satisfied,
-                                diag_gate.compile_remediation_resolved,
-                                crate::completion_engine::requires_semantic_verification(&session.contract.objective),
-                                current_belief,
-                                session.local_evidence.len()
-                            ));
-                        }
+                        self.log_turns_exhausted(&session, current_belief);
                         return Ok(CortexOutcome::TurnsExhausted {
                             best_belief: current_belief,
                             evidence: session.collect_evidence(best_node.id),
@@ -503,19 +493,7 @@ impl CorticalLoop {
                 // condition_is_met's probing convention, so a
                 // MinBeliefScore condition -- the very thing that just
                 // decayed to death -- cannot circularly block this check.
-                let contract_satisfied_by_evidence =
-                    crate::completion_engine::SubgoalCompletionEngine::evaluate(
-                        &session.contract,
-                        &session.local_evidence,
-                        1.0,
-                    );
-
-                let requires_semantic_verification =
-                    crate::completion_engine::requires_semantic_verification(
-                        &session.contract.objective,
-                    );
-
-                if contract_satisfied_by_evidence && !requires_semantic_verification {
+                if Self::evidence_satisfies_contract(&session) {
                     self.log(
                         "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated physical evidence already satisfies the contract. Node complete.\x1b[0m"
                             .to_string(),
@@ -608,22 +586,7 @@ impl CorticalLoop {
                     // even after the top-of-loop fix: Strategize -> Fail ->
                     // TurnsExhausted happens entirely inside this match
                     // block and never revisits the top-of-loop guard.
-                    let contract_satisfied_by_evidence =
-                        crate::completion_engine::SubgoalCompletionEngine::evaluate(
-                            &session.contract,
-                            &session.local_evidence,
-                            1.0,
-                        );
-
-                    let requires_semantic_verification =
-                        crate::completion_engine::requires_semantic_verification(
-                            &session.contract.objective,
-                        );
-
-                    if contract_satisfied_by_evidence
-                        && !requires_semantic_verification
-                        && !reverted_mutations
-                    {
+                    if Self::evidence_satisfies_contract(&session) && !reverted_mutations {
                         self.log(
                             "\x1b[1;36m>> [CORTEX TERMINAL] No hypothesis survived, but accumulated physical evidence already satisfies the contract. Node complete.\x1b[0m"
                                 .to_string(),
@@ -640,17 +603,7 @@ impl CorticalLoop {
                     // passing it up to the DAG verifier causes every
                     // criterion to fail even when the physical work was
                     // actually completed successfully.
-                    {
-                        let diag_gate = TerminalGate::evaluate(&session, belief);
-                        self.log(format!(
-                            "\x1b[1;35m>> [CORTEX DIAG] TurnsExhausted: contract_satisfied={} compile_resolved={} semantic_required={} belief={:.2} evidence_bytes={}\x1b[0m",
-                            diag_gate.contract_satisfied,
-                            diag_gate.compile_remediation_resolved,
-                            crate::completion_engine::requires_semantic_verification(&session.contract.objective),
-                            belief,
-                            session.local_evidence.len()
-                        ));
-                    }
+                    self.log_turns_exhausted(&session, belief);
                     return Ok(CortexOutcome::TurnsExhausted {
                         best_belief: belief,
                         evidence: session.local_evidence.clone(),
@@ -658,6 +611,28 @@ impl CorticalLoop {
                 }
             };
         }
+    }
+
+    /// True when accumulated physical evidence already satisfies the
+    /// deterministic contract and no semantic verification is required.
+    /// Belief is probed at 1.0 so a decayed MinBeliefScore cannot circularly
+    /// block the check.
+    fn evidence_satisfies_contract(session: &EpistemicSession) -> bool {
+        use crate::completion_engine::{requires_semantic_verification, SubgoalCompletionEngine};
+        SubgoalCompletionEngine::evaluate(&session.contract, &session.local_evidence, 1.0)
+            && !requires_semantic_verification(&session.contract.objective)
+    }
+
+    fn log_turns_exhausted(&self, session: &EpistemicSession, belief: f32) {
+        let g = TerminalGate::evaluate(session, belief);
+        self.log(format!(
+            "\x1b[1;35m>> [CORTEX DIAG] TurnsExhausted: contract_satisfied={} compile_resolved={} semantic_required={} belief={:.2} evidence_bytes={}\x1b[0m",
+            g.contract_satisfied,
+            g.compile_remediation_resolved,
+            crate::completion_engine::requires_semantic_verification(&session.contract.objective),
+            belief,
+            session.local_evidence.len()
+        ));
     }
 
     /// The write phase may be entered only when a declared artifact is
