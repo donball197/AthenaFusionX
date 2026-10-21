@@ -120,3 +120,4 @@ model_preflight.py
 scout_models3.py
 secret.json
 __pycache__/
+mirror/
