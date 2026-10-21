@@ -1,3 +1,33 @@
+/// Summarize a [READ_OK] / [READ_CHUNK_OK] record by FILE lines, not record
+/// lines: skip the marker and content-header lines, drop trailing blanks, and
+/// use the read tool's `TOTAL LINES: N` truncation notice when present.
+fn read_line_summary(lines: &[&str]) -> String {
+    let start = lines
+        .iter()
+        .position(|l| matches!(l.trim(), "FULL FILE CONTENT:" | "CONTENT:"))
+        .map(|i| i + 1)
+        .unwrap_or(1);
+    let mut body: Vec<&str> = lines.get(start..).unwrap_or(&[]).to_vec();
+    let total = body.iter().find_map(|l| {
+        if l.contains("[CONTENT TRUNCATED") {
+            l.split("TOTAL LINES:")
+                .nth(1)
+                .and_then(|r| r.trim_start().split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|n| n.parse::<usize>().ok())
+        } else {
+            None
+        }
+    });
+    body.retain(|l| !l.contains("[CONTENT TRUNCATED"));
+    while body.last().is_some_and(|l| l.trim().is_empty()) {
+        body.pop();
+    }
+    match total {
+        Some(t) if t > body.len() => format!("File read ({} of {} lines shown)", body.len(), t),
+        _ => format!("File read ({} lines)", body.len()),
+    }
+}
+
 fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
     let lines: Vec<&str> = raw.lines().collect();
     if lines.is_empty() {
@@ -22,7 +52,7 @@ fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
             }
         }
         let symbols_summary = if key_symbols.is_empty() {
-            format!("File read ({} lines)", lines.len())
+            read_line_summary(&lines)
         } else {
             key_symbols.join(", ")
         };
@@ -313,5 +343,38 @@ impl EpistemicSession {
 
     pub fn global_action_attempt_count(&self, action_key: &str) -> u32 {
         self.global_action_attempts.get(action_key).copied().unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod read_line_summary_tests {
+    use super::read_line_summary;
+
+    fn split(s: &str) -> Vec<&str> {
+        s.lines().collect()
+    }
+
+    #[test]
+    fn whole_file_counts_body_not_headers() {
+        let raw = "[READ_OK] a.rs\nFULL FILE CONTENT:\nl1\nl2\nl3\nl4\n\n";
+        assert_eq!(read_line_summary(&split(raw)), "File read (4 lines)");
+    }
+
+    #[test]
+    fn chunk_counts_body_not_headers() {
+        let raw = "[READ_CHUNK_OK] File: a.rs | Lines 1-3 of 9\nCONTENT:\nx\ny\nz\n";
+        assert_eq!(read_line_summary(&split(raw)), "File read (3 lines)");
+    }
+
+    #[test]
+    fn truncated_read_reports_shown_of_total() {
+        let raw = "[READ_OK] a.rs\nFULL FILE CONTENT:\nl1\nl2\n\n[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: 410. USE THE `read_file_chunk` TOOL]";
+        assert_eq!(read_line_summary(&split(raw)), "File read (2 of 410 lines shown)");
+    }
+
+    #[test]
+    fn empty_body_is_zero_lines() {
+        let raw = "[READ_OK] a.rs\nFULL FILE CONTENT:\n";
+        assert_eq!(read_line_summary(&split(raw)), "File read (0 lines)");
     }
 }
