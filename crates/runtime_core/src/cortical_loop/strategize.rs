@@ -325,6 +325,13 @@ impl CorticalLoop {
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
+            // A semantic mission (analysis/audit/report) needs a real report in
+            // the halt; the bare auto-halt can never satisfy it and would
+            // override a valid recon action. Read-only keeps existing behavior.
+            && (session.contract.read_only
+                || !crate::completion_engine::requires_semantic_verification(
+                    &session.contract.objective,
+                ))
             // Never auto-halt while the read ledger still has an unread range:
             // a truncated first read satisfies ReadPathAcquired long before the
             // file has actually been read.

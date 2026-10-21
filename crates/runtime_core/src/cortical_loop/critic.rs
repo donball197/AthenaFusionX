@@ -434,7 +434,15 @@ impl CorticalLoop {
                             obs_id,
                             h_id,
                             EdgeRelation::Contradicts,
-                            if action_is_write && strategy_is_write { 0.10 } else { 0.40 },
+                            // A vetoed halt judges the completion proposal, not the
+                            // strategy that produced the evidence.
+                            if (action_is_write && strategy_is_write)
+                                || matches!(actions.first(), Some(AgentAction::Halt { .. }))
+                            {
+                                0.10
+                            } else {
+                                0.40
+                            },
                         );
                         session.graph.propagate_beliefs();
                     }
