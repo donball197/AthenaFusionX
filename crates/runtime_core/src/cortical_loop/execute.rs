@@ -151,7 +151,7 @@ impl CorticalLoop {
 
             // Build the canonical action key before MotorCortex::translate()
             // consumes the AgentAction.
-            let action_key = crate::cortical::action_identity::action_key(&action);
+            let action_key = crate::cortical::critic_filter::attempt_key(session, &action);
 
             // Captured before the move below so a failed execution's error
             // string can be scoped to the attempted path (see error-arm

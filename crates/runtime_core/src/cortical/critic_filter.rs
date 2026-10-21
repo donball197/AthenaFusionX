@@ -22,7 +22,7 @@ impl CorticalLoop {
         let mut vetoed_keys: Vec<String> = Vec::new();
 
         for action in actions {
-            let action_key = crate::cortical::action_identity::action_key(&action);
+            let action_key = attempt_key(session, &action);
             let attempt_count = session.global_action_attempt_count(&action_key);
 
             // STRICT ANTI-LOOP:
@@ -147,6 +147,56 @@ impl CorticalLoop {
     }
 }
 
+/// Actions whose result depends on the current state of the workspace. The same
+/// command / read / search is NOT a duplicate once a mutation has landed in
+/// between (re-running a failing command after patching its target; re-reading a
+/// file after editing it).
+fn is_state_sensitive(action: &AgentAction) -> bool {
+    matches!(
+        action,
+        AgentAction::ExecuteCommand { _thought_process: None, .. }
+            | AgentAction::ReadFile { _thought_process: None, .. }
+            | AgentAction::ReadFileChunk { _thought_process: None, .. }
+            | AgentAction::ReadFunction { _thought_process: None, .. }
+            | AgentAction::SearchCode { _thought_process: None, .. }
+    )
+}
+
+/// Number of physical mutation markers recorded so far in the session evidence.
+pub(crate) fn mutation_epoch(evidence: &str) -> usize {
+    evidence
+        .lines()
+        .filter(|l| {
+            l.trim_start()
+                .strip_prefix('[')
+                .and_then(|r| r.split(']').next())
+                .map(|m| {
+                    matches!(
+                        m,
+                        "WRITE_OK" | "PATCH_FUNCTION_OK" | "DIFF_PATCH_OK" | "REPLACE_LINES_OK"
+                    ) || m.starts_with("ATOMIC_PATCH")
+                        || m.starts_with("SYNTHESIZE")
+                })
+                .unwrap_or(false)
+        })
+        .count()
+}
+
+/// Anti-loop attempt key: the canonical action key, plus the mutation epoch for
+/// state-sensitive actions so a repeat after a real change is a new attempt.
+pub(crate) fn attempt_key_for(action: &AgentAction, evidence: &str) -> String {
+    let base = crate::cortical::action_identity::action_key(action);
+    if is_state_sensitive(action) {
+        format!("{}@m{}", base, mutation_epoch(evidence))
+    } else {
+        base
+    }
+}
+
+pub(crate) fn attempt_key(session: &EpistemicSession, action: &AgentAction) -> String {
+    attempt_key_for(action, &session.local_evidence)
+}
+
 /// A repeated WriteFile is not a duplicate if its previous effect is gone
 /// (reverted, or never landed): the target is physically absent. Capped so an
 /// identical write that keeps failing still trips the veto.
@@ -264,5 +314,40 @@ mod tests {
         )
         .expect("read_file JSON must deserialize as AgentAction");
         assert!(!is_retryable_absent_write(&a, 1));
+    }
+}
+
+#[cfg(test)]
+mod attempt_key_tests {
+    use super::*;
+
+    fn cmd(c: &str) -> AgentAction {
+        serde_json::from_value(serde_json::json!({"type": "execute_command", "command": c}))
+            .expect("execute_command JSON must deserialize as AgentAction")
+    }
+
+    #[test]
+    fn same_command_gets_a_new_key_after_a_mutation() {
+        let a = cmd("python3 -c 'print(1)'");
+        let before = "[ACTION FAILED] exit 1\n";
+        let after = "[ACTION FAILED] exit 1\n[PATCH_FUNCTION_OK] m.py:divide\n";
+        assert_eq!(attempt_key_for(&a, before), attempt_key_for(&a, before));
+        assert_ne!(attempt_key_for(&a, before), attempt_key_for(&a, after));
+    }
+
+    #[test]
+    fn write_actions_ignore_the_epoch() {
+        let w: AgentAction = serde_json::from_value(
+            serde_json::json!({"type": "write_file", "path": "a.txt", "content": "x"}),
+        )
+        .expect("write_file JSON must deserialize as AgentAction");
+        assert_eq!(attempt_key_for(&w, ""), attempt_key_for(&w, "[WRITE_OK] a.txt\n"));
+    }
+
+    #[test]
+    fn epoch_counts_only_mutation_markers() {
+        let ev = "[CMD_OK] x\n[WRITE_OK] a\n[READ_OK] b\n[PATCH_FUNCTION_OK] c\n[WRITE_NOOP] d\n";
+        assert_eq!(mutation_epoch(ev), 2);
+        assert_eq!(mutation_epoch(""), 0);
     }
 }

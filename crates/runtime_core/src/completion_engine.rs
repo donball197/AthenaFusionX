@@ -439,7 +439,8 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
         "bash", "sh",
     ];
 
-    const STOPPERS: &[&str] = &[" to ", " and ", " so ", ". ", " that ", " which ", ", "];
+    const STOPPERS: &[&str] =
+        &[" to ", " and ", " so ", ". ", " that ", " which ", " using ", ", "];
 
     for verb in ["execute ", "run "] {
         let mut search_from = 0usize;
@@ -451,13 +452,7 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
             let first_word = line.split_whitespace().next().unwrap_or("");
 
             if KNOWN_BINARIES.iter().any(|binary| first_word.eq_ignore_ascii_case(binary)) {
-                let mut command = line.to_string();
-
-                for stopper in STOPPERS {
-                    if let Some(pos) = command.find(stopper) {
-                        command.truncate(pos);
-                    }
-                }
+                let command = truncate_at_unquoted_stopper(line, STOPPERS);
 
                 let command = command.trim().trim_end_matches('.').trim();
 
@@ -471,6 +466,38 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Truncate `line` at the earliest stopper that is NOT inside a quoted span
+/// (double quotes, backticks, or single quotes that open after whitespace), so a
+/// command whose quoted argument contains ", " or " to " is not cut in the
+/// middle of that argument.
+fn truncate_at_unquoted_stopper(line: &str, stoppers: &[&str]) -> String {
+    let mut quote: Option<char> = None;
+    let mut prev: Option<char> = None;
+    for (i, c) in line.char_indices() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => {
+                let opens = match c {
+                    '"' | '`' => true,
+                    '\'' => prev.is_none_or(|p| p.is_whitespace() || p == '(' || p == '='),
+                    _ => false,
+                };
+                if opens {
+                    quote = Some(c);
+                } else if stoppers.iter().any(|s| line[i..].starts_with(s)) {
+                    return line[..i].to_string();
+                }
+            }
+        }
+        prev = Some(c);
+    }
+    line.to_string()
 }
 
 /// Collect every target named on a `<marker><target>` line of a mission.
@@ -1965,3 +1992,23 @@ LINEAGE CONTEXT:
 
 // math_command_satisfied() is consumed only by the explicit
 // MathematicalExecutionVerified contract in outcome_verifier.rs.
+
+#[cfg(test)]
+mod quote_aware_stopper_tests {
+    use super::extract_required_command;
+
+    #[test]
+    fn commas_inside_a_quoted_argument_do_not_truncate_the_command() {
+        let d = r#"Run python3 -c "import math_ops; print(math_ops.divide(10, 0))" using execute_command, patch math_ops.py using patch_function so that dividing by zero returns 0, and re-run the command until it exits successfully with status 0."#;
+        assert_eq!(
+            extract_required_command(d).as_deref(),
+            Some(r#"python3 -c "import math_ops; print(math_ops.divide(10, 0))""#)
+        );
+    }
+
+    #[test]
+    fn unquoted_stoppers_still_apply() {
+        let d = "Execute cargo check -p math_utils to verify that the AST patch compiles cleanly with zero errors.";
+        assert_eq!(extract_required_command(d).as_deref(), Some("cargo check -p math_utils"));
+    }
+}
