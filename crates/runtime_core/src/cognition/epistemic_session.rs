@@ -2,6 +2,18 @@
 /// lines: skip the marker and content-header lines, drop trailing blanks, and
 /// use the read tool's `TOTAL LINES: N` truncation notice when present.
 fn read_line_summary(lines: &[&str]) -> String {
+    // A directory listing record is not file content; describe it as such.
+    if lines.iter().any(|l| l.trim() == "DIRECTORY LISTING:") {
+        let entries = lines.iter().find_map(|l| {
+            l.trim()
+                .strip_prefix("ENTRIES:")
+                .and_then(|r| r.trim_start().split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|n| n.parse::<usize>().ok())
+        });
+        if let Some(n) = entries {
+            return format!("Directory listing ({} entries)", n);
+        }
+    }
     let start = lines
         .iter()
         .position(|l| matches!(l.trim(), "FULL FILE CONTENT:" | "CONTENT:"))
@@ -370,6 +382,13 @@ mod read_line_summary_tests {
     fn truncated_read_reports_shown_of_total() {
         let raw = "[READ_OK] a.rs\nFULL FILE CONTENT:\nl1\nl2\n\n[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: 410. USE THE `read_file_chunk` TOOL]";
         assert_eq!(read_line_summary(&split(raw)), "File read (2 of 410 lines shown)");
+    }
+
+    #[test]
+    fn directory_listing_is_not_described_as_a_file() {
+        let raw = "[READ_OK] d\nDIRECTORY LISTING:\nENTRIES: 2 (read individual files)\nd/a.rs\nd/b.rs\n";
+        let lines: Vec<&str> = raw.lines().collect();
+        assert_eq!(read_line_summary(&lines), "Directory listing (2 entries)");
     }
 
     #[test]

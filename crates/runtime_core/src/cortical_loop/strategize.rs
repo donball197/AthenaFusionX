@@ -499,7 +499,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     }
                     _ => false,
                 };
-            if !strategy_ok && !advances_unmet && !veto_recon_ok {
+            let dir_child_read_ok = is_dir_child_read(&active_strategy, first_action);
+            if !strategy_ok && !advances_unmet && !veto_recon_ok && !dir_child_read_ok {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
                     active_strategy,
@@ -531,5 +532,88 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         }
 
         Ok(CortexState::Critique { actions, proposal: raw_proposal, belief: current_belief })
+    }
+}
+
+/// A pinned `read_file:<dir>` strategy can only ever yield a directory listing,
+/// so it is operationalized by reading files INSIDE that directory. Admit a
+/// read_file / read_file_chunk whose path is strictly under the pinned
+/// directory (component-wise, no `..`). Every other mismatch still violates.
+fn is_dir_child_read(strategy: &str, action: &AgentAction) -> bool {
+    let Some(dir) = strategy.strip_prefix("read_file:") else {
+        return false;
+    };
+    let child = match action {
+        AgentAction::ReadFile { _thought_process: None, path, .. }
+        | AgentAction::ReadFileChunk { _thought_process: None, path, .. } => path.trim(),
+        _ => return false,
+    };
+    let dir_path = std::path::Path::new(dir.trim());
+    let child_path = std::path::Path::new(child);
+    dir_path.is_dir()
+        && child_path != dir_path
+        && child_path.starts_with(dir_path)
+        && !child_path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+#[cfg(test)]
+mod dir_child_tests {
+    use super::is_dir_child_read;
+    use crate::agent_protocol::AgentAction;
+
+    fn act(v: serde_json::Value) -> AgentAction {
+        serde_json::from_value(v).expect("action JSON must deserialize as AgentAction")
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn child_of_pinned_directory_is_allowed() {
+        let d = temp_dir("dir_child_test_a");
+        let strategy = format!("read_file:{}", d.to_string_lossy());
+        let child = d.join("f.rs").to_string_lossy().to_string();
+        let a = act(serde_json::json!({"type": "read_file", "path": child}));
+        assert!(is_dir_child_read(&strategy, &a));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn dir_itself_sibling_and_parent_escape_are_rejected() {
+        let d = temp_dir("dir_child_test_b");
+        let other = temp_dir("dir_child_test_c");
+        let strategy = format!("read_file:{}", d.to_string_lossy());
+        let itself = act(serde_json::json!({"type": "read_file", "path": d.to_string_lossy()}));
+        let sibling = act(
+            serde_json::json!({"type": "read_file", "path": other.join("x.rs").to_string_lossy()}),
+        );
+        let escape = act(serde_json::json!({
+            "type": "read_file",
+            "path": format!("{}/../dir_child_test_c/x.rs", d.to_string_lossy())
+        }));
+        assert!(!is_dir_child_read(&strategy, &itself));
+        assert!(!is_dir_child_read(&strategy, &sibling));
+        assert!(!is_dir_child_read(&strategy, &escape));
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn non_directory_or_non_read_strategies_never_match() {
+        let d = temp_dir("dir_child_test_d");
+        let child = d.join("f.rs").to_string_lossy().to_string();
+        let read = act(serde_json::json!({"type": "read_file", "path": child.clone()}));
+        let write =
+            act(serde_json::json!({"type": "write_file", "path": child, "content": "x"}));
+        // strategy path is not an existing directory
+        assert!(!is_dir_child_read("read_file:/nonexistent_dir_xyz_123", &read));
+        // action is a write, not a read
+        assert!(!is_dir_child_read(&format!("read_file:{}", d.to_string_lossy()), &write));
+        // strategy is not a read_file strategy
+        assert!(!is_dir_child_read(&format!("search_code:{}", d.to_string_lossy()), &read));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

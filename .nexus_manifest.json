@@ -619,6 +619,18 @@
   },
   {
     "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-embed-1b",
+    "context": "4K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-embed-8b",
+    "context": "4K in / 4K out",
+    "category": "EMBEDDING"
+  },
+  {
+    "provider": "Nvidia",
     "name": "nvidia/nemotron-3.5-lightning-30b-a3b",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
