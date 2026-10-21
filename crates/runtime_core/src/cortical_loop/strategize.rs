@@ -325,6 +325,9 @@ impl CorticalLoop {
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
+            // Once the report gate has rejected a bare halt, re-injecting it is
+            // futile and would replace every later strategist action.
+            && !session.local_evidence.contains("[HALT_REJECTED_REPORT]")
             // A semantic mission (analysis/audit/report) needs a real report in
             // the halt; the bare auto-halt can never satisfy it and would
             // override a valid recon action. Read-only keeps existing behavior.

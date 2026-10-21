@@ -451,7 +451,39 @@ impl RoboticExecutor {
             }
             MotorAction::ReadFile { path } => {
                 let safe_path = sanitize(&path)?;
-                let content = tokio::fs::read_to_string(&safe_path).await?;
+                // A directory cannot be read as a file (EISDIR). Return a sorted
+                // listing under the same [READ_OK] marker so a path-bound read of a
+                // directory is satisfiable, but under a distinct header so the
+                // coverage ledger (keyed on FULL FILE CONTENT:) does not treat a
+                // listing as a fully-read file.
+                let is_dir_listing = tokio::fs::metadata(&safe_path)
+                    .await
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false);
+                let content = if is_dir_listing {
+                    let mut names: Vec<String> = Vec::new();
+                    let mut rd = tokio::fs::read_dir(&safe_path).await?;
+                    while let Some(entry) = rd.next_entry().await? {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let is_dir =
+                            entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                        names.push(if is_dir { format!("{}/", name) } else { name });
+                    }
+                    names.sort();
+                    let total_entries = names.len();
+                    names.truncate(200);
+                    let base = path.trim_end_matches('/');
+                    let mut listing = format!(
+                        "ENTRIES: {} (read individual files with read_file or read_file_chunk)\n",
+                        total_entries
+                    );
+                    for n in &names {
+                        listing.push_str(&format!("{}/{}\n", base, n));
+                    }
+                    listing
+                } else {
+                    tokio::fs::read_to_string(&safe_path).await?
+                };
                 let snippet: String = content.chars().take(4000).collect();
                 if let Ok(emb) =
                     nexus_substrate::vector_bridge::get_embedding(&self.api_key, &snippet).await
@@ -487,7 +519,8 @@ impl RoboticExecutor {
                     content.clone()
                 };
 
-                Ok(format!("[READ_OK] {}\nFULL FILE CONTENT:\n{}", path, return_content))
+                let header = if is_dir_listing { "DIRECTORY LISTING:" } else { "FULL FILE CONTENT:" };
+                Ok(format!("[READ_OK] {}\n{}\n{}", path, header, return_content))
             }
             MotorAction::ReadFunction { path, function_name } => {
                 let safe_path = sanitize(&path)?;
