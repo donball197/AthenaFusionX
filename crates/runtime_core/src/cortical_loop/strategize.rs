@@ -209,6 +209,8 @@ impl CorticalLoop {
             write_phase_ready,
         );
 
+        self.apply_patch_command_phase(session, &mut active_strategy, mission, write_phase_ready);
+
         self.apply_halt_veto_recovery(session);
 
         self.apply_post_search_expansion(

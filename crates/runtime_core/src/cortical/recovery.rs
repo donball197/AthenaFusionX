@@ -485,3 +485,262 @@ impl CorticalLoop {
         let _ = session.graph.decay(h_id, delta);
     }
 }
+
+// ---------------------------------------------------------------------------
+// PATCH -> VERIFY phase for compound [PatchMarkerAcquired + CommandExecutionVerified]
+// contracts ("run X, patch the file so X passes, re-run X").
+//
+// A pinned `execute_command:` strategy narrows the strategist to exactly one
+// tool (see tools::schema::tool_declarations_for_strategy), so it can never emit
+// the patch the contract also requires. The phase is derived from physical
+// evidence only: the latest traceback grounds the patch target, a patch marker
+// moves the node to verification, and a fresh failure after the patch moves it
+// back to patching.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum PatchCommandPhase {
+    /// Nothing grounded to patch yet: let the pinned command strategy reproduce.
+    Reproduce,
+    /// Patch the file named by the latest traceback.
+    Patch { path: String, function: Option<String> },
+    /// A patch is in place: (re-)run the required command.
+    Verify,
+}
+
+fn marker_token(line: &str) -> Option<&str> {
+    line.trim_start().strip_prefix('[').and_then(|r| r.split(']').next())
+}
+
+fn relativize_to_cwd(p: &str) -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| {
+            std::path::Path::new(p)
+                .strip_prefix(&cwd)
+                .ok()
+                .map(|r| r.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| p.to_string())
+}
+
+/// Innermost non-stdlib frame of the latest Python-style traceback:
+/// `File "<path>", line N, in <function>`. The function is optional
+/// (module-level frames and SyntaxErrors have none).
+pub(crate) fn grounded_patch_target(evidence: &str) -> Option<(String, Option<String>)> {
+    for line in evidence.lines().rev() {
+        let Some(rest) = line.trim_start().strip_prefix("File \"") else {
+            continue;
+        };
+        let Some((path, tail)) = rest.split_once('"') else {
+            continue;
+        };
+        if path.starts_with('<')
+            || path.contains("site-packages")
+            || path.contains("dist-packages")
+            || path.starts_with("/usr/lib")
+            || path.starts_with("/usr/local/lib")
+        {
+            continue;
+        }
+        let function = tail
+            .rsplit_once(", in ")
+            .map(|(_, n)| n.trim())
+            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_'))
+            .map(|n| n.to_string());
+        return Some((relativize_to_cwd(path), function));
+    }
+    None
+}
+
+pub(crate) fn patch_command_phase(evidence: &str, patch_done: bool) -> PatchCommandPhase {
+    let lines: Vec<&str> = evidence.lines().collect();
+    let last_patch = lines.iter().rposition(|l| {
+        matches!(
+            marker_token(l),
+            Some("PATCH_FUNCTION_OK" | "DIFF_PATCH_OK" | "REPLACE_LINES_OK")
+        )
+    });
+    let last_fail = lines.iter().rposition(|l| l.trim_start().starts_with("[ACTION FAILED]"));
+    let failed_after_patch = match (last_patch, last_fail) {
+        (Some(p), Some(f)) => f > p,
+        _ => false,
+    };
+    let target = grounded_patch_target(evidence);
+    if !patch_done {
+        return match target {
+            Some((path, function)) => PatchCommandPhase::Patch { path, function },
+            None => PatchCommandPhase::Reproduce,
+        };
+    }
+    if failed_after_patch {
+        if let Some((path, function)) = target {
+            return PatchCommandPhase::Patch { path, function };
+        }
+    }
+    PatchCommandPhase::Verify
+}
+
+impl crate::cortical_loop::CorticalLoop {
+    pub(crate) fn apply_patch_command_phase(
+        &self,
+        session: &mut crate::cognition::epistemic_session::EpistemicSession,
+        active_strategy: &mut String,
+        mission: &str,
+        write_phase_ready: bool,
+    ) {
+        use crate::completion_engine::CompletionCondition as CC;
+
+        if write_phase_ready
+            || session.contract.read_only
+            || session.compile_remediation.is_active()
+        {
+            return;
+        }
+        let m = mission.to_lowercase();
+        if m.contains("read-only") || m.contains("do not modify") || m.contains("don't modify") {
+            return;
+        }
+        if !session.contract.conditions.iter().any(|c| matches!(c, CC::PatchMarkerAcquired)) {
+            return;
+        }
+        let Some(command) = session.contract.conditions.iter().find_map(|c| match c {
+            CC::CommandExecutionVerified { command } => Some(command.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        let command_cond = CC::CommandExecutionVerified { command: command.clone() };
+        if crate::cortical::contract_advance::condition_is_met(
+            &command_cond,
+            &session.local_evidence,
+        ) {
+            return;
+        }
+        let patch_done = crate::cortical::contract_advance::condition_is_met(
+            &CC::PatchMarkerAcquired,
+            &session.local_evidence,
+        );
+
+        let strategies: Vec<String> = match patch_command_phase(&session.local_evidence, patch_done)
+        {
+            PatchCommandPhase::Reproduce => return,
+            PatchCommandPhase::Patch { path, function } => {
+                let forced = session
+                    .local_evidence
+                    .lines()
+                    .filter(|l| l.starts_with("[PATCH_PHASE_FORCED]"))
+                    .count();
+                if forced >= 4 {
+                    return;
+                }
+                let mut v: Vec<String> = Vec::new();
+                // patch_function is AST-based and its payload guard requires a Rust
+                // `fn <name>` item; every other file type is patched by line range.
+                if path.ends_with(".rs") {
+                    if let Some(f) = &function {
+                        v.push(format!("patch_function:{}:{}", path, f));
+                    }
+                }
+                v.push(format!("replace_lines:{}", path));
+                session.local_evidence.push_str(&format!(
+                    "[PATCH_PHASE_FORCED] {} (target grounded in the latest traceback)\n",
+                    v[0]
+                ));
+                v
+            }
+            PatchCommandPhase::Verify => vec![format!("execute_command:{}", command)],
+        };
+
+        let mut injected = 0usize;
+        for strat in &strategies {
+            if let Some(id) = session.graph.find_by_content(strat) {
+                if injected == 0 {
+                    session.graph.promote_hypothesis(id, 0.58);
+                    session.best_hypothesis_id = Some(id);
+                    *active_strategy = strat.clone();
+                    injected += 1;
+                }
+                continue;
+            }
+            let belief = if injected == 0 { 0.58 } else { 0.54 };
+            let hid = session.graph.add_node(
+                crate::cognition_graph::NodeKind::Hypothesis,
+                strat,
+                belief,
+                100,
+            );
+            if injected == 0 {
+                session.best_hypothesis_id = Some(hid);
+                *active_strategy = strat.clone();
+            }
+            injected += 1;
+        }
+        if injected > 0 {
+            self.log(format!(
+                "\x1b[1;36m>> [CORTEX PATCH/VERIFY PHASE]\x1b[0m Forcing `{}`.",
+                active_strategy
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod patch_command_phase_tests {
+    use super::{grounded_patch_target, patch_command_phase, PatchCommandPhase};
+
+    const TRACE: &str = "[ACTION FAILED] OS rejected action: Command failed with status: exit status: 1\nSTDERR:\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import math_ops; print(math_ops.divide(10, 0))\n  File \"/elsewhere/math_ops.py\", line 2, in divide\n    return a / b\nZeroDivisionError: division by zero\n";
+
+    fn divide_target() -> Option<(String, Option<String>)> {
+        Some(("/elsewhere/math_ops.py".to_string(), Some("divide".to_string())))
+    }
+
+    #[test]
+    fn innermost_workspace_frame_is_the_target() {
+        assert_eq!(grounded_patch_target(TRACE), divide_target());
+    }
+
+    #[test]
+    fn stdlib_frames_are_skipped() {
+        let ev = format!(
+            "{}  File \"/usr/lib/python3.13/json/__init__.py\", line 9, in dumps\n    x\n",
+            TRACE
+        );
+        assert_eq!(grounded_patch_target(&ev), divide_target());
+    }
+
+    #[test]
+    fn module_level_frame_has_no_function() {
+        let ev = "Traceback:\n  File \"/elsewhere/x.py\", line 3, in <module>\n    boom()\n";
+        assert_eq!(grounded_patch_target(ev), Some(("/elsewhere/x.py".to_string(), None)));
+    }
+
+    #[test]
+    fn path_under_cwd_is_relativized() {
+        let abs = std::env::current_dir().unwrap().join("math_ops.py");
+        let ev = format!("  File \"{}\", line 2, in divide\n", abs.display());
+        assert_eq!(
+            grounded_patch_target(&ev),
+            Some(("math_ops.py".to_string(), Some("divide".to_string())))
+        );
+    }
+
+    #[test]
+    fn no_traceback_means_no_target() {
+        assert_eq!(grounded_patch_target("[CMD_OK] ls\nStatus: exit status: 0\n"), None);
+    }
+
+    #[test]
+    fn phases_follow_patch_and_failure_order() {
+        // nothing grounded yet: reproduce first
+        assert_eq!(patch_command_phase("", false), PatchCommandPhase::Reproduce);
+        // failing run, no patch yet
+        assert!(matches!(patch_command_phase(TRACE, false), PatchCommandPhase::Patch { .. }));
+        // patch landed, nothing failed since
+        let patched = format!("{}[REPLACE_LINES_OK] math_ops.py\n", TRACE);
+        assert_eq!(patch_command_phase(&patched, true), PatchCommandPhase::Verify);
+        // patch landed, the re-run failed again with a fresh traceback
+        let refailed = format!("{}{}", patched, TRACE);
+        assert!(matches!(patch_command_phase(&refailed, true), PatchCommandPhase::Patch { .. }));
+    }
+}
