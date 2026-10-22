@@ -635,12 +635,11 @@ impl crate::cortical_loop::CorticalLoop {
                     return;
                 }
                 let mut v: Vec<String> = Vec::new();
-                // patch_function is AST-based and its payload guard requires a Rust
-                // `fn <name>` item; every other file type is patched by line range.
-                if path.ends_with(".rs") {
-                    if let Some(f) = &function {
-                        v.push(format!("patch_function:{}:{}", path, f));
-                    }
+                // patch_function is AST-based and works for every language the AST
+                // tool handles (Python included); fall back to a line-range patch
+                // only when the traceback names no function.
+                if let Some(f) = &function {
+                    v.push(format!("patch_function:{}:{}", path, f));
                 }
                 v.push(format!("replace_lines:{}", path));
                 session.local_evidence.push_str(&format!(

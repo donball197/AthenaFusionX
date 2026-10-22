@@ -58,6 +58,26 @@ impl CorticalLoop {
             }
         }
 
+        // REQUIRED-COMMAND BYPASS: the exact command the directive requires is
+        // mission-authoritative. Once every other condition is met (e.g. the patch
+        // landed) the LLM critic has nothing left to judge, and it has been observed
+        // vetoing this command on a stale reading of the evidence. The repeat-veto
+        // latch then makes the identical (correct) proposal unrecoverable.
+        if actions.len() == 1
+            && is_required_verification_command(
+                &session.contract.conditions,
+                &session.local_evidence,
+                &actions[0],
+            )
+        {
+            self.log(
+                "\x1b[1;36m>> [CRITIC BYPASS] Contract-required command with all other conditions met; LLM critic skipped.\x1b[0m"
+                    .to_string(),
+            );
+            session.last_critic_rejected_actions = None;
+            return Ok(CortexState::Execute { actions, proposal, belief });
+        }
+
         // HALT PRE-GATE (read-only audits): the LLM critic is not authoritative on
         // halt reports (it has approved garbage and vetoed good reports from stale
         // evidence text). Symbols, substance and cited line ranges are checked
@@ -287,6 +307,11 @@ impl CorticalLoop {
             })
             .collect();
         let critic_evidence = format!("{}{}", critic_evidence, path_facts);
+        let critic_evidence = format!(
+            "{}{}",
+            critic_evidence,
+            contract_facts(&session.contract.conditions, &session.local_evidence)
+        );
         match EpistemicEngine::criticize_proposal(
             &self.client,
             &self.api_key,
@@ -501,5 +526,129 @@ mod patch_needle_tests {
     #[test]
     fn path_is_trimmed_and_case_insensitive() {
         assert_eq!(patch_signature_needle("  a/B.PY ", "g"), "def g");
+    }
+}
+
+fn normalize_cmd(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// True when `action` is exactly the command the contract requires, the
+/// requirement is still unmet, and every other (non-belief) condition is already
+/// met. Pure over (conditions, evidence, action) so it is unit-testable.
+fn is_required_verification_command(
+    conditions: &[crate::completion_engine::CompletionCondition],
+    evidence: &str,
+    action: &AgentAction,
+) -> bool {
+    use crate::completion_engine::CompletionCondition as CC;
+    let AgentAction::ExecuteCommand { _thought_process: None, command, .. } = action else {
+        return false;
+    };
+    let wanted = normalize_cmd(command);
+    let mut command_unmet = false;
+    for c in conditions {
+        match c {
+            CC::CommandExecutionVerified { command: required } => {
+                if normalize_cmd(required) != wanted {
+                    return false;
+                }
+                if !crate::cortical::contract_advance::condition_is_met(c, evidence) {
+                    command_unmet = true;
+                }
+            }
+            CC::MinBeliefScore(_) => {}
+            other => {
+                if !crate::cortical::contract_advance::condition_is_met(other, evidence) {
+                    return false;
+                }
+            }
+        }
+    }
+    command_unmet
+}
+
+/// Deterministic contract status handed to the LLM critic as authoritative fact,
+/// so it cannot invent a required marker or claim a met condition is missing.
+fn contract_facts(
+    conditions: &[crate::completion_engine::CompletionCondition],
+    evidence: &str,
+) -> String {
+    let mut met: Vec<String> = Vec::new();
+    let mut unmet: Vec<String> = Vec::new();
+    for c in conditions {
+        if matches!(c, crate::completion_engine::CompletionCondition::MinBeliefScore(_)) {
+            continue;
+        }
+        let label = format!("{:?}", c);
+        if crate::cortical::contract_advance::condition_is_met(c, evidence) {
+            met.push(label);
+        } else {
+            unmet.push(label);
+        }
+    }
+    format!(
+        "\n[CONTRACT FACT - AUTHORITATIVE] Deterministic contract status. MET: {:?}. UNMET: {:?}. Do not claim a MET condition is missing from the evidence, and do not require a marker that is not listed here (for example ANALYSIS_OK) unless it appears in UNMET.",
+        met, unmet
+    )
+}
+
+#[cfg(test)]
+mod contract_fact_tests {
+    use super::{contract_facts, is_required_verification_command};
+    use crate::agent_protocol::AgentAction;
+    use crate::completion_engine::CompletionCondition as CC;
+
+    const CMD: &str = "python3 -c \"import math_ops; print(math_ops.divide(10, 0))\"";
+    const PATCHED: &str = "[PATCH_FUNCTION_OK] math_ops.py:divide\nUpdated function 'divide' in math_ops.py\n";
+
+    fn run(c: &str) -> AgentAction {
+        serde_json::from_value(serde_json::json!({"type": "execute_command", "command": c}))
+            .expect("execute_command JSON must deserialize as AgentAction")
+    }
+
+    fn compound() -> Vec<CC> {
+        vec![CC::PatchMarkerAcquired, CC::CommandExecutionVerified { command: CMD.to_string() }]
+    }
+
+    #[test]
+    fn required_command_is_bypassed_only_after_the_patch_landed() {
+        assert!(!is_required_verification_command(&compound(), "", &run(CMD)));
+        assert!(is_required_verification_command(&compound(), PATCHED, &run(CMD)));
+    }
+
+    #[test]
+    fn whitespace_differences_do_not_matter() {
+        let spaced = "python3  -c \"import math_ops; print(math_ops.divide(10, 0))\"";
+        assert!(is_required_verification_command(&compound(), PATCHED, &run(spaced)));
+    }
+
+    #[test]
+    fn a_different_command_is_never_bypassed() {
+        assert!(!is_required_verification_command(&compound(), PATCHED, &run("rm -rf /tmp/x")));
+    }
+
+    #[test]
+    fn command_only_contract_bypasses_its_exact_command() {
+        let conds = vec![CC::CommandExecutionVerified { command: CMD.to_string() }];
+        assert!(is_required_verification_command(&conds, "", &run(CMD)));
+    }
+
+    #[test]
+    fn non_command_actions_are_never_bypassed() {
+        let read: AgentAction = serde_json::from_value(
+            serde_json::json!({"type": "read_file", "path": "math_ops.py"}),
+        )
+        .expect("read_file JSON must deserialize as AgentAction");
+        assert!(!is_required_verification_command(&compound(), PATCHED, &read));
+    }
+
+    #[test]
+    fn contract_facts_list_met_and_unmet_and_skip_the_belief_threshold() {
+        let conds = vec![CC::PatchMarkerAcquired, CC::MinBeliefScore(0.65)];
+        let out = contract_facts(&conds, PATCHED);
+        assert!(out.contains("MET: [\"PatchMarkerAcquired\"]"), "{out}");
+        assert!(out.contains("UNMET: []"), "{out}");
+        assert!(!out.contains("MinBeliefScore"), "{out}");
     }
 }
