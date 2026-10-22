@@ -613,6 +613,12 @@
   },
   {
     "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-bolt-e4b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
     "name": "nvidia/nemotron-3.5-content-safety",
     "context": "4K in / 4K out",
     "category": "SAFETY"

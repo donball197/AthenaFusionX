@@ -165,12 +165,13 @@ impl CorticalLoop {
         for a in &actions {
             if let AgentAction::PatchFunction {
                 _thought_process: None,
+                path,
                 function_name,
                 new_body,
                 ..
             } = a
             {
-                let needle = format!("fn {}", function_name.trim());
+                let needle = patch_signature_needle(path, function_name.trim());
                 if !new_body.contains(&needle) {
                     self.log(format!(
                         "\x1b[1;31m>> [PATCH PAYLOAD REJECTED]\x1b[0m new_body for `{}` has no `{}` item.",
@@ -274,7 +275,13 @@ impl CorticalLoop {
                 | AgentAction::ReadFileChunk { _thought_process: None, path, .. } => Some(format!(
                     "\n[FILESYSTEM FACT - AUTHORITATIVE] `{}` {} in the workspace.",
                     path,
-                    if std::path::Path::new(path).exists() { "EXISTS" } else { "does NOT exist" }
+                    if std::path::Path::new(path).is_dir() {
+                        "EXISTS as a DIRECTORY (read_file on a directory is VALID: it returns a sorted listing of its entries; do NOT veto it for not being a file)"
+                    } else if std::path::Path::new(path).exists() {
+                        "EXISTS"
+                    } else {
+                        "does NOT exist"
+                    }
                 )),
                 _ => None,
             })
@@ -450,5 +457,49 @@ impl CorticalLoop {
                 }
             }
         }
+    }
+}
+
+/// Text a patch_function `new_body` must contain for the file's language: the
+/// COMPLETE function item including its signature. Languages other than Rust and
+/// Python are not checked (empty needle always matches).
+fn patch_signature_needle(path: &str, name: &str) -> String {
+    let ext = std::path::Path::new(path.trim())
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "rs" => format!("fn {}", name),
+        "py" => format!("def {}", name),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod patch_needle_tests {
+    use super::patch_signature_needle;
+
+    #[test]
+    fn rust_requires_fn_item() {
+        assert_eq!(patch_signature_needle("src/lib.rs", "add"), "fn add");
+    }
+
+    #[test]
+    fn python_requires_def_item() {
+        assert_eq!(patch_signature_needle("math_ops.py", "divide"), "def divide");
+        assert!("def divide(a, b):\n    return 0".contains(&patch_signature_needle("math_ops.py", "divide")));
+    }
+
+    #[test]
+    fn unknown_extensions_are_unchecked() {
+        assert_eq!(patch_signature_needle("x.js", "f"), "");
+        assert_eq!(patch_signature_needle("Makefile", "f"), "");
+        assert!("anything".contains(&patch_signature_needle("x.js", "f")));
+    }
+
+    #[test]
+    fn path_is_trimmed_and_case_insensitive() {
+        assert_eq!(patch_signature_needle("  a/B.PY ", "g"), "def g");
     }
 }

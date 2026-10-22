@@ -442,7 +442,7 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
     const STOPPERS: &[&str] =
         &[" to ", " and ", " so ", ". ", " that ", " which ", " using ", ", "];
 
-    for verb in ["execute ", "run "] {
+    for verb in ["execute ", "run ", "execute: ", "run: "] {
         let mut search_from = 0usize;
 
         while let Some(rel) = lower[search_from..].find(verb) {
@@ -2010,5 +2010,19 @@ mod quote_aware_stopper_tests {
     fn unquoted_stoppers_still_apply() {
         let d = "Execute cargo check -p math_utils to verify that the AST patch compiles cleanly with zero errors.";
         assert_eq!(extract_required_command(d).as_deref(), Some("cargo check -p math_utils"));
+    }
+}
+
+#[cfg(test)]
+mod colon_introducer_tests {
+    use super::extract_required_command;
+
+    #[test]
+    fn run_colon_introducer_with_quoted_commas_extracts_the_command() {
+        let d = r#"Use the execute_command tool to run: python3 -c "import math_ops; print(math_ops.divide(10, 0))", and when it fails with a ZeroDivisionError, use the patch_function tool to modify math_ops.py so that dividing by zero returns 0, then re-run the execute_command until it exits successfully with status 0."#;
+        assert_eq!(
+            extract_required_command(d).as_deref(),
+            Some(r#"python3 -c "import math_ops; print(math_ops.divide(10, 0))""#)
+        );
     }
 }
