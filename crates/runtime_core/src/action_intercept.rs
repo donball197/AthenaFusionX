@@ -13,21 +13,21 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         });
     }
 
-    if action_str.starts_with("search_code") {
+    if action_str.starts_with("search_code ") || action_str == "search_code" {
         let parts: Vec<&str> = action_str.split_whitespace().collect();
-        if parts.len() >= 2 {
+        if parts.len() >= 3 && parts[0] == "search_code" {
             let path = parts[1].to_string();
-            let query = if parts.len() >= 3 {
-                parts[2..].join(" ").trim_matches('\'').trim_matches('"').to_string()
-            } else {
-                String::new()
-            };
-            return Some(AgentAction::SearchCode {
-                _thought_process: None,
-                path,
-                query,
-                reasoning: "Intercepted fallback search_code".to_string(),
-            });
+            let query =
+                parts[2..].join(" ").trim_matches('\'').trim_matches('"').to_string();
+
+            if !path.trim().is_empty() && !query.trim().is_empty() {
+                return Some(AgentAction::SearchCode {
+                    _thought_process: None,
+                    path,
+                    query,
+                    reasoning: "Intercepted fallback search_code".to_string(),
+                });
+            }
         }
     }
 
@@ -76,10 +76,16 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
         let path = labeled_value(
             text,
             &["[PATH]:", "[PATH]", "Target Path:", "target path:", "Path:", "path:"],
-        )
-        .unwrap_or_else(|| "apps/warp".to_string());
+        );
         let query =
-            labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"]).unwrap_or_default();
+            labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"]);
+
+        let (Some(path), Some(query)) = (path, query) else {
+            return None;
+        };
+        if path.trim().is_empty() || query.trim().is_empty() {
+            return None;
+        }
 
         return Some(AgentAction::SearchCode {
             _thought_process: None,
@@ -245,6 +251,50 @@ mod tests {
         [COMMAND]: cargo test"),
             Some(AgentAction::ExecuteCommand { _thought_process: None, command, .. })
                 if command == "cargo test"
+        ));
+    }
+
+    #[test]
+    fn rejects_labeled_search_code_without_path() {
+        assert!(intercept_fallback_action(
+            "[ACTION]: search_code\n[QUERY]: router"
+        ).is_none());
+    }
+
+    #[test]
+    fn rejects_labeled_search_code_without_query() {
+        assert!(intercept_fallback_action(
+            "[ACTION]: search_code\n[PATH]: crates/runtime_core/src\n[QUERY]:"
+        ).is_none());
+    }
+
+    #[test]
+    fn accepts_labeled_search_code_with_path_and_query() {
+        assert!(matches!(
+            intercept_fallback_action(
+                "[ACTION]: search_code\n[PATH]: crates/runtime_core/src\n[QUERY]: router"
+            ),
+            Some(AgentAction::SearchCode { path, query, .. })
+                if path == "crates/runtime_core/src" && query == "router"
+        ));
+    }
+
+    #[test]
+    fn rejects_free_form_search_code_without_path() {
+        assert!(intercept_fallback_action("search_code").is_none());
+    }
+
+    #[test]
+    fn rejects_free_form_search_code_without_query() {
+        assert!(intercept_fallback_action("search_code crates/runtime_core/src").is_none());
+    }
+
+    #[test]
+    fn accepts_valid_free_form_search_code() {
+        assert!(matches!(
+            intercept_fallback_action("search_code crates/runtime_core/src router"),
+            Some(AgentAction::SearchCode { path, query, .. })
+                if path == "crates/runtime_core/src" && query == "router"
         ));
     }
 }

@@ -457,6 +457,12 @@
   },
   {
     "provider": "Nvidia",
+    "name": "minimaxai/minimax-m3.1-flash",
+    "context": "Unknown",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Nvidia",
     "name": "mistralai/codestral-22b-instruct-v0.1",
     "context": "32K in / 4K out",
     "category": "MISTRAL"
@@ -608,12 +614,6 @@
   {
     "provider": "Nvidia",
     "name": "nvidia/nemotron-3-ultra-550b-a55b",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3.5-bolt-e4b",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
   },

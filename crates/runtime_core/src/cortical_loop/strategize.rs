@@ -172,6 +172,19 @@ impl CorticalLoop {
             strategy
         } else if session.coverage.coverage_pct() >= 99.9
             && session.contract.read_only
+            // Full coverage of ONE file does not mean the mission's reconnaissance is
+            // done: outstanding path-bound reads/searches must be satisfied first, or
+            // the strategist is forced to halt with nothing to report (and the report
+            // gate then rejects it forever). Belief is probed at 1.0: no action can
+            // advance MinBeliefScore.
+            && crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
+                &session.contract,
+                &session.local_evidence,
+                1.0,
+            )
+            // After a rejected report, re-forcing `halt` before any NEW evidence arrives
+            // can only reproduce the same thin report; let the strategist gather first.
+            && !halt_rejected_since_last_evidence(&session.local_evidence)
             && session
                 .coverage
                 .largest_interior_gap()
@@ -210,6 +223,8 @@ impl CorticalLoop {
         );
 
         self.apply_patch_command_phase(session, &mut active_strategy, mission, write_phase_ready);
+
+        self.apply_contract_first_recon(session, &mut active_strategy, write_phase_ready);
 
         self.apply_halt_veto_recovery(session);
 
@@ -499,7 +514,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             // this, the veto and the strategy gate deadlock and the node dies
             // with belief 0.00. Only non-mutating actions are admitted; every
             // mutation still goes through the strict strategy match.
-            let veto_recon_ok = session.local_evidence.contains("[CRITIC_VETO]")
+            // A rejected halt report means the strategist has been told its findings are
+            // too thin: more non-mutating reconnaissance is then legitimate even when it
+            // is outside the pinned strategy and the (possibly under-specified)
+            // contract.
+            let veto_recon_ok = (session.local_evidence.contains("[CRITIC_VETO]")
+                || session.local_evidence.contains("[HALT_REJECTED_REPORT]"))
                 && match first_action {
                     AgentAction::ReadFile { _thought_process: None, .. }
                     | AgentAction::ReadFileChunk { _thought_process: None, .. }
@@ -627,5 +647,61 @@ mod dir_child_tests {
         // strategy is not a read_file strategy
         assert!(!is_dir_child_read(&format!("search_code:{}", d.to_string_lossy()), &read));
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+/// True when the most recent halt-report rejection is newer than the most recent
+/// successful physical evidence (a `[..._OK]` marker). The strategist has been told
+/// its report lacks findings and has gathered nothing since.
+fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
+    let mut last_reject: Option<usize> = None;
+    let mut last_ok: Option<usize> = None;
+    for (i, l) in evidence.lines().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("[HALT_REJECTED_REPORT]") {
+            last_reject = Some(i);
+        } else if t
+            .strip_prefix('[')
+            .and_then(|r| r.split(']').next())
+            .map(|m| m.ends_with("_OK"))
+            .unwrap_or(false)
+        {
+            last_ok = Some(i);
+        }
+    }
+    match (last_reject, last_ok) {
+        (Some(r), Some(o)) => r > o,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod halt_release_tests {
+    use super::halt_rejected_since_last_evidence;
+
+    const REJECT: &str = "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable.\n";
+
+    #[test]
+    fn no_rejection_means_no_release() {
+        assert!(!halt_rejected_since_last_evidence("[READ_OK] a.rs\nFULL FILE CONTENT:\nx\n"));
+        assert!(!halt_rejected_since_last_evidence(""));
+    }
+
+    #[test]
+    fn rejection_after_the_last_evidence_releases_the_forced_halt() {
+        let ev = format!("[READ_OK] a.rs\nFULL FILE CONTENT:\nx\n{}", REJECT);
+        assert!(halt_rejected_since_last_evidence(&ev));
+    }
+
+    #[test]
+    fn new_evidence_after_a_rejection_re_arms_the_forced_halt() {
+        let ev = format!("[READ_OK] a.rs\nx\n{}[READ_OK] b.rs\nFULL FILE CONTENT:\ny\n", REJECT);
+        assert!(!halt_rejected_since_last_evidence(&ev));
+    }
+
+    #[test]
+    fn rejection_with_no_evidence_at_all_releases() {
+        assert!(halt_rejected_since_last_evidence(REJECT));
     }
 }

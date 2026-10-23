@@ -743,3 +743,133 @@ mod patch_command_phase_tests {
         assert!(matches!(patch_command_phase(&refailed, true), PatchCommandPhase::Patch { .. }));
     }
 }
+
+// ---------------------------------------------------------------------------
+// CONTRACT-FIRST RECON: outstanding path-bound reads outrank belief.
+//
+// Strategy selection ranks hypotheses by belief, so a post-search expansion
+// (`read_file:<search hit>`) or an already-satisfied search strategy can keep the
+// node pinned while the contract's mandatory reads stay unread; the strategist
+// then cannot act (reading anything else is a STRATEGY VIOLATION) and can only
+// halt. While a `ReadPathAcquired` condition is unmet, pin the read for it.
+// ---------------------------------------------------------------------------
+
+/// First `ReadPathAcquired` path, in contract order, that the evidence has not
+/// yet satisfied.
+pub(crate) fn next_unmet_read(
+    conditions: &[crate::completion_engine::CompletionCondition],
+    evidence: &str,
+) -> Option<String> {
+    use crate::completion_engine::CompletionCondition as CC;
+    conditions.iter().find_map(|c| match c {
+        CC::ReadPathAcquired { path }
+            if !crate::cortical::contract_advance::condition_is_met(c, evidence) =>
+        {
+            Some(path.clone())
+        }
+        _ => None,
+    })
+}
+
+impl crate::cortical_loop::CorticalLoop {
+    pub(crate) fn apply_contract_first_recon(
+        &self,
+        session: &mut crate::cognition::epistemic_session::EpistemicSession,
+        active_strategy: &mut String,
+        write_phase_ready: bool,
+    ) {
+        use crate::completion_engine::CompletionCondition as CC;
+
+        // Patch/verify contracts have their own phase logic; the write phase and
+        // compile remediation own the strategy when they are active.
+        if write_phase_ready
+            || session.compile_remediation.is_active()
+            || session.contract.conditions.iter().any(|c| matches!(c, CC::PatchMarkerAcquired))
+        {
+            return;
+        }
+        // An unread range in the file being read outranks this: the coverage
+        // mandate finishes that file first, then this resumes.
+        if session
+            .coverage
+            .largest_interior_gap()
+            .or_else(|| session.coverage.largest_gap())
+            .is_some()
+        {
+            return;
+        }
+        let Some(path) = next_unmet_read(&session.contract.conditions, &session.local_evidence)
+        else {
+            return;
+        };
+        let strat = format!("read_file:{}", path);
+        // A read that keeps failing must not pin the node forever.
+        let forced = session
+            .local_evidence
+            .lines()
+            .filter(|l| l.starts_with("[CONTRACT_FIRST_FORCED]") && l.contains(strat.as_str()))
+            .count();
+        if forced >= 3 {
+            return;
+        }
+        session.local_evidence.push_str(&format!(
+            "[CONTRACT_FIRST_FORCED] {} (mandatory read outstanding)\n",
+            strat
+        ));
+
+        if let Some(id) = session.graph.find_by_content(&strat) {
+            session.graph.promote_hypothesis(id, 0.58);
+            session.best_hypothesis_id = Some(id);
+        } else {
+            let hid = session.graph.add_node(
+                crate::cognition_graph::NodeKind::Hypothesis,
+                &strat,
+                0.58,
+                100,
+            );
+            session.best_hypothesis_id = Some(hid);
+        }
+        *active_strategy = strat;
+        self.log(format!(
+            "\x1b[1;36m>> [CORTEX CONTRACT-FIRST RECON]\x1b[0m Mandatory read outstanding; forcing `{}`.",
+            active_strategy
+        ));
+    }
+}
+
+#[cfg(test)]
+mod contract_first_recon_tests {
+    use super::next_unmet_read;
+    use crate::completion_engine::CompletionCondition as CC;
+
+    fn reads() -> Vec<CC> {
+        vec![
+            CC::ReadPathAcquired { path: "Cargo.toml".to_string() },
+            CC::ReadPathAcquired { path: "crates/runtime_core/Cargo.toml".to_string() },
+            CC::MinBeliefScore(0.65),
+        ]
+    }
+
+    const FIRST: &str = "[READ_OK] Cargo.toml\nFULL FILE CONTENT:\n[workspace]\n";
+    const SECOND: &str =
+        "[READ_OK] crates/runtime_core/Cargo.toml\nFULL FILE CONTENT:\n[package]\n";
+
+    #[test]
+    fn first_unmet_read_is_returned_in_contract_order() {
+        assert_eq!(next_unmet_read(&reads(), ""), Some("Cargo.toml".to_string()));
+    }
+
+    #[test]
+    fn satisfied_reads_are_skipped() {
+        assert_eq!(
+            next_unmet_read(&reads(), FIRST),
+            Some("crates/runtime_core/Cargo.toml".to_string())
+        );
+    }
+
+    #[test]
+    fn nothing_is_returned_once_every_read_is_evidenced() {
+        let both = format!("{}{}", FIRST, SECOND);
+        assert_eq!(next_unmet_read(&reads(), &both), None);
+    }
+}

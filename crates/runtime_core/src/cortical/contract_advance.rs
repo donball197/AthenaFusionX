@@ -49,10 +49,10 @@ pub(crate) fn action_advances_unmet_contract_condition(
             CC::ReadPathAcquired { path: target } => {
                 matches!(
                     action,
-                    AgentAction::ReadFile { path, .. } if path.trim() == target
+                    AgentAction::ReadFile { path, .. } if same_workspace_path(path, target)
                 ) || matches!(
                     action,
-                    AgentAction::ReadFileChunk { path, .. } if path.trim() == target
+                    AgentAction::ReadFileChunk { path, .. } if same_workspace_path(path, target)
                 )
             }
             CC::SearchMarkerAcquired => matches!(action, AgentAction::SearchCode { .. }),
@@ -182,4 +182,50 @@ pub(crate) fn condition_is_met(
         1.0,
         std::slice::from_ref(cond),
     )
+}
+
+/// Path equality that bridges absolute and cwd-relative spellings of the same
+/// workspace file (the strategist often emits `/root/.../Cargo.toml` for a
+/// contract that names `Cargo.toml`; the evidence verifier already treats them
+/// as the same path, so the strategy gate must too).
+fn same_workspace_path(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    if a == b {
+        return true;
+    }
+    let rel = |p: &str| -> String {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| {
+                std::path::Path::new(p)
+                    .strip_prefix(&cwd)
+                    .ok()
+                    .map(|r| r.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| p.trim_start_matches("./").to_string())
+    };
+    rel(a) == rel(b)
+}
+
+#[cfg(test)]
+mod same_workspace_path_tests {
+    use super::same_workspace_path;
+
+    #[test]
+    fn identical_and_dot_slash_paths_match() {
+        assert!(same_workspace_path("Cargo.toml", "Cargo.toml"));
+        assert!(same_workspace_path("./Cargo.toml", "Cargo.toml"));
+    }
+
+    #[test]
+    fn absolute_under_cwd_matches_relative() {
+        let abs = std::env::current_dir().unwrap().join("crates/runtime_core/Cargo.toml");
+        assert!(same_workspace_path(&abs.to_string_lossy(), "crates/runtime_core/Cargo.toml"));
+    }
+
+    #[test]
+    fn different_files_and_outside_paths_do_not_match() {
+        assert!(!same_workspace_path("Cargo.toml", "crates/runtime_core/Cargo.toml"));
+        assert!(!same_workspace_path("/elsewhere/Cargo.toml", "Cargo.toml"));
+    }
 }
