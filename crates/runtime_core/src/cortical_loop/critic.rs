@@ -486,8 +486,8 @@ impl CorticalLoop {
 }
 
 /// Text a patch_function `new_body` must contain for the file's language: the
-/// COMPLETE function item including its signature. Languages other than Rust and
-/// Python are not checked (empty needle always matches).
+/// COMPLETE function item including its signature (per-language keyword; bare
+/// function name for unknown languages).
 fn patch_signature_needle(path: &str, name: &str) -> String {
     let ext = std::path::Path::new(path.trim())
         .extension()
@@ -495,9 +495,12 @@ fn patch_signature_needle(path: &str, name: &str) -> String {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "rs" => format!("fn {}", name),
+        "rs" | "zig" => format!("fn {}", name),
         "py" => format!("def {}", name),
-        _ => String::new(),
+        "go" => format!("func {}", name),
+        "php" => format!("function {}", name),
+        // Unknown language: at least require the function's own name.
+        _ => name.to_string(),
     }
 }
 
@@ -506,21 +509,29 @@ mod patch_needle_tests {
     use super::patch_signature_needle;
 
     #[test]
-    fn rust_requires_fn_item() {
+    fn rust_and_zig_require_fn_item() {
         assert_eq!(patch_signature_needle("src/lib.rs", "add"), "fn add");
+        assert_eq!(patch_signature_needle("a.zig", "add"), "fn add");
     }
 
     #[test]
     fn python_requires_def_item() {
         assert_eq!(patch_signature_needle("math_ops.py", "divide"), "def divide");
-        assert!("def divide(a, b):\n    return 0".contains(&patch_signature_needle("math_ops.py", "divide")));
+        assert!("def divide(a, b):\n    return 0"
+            .contains(&patch_signature_needle("math_ops.py", "divide")));
     }
 
     #[test]
-    fn unknown_extensions_are_unchecked() {
-        assert_eq!(patch_signature_needle("x.js", "f"), "");
-        assert_eq!(patch_signature_needle("Makefile", "f"), "");
-        assert!("anything".contains(&patch_signature_needle("x.js", "f")));
+    fn go_and_php_have_their_own_keywords() {
+        assert_eq!(patch_signature_needle("m.go", "f"), "func f");
+        assert_eq!(patch_signature_needle("m.php", "f"), "function f");
+    }
+
+    #[test]
+    fn unknown_extensions_require_the_function_name() {
+        assert_eq!(patch_signature_needle("x.js", "f"), "f");
+        assert_eq!(patch_signature_needle("Makefile", "f"), "f");
+        assert!(!"unrelated body".contains(&patch_signature_needle("x.js", "build")));
     }
 
     #[test]
