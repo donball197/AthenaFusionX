@@ -20,6 +20,7 @@ impl CorticalLoop {
     ) -> AntiLoopOutcome {
         let mut filtered_actions: Vec<AgentAction> = Vec::with_capacity(actions.len());
         let mut vetoed_keys: Vec<String> = Vec::new();
+        let mut condition_satisfied_seen = false;
 
         for action in actions {
             let action_key = attempt_key(session, &action);
@@ -56,10 +57,10 @@ impl CorticalLoop {
                 ) {
                     crate::anti_loop::FilterOutcome::ConditionSatisfied => {
                         self.log(
-                            "\x1b[1;32m>> [ANTI-LOOP RESOLVED] Required command already executed; condition satisfied.\x1b[0m"
+                            "\x1b[1;32m>> [ANTI-LOOP RESOLVED] Required command already executed; condition satisfied. Skipping redispatch.\x1b[0m"
                                 .to_string(),
                         );
-                        filtered_actions.push(action);
+                        condition_satisfied_seen = true;
                     }
                     crate::anti_loop::FilterOutcome::AllowRetry => {
                         self.log(
@@ -85,6 +86,14 @@ impl CorticalLoop {
                 }
                 filtered_actions.push(action);
             }
+        }
+
+        if filtered_actions.is_empty() && condition_satisfied_seen {
+            self.log(
+                "[ANTI-LOOP RESOLVED] All proposed actions already satisfy their required command condition; returning to Strategize for any remaining verification or remediation."
+                    .to_string(),
+            );
+            return AntiLoopOutcome::NeedsStrategize;
         }
 
         if filtered_actions.is_empty() {
