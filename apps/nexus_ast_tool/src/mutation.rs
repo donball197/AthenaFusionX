@@ -248,6 +248,49 @@ fn find_rust_function_body(source: &str, symbol: &str) -> MutationResult<(usize,
     }
 }
 
+
+/// If `payload` is a complete Python function (`def name(...):` + body),
+/// return only the body lines (dedented). Otherwise return the payload as-is.
+/// Mirrors extract_tree_sitter_payload_body for Rust so a full `def` is not
+/// re-nested inside the target function.
+fn extract_python_payload_body(payload: &str) -> String {
+    let trimmed = payload.trim();
+    let lines: Vec<&str> = trimmed.lines().collect();
+    if lines.is_empty() {
+        return payload.to_string();
+    }
+
+    let first = lines[0].trim_start();
+    let is_full_def = first.starts_with("def ") || first.starts_with("async def ");
+    if !is_full_def {
+        return payload.to_string();
+    }
+
+    let body_lines: Vec<&str> = lines.iter().skip(1).copied().collect();
+    if body_lines.iter().all(|l| l.trim().is_empty()) {
+        return "pass".to_string();
+    }
+
+    let min_indent = body_lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
+        .min()
+        .unwrap_or(0);
+
+    body_lines
+        .iter()
+        .map(|l| {
+            if l.trim().is_empty() {
+                String::new()
+            } else {
+                l.chars().skip(min_indent).collect::<String>()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn extract_tree_sitter_payload_body(payload: &str) -> MutationResult<String> {
     if payload.trim().is_empty() {
         return Err(MutationError::InvalidPayload("Payload cannot be empty".into()));
@@ -429,10 +472,10 @@ impl ReplaceFunctionBody {
         // the target function. This mirrors the legacy `apply` path, which
         // already calls `extract_tree_sitter_payload_body`. Non-Rust
         // languages pass through unchanged.
-        let body_payload = if matches!(language, SupportedLanguage::Rust) {
-            extract_tree_sitter_payload_body(payload)?
-        } else {
-            payload.to_string()
+        let body_payload = match language {
+            SupportedLanguage::Rust => extract_tree_sitter_payload_body(payload)?,
+            SupportedLanguage::Python => extract_python_payload_body(payload),
+            _ => payload.to_string(),
         };
 
         let normalized =
@@ -452,22 +495,30 @@ fn normalize_polyglot_payload(
     let trimmed = payload.trim();
 
     match language {
-        SupportedLanguage::Python => {
+                SupportedLanguage::Python => {
             // Python bodies require indentation but no enclosing braces.
-            let indent = original_body
+            // Preserve relative indentation inside the payload; only shift
+            // the whole block to the target body's base indent. Flattening
+            // every line to the same indent (the old behavior) turns
+            //   if b == 0:
+            //       return 0
+            // into an IndentationError.
+            let base_indent = original_body
                 .lines()
                 .find(|line| {
                     let t = line.trim();
-                    // Skip the opening `{` of the target body. It is the first
-                    // non-empty line of `original_body` for brace-delimited
-                    // languages, but it has zero leading whitespace, so deriving
-                    // indent from it produces an empty prefix that silently
-                    // shadows the fallback below.
                     !t.is_empty() && t != "{"
                 })
                 .map(|line| line.chars().take_while(|c| c.is_whitespace()).collect::<String>())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "    ".to_string());
+
+            let min_payload_indent = trimmed
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
+                .min()
+                .unwrap_or(0);
 
             trimmed
                 .lines()
@@ -475,13 +526,18 @@ fn normalize_polyglot_payload(
                     if line.trim().is_empty() {
                         String::new()
                     } else {
-                        format!("{indent}{}", line.trim())
+                        let line_indent = line.chars().take_while(|c| c.is_whitespace()).count();
+                        let relative = line_indent.saturating_sub(min_payload_indent);
+                        format!(
+                            "{base_indent}{}{}",
+                            " ".repeat(relative),
+                            line.trim()
+                        )
                     }
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
         }
-
         _ => {
             // Brace-delimited languages need the replacement body aligned with
             // the target function's existing body indentation.
@@ -1249,5 +1305,29 @@ if true {
         assert!(mutated.contains(r#"println!("UNCHANGED");"#));
 
         assert!(SupportedLanguage::Rust.parses_cleanly(&mutated));
+    }
+}
+
+#[cfg(test)]
+mod python_patch_regression {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn python_full_def_payload_preserves_nested_indent() {
+        let source = "def divide(a, b):\n    return a / b\n";
+        let path = Path::new("math_ops.py");
+        let payload = "def divide(a, b):\n    if b == 0:\n        return 0\n    return a / b\n";
+
+        let mutated = ReplaceFunctionBody::apply_for_path(path, source, "divide", payload)
+            .expect("Python apply_for_path must succeed");
+
+        eprintln!("=== MUTATED ===\n{mutated}=== END ===");
+
+        let expected = "def divide(a, b):\n    if b == 0:\n        return 0\n    return a / b\n";
+        assert_eq!(
+            mutated, expected,
+            "nested indent under `if` must be preserved; got:\n{mutated}"
+        );
     }
 }

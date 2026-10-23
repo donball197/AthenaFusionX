@@ -137,8 +137,25 @@ impl PolyglotDiffEngine {
 
             1 => {
                 let range = &candidates[0];
-                let start = range.start;
+                let mut start = range.start;
                 let end = range.end;
+
+                // Python: body node often starts at the first statement
+                // character, not the indent that precedes it. Include leading
+                // whitespace on that line so the whole suite is replaced and
+                // normalize_polyglot_payload does not double-indent the first line.
+                if matches!(language, SupportedLanguage::Python) {
+                    let prefix = &source[..start];
+                    if let Some(nl) = prefix.rfind('\n') {
+                        let line_start = nl + 1;
+                        if source[line_start..start]
+                            .chars()
+                            .all(|c| c == ' ' || c == '\t')
+                        {
+                            start = line_start;
+                        }
+                    }
+                }
 
                 if start >= end
                     || end > source.len()
