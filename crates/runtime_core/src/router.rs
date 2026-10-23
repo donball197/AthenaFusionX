@@ -65,39 +65,54 @@ pub struct IntelligentRouter;
 impl IntelligentRouter {
     pub fn classify(d: &str) -> DirectiveClass {
         let d = d.to_lowercase();
-        if ["audit", "vulnerability", "cve", "taint", "exploit", "sqli", "security"]
+        let trimmed = d.trim();
+
+        // 1. Explicit Targeted Edits & Patches (highest precedence for code modifications)
+        if ["fix", "patch", "edit", "replace"].iter().any(|k| trimmed.contains(k)) {
+            return DirectiveClass::TargetedEdit { file_hint: "target".into() };
+        }
+
+        // 2. Feature Builds & Implementations
+        if ["build", "implement", "create", "add feature", "extend", "generate"].iter().any(|k| trimmed.contains(k)) {
+            return DirectiveClass::FeatureBuild;
+        }
+
+        // 3. Shell / Command Operations
+        if ["cargo check", "cargo test", "cargo build", "ls ", "find ", "git ", "cat ", "rm ", "sh "]
             .iter()
-            .any(|k| d.contains(k))
-        {
-            return DirectiveClass::SecurityAudit;
-        }
-        if ["wasm", "webassembly", "wat", "zig", "wasm_tester"].iter().any(|k| d.contains(k)) {
-            return DirectiveClass::WasmForge;
-        }
-        if ["diagnose", "doctor", "fix repo", "suture", "repair"].iter().any(|k| d.contains(k)) {
-            return DirectiveClass::RepoDoctor;
-        }
-        if ["what", "why", "how", "explain", "describe", "status", "show", "who"]
-            .iter()
-            .any(|k| d.starts_with(k) || d.contains(k))
-        {
-            return DirectiveClass::Inquiry;
-        }
-        if ["cargo check", "ls ", "find ", "git ", "cat "]
-            .iter()
-            .any(|k| d.starts_with(k) || d.contains(k))
+            .any(|k| trimmed.starts_with(k) || trimmed.contains(&format!(" {k}")))
         {
             return DirectiveClass::ShellOp;
         }
-        if ["build", "implement", "create", "add feature", "extend", "generate"]
+
+        // 4. Security Audits (Require specific security terms or explicit security audit phrase)
+        if ["vulnerability", "cve", "taint", "exploit", "sqli", "security audit", "penetration test"]
             .iter()
-            .any(|k| d.contains(k))
+            .any(|k| trimmed.contains(k)) 
+            || (trimmed.contains("audit") && (trimmed.contains("security") || trimmed.contains("system") || trimmed.contains("code")))
         {
-            return DirectiveClass::FeatureBuild;
+            return DirectiveClass::SecurityAudit;
         }
-        if ["fix", "patch", "edit", "replace"].iter().any(|k| d.contains(k)) {
-            return DirectiveClass::TargetedEdit { file_hint: "target".into() };
+
+        // 5. Repo Doctor / Diagnostics
+        if ["diagnose", "doctor", "fix repo", "suture", "repair", "preflight"].iter().any(|k| trimmed.contains(k)) {
+            return DirectiveClass::RepoDoctor;
         }
+
+        // 6. Wasm Forge
+        if ["wasm", "webassembly", "wat", "zig", "wasm_tester"].iter().any(|k| trimmed.contains(k)) {
+            return DirectiveClass::WasmForge;
+        }
+
+        // 7. Inquiry (Strict check: starts with question/inquiry verbs or ends with '?')
+        if ["what ", "why ", "how ", "explain ", "describe ", "status ", "show ", "who "]
+            .iter()
+            .any(|k| trimmed.starts_with(k))
+            || trimmed.ends_with('?')
+        {
+            return DirectiveClass::Inquiry;
+        }
+
         DirectiveClass::General
     }
 
@@ -134,5 +149,35 @@ MANDATORY SCHEMA:
         };
 
         AgentProfile { class, primary_model, max_turns: 8, budget, persona: persona.to_string() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_router_classification_precedence() {
+        assert_eq!(
+            IntelligentRouter::classify("Fix memory leak in parser"),
+            DirectiveClass::TargetedEdit { file_hint: "target".into() }
+        );
+        assert_eq!(
+            IntelligentRouter::classify("Perform full system security audit"),
+            DirectiveClass::SecurityAudit
+        );
+        // "perform " contains the characters "rm ", but is not a shell command.
+        assert_ne!(
+            IntelligentRouter::classify("Perform a system review"),
+            DirectiveClass::ShellOp
+        );
+        assert_eq!(
+            IntelligentRouter::classify("Explain how the router works"),
+            DirectiveClass::Inquiry
+        );
+        assert_eq!(
+            IntelligentRouter::classify("cargo test --workspace"),
+            DirectiveClass::ShellOp
+        );
     }
 }
