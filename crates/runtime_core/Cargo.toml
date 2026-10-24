@@ -39,3 +39,6 @@ workspace = true
 [features]
 default = []
 cognition_v5 = []
+
+[package.metadata.cargo-machete]
+ignored = ["openssl-sys"]
