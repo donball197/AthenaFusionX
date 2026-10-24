@@ -122,8 +122,8 @@ impl CorticalLoop {
                 // Search relevance must inspect the action that actually
                 // executed, never the strategist's natural-language proposal.
                 let executed_action_lower = executed_action.to_ascii_lowercase();
-                let is_search_like = executed_action_lower.contains("search_code")
-                    || executed_action_lower.contains("search_memory");
+                let is_search_like = !executed_action_lower.contains("halt") && (executed_action_lower.contains("search_code")
+                    || executed_action_lower.contains("search_memory"));
                 if is_search_like {
                     let query_hint = executed_action
                         .lines()

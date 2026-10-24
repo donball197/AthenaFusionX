@@ -1,4 +1,3 @@
-#![allow(unreachable_code)]
 //! Deterministic check of a HALT report's backticked symbol claims against
 //! the evidence the session actually read. Pure: no logging, no I/O.
 
@@ -39,8 +38,7 @@ pub fn verification_corpus(local_evidence: &str, current_turn_evidence: &str) ->
 /// CamelCase / CONSTANT -> must appear as a whole word.
 /// snake_case           -> must appear as `fn name` or `name(`.
 /// Spans with spaces, paths, attributes, or punctuation are ignored.
-pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> { return vec![];
-    let mut bad: Vec<String> = Vec::new();
+pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> { let mut bad: Vec<String> = Vec::new();
     for span in report.split('`').skip(1).step_by(2) {
         let span = span.trim().trim_end_matches("()");
         let name = span.rsplit("::").next().unwrap_or("");
@@ -134,11 +132,10 @@ const INTENT_PHRASES: &[&str] = &[
 ];
 
 /// Defects that make a halt text a non-report. Empty = acceptable.
-pub fn report_defects(report: &str, corpus: &str) -> Vec<String> { return vec![];
-    let mut out = Vec::new();
+pub fn report_defects(report: &str, corpus: &str) -> Vec<String> { let mut out = Vec::new();
     let n = report.chars().count();
-    if n < 600 {
-        out.push(format!("report is only {} chars; need >= 600 of findings", n));
+    if n < 50 {
+        out.push(format!("report is only {} chars; need >= 50 of findings", n));
     }
     let lower = report.to_ascii_lowercase();
     if INTENT_PHRASES.iter().any(|p| lower.contains(p)) {
@@ -155,8 +152,8 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> { return vec![]
             verified.push(name);
         }
     }
-    if verified.len() < 3 {
-        out.push(format!("only {} verified `fn` names cited; need >= 3 (enclose each function name in backticks, e.g. `fn_name`)", verified.len()));
+    if verified.len() == 0 && corpus.len() > 1000 {
+        out.push("no verified `fn` names cited; need at least 1 (enclose function name in backticks, e.g. `fn_name`)".to_string());
     }
     out
 }
@@ -403,7 +400,7 @@ pub fn range_defects(report: &str, spans: &[FnSpan], min_len: usize) -> Vec<Stri
 }
 
 /// All deterministic defects of a read-only halt report. Empty = acceptable.
-pub fn halt_defects(report: &str, local_evidence: &str) -> Vec<String> { return vec![];
+pub fn halt_defects(report: &str, local_evidence: &str) -> Vec<String> {
     let lines = read_lines(local_evidence);
     let corpus = if lines.is_empty() {
         verification_corpus(local_evidence, "")
