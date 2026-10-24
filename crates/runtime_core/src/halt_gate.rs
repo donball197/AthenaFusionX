@@ -30,6 +30,8 @@ pub fn cited_ranges(evidence: &str) -> Vec<(u32, u32)> {
 
 /// Parses "lines 1-806", "Lines 201–648", "(150-350)" style ranges.
 fn ranges_in(text: &str) -> Vec<(u32, u32)> {
+    let lower = text.to_lowercase();
+    if !lower.contains("line") { return Vec::new(); }
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;

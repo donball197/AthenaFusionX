@@ -813,7 +813,7 @@ impl crate::cortical_loop::CorticalLoop {
             return;
         }
         session.local_evidence.push_str(&format!(
-            "[CONTRACT_FIRST_FORCED] {} (mandatory read outstanding)\n",
+            "[CONTRACT_FIRST_FORCED] {} (issued by the cortex; satisfied once its [READ_OK] appears; do not re-read it)\n",
             strat
         ));
 

@@ -57,5 +57,8 @@ pub fn classify_duplicate(
             return FilterOutcome::AllowRetry; // earlier write failed
         }
     }
+    if matches!(action, AgentAction::ReadFileChunk { .. } | AgentAction::SearchCode { .. } | AgentAction::ReadFile { .. } | AgentAction::ReadFunction { .. }) {
+        return FilterOutcome::AllowRetry;
+    }
     FilterOutcome::FilterAndDecay
 }

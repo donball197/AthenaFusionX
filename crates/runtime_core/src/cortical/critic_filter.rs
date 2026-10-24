@@ -88,7 +88,10 @@ impl CorticalLoop {
             }
         }
 
-        if filtered_actions.is_empty() && condition_satisfied_seen {
+        if filtered_actions.is_empty()
+            && condition_satisfied_seen
+            && vetoed_keys.is_empty()
+        {
             self.log(
                 "[ANTI-LOOP RESOLVED] All proposed actions already satisfy their required command condition; returning to Strategize for any remaining verification or remediation."
                     .to_string(),

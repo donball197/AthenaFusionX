@@ -329,6 +329,36 @@ impl CorticalLoop {
             }
         }
 
+        // RECOVER THE MODEL'S REAL INTENT: after a leaked chat-template token the model
+        // often continues in its native tool-call dialect
+        // (`assistant to=execute_command ... <rfl:parameter name="command">CMD`). That tail
+        // is its latest decision, while the JSON before it is frequently a placeholder
+        // (an already-read file, a directory read, a thin halt); dropping it makes the
+        // node repeat the placeholder forever. Honour it only for read-only missions,
+        // only for commands the read-only gate accepts, and only if that exact command
+        // has not been attempted yet.
+        if session.contract.read_only {
+            if let Some(cmd) = leaked_execute_command(&raw_proposal) {
+                if crate::cortical::read_only_gate::is_read_only_safe_command(&cmd) {
+                    let leaked = AgentAction::ExecuteCommand {
+                        _thought_process: None,
+                        command: cmd,
+                        reasoning: "Recovered from the strategist's leaked tool-call tail."
+                            .to_string(),
+                        confidence: 0.9,
+                    };
+                    let key = crate::cortical::critic_filter::attempt_key(&*session, &leaked);
+                    if session.global_action_attempt_count(&key) == 0 {
+                        self.log(
+                            "\x1b[1;36m>> [CORTEX] Recovered a leaked execute_command tool call from the proposal.\x1b[0m"
+                                .to_string(),
+                        );
+                        actions = vec![leaked];
+                    }
+                }
+            }
+        }
+
         // Strip leaked chat-template control tokens (`<|end|><|start|>...`) from halt text.
         for a in actions.iter_mut() {
             if let AgentAction::Halt { reasoning, .. } = a {
@@ -703,5 +733,86 @@ mod halt_release_tests {
     #[test]
     fn rejection_with_no_evidence_at_all_releases() {
         assert!(halt_rejected_since_last_evidence(REJECT));
+    }
+}
+
+/// Extract the command from a leaked native tool-call tail of the form
+/// `... to=execute_command ... name="command">CMD`. Works on the raw JSON text
+/// (escaped quotes and `\n` sequences) as well as on decoded text. A leading
+/// `cd <cwd> && ` is dropped, since commands already run in the workspace.
+fn leaked_execute_command(raw: &str) -> Option<String> {
+    let start = raw.rfind("to=execute_command")?;
+    let tail = &raw[start..];
+    let marker_end = ["name=\\\"command\\\">", "name=\"command\">"]
+        .iter()
+        .filter_map(|m| tail.find(m).map(|p| p + m.len()))
+        .min()?;
+    let body = &tail[marker_end..];
+    let body = body.split("</rfl:parameter>").next().unwrap_or(body);
+    let mut out = String::new();
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => break,
+            },
+            '"' => break,
+            _ => out.push(c),
+        }
+    }
+    let cmd = out.trim().to_string();
+    if cmd.is_empty() {
+        return None;
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let prefix = format!("cd {} && ", cwd.display());
+        if let Some(rest) = cmd.strip_prefix(prefix.as_str()) {
+            return Some(rest.trim().to_string());
+        }
+    }
+    Some(cmd)
+}
+
+#[cfg(test)]
+mod leaked_call_tests {
+    use super::leaked_execute_command;
+
+    #[test]
+    fn recovers_the_command_from_a_leaked_tool_call_tail() {
+        let raw = r#"[{"type":"read_file","path":"d","reasoning":"x.<|end|><|start|> assistant to=execute_command<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name=\"command\">\nfind crates/runtime_core/src/governance -type f | sort"}]"#;
+        assert_eq!(
+            leaked_execute_command(raw).as_deref(),
+            Some("find crates/runtime_core/src/governance -type f | sort")
+        );
+    }
+
+    #[test]
+    fn a_leading_cd_into_the_workspace_is_dropped() {
+        let cwd = std::env::current_dir().unwrap();
+        let raw = format!(
+            r#"[{{"type":"halt","reasoning":"x<|end|> to=execute_command<rfl:parameter name=\"command\">\ncd {} && find src -type f | sort"}}]"#,
+            cwd.display()
+        );
+        assert_eq!(leaked_execute_command(&raw).as_deref(), Some("find src -type f | sort"));
+    }
+
+    #[test]
+    fn decoded_text_with_a_closing_tag_is_handled() {
+        let raw = "to=execute_command <rfl:parameter name=\"command\">ls -la</rfl:parameter>";
+        assert_eq!(leaked_execute_command(raw).as_deref(), Some("ls -la"));
+    }
+
+    #[test]
+    fn no_leaked_call_means_none() {
+        assert_eq!(leaked_execute_command(r#"[{"type":"halt","reasoning":"x"}]"#), None);
+        assert_eq!(leaked_execute_command("to=execute_command with no parameter"), None);
     }
 }
