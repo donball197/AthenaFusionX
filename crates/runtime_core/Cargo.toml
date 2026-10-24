@@ -13,7 +13,6 @@ sqlx = { workspace = true }
 serde = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
-futures-util = { workspace = true }
 uuid = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = { workspace = true }
@@ -21,17 +20,12 @@ base64 = { workspace = true }
 async-trait = { workspace = true }
 parking_lot = { workspace = true }
 libc = "0.2"
-tree-sitter = "0.23"
-tree-sitter-rust = "0.23"
-bitflags = "2.4"
 sysinfo = { workspace = true }
 wasmtime = "48.0.4"
 wasmtime-wasi = "48.0.4"
 
 nexus_substrate = { path = "../nexus_substrate" }
 nexus_model_hub = { path = "../nexus_model_hub" }
-thiserror = "2.0.19"
-walkdir = "2.5.0"
 nexus_ast_tool = { version = "0.1.0", path = "../../apps/nexus_ast_tool" }
 nexus_strategy_algorithms = { path = "../../algorithms/strategy" }
 nexus_reconnaissance_algorithms = { path = "../../algorithms/reconnaissance" }
