@@ -454,3 +454,205 @@ mod outline_tests {
         assert!(o.contains("`alpha`: lines 10-12"));
     }
 }
+
+/// One definition line: `(name, is_pub)`. `pub(crate)`/`pub(super)` count as
+/// NOT public. Call sites, `use`, and `impl` lines are not definitions.
+fn definition_on(t: &str) -> Option<(String, bool)> {
+    let mut rest = t;
+    let mut is_pub = false;
+    if let Some(r) = rest.strip_prefix("pub") {
+        if r.starts_with('(') {
+            rest = r[r.find(')')? + 1..].trim_start();
+        } else if r.starts_with(char::is_whitespace) {
+            is_pub = true;
+            rest = r.trim_start();
+        } else {
+            return None;
+        }
+    }
+    loop {
+        if let Some(r) = rest.strip_prefix("async ").or_else(|| rest.strip_prefix("unsafe ")) {
+            rest = r.trim_start();
+        } else if let Some(r) = rest.strip_prefix("const fn ") {
+            rest = r.trim_start();
+            return definition_name("fn", rest).map(|n| (n, is_pub));
+        } else {
+            break;
+        }
+    }
+    for kw in ["fn", "struct", "enum", "trait", "type", "const", "static", "mod", "union"] {
+        if let Some(r) = rest.strip_prefix(kw) {
+            if r.starts_with(char::is_whitespace) {
+                let name: String = r.trim_start().chars().take_while(|&c| is_word_char(c)).collect();
+                if is_ident(&name) {
+                    return Some((name, is_pub));
+                }
+            }
+        }
+    }
+    if is_pub {
+        // public field: `pub name: Type`
+        let name: String = rest.chars().take_while(|&c| is_word_char(c)).collect();
+        let after = rest[name.len()..].trim_start();
+        if is_ident(&name) && after.starts_with(':') && !after.starts_with("::") {
+            return Some((name, true));
+        }
+    }
+    None
+}
+
+fn definition_name(_kw: &str, rest: &str) -> Option<String> {
+    let name: String = rest.chars().take_while(|&c| is_word_char(c)).collect();
+    if is_ident(&name) { Some(name) } else { None }
+}
+
+fn public_definitions(corpus: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for line in corpus.lines() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("pub use ") {
+            let body = rest.trim().trim_end_matches(';');
+            let items: Vec<&str> = match (body.find('{'), body.rfind('}')) {
+                (Some(a), Some(b)) if b > a => body[a + 1..b].split(',').collect(),
+                _ => vec![body],
+            };
+            for it in items {
+                let it = it.trim();
+                let name = it.rsplit(" as ").next().unwrap_or(it);
+                let name = name.rsplit("::").next().unwrap_or(name).trim();
+                if is_ident(name) {
+                    out.insert(name.to_string());
+                }
+            }
+            continue;
+        }
+        if let Some((name, true)) = definition_on(t) {
+            out.insert(name);
+        }
+    }
+    out
+}
+
+/// Splits backticked identifiers in a report into `(grounded, ungrounded)`.
+/// A name is grounded only if `corpus` holds a PUBLIC definition of it
+/// (`pub fn|struct|enum|trait|type|const|static|mod NAME`, `pub NAME:` field, or
+/// a `pub use ... NAME` re-export). Call sites, imports, `impl` headers and
+/// `pub(crate)`/private items do not count. Stricter than `unverified_symbols`;
+/// use it only when the mission asks for public items.
+pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>) {
+    let public = public_definitions(corpus);
+    let (mut ok, mut bad): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for span in report.split('`').skip(1).step_by(2) {
+        let span = span.trim().trim_end_matches("()");
+        let name = span.rsplit("::").next().unwrap_or("");
+        if !is_ident(name) || SKIP.contains(&name) {
+            continue;
+        }
+        let bucket = if public.contains(name) { &mut ok } else { &mut bad };
+        if !bucket.iter().any(|b| b == name) {
+            bucket.push(name.to_string());
+        }
+    }
+    (ok, bad)
+}
+
+pub fn unverified_pub_claims(report: &str, corpus: &str) -> Vec<String> {
+    check_pub_claims(report, corpus).1
+}
+
+/// Report-style artifacts only; source files are never gated here.
+pub fn is_report_artifact(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.ends_with(".txt") || p.ends_with(".md")
+}
+
+/// True when the mission asks for public items (so the strict check applies).
+pub fn wants_pub_items(objective: &str) -> bool {
+    let o = objective.to_ascii_lowercase();
+    ["pub fn", "pub struct", "pub enum", "pub trait", "public item", "public api"]
+        .iter()
+        .any(|k| o.contains(k))
+}
+
+#[cfg(test)]
+mod pub_claim_tests {
+    use super::*;
+
+    const EVIDENCE: &str = r#"[READ_OK] crates/runtime_core/src/epistemic_engine.rs
+FULL FILE CONTENT:
+use crate::json_parser::sanitize_json_escapes;
+pub struct CriticResponse {
+    pub critique: String,
+    pub confidence_modifier: f32,
+}
+pub struct EpistemicEngine;
+impl EpistemicEngine {
+    pub async fn safe_api_call(
+        client: &Client,
+    ) -> Result<String> {
+    pub(crate) fn strip_thought_tags(s: &str) -> String {
+    pub(crate) fn compress_preserving_reads(evidence: &str) -> String {
+        let read_targets =
+            crate::completion_engine::extract_all_named_targets(scoped_problem, "READ_OK:");
+        if crate::completion_engine::any_word_unnegated(&problem_lower, &["search"]) {
+fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
+pub fn sanitize(path: &str) -> Result<PathBuf> {
+pub enum FsmState {
+use crate::cortical_loop::CorticalLoop;
+use crate::cognition::epistemic_session::EpistemicSession;
+impl CorticalLoop {
+    pub(crate) fn apply_ast_unaddressable_recovery(
+pub use client::ApiClient;
+pub use config::{NexusConfig, Other as Renamed};
+pub mod agent_protocol;
+pub(crate) mod cortical;
+"#;
+
+    #[test]
+    fn flags_every_bad_name_from_the_live_report() {
+        let report = "`CriticResponse` `EpistemicEngine` `safe_api_call` `strip_thought_tags` `compress_preserving_reads` `canonicalize_or_parent` `any_word_unnegated` `extract_all_named_targets` `create_search_memory_graph` `CorticalLoop` `EpistemicSession` `apply_ast_unaddressable_recovery`";
+        let mut bad = unverified_pub_claims(report, EVIDENCE);
+        bad.sort();
+        let mut want = vec![
+            "strip_thought_tags", "compress_preserving_reads", "canonicalize_or_parent",
+            "any_word_unnegated", "extract_all_named_targets", "create_search_memory_graph",
+            "CorticalLoop", "EpistemicSession", "apply_ast_unaddressable_recovery",
+        ];
+        want.sort();
+        assert_eq!(bad, want);
+    }
+
+    #[test]
+    fn accepts_real_public_items_fields_reexports_and_modules() {
+        let report = "`CriticResponse`, `critique`, `confidence_modifier`, `EpistemicEngine::safe_api_call()`, `sanitize`, `FsmState`, `ApiClient`, `NexusConfig`, `Renamed`, `agent_protocol`";
+        assert!(unverified_pub_claims(report, EVIDENCE).is_empty());
+    }
+
+    #[test]
+    fn restricted_modules_do_not_count_as_public() {
+        assert_eq!(unverified_pub_claims("`cortical`", EVIDENCE), vec!["cortical"]);
+    }
+
+    #[test]
+    fn spans_with_spaces_paths_or_fences_are_ignored() {
+        let report = "`pub use client::ApiClient;` `src/lib.rs` ```sh\nfind . | wc -l\n```";
+        assert!(unverified_pub_claims(report, EVIDENCE).is_empty());
+    }
+
+    #[test]
+    fn artifact_and_mission_detection() {
+        assert!(is_report_artifact("analysis_report.txt"));
+        assert!(!is_report_artifact("crates/runtime_core/src/lib.rs"));
+        assert!(wants_pub_items("list 3-5 `pub fn` or pub struct names"));
+        assert!(!wants_pub_items("summarize the module structure"));
+    }
+
+    #[test]
+    fn placeholder_report_has_no_grounded_items() {
+        let (ok, bad) = check_pub_claims("placeholder\n", EVIDENCE);
+        assert!(ok.is_empty() && bad.is_empty());
+        let (ok, bad) = check_pub_claims("`sanitize` and `CorticalLoop`", EVIDENCE);
+        assert_eq!(ok, vec!["sanitize"]);
+        assert_eq!(bad, vec!["CorticalLoop"]);
+    }
+}

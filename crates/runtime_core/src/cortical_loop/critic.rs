@@ -58,6 +58,70 @@ impl CorticalLoop {
             }
         }
 
+        // REPORT_GROUNDING_GATE (deterministic; runs before the LLM critic and
+        // before every FACT_OVERRIDE branch, so it cannot be overridden).
+        if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
+            use crate::cortical::halt_claims as hc;
+            if hc::is_report_artifact(path)
+                && (hc::wants_pub_items(&session.contract.objective)
+                    || hc::wants_pub_items(mission))
+            {
+                let (grounded, ungrounded) =
+                    hc::check_pub_claims(content, &session.local_evidence);
+                if !ungrounded.is_empty() || grounded.is_empty() {
+                    let names = ungrounded
+                        .iter()
+                        .map(|n| format!("`{}`", n))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let msg = if ungrounded.is_empty() {
+                        concat!(
+                            "GROUNDING GATE: the report cites no public item that the evidence defines as public. ",
+                            "Gather evidence first (search_code for 'pub ' in each named file, or read_file_chunk the ",
+                            "unread ranges), then cite only items you saw defined with `pub`."
+                        )
+                        .to_string()
+                    } else {
+                        format!(
+                            concat!(
+                                "GROUNDING GATE: the report names item(s) the evidence never shows as public definitions: {}. ",
+                                "A call site, `use` import, `impl` header, pub(crate) or private item does not count. ",
+                                "Read the defining file (search_code for 'pub ' in it, or read_file_chunk the unread ranges) ",
+                                "or remove those names. Do not describe items you did not see."
+                            ),
+                            names
+                        )
+                    };
+                    self.log(format!(
+                        ">> [GROUNDING GATE] Report write rejected: {} ungrounded, {} grounded.",
+                        ungrounded.len(),
+                        grounded.len()
+                    ));
+                    session.last_critic_rejected_actions = Some(
+                        actions
+                            .iter()
+                            .map(crate::cortical::action_identity::action_key)
+                            .collect::<Vec<_>>(),
+                    );
+                    session.local_evidence.push_str(&format!(
+                        "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
+                        msg
+                    ));
+                    if let Some(h_id) = session.best_hypothesis_id {
+                        let obs_id = session.graph.add_node(
+                            NodeKind::Observation,
+                            &format!("[CRITIC_VETO] {}", msg),
+                            1.0,
+                            75,
+                        );
+                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.10);
+                        session.graph.propagate_beliefs();
+                    }
+                    return Ok(CortexState::Strategize);
+                }
+            }
+        }
+
         // REQUIRED-COMMAND BYPASS: the exact command the directive requires is
         // mission-authoritative. Once every other condition is met (e.g. the patch
         // landed) the LLM critic has nothing left to judge, and it has been observed
