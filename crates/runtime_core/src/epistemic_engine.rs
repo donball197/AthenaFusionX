@@ -53,6 +53,9 @@ impl EpistemicEngine {
         payload: &Value,
     ) -> Result<String> {
         eprintln!("[MODEL TRACE] safe_api_call models={:?}", models);
+        // Providers reject an empty tool list (NVIDIA NIM: HTTP 400). Strip it once, up front.
+        let stripped_payload = strip_empty_tools(payload);
+        let payload: &Value = stripped_payload.as_ref().unwrap_or(payload);
 
         if models.is_empty() {
             return Err(anyhow!(
@@ -1802,3 +1805,50 @@ mod judge_budget_tests {
         }
     }
 }
+
+/// Providers reject an empty tool list (NVIDIA NIM: HTTP 400 "`tools` must not be an
+/// empty array"). When there are no declarations, drop `tools` and any forced choice.
+fn strip_empty_tools(payload: &Value) -> Option<Value> {
+    let empty_decls = payload
+        .pointer("/tools/0/functionDeclarations")
+        .and_then(|v| v.as_array())
+        .map_or(false, |a| a.is_empty());
+    let empty_tools = payload.get("tools").and_then(|v| v.as_array()).map_or(false, |a| a.is_empty());
+    if !(empty_decls || empty_tools) {
+        return None;
+    }
+    let mut p = payload.clone();
+    if let Some(o) = p.as_object_mut() {
+        o.remove("tools");
+        o.remove("forced_tool_choice");
+    }
+    Some(p)
+}
+
+#[cfg(test)]
+mod empty_tools_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn empty_declarations_are_stripped_before_any_provider_branch() {
+        let payload = json!({"contents": [], "tools": [{"functionDeclarations": []}], "forced_tool_choice": "read_file"});
+        let fixed = strip_empty_tools(&payload).expect("should strip");
+        assert!(fixed.get("tools").is_none() && fixed.get("forced_tool_choice").is_none());
+        assert!(fixed.get("contents").is_some());
+    }
+
+    #[test]
+    fn empty_top_level_tools_array_is_stripped_too() {
+        let fixed = strip_empty_tools(&json!({"tools": [], "contents": []})).unwrap();
+        assert!(fixed.get("tools").is_none());
+    }
+
+    #[test]
+    fn real_and_absent_tools_are_untouched() {
+        let real = json!({"tools": [{"functionDeclarations": [{"name": "read_file"}]}], "forced_tool_choice": "read_file"});
+        assert!(strip_empty_tools(&real).is_none());
+        assert!(strip_empty_tools(&json!({"contents": []})).is_none());
+    }
+}
+
