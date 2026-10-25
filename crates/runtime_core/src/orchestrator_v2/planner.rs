@@ -53,7 +53,8 @@ impl PlannerAgent {
             && (crate::completion_engine::any_word_unnegated(directive, &["searchmemory"])
                 || crate::completion_engine::any_word_unnegated(directive, &["search_memory"])
                 || (crate::completion_engine::any_word_unnegated(directive, &["search"])
-                    && crate::completion_engine::any_word_unnegated(directive, &["memory"])));
+                    && crate::completion_engine::any_word_unnegated(directive, &["memory"])
+                    && is_short_plain_directive(directive)));
 
         if search_memory_explicit {
             return Ok(Self::create_search_memory_graph(directive));
@@ -995,3 +996,33 @@ mod tests {
         assert!(!graph.nodes.contains_key("task_1"));
     }
 }
+
+/// The loose "search" + "memory" heuristic is meant for short one-line requests
+/// ("search memory for X"). A long structured mission mentions both words in
+/// prose ("do not use semantic memory", "openfang-memory", "search the source")
+/// and must reach the LLM planner instead of collapsing into one
+/// SEARCH_MEMORY_OK node.
+fn is_short_plain_directive(d: &str) -> bool {
+    let t = d.trim();
+    t.len() <= 400 && !t.starts_with('#') && !t.contains("\n## ") && t.lines().count() <= 6
+}
+
+#[cfg(test)]
+mod short_directive_tests {
+    use super::is_short_plain_directive;
+
+    #[test]
+    fn short_requests_still_qualify() {
+        assert!(is_short_plain_directive("Search memory for the last roadmap report"));
+        assert!(is_short_plain_directive("Use SearchMemory to recall the openfang notes."));
+    }
+
+    #[test]
+    fn long_structured_missions_do_not() {
+        let mission = "# MISSION: X\n\n## Objective\n\nSearch the checkout. Do not use semantic memory.\n";
+        assert!(!is_short_plain_directive(mission));
+        assert!(!is_short_plain_directive(&"search memory ".repeat(40)));
+        assert!(!is_short_plain_directive("a\nb\nc\nd\ne\nf\ng search memory"));
+    }
+}
+

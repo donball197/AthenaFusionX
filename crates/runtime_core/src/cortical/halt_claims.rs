@@ -509,7 +509,7 @@ fn definition_name(_kw: &str, rest: &str) -> Option<String> {
 fn public_definitions(corpus: &str) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for line in corpus.lines() {
-        let t = line.trim_start();
+        let t = strip_line_number_prefix(line.trim_start()).trim_start();
         if let Some(rest) = t.strip_prefix("pub use ") {
             let body = rest.trim().trim_end_matches(';');
             let items: Vec<&str> = match (body.find('{'), body.rfind('}')) {
@@ -544,8 +544,12 @@ pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>
     let (mut ok, mut bad): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     for span in report.split('`').skip(1).step_by(2) {
         let span = span.trim().trim_end_matches("()");
-        let name = span.rsplit("::").next().unwrap_or("");
-        if !is_ident(name) || SKIP.contains(&name) {
+        let claimed = match claimed_name(span) {
+            Some(n) => n,
+            None => continue,
+        };
+        let name = claimed.as_str();
+        if SKIP.contains(&name) {
             continue;
         }
         let bucket = if public.contains(name) { &mut ok } else { &mut bad };
@@ -556,8 +560,88 @@ pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>
     (ok, bad)
 }
 
-pub fn unverified_pub_claims(report: &str, corpus: &str) -> Vec<String> {
-    check_pub_claims(report, corpus).1
+
+/// Single-file `search_code` hits: `13:pub struct X {` or context `14-    body`.
+fn strip_line_number_prefix(line: &str) -> &str {
+    let digits = line.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits == 0 {
+        return line;
+    }
+    match line[digits..].chars().next() {
+        Some(':') | Some('-') => &line[digits + 1..],
+        _ => line,
+    }
+}
+
+/// Bare ident (`foo`, `Type::foo`) or keyword-led public claim (`pub fn foo`,
+/// `pub async fn foo`, `pub struct Foo`). Paths, `pub use`, `pub(crate)`, prose → None.
+fn claimed_name(span: &str) -> Option<String> {
+    let bare = span.rsplit("::").next().unwrap_or("");
+    if is_ident(bare) {
+        return Some(bare.to_string());
+    }
+    let mut toks = span.split_whitespace();
+    if toks.next() != Some("pub") {
+        return None;
+    }
+    let mut t = toks.next()?;
+    while t == "async" || t == "unsafe" || (t == "const" && toks.clone().next() == Some("fn")) {
+        t = toks.next()?;
+    }
+    if !["fn", "struct", "enum", "trait", "type", "const", "static", "mod", "union"].contains(&t) {
+        return None;
+    }
+    let name: String = toks.next()?.chars().take_while(|&c| is_word_char(c)).collect();
+    if is_ident(&name) {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod claim_form_tests {
+    use super::*;
+
+    const SEARCH: &str = r#"[SEARCH_CODE_OK] Path: crates/runtime_core/src/executor.rs | Query: 'pub '
+MATCHES:
+11-
+12-#[derive(Debug, PartialEq, Clone)]
+13:pub enum FsmState {
+57:pub fn sanitize(path: &str) -> Result<PathBuf> {
+276-impl RoboticExecutor {
+277:    pub fn new(api_key: String) -> Self {
+289:    pub async fn execute_motor_command(
+33:fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
+40:pub const fn make() -> u8 {
+"#;
+
+    #[test]
+    fn keyword_led_spans_are_checked_against_single_file_search_hits() {
+        let report = "`pub enum FsmState` `pub fn sanitize` `pub async fn execute_motor_command` `pub fn new` `pub const fn make` `pub fn canonicalize_or_parent` `pub fn invented`";
+        let (ok, bad) = check_pub_claims(report, SEARCH);
+        assert_eq!(ok, vec!["FsmState", "sanitize", "execute_motor_command", "new", "make"]);
+        assert_eq!(bad, vec!["canonicalize_or_parent", "invented"]);
+    }
+
+    #[test]
+    fn restricted_use_and_path_spans_claim_nothing() {
+        let (ok, bad) = check_pub_claims(
+            "`pub(crate) fn hidden` `pub use a::B;` `src/x.rs` `prose words`",
+            SEARCH,
+        );
+        assert!(ok.is_empty() && bad.is_empty());
+    }
+
+    #[test]
+    fn line_number_prefix_stripping() {
+        assert_eq!(strip_line_number_prefix("13:pub x"), "pub x");
+        assert_eq!(strip_line_number_prefix("14-    body"), "    body");
+        assert_eq!(strip_line_number_prefix("11-"), "");
+        assert_eq!(strip_line_number_prefix("84"), "84");
+        assert_eq!(strip_line_number_prefix("--"), "--");
+        assert_eq!(strip_line_number_prefix("pub fn z()"), "pub fn z()");
+    }
 }
 
 /// Report-style artifacts only; source files are never gated here.

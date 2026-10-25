@@ -76,9 +76,9 @@ impl CorticalLoop {
                         .join(", ");
                     let msg = if ungrounded.is_empty() {
                         concat!(
-                            "GROUNDING GATE: the report cites no public item that the evidence defines as public. ",
-                            "Gather evidence first (search_code for 'pub ' in each named file, or read_file_chunk the ",
-                            "unread ranges), then cite only items you saw defined with `pub`."
+                            "GROUNDING GATE: the report cites no public item that the evidence defines as public (placeholders are rejected). ",
+                            "If the evidence already holds the search hits, write the COMPLETE report now from them, naming items as `pub fn name` or `pub struct Name`. ",
+                            "Otherwise gather evidence first (search_code for 'pub ' in each named file, or read_file_chunk the unread ranges)."
                         )
                         .to_string()
                     } else {
@@ -107,16 +107,7 @@ impl CorticalLoop {
                         "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
                         msg
                     ));
-                    if let Some(h_id) = session.best_hypothesis_id {
-                        let obs_id = session.graph.add_node(
-                            NodeKind::Observation,
-                            &format!("[CRITIC_VETO] {}", msg),
-                            1.0,
-                            75,
-                        );
-                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.10);
-                        session.graph.propagate_beliefs();
-                    }
+                    // No graph edge: content veto must not decay the write_file hypothesis.
                     return Ok(CortexState::Strategize);
                 }
             }
