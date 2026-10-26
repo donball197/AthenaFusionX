@@ -166,10 +166,11 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
     }
 
     if let Some(expected_command) = strategy.strip_prefix("execute_command:") {
+        let expected = crate::cmd_match::normalize_cmd(expected_command);
         return matches!(
             action,
             AgentAction::ExecuteCommand { command, .. }
-                if command.trim() == expected_command.trim()
+                if crate::cmd_match::normalize_cmd(command) == expected
         );
     }
 
@@ -224,6 +225,30 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
     true
 }
 
+
+/// Return true if `action_path` is still a mandatory unread target.
+/// Callers pass paths from the node contract that are not yet fully covered.
+pub fn is_mandatory_unread_path(action_path: &str, mandatory_unread: &[String]) -> bool {
+    mandatory_unread.iter().any(|m| {
+        let a = action_path.trim_start_matches("./");
+        let b = m.trim_start_matches("./");
+        a == b || a.ends_with(b) || b.ends_with(a)
+    })
+}
+
+/// STRATEGY_VIOLATION escape hatch: path differs from active strategy, but the
+/// action targets a still-mandatory unread file for this node.
+pub fn allow_mandatory_pivot(
+    strategy_path: &str,
+    action_path: &str,
+    mandatory_unread: &[String],
+) -> bool {
+    if strategy_path == action_path {
+        return true;
+    }
+    is_mandatory_unread_path(action_path, mandatory_unread)
+}
+
 #[cfg(test)]
 mod same_path_tests {
     use super::same_path;
@@ -263,4 +288,89 @@ mod same_path_tests {
     fn different_files_do_not_match() {
         assert!(!same_path("a.rs", "b.rs"));
     }
+}
+
+#[cfg(test)]
+mod action_matches_strategy_tests {
+    use super::action_matches_strategy;
+    use crate::agent_protocol::AgentAction;
+    use crate::json_parser::extract_actions;
+
+    fn act(json: &str) -> AgentAction {
+        extract_actions(json)
+            .expect("test payload should parse")
+            .into_iter()
+            .next()
+            .expect("expected exactly one action")
+    }
+
+    // Regression: patch_function against replace_lines strategy.
+    // This is the exact mismatch that let the OpenFang mutation land.
+    #[test]
+    fn patch_function_against_replace_lines_strategy_is_rejected() {
+        let action = act(
+            r#"[{"type":"patch_function","path":"src/lib.rs","function_name":"new","new_body":"fn new() {}","reasoning":"test"}]"#,
+        );
+        assert!(
+            !action_matches_strategy("replace_lines:src/lib.rs", &action),
+            "patch_function must not satisfy a replace_lines strategy"
+        );
+    }
+
+    #[test]
+    fn replace_lines_against_replace_lines_strategy_is_accepted() {
+        let action = act(
+            r#"[{"type":"replace_lines","path":"src/lib.rs","start_line":1,"end_line":2,"replacement":"x","reasoning":"test"}]"#,
+        );
+        assert!(
+            action_matches_strategy("replace_lines:src/lib.rs", &action),
+            "replace_lines must satisfy a replace_lines strategy on the same path"
+        );
+    }
+
+    #[test]
+    fn replace_lines_against_wrong_path_is_rejected() {
+        let action = act(
+            r#"[{"type":"replace_lines","path":"other.rs","start_line":1,"end_line":2,"replacement":"x","reasoning":"test"}]"#,
+        );
+        assert!(
+            !action_matches_strategy("replace_lines:src/lib.rs", &action),
+            "replace_lines against a different path must be rejected"
+        );
+    }
+
+    #[test]
+    fn patch_function_against_patch_function_strategy_is_accepted() {
+        let action = act(
+            r#"[{"type":"patch_function","path":"src/lib.rs","function_name":"new","new_body":"fn new() {}","reasoning":"test"}]"#,
+        );
+        assert!(
+            action_matches_strategy("patch_function:src/lib.rs:new", &action),
+            "patch_function must satisfy a patch_function strategy on the same path"
+        );
+    }
+
+    #[test]
+    fn write_file_against_write_file_strategy_is_accepted() {
+        let action = act(
+            r#"[{"type":"write_file","path":"out.md","content":"hello","reasoning":"test"}]"#,
+        );
+        assert!(action_matches_strategy("write_file:out.md", &action));
+    }
+
+    #[test]
+    fn execute_command_with_report_suffix_matches_bare_action() {
+        // Submission 1 failure: strategy carried " and report stdout."
+        // from the directive, but the action's command was the bare shell
+        // command. Contract check passed but strategy check failed, deadlocking
+        // the cortex. Both sides must normalize the same way.
+        let action = act(
+            r#"[{"type":"execute_command","command":"find X | wc -l","reasoning":"test"}]"#,
+        );
+        assert!(action_matches_strategy(
+            "execute_command:find X | wc -l and report stdout.",
+            &action
+        ));
+    }
+
 }

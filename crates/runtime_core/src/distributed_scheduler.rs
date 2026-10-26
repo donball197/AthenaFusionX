@@ -77,7 +77,12 @@ impl DistributedScheduler {
 
         let reply: Reply = res.json().await?;
         if reply.ok {
-            Ok(reply.b64.unwrap_or_default())
+            match reply.b64.filter(|s| !s.is_empty()) {
+                Some(payload) => Ok(payload),
+                None => Err(anyhow!(
+                    "Remote forge returned ok=true without a synthesized payload"
+                )),
+            }
         } else {
             Err(anyhow!(reply.error.unwrap_or_else(|| "Remote forge error".into())))
         }

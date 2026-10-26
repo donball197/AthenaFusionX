@@ -562,7 +562,38 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     _ => false,
                 };
             let dir_child_read_ok = is_dir_child_read(&active_strategy, first_action);
-            if !strategy_ok && !advances_unmet && !veto_recon_ok && !dir_child_read_ok {
+            // Multi-file audit nodes: allow read of another path when the pinned
+            // strategy is also a read_* action (coverage ledger + critic still apply).
+            // Mutations remain subject to strict strategy_ok.
+            let mandatory_pivot_ok = match first_action {
+                AgentAction::ReadFile { path, .. }
+                | AgentAction::ReadFileChunk { path, .. }
+                | AgentAction::ReadFunction { path, .. } => {
+                    let mandatory_unread: Vec<String> = Vec::new();
+                    crate::cortical::strategy_match::allow_mandatory_pivot(
+                        &active_strategy,
+                        path,
+                        &mandatory_unread,
+                    )
+                }
+                _ => false,
+            };
+            let audit_read_pivot_ok = (active_strategy.contains("read_file")
+                || active_strategy.contains("read_file_chunk")
+                || active_strategy.contains("read_function"))
+                && matches!(
+                    first_action,
+                    AgentAction::ReadFile { .. }
+                        | AgentAction::ReadFileChunk { .. }
+                        | AgentAction::ReadFunction { .. }
+                );
+            if !strategy_ok
+                && !advances_unmet
+                && !veto_recon_ok
+                && !dir_child_read_ok
+                && !mandatory_pivot_ok
+                && !audit_read_pivot_ok
+            {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
                     active_strategy,

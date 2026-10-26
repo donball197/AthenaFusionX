@@ -748,7 +748,12 @@ impl SubgoalCompletionEngine {
             || objective.contains("DIFF_PATCH_OK:")
             || objective.contains("REPLACE_LINES_OK:");
         let read_only = !declared_mutation_criteria
-            && (detect_read_only(objective) || detect_read_only(scopes.root_directive));
+            && (detect_read_only(objective)
+                || detect_read_only(scopes.root_directive)
+                || crate::cortical::read_only_gate::mission_declares_read_only(objective)
+                || crate::cortical::read_only_gate::mission_declares_read_only(
+                    scopes.root_directive,
+                ));
 
         if let Some(contract) = declared_criteria_contract(node_id, objective, read_only) {
             return contract;

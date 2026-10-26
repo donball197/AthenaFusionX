@@ -512,8 +512,11 @@ impl RoboticExecutor {
                 }
 
                 let total_lines = content.lines().count();
-                let return_content = if content.chars().count() > 3000 {
-                    let prefix: String = content.chars().take(3000).collect();
+                // Files up to this many chars are returned whole so the coverage
+                // ledger, strategist and critic never see a partial read.
+                const READ_TRUNCATE_CHARS: usize = 60_000;
+                let return_content = if content.chars().count() > READ_TRUNCATE_CHARS {
+                    let prefix: String = content.chars().take(READ_TRUNCATE_CHARS).collect();
                     format!("{}...\n\n[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: {}. USE THE `read_file_chunk` TOOL BY SPECIFYING `start_line` AND `max_lines` TO READ BEYOND THIS POINT.]", prefix, total_lines)
                 } else {
                     content.clone()

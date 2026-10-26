@@ -44,12 +44,105 @@ impl CompilerGate {
             ));
         }
 
+        // Cache cargo metadata per manifest so multi-file mutations in the
+        // same nested workspace only shell out once.
+        let mut meta_cache: std::collections::HashMap<
+            PathBuf,
+            (PathBuf, Vec<serde_json::Value>),
+        > = std::collections::HashMap::new();
+
+        let root_meta = Self::load_workspace_metadata(&workspace_manifest).await?;
+        meta_cache.insert(workspace_manifest.clone(), root_meta.clone());
+
+        let mut matched: Vec<(PathBuf, String)> = Vec::new(); // (manifest, package)
+        let mut standalone_files: Vec<PathBuf> = Vec::new();
+
+        for mutated_path in &rs_paths {
+            let absolute_path = if mutated_path.is_absolute() {
+                mutated_path.clone()
+            } else {
+                root_meta.0.join(mutated_path)
+            };
+
+            // Pass 1: parent workspace.
+            if let Some(pkg) = Self::find_owner(&root_meta.1, &absolute_path) {
+                matched.push((workspace_manifest.clone(), pkg));
+                continue;
+            }
+
+            // Pass 2: walk up for the nearest Cargo.toml that isn't the
+            // parent workspace's. This is the fix for vendor/<nested>/...
+            // paths that were previously misclassified as standalone.
+            let mut resolved = false;
+            if let Some(nested_manifest) =
+                Self::nearest_cargo_toml(&absolute_path, &workspace_manifest)
+            {
+                let cached = if let Some(pair) = meta_cache.get(&nested_manifest) {
+                    Some(pair.clone())
+                } else {
+                    match Self::load_workspace_metadata(&nested_manifest).await {
+                        Ok(pair) => {
+                            meta_cache.insert(nested_manifest.clone(), pair.clone());
+                            Some(pair)
+                        }
+                        Err(_) => None,
+                    }
+                };
+                if let Some((_, packages)) = cached {
+                    if let Some(pkg) = Self::find_owner(&packages, &absolute_path) {
+                        matched.push((nested_manifest, pkg));
+                        resolved = true;
+                    }
+                }
+            }
+            if !resolved {
+                standalone_files.push(mutated_path.clone());
+            }
+        }
+
+        // The current enum shape carries one workspace manifest. If the
+        // mutation touches files in multiple workspaces, fail loudly so the
+        // caller splits the mutation rather than silently checking one.
+        let unique_manifests: std::collections::HashSet<&PathBuf> =
+            matched.iter().map(|(m, _)| m).collect();
+        if unique_manifests.len() > 1 {
+            return Err(format!(
+                "mutation spans {} workspaces ({}); split so each workspace is verified independently",
+                unique_manifests.len(),
+                unique_manifests
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+
+        if let Some((manifest, _)) = matched.first() {
+            let manifest = manifest.clone();
+            let packages: Vec<String> =
+                matched.into_iter().map(|(_, pkg)| pkg).collect();
+            Ok(RustVerificationTarget::WorkspacePackages {
+                workspace_manifest: manifest,
+                packages,
+            })
+        } else if !standalone_files.is_empty() {
+            Ok(RustVerificationTarget::StandaloneFiles { files: standalone_files })
+        } else {
+            Ok(RustVerificationTarget::NoVerificationNeeded)
+        }
+    }
+
+    /// Load cargo metadata for a specific manifest. Returns
+    /// `(workspace_root, packages_array)`.
+    async fn load_workspace_metadata(
+        manifest: &Path,
+    ) -> Result<(PathBuf, Vec<serde_json::Value>), String> {
         let output = tokio::process::Command::new("cargo")
             .args(["metadata", "--no-deps", "--format-version=1", "--manifest-path"])
-            .arg(&workspace_manifest)
+            .arg(manifest)
             .output()
             .await
-            .map_err(|e| format!("cargo metadata failed to execute: {e}"))?;
+            .map_err(|e| format!("cargo metadata failed: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -63,7 +156,7 @@ impl CompilerGate {
         let meta: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("cargo metadata JSON parse failed: {e}"))?;
 
-        let workspace_root = meta
+        let root = meta
             .get("workspace_root")
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
@@ -72,56 +165,43 @@ impl CompilerGate {
         let packages = meta
             .get("packages")
             .and_then(|v| v.as_array())
+            .cloned()
             .ok_or_else(|| "cargo metadata omitted packages".to_string())?;
 
-        let mut matched_packages = Vec::new();
-        let mut standalone_files = Vec::new();
+        Ok((root, packages))
+    }
 
-        for mutated_path in &rs_paths {
-            let absolute_path = if mutated_path.is_absolute() {
-                mutated_path.clone()
-            } else {
-                workspace_root.join(mutated_path)
+    /// Package name whose manifest directory contains `abs_path`.
+    fn find_owner(packages: &[serde_json::Value], abs_path: &Path) -> Option<String> {
+        for package in packages {
+            let Some(name) = package.get("name").and_then(|v| v.as_str()) else {
+                continue;
             };
-
-            let mut owner = None;
-            for package in packages {
-                let Some(name) = package.get("name").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                let Some(manifest_path) = package.get("manifest_path").and_then(|v| v.as_str())
-                else {
-                    continue;
-                };
-                let Ok(package_root) = Path::new(manifest_path).parent().ok_or("invalid path")
-                else {
-                    continue;
-                };
-
-                if absolute_path.starts_with(package_root) {
-                    owner = Some(name.to_string());
-                    break;
-                }
-            }
-
-            if let Some(pkg) = owner {
-                if !matched_packages.contains(&pkg) {
-                    matched_packages.push(pkg);
-                }
-            } else {
-                standalone_files.push(mutated_path.clone());
+            let Some(manifest_path) = package.get("manifest_path").and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            let Ok(package_root) = Path::new(manifest_path).parent().ok_or("invalid path")
+            else {
+                continue;
+            };
+            if abs_path.starts_with(package_root) {
+                return Some(name.to_string());
             }
         }
+        None
+    }
 
-        if !matched_packages.is_empty() {
-            Ok(RustVerificationTarget::WorkspacePackages {
-                workspace_manifest,
-                packages: matched_packages,
-            })
-        } else if !standalone_files.is_empty() {
-            Ok(RustVerificationTarget::StandaloneFiles { files: standalone_files })
-        } else {
-            Ok(RustVerificationTarget::NoVerificationNeeded)
+    /// Nearest Cargo.toml above `abs_path`, excluding the parent workspace's
+    /// own manifest.
+    fn nearest_cargo_toml(abs_path: &Path, parent_manifest: &Path) -> Option<PathBuf> {
+        let mut cur = abs_path.parent()?;
+        loop {
+            let candidate = cur.join("Cargo.toml");
+            if candidate.exists() && candidate != parent_manifest {
+                return Some(candidate);
+            }
+            cur = cur.parent()?;
         }
     }
 
@@ -191,7 +271,7 @@ impl CompilerGate {
                         };
                     }
                     let out = tokio::process::Command::new("rustc")
-                        .args(["--crate-type=lib", "--emit=metadata"])
+                        .args(["--edition", "2021", "--crate-type=lib", "--emit=metadata"])
                         .arg("--out-dir")
                         .arg(&scratch)
                         .arg(file)

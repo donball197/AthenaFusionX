@@ -62,3 +62,23 @@ pub fn classify_duplicate(
     }
     FilterOutcome::FilterAndDecay
 }
+
+/// Fingerprint a halt by its reasoning body so a *revised* halt is not treated
+/// as a duplicate of a prior rejected halt. Call this from the anti-loop key
+/// path when the action is Halt { reasoning }.
+#[allow(dead_code)]
+pub fn halt_reasoning_fingerprint(reasoning: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    "halt".hash(&mut h);
+    reasoning.hash(&mut h);
+    h.finish()
+}
+
+/// Prefer this when recording a Halt into the anti-loop set so revised
+/// halt bodies are not treated as duplicates of a prior rejected halt.
+pub fn halt_action_key(reasoning: &str) -> String {
+    format!("halt:{:x}", halt_reasoning_fingerprint(reasoning))
+}
+

@@ -21,6 +21,17 @@ fn repo_root(dir: &Path) -> Result<PathBuf, String> {
     PathBuf::from(s).canonicalize().map_err(|e| e.to_string())
 }
 
+fn governing_repo(outer_root: &Path, target: &Path) -> PathBuf {
+    let mut cur = target.parent();
+    while let Some(dir) = cur {
+        if !dir.starts_with(outer_root) { break; }
+        if dir.join(".git").exists() { return dir.to_path_buf(); }
+        if dir == outer_root { break; }
+        cur = dir.parent();
+    }
+    outer_root.to_path_buf()
+}
+
 /// Ok(true) = tracked, Ok(false) = git says unknown path, Err = git failed.
 fn is_tracked(dir: &Path, spec: &str) -> Result<bool, String> {
     let out = git(dir)
@@ -37,16 +48,24 @@ fn is_tracked(dir: &Path, spec: &str) -> Result<bool, String> {
 /// Returns Ok(()) only when `path` is back to its pre-mutation state.
 pub(crate) fn revert_mutation_path(path: &str) -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    revert_in(&cwd, path, &|spec| {
-        crate::podman::PodmanShield::execute_argv("git", &["checkout", "--", spec])
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    revert_in(&cwd, path, &|dir, spec| {
+        let dir_s = dir.to_string_lossy().to_string();
+        crate::podman::PodmanShield::execute_argv(
+            "git",
+            &["-C", &dir_s, "checkout", "--", spec],
+        )
+        .map(|o| o.status.success())
+        .unwrap_or(false)
     })
 }
 
 /// `dir` is where relative `path`s resolve and where git runs.
 /// `checkout` restores one tracked pathspec and reports success.
-fn revert_in(dir: &Path, path: &str, checkout: &dyn Fn(&str) -> bool) -> Result<(), String> {
+fn revert_in(
+    dir: &Path,
+    path: &str,
+    checkout: &dyn Fn(&Path, &str) -> bool,
+) -> Result<(), String> {
     let root = repo_root(dir)?;
     let dir_canon = dir.canonicalize().map_err(|e| e.to_string())?;
     let joined = dir_canon.join(path);
@@ -67,15 +86,25 @@ fn revert_in(dir: &Path, path: &str, checkout: &dyn Fn(&str) -> bool) -> Result<
     if rel.split('/').any(|c| c == ".git") {
         return Err(format!("refusing to touch git metadata: {}", rel));
     }
-    // Pathspecs are relative to git's cwd: plain form from the repo root,
-    // top-level magic form from a subdirectory.
-    let spec = if dir_canon == root { rel } else { format!(":/{}", rel) };
+    // Select the repo that actually tracks `target`. Normally the repo
+    // rooted at `root`; for a path inside a nested worktree (e.g.
+    // vendor/upstream/x.rs) it is the nested repo.
+    let governing = governing_repo(&root, &target);
+    let spec = target
+        .strip_prefix(&governing)
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
 
-    if is_tracked(dir, &spec)? {
-        if checkout(&spec) {
+    if is_tracked(&governing, &spec)? {
+        if checkout(&governing, &spec) {
             Ok(())
         } else {
-            Err(format!("git checkout failed for {}", spec))
+            Err(format!(
+                "git checkout failed for {} (repo {})",
+                spec,
+                governing.display()
+            ))
         }
     } else if std::fs::symlink_metadata(&target).is_ok() {
         std::fs::remove_file(&target).map_err(|e| e.to_string())
@@ -132,11 +161,10 @@ mod tests {
         assert!(status.success(), "git {:?} failed", args);
     }
 
-    fn checkout_in(dir: &Path) -> impl Fn(&str) -> bool {
-        let dir = dir.to_path_buf();
-        move |spec: &str| {
+    fn checkout_in(_bound: &Path) -> impl Fn(&Path, &str) -> bool {
+        |dir, spec| {
             Command::new("git")
-                .current_dir(&dir)
+                .current_dir(dir)
                 .args(["checkout", "--", spec])
                 .status()
                 .map(|s| s.success())
@@ -183,7 +211,7 @@ mod tests {
         sb.commit_file("a.txt", "x\n");
         let outside = sb.base.join("outside.txt");
         fs::write(&outside, "keep").unwrap();
-        let err = revert_in(&sb.repo, "../outside.txt", &|_| true).unwrap_err();
+        let err = revert_in(&sb.repo, "../outside.txt", &|_, _| true).unwrap_err();
         assert!(err.contains("escapes"), "{}", err);
         assert!(outside.exists());
     }
@@ -195,7 +223,7 @@ mod tests {
         let outside = sb.base.join("outside2.txt");
         fs::write(&outside, "keep").unwrap();
         let abs = outside.to_str().unwrap().to_string();
-        let err = revert_in(&sb.repo, &abs, &|_| true).unwrap_err();
+        let err = revert_in(&sb.repo, &abs, &|_, _| true).unwrap_err();
         assert!(err.contains("escapes"), "{}", err);
         assert!(outside.exists());
     }
@@ -204,7 +232,7 @@ mod tests {
     fn not_a_git_repo_never_deletes() {
         let sb = Sandbox::new("nogit", false);
         fs::write(sb.repo.join("f.txt"), "keep").unwrap();
-        assert!(revert_in(&sb.repo, "f.txt", &|_| true).is_err());
+        assert!(revert_in(&sb.repo, "f.txt", &|_, _| true).is_err());
         assert!(sb.repo.join("f.txt").exists());
     }
 
@@ -214,7 +242,7 @@ mod tests {
         sb.commit_file("a.txt", "x\n");
         let evil = sb.repo.join(".git").join("evil.txt");
         fs::write(&evil, "keep").unwrap();
-        let err = revert_in(&sb.repo, ".git/evil.txt", &|_| true).unwrap_err();
+        let err = revert_in(&sb.repo, ".git/evil.txt", &|_, _| true).unwrap_err();
         assert!(err.contains(".git"), "{}", err);
         assert!(evil.exists());
     }
@@ -240,4 +268,30 @@ mod tests {
         revert_in(&sb.repo, "link.rs", &checkout_in(&sb.repo)).unwrap();
         assert!(fs::symlink_metadata(&link).is_err());
     }
+    #[test]
+    fn nested_repo_file_is_restored_not_deleted() {
+        // Regression: a path tracked by a nested repo must be restored
+        // from that repo, not deleted as if it were an agent artifact.
+        let outer = Sandbox::new("nested", true);
+        let inner = outer.repo.join("inner");
+        fs::create_dir_all(&inner).unwrap();
+        run(&inner, &["init", "-q"]);
+        run(&inner, &["config", "user.email", "t@example.com"]);
+        run(&inner, &["config", "user.name", "t"]);
+        fs::write(inner.join("x.rs"), "orig").unwrap();
+        run(&inner, &["add", "."]);
+        run(&inner, &["commit", "-qm", "init"]);
+
+        fs::write(inner.join("x.rs"), "mutated").unwrap();
+
+        revert_in(&outer.repo, "inner/x.rs", &checkout_in(&outer.repo)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(inner.join("x.rs")).unwrap(),
+            "orig",
+            "nested-repo file must be restored, not deleted"
+        );
+        assert!(inner.join("x.rs").exists());
+    }
+
 }

@@ -1,9 +1,20 @@
 //! Deterministic check of a HALT report's backticked symbol claims against
 //! the evidence the session actually read. Pure: no logging, no I/O.
+//!
+//! POLICY: bare `fn_name` citations are valid when the symbol appears in
+//! the READ_* verification corpus. Only explicit "lines X-Y" claims are
+//! required to match the coverage ledger spans.
 
 const SKIP: &[&str] = &[
     "u8", "u16", "u32", "u64", "usize", "i32", "i64", "f32", "f64", "bool", "str", "self", "Self",
     "mut", "true", "false", "async", "await", "fn", "pub", "let", "None", "Some", "Ok", "Err",
+    // Source-code search markers. A halt report that documents "no TODO
+    // matches found" is citing the search term, not claiming TODO exists
+    // in the code. Treating these as unverified symbols rejects every
+    // absence-documentation paragraph, which is the opposite of what the
+    // stub-scan objective asks for.
+    "TODO", "FIXME", "XXX", "HACK", "NOTE", "todo", "fixme", "xxx", "hack", "note",
+    "todo!", "unimplemented!", "unreachable!",
 ];
 
 fn is_word_char(c: char) -> bool {
@@ -401,12 +412,16 @@ pub fn range_defects(report: &str, spans: &[FnSpan], min_len: usize) -> Vec<Stri
 
 /// All deterministic defects of a read-only halt report. Empty = acceptable.
 pub fn halt_defects(report: &str, local_evidence: &str) -> Vec<String> {
+    // Symbol verification MUST run against the raw evidence blob, not the
+    // read_lines map. read_lines exists for line-number tracking
+    // (function_spans); using its values as a symbol corpus drops any file
+    // body that truncation, chunk overlap, or line-number gaps prevented
+    // read_lines from mapping, producing false "symbol not found" rejections
+    // on files that were genuinely read in full (see distributed_scheduler.rs
+    // vs. remote_synthesize rejection). verification_corpus already strips
+    // [HALT lines and preserves FULL FILE CONTENT / CONTENT blocks verbatim.
+    let corpus = verification_corpus(local_evidence, "");
     let lines = read_lines(local_evidence);
-    let corpus = if lines.is_empty() {
-        verification_corpus(local_evidence, "")
-    } else {
-        lines.values().cloned().collect::<Vec<_>>().join("\n")
-    };
     let spans = function_spans(&lines);
     let mut out = Vec::new();
     let bad = unverified_symbols(report, &corpus);
@@ -558,6 +573,11 @@ pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>
         }
     }
     (ok, bad)
+}
+
+/// Backticked public-item claims in `report` that are not verified public in `corpus`.
+fn unverified_pub_claims(report: &str, corpus: &str) -> Vec<String> {
+    check_pub_claims(report, corpus).1
 }
 
 

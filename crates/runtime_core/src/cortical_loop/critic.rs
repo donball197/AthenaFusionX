@@ -13,6 +13,33 @@ impl CorticalLoop {
     ) -> Result<CortexState> {
         let CriticInput { actions, proposal, belief } = input;
 
+        // PROTECTED_PATH_GATE (deterministic; runs before the LLM critic and
+        // before every FACT_OVERRIDE branch). vendor/ and third_party/ are
+        // read-only unless the contract names the exact path as its artifact.
+        // This is the structural defence against the OpenFang failure class:
+        // the LLM critic vetoes a vendor mutation, then FACT_OVERRIDE lands it
+        // anyway. This gate cannot be overridden.
+        {
+            use crate::cortical::protected_path as pp;
+            let allowed: Vec<String> =
+                session.contract.required_artifact_paths.iter().map(|a| a.path.clone()).collect();
+            if let Some(msg) = actions.iter().find_map(|a| pp::protected_violation(a, &allowed)) {
+                self.log(format!(">> [PROTECTED PATH GATE] {}", msg));
+                session.last_critic_rejected_actions = Some(
+                    actions
+                        .iter()
+                        .map(crate::cortical::action_identity::action_key)
+                        .collect::<Vec<_>>(),
+                );
+                session.local_evidence.push_str(&format!(
+                    "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
+                    msg
+                ));
+                return Ok(CortexState::Strategize);
+            }
+        }
+
+
         let status =
             ContractEvaluator::evaluate(&session.contract, &session.local_evidence, belief);
 
@@ -595,9 +622,10 @@ mod patch_needle_tests {
     }
 }
 
-fn normalize_cmd(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
+// (Removed local normalize_cmd — see crate::cmd_match::normalize_cmd,
+//  which strips directive suffixes like 'and report stdout' so this
+//  gate agrees with the strategy-match gate on the same command.)
+use crate::cmd_match::normalize_cmd;
 
 /// True when `action` is exactly the command the contract requires, the
 /// requirement is still unmet, and every other (non-belief) condition is already
@@ -716,5 +744,43 @@ mod contract_fact_tests {
         assert!(out.contains("MET: [\"PatchMarkerAcquired\"]"), "{out}");
         assert!(out.contains("UNMET: []"), "{out}");
         assert!(!out.contains("MinBeliefScore"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod critic_normalize_tests {
+    use super::is_required_verification_command;
+    use crate::agent_protocol::AgentAction;
+    use crate::completion_engine::CompletionCondition as CC;
+
+    #[test]
+    fn normalize_strips_report_suffix_like_cmd_match() {
+        assert_eq!(
+            super::normalize_cmd("find X | wc -l and report stdout."),
+            crate::cmd_match::normalize_cmd("find X | wc -l"),
+        );
+    }
+
+    #[test]
+    fn suffixed_contract_command_bypasses_critic_for_bare_action() {
+        // Regression for the class of failure where the contract carries
+        // "and report stdout." (from directive phrasing) but the action's
+        // command is bare. The bypass must fire so the critic is skipped
+        // and the contract-required command runs.
+        let conditions = vec![CC::CommandExecutionVerified {
+            command: "find X | wc -l and report stdout.".to_string(),
+        }];
+        let evidence = "";
+        let action = AgentAction::ExecuteCommand {
+            _thought_process: None,
+            command: "find X | wc -l".to_string(),
+            reasoning: "test".to_string(),
+            confidence: 1.0,
+        };
+        assert!(
+            is_required_verification_command(&conditions, evidence, &action),
+            "critic bypass must accept the bare command when the contract \
+             carries a directive suffix"
+        );
     }
 }

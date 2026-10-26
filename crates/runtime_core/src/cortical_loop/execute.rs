@@ -47,24 +47,50 @@ impl CorticalLoop {
             if session.contract.read_only
                 && crate::cortical::read_only_gate::violates_read_only(&action)
             {
-                self.log(format!(
-                    "\x1b[1;31m>> [READ-ONLY VIOLATION]\x1b[0m Mission declares read-only intent; refusing mutation action: {:?}",
-                    action
-                ));
-                session.local_evidence.push_str(
-                    "[READ_ONLY_VIOLATION] Mission is READ-ONLY. Write/patch/synthesize actions are not permitted. Provide the audit findings as a halt action instead.\n",
+                // A read-only mission forbids mutations of the substrate.
+                // It does NOT forbid running read-only commands. `git status`,
+                // `git log`, `git branch`, `git rev-parse`, `find`, `cat`,
+                // `grep`, `ls`, `head`, `tail`, `wc`, `sort` are the very
+                // operations a read-only audit needs to gather evidence.
+                // `is_read_only_safe_command` statically analyzes a shell
+                // command (segmenting on pipes/&&/||, checking the first token
+                // against SAFE_COMMANDS, and checking git subcommands against
+                // SAFE_GIT, with flag-level escapes like --output refused).
+                // Only when that analysis says the command is safe do we
+                // exempt the action from this violation block.
+                //
+                // Root cause of the 2026-10-25 crate-audit Stage A abort:
+                // Stage A requires `git status`, `git branch`, `git rev-parse`;
+                // the gate refused all three as read-only violations because
+                // it classified every ExecuteCommand as mutating regardless
+                // of the actual command text.
+                let exec_is_provably_safe = matches!(
+                    &action,
+                    AgentAction::ExecuteCommand { _thought_process: None, command, .. }
+                        if crate::cortical::read_only_gate::is_read_only_safe_command(command)
                 );
-                if let Some(h_id) = session.best_hypothesis_id {
-                    let obs_id = session.graph.add_node(
-                        NodeKind::Observation,
-                        "[READ_ONLY_VIOLATION] Write action refused by READ-ONLY contract.",
-                        1.0,
-                        50,
+                if !exec_is_provably_safe {
+                    self.log(format!(
+                        "\x1b[1;31m>> [READ-ONLY VIOLATION]\x1b[0m Mission declares read-only intent; refusing mutation action: {:?}",
+                        action
+                    ));
+                    session.local_evidence.push_str(
+                        "[READ_ONLY_VIOLATION] Mission is READ-ONLY. Write/patch/synthesize actions are not permitted. Provide the audit findings as a halt action instead.\n",
                     );
-                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.50);
-                    session.graph.propagate_beliefs();
+                    if let Some(h_id) = session.best_hypothesis_id {
+                        let obs_id = session.graph.add_node(
+                            NodeKind::Observation,
+                            "[READ_ONLY_VIOLATION] Write action refused by READ-ONLY contract.",
+                            1.0,
+                            50,
+                        );
+                        session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.50);
+                        session.graph.propagate_beliefs();
+                    }
+                    continue;
                 }
-                continue;
+                // else: provably-safe read-only ExecuteCommand — fall through
+                // and let the executor run it.
             }
 
             let intent = IntentContract::new(&proposal, belief);

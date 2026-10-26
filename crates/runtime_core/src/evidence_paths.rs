@@ -10,7 +10,23 @@
 /// relative spellings remain distinguishable. `fs::canonicalize` is
 /// deliberately not used: confirmed-absence targets do not exist on disk.
 pub fn normalize_path(p: &str) -> String {
-    let t = p.trim();
+    // Expand `~` and `~/...` to $HOME before further normalization so a
+    // contract term like `~/AthenaFusionX` compares equal to evidence
+    // recorded as `/root/AthenaFusionX`. Only the exact forms `~` and
+    // `~/...` expand; `~user/...` and mid-path `~` are left unchanged.
+    let trimmed = p.trim();
+    let expanded: String;
+    let t: &str = if trimmed == "~" || trimmed.starts_with("~/") {
+        match std::env::var("HOME") {
+            Ok(home) if !home.is_empty() => {
+                expanded = trimmed.replacen("~", &home, 1);
+                expanded.as_str()
+            }
+            _ => trimmed,
+        }
+    } else {
+        trimmed
+    };
     let mut out: Vec<&str> = Vec::new();
     for seg in t.split('/') {
         match seg {
@@ -198,5 +214,45 @@ mod tests {
         assert!(!cmd_ok_binds_command(
             "[CMD_OK] Command: ls\n[DAG NODE COMPLETE]\nStatus: exit status: 0\n"
         ));
+    }
+}
+
+
+#[cfg(test)]
+mod tilde_tests {
+    use super::{normalize_path, paths_equivalent};
+
+    #[test]
+    fn tilde_expands_to_home() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        assert_eq!(normalize_path("~"), normalize_path(&home));
+    }
+
+    #[test]
+    fn tilde_prefix_expands_to_home_prefix() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        assert_eq!(
+            normalize_path("~/AthenaFusionX"),
+            normalize_path(&format!("{}/AthenaFusionX", home))
+        );
+    }
+
+    #[test]
+    fn tilde_contract_matches_absolute_evidence() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        assert!(paths_equivalent(
+            "~/AthenaFusionX",
+            &format!("{}/AthenaFusionX", home)
+        ));
+    }
+
+    #[test]
+    fn tilde_user_is_not_expanded() {
+        assert_eq!(normalize_path("~user/x"), "~user/x");
+    }
+
+    #[test]
+    fn mid_path_tilde_is_not_expanded() {
+        assert_eq!(normalize_path("/foo/~/bar"), "/foo/~/bar");
     }
 }

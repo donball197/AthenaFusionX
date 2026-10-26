@@ -117,6 +117,20 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     let clean_text = if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&clean_text) {
         let process_obj = |obj: &mut serde_json::Map<String, serde_json::Value>| {
+
+            // Float to Int normalization for model quirks
+            for key in ["start_line", "max_lines", "end_line", "offset", "limit"] {
+                if let Some(val) = obj.get_mut(key) {
+                    if let Some(s) = val.as_str() {
+                        if let Ok(f) = s.parse::<f64>() {
+                            *val = serde_json::Value::from(f as u64);
+                        }
+                    } else if let Some(f) = val.as_f64() {
+                        *val = serde_json::Value::from(f as u64);
+                    }
+                }
+            }
+    
             if let Some(tool_val) = obj.remove("tool") {
                 obj.insert("type".to_string(), tool_val);
             }
@@ -313,6 +327,21 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
         }
     } else {
         clean_text
+    };
+
+    // Strip model control-token leaks (<|end|>, <rfl:...>) from string fields.
+    // A halt whose text was cut is a parse fault: re-propose, do not accept.
+    let clean_text = match serde_json::from_str::<serde_json::Value>(&clean_text) {
+        Ok(orig) => {
+            let s = crate::proposal_sanitize::sanitize(orig);
+            if s.stripped {
+                return Err(anyhow::anyhow!(
+                    "PARSE_FAULT: control-token leak in proposal; re-propose"
+                ));
+            }
+            serde_json::to_string(&s.value).unwrap_or(clean_text)
+        }
+        Err(_) => clean_text,
     };
 
     match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {

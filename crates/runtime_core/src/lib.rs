@@ -21,6 +21,8 @@ pub mod executor;
 pub mod fitness_evaluator;
 pub mod governance;
 pub mod halt_gate;
+pub mod proposal_sanitize;
+pub mod truncation;
 pub mod health_check;
 pub mod hypothesis;
 pub mod hypothesis_engine;

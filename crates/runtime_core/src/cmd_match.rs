@@ -18,7 +18,36 @@ use sha2::{Digest, Sha256};
 /// differences (JSON \n renderings vs. live newlines) no longer create
 /// distinct identities.
 pub fn normalize_cmd(raw: &str) -> String {
-    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+    strip_directive_suffix(raw)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Directive phrasing often wraps a command as "Run: <command> and report
+/// stdout." When the strategy string carries that wrapper, it will not match
+/// the bare command recorded in `[CMD_OK]` evidence. Strip the trailing
+/// report-style phrase before normalizing so both sides converge.
+fn strip_directive_suffix(s: &str) -> &str {
+    let s = s.trim_end_matches(|c: char| c == '.' || c == '!' || c == '?');
+    for suffix in [
+        " and report command and full stdout",
+        " and report full stdout",
+        " and report command",
+        " and report its output",
+        " and report the output verbatim",
+        " and report the output",
+        " and report the result",
+        " and report the results",
+        " and report the findings",
+        " and report findings",
+        " and report stdout",
+    ] {
+        if let Some(stripped) = s.strip_suffix(suffix) {
+            return stripped.trim_end();
+        }
+    }
+    s
 }
 
 pub fn cmd_hash(raw: &str) -> String {
@@ -130,4 +159,43 @@ mod tests {
         let evidence = "[CMD_OK] Command: ls -la\n";
         assert!(!command_condition_met("ls -la", evidence));
     }
+
+#[cfg(test)]
+mod strip_directive_suffix_tests {
+    use super::{normalize_cmd, strip_directive_suffix};
+
+    #[test]
+    fn strips_and_report_stdout() {
+        assert_eq!(
+            strip_directive_suffix("find X | wc -l and report stdout."),
+            "find X | wc -l"
+        );
+    }
+
+    #[test]
+    fn strips_and_report_command_and_full_stdout() {
+        assert_eq!(
+            strip_directive_suffix("grep -rn epoch vendor/ and report command and full stdout"),
+            "grep -rn epoch vendor/"
+        );
+    }
+
+    #[test]
+    fn leaves_bare_command_alone() {
+        assert_eq!(strip_directive_suffix("find X | wc -l"), "find X | wc -l");
+        assert_eq!(
+            strip_directive_suffix("grep -rn wasm vendor/"),
+            "grep -rn wasm vendor/"
+        );
+    }
+
+    #[test]
+    fn normalize_makes_suffixed_and_bare_identical() {
+        assert_eq!(
+            normalize_cmd("find X | wc -l and report stdout."),
+            normalize_cmd("find X | wc -l")
+        );
+    }
+}
+
 }

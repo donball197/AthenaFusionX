@@ -114,7 +114,7 @@ impl CorticalLoop {
                 })
                 || {
                     let m = mission.to_lowercase();
-                    m.contains("patch")
+                    crate::cortical::read_only_gate::contains_word_start(&m, "patch")
                         || m.contains("modify ")
                         || m.contains("remove the unconditional")
                 };
@@ -123,10 +123,8 @@ impl CorticalLoop {
                 || session.local_evidence.contains("[REPLACE_LINES_OK]")
                 || session.local_evidence.contains("[WRITE_OK]");
 
-            let read_only_mission = session.contract.read_only || {
-                let m = mission.to_lowercase();
-                m.contains("read-only") || m.contains("do not modify") || m.contains("don't modify")
-            };
+            let read_only_mission = session.contract.read_only
+                || crate::cortical::read_only_gate::mission_declares_read_only(mission);
 
             if read_ok_done
                 && patch_marker_needed
