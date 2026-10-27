@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use nexus_substrate::memory::{AgentMemory, MemoryPalace};
-use nexus_substrate::taint::TaintLabel;
+use nexus_substrate::taint::{FlowPolicy, TaintLabel};
 
 #[derive(Clone)]
 pub struct MemoryCortex {
@@ -85,7 +85,7 @@ impl MemoryCortex {
     }
 
     pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>> {
-        let result = self.palace.search_memories(query).await?;
+        let result = self.palace.search_memories_scoped(query, FlowPolicy::INTERNAL_SINK).await?;
         Ok(result)
     }
 
@@ -94,7 +94,10 @@ impl MemoryCortex {
         embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<AgentMemory>> {
-        let result = self.palace.semantic_search(embedding, limit).await?;
+        let result = self
+            .palace
+            .semantic_search_taint_scoped(embedding, limit, FlowPolicy::INTERNAL_SINK)
+            .await?;
         Ok(result)
     }
 

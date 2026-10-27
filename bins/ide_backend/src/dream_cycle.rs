@@ -25,7 +25,10 @@ pub fn spawn(
                     .to_string()
             );
 
-            let strands = palace.fetch_random_strands(8).await.unwrap_or_default();
+            let strands = palace
+                .fetch_random_strands_scoped(8, nexus_substrate::taint::FlowPolicy::INTERNAL_SINK)
+                .await
+                .unwrap_or_default();
 
             if strands.is_empty() {
                 continue;

@@ -410,7 +410,15 @@ impl MemoryPalace {
         Ok(())
     }
 
-    pub async fn fetch_all(&self) -> Result<Vec<AgentMemory>, sqlx::Error> {
+    pub async fn fetch_all_scoped(
+        &self,
+        policy: crate::taint::FlowPolicy,
+    ) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = self.fetch_all().await?;
+        Ok(rows.into_iter().filter(|m| m.taint_label.flow_to(policy).is_ok()).collect())
+    }
+
+    pub(crate) async fn fetch_all(&self) -> Result<Vec<AgentMemory>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp, plan_id, task_id, session_id, mission_id FROM neural_context ORDER BY id DESC LIMIT 50")
             .fetch_all(&self.pool).await?;
         Ok(rows
@@ -432,7 +440,19 @@ impl MemoryPalace {
             .collect())
     }
 
-    pub async fn search_memories(&self, query: &str) -> Result<Vec<AgentMemory>, sqlx::Error> {
+    pub async fn search_memories_scoped(
+        &self,
+        query: &str,
+        policy: crate::taint::FlowPolicy,
+    ) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = self.search_memories(query).await?;
+        Ok(rows.into_iter().filter(|m| m.taint_label.flow_to(policy).is_ok()).collect())
+    }
+
+    pub(crate) async fn search_memories(
+        &self,
+        query: &str,
+    ) -> Result<Vec<AgentMemory>, sqlx::Error> {
         // FTS5 MATCH interprets tokens containing ':' as query syntax,
         // including column selectors such as "OBJECTIVE:".
         //
@@ -521,7 +541,27 @@ impl MemoryPalace {
         Ok(admitted)
     }
 
-    pub async fn semantic_search(
+    pub async fn semantic_search_taint_scoped(
+        &self,
+        query_vec: &[f32],
+        limit: usize,
+        policy: crate::taint::FlowPolicy,
+    ) -> anyhow::Result<Vec<AgentMemory>> {
+        let candidates = self.semantic_search(query_vec, limit.saturating_mul(4)).await?;
+        let mut admitted = Vec::with_capacity(limit);
+        for m in candidates {
+            if m.taint_label.flow_to(policy).is_err() {
+                continue;
+            }
+            admitted.push(m);
+            if admitted.len() >= limit {
+                break;
+            }
+        }
+        Ok(admitted)
+    }
+
+    pub(crate) async fn semantic_search(
         &self,
         query_vec: &[f32],
         limit: usize,
@@ -578,7 +618,19 @@ impl MemoryPalace {
         Ok(())
     }
 
-    pub async fn fetch_random_strands(&self, limit: i64) -> Result<Vec<AgentMemory>, sqlx::Error> {
+    pub async fn fetch_random_strands_scoped(
+        &self,
+        limit: i64,
+        policy: crate::taint::FlowPolicy,
+    ) -> Result<Vec<AgentMemory>, sqlx::Error> {
+        let rows = self.fetch_random_strands(limit).await?;
+        Ok(rows.into_iter().filter(|m| m.taint_label.flow_to(policy).is_ok()).collect())
+    }
+
+    pub(crate) async fn fetch_random_strands(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<AgentMemory>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, origin, directive, result, taint_label, timestamp, plan_id, task_id, session_id, mission_id FROM neural_context ORDER BY RANDOM() LIMIT ?")
             .bind(limit).fetch_all(&self.pool).await?;
         Ok(rows
@@ -686,5 +738,18 @@ mod parse_taint_tests {
     fn legacy_and_packed_labels_still_parse() {
         assert_eq!(parse_taint("Untrusted"), TaintLabel::UNTRUSTED_PUBLIC);
         assert_eq!(parse_taint(&TaintLabel::MUTATED.to_storage()), TaintLabel::MUTATED);
+    }
+}
+
+#[cfg(test)]
+mod scoped_recall_tests {
+    use crate::taint::{FlowPolicy, TaintLabel};
+
+    #[test]
+    fn untrusted_rejected_by_internal_sink() {
+        // If the variant name differs in your tree, adjust to your
+        // strictest label. The important assertion is that a strict
+        // prompt-sink policy rejects it.
+        assert!(TaintLabel::UNTRUSTED_PUBLIC.flow_to(FlowPolicy::INTERNAL_SINK).is_err());
     }
 }
