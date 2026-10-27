@@ -100,8 +100,13 @@ pub async fn wait_for_quota(model: &str, estimated_tokens: u32) -> Result<(), St
     Err(format!("[LEDGER] Quota for '{}' unavailable after {} attempts.", model, MAX_ATTEMPTS))
 }
 
+fn parse_rpm(raw: Option<&str>) -> u32 {
+    // 0 would reject every request on an empty window (and used to panic on unwrap).
+    raw.and_then(|v| v.parse::<u32>().ok()).unwrap_or(60).max(1)
+}
+
 fn http_rpm_limit() -> u32 {
-    std::env::var("NEXUS_HTTP_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(60)
+    parse_rpm(std::env::var("NEXUS_HTTP_RPM").ok().as_deref())
 }
 
 static HTTP_WINDOWS: Lazy<Mutex<HashMap<String, Vec<Instant>>>> =
@@ -110,7 +115,7 @@ static HTTP_WINDOWS: Lazy<Mutex<HashMap<String, Vec<Instant>>>> =
 pub fn http_check(ip: &str) -> Result<(), u64> {
     let limit = http_rpm_limit();
     let cutoff = Instant::now() - Duration::from_secs(60);
-    let mut map = HTTP_WINDOWS.lock().unwrap();
+    let mut map = HTTP_WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
     let win = map.entry(ip.to_string()).or_default();
     win.retain(|&ts| ts > cutoff);
     if win.len() as u32 >= limit {
@@ -135,5 +140,27 @@ fn generate_seed() -> u64 {
 impl Default for TokenLedger {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod http_rpm_tests {
+    use super::parse_rpm;
+
+    #[test]
+    fn zero_is_clamped_to_one() {
+        assert_eq!(parse_rpm(Some("0")), 1);
+    }
+
+    #[test]
+    fn default_and_garbage_use_sixty() {
+        assert_eq!(parse_rpm(None), 60);
+        assert_eq!(parse_rpm(Some("abc")), 60);
+        assert_eq!(parse_rpm(Some("-5")), 60);
+    }
+
+    #[test]
+    fn valid_values_pass_through() {
+        assert_eq!(parse_rpm(Some("120")), 120);
     }
 }

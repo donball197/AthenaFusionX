@@ -35,7 +35,8 @@ use std::sync::Arc;
 pub fn parse_taint(s: &str) -> TaintLabel {
     TaintLabel::from_storage(s)
         .or_else(|| TaintLabel::from_legacy(s))
-        .unwrap_or(TaintLabel::UNTRUSTED_PUBLIC)
+        // Fail closed: an unreadable label must not look publishable.
+        .unwrap_or(TaintLabel::UNTRUSTED_PUBLIC.with_secrecy(crate::taint::Secrecy::Secret))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -162,8 +163,7 @@ impl MemoryPalace {
             .execute(
                 "UPDATE neural_context\n                 SET taint_label = CASE taint_label\n                     WHEN 'Untrusted' THEN 'I:0,S:0,E:0'\n                     WHEN 'Observed'  THEN 'I:1,S:1,E:0'\n                     WHEN 'Mutated'   THEN 'I:1,S:1,E:1'\n                     WHEN 'Internal'  THEN 'I:2,S:1,E:2'\n                     ELSE taint_label\n                 END\n                 WHERE taint_label NOT LIKE 'I:%';",
             )
-            .await
-            .ok();
+            .await?;
 
         // Episode provenance columns. Nullable: legacy rows have
         // NULL, meaning "episode unknown". No existing row is
@@ -667,5 +667,24 @@ impl MemoryPalace {
             .into_iter()
             .map(|row| (row.get("id"), row.get("root_directive"), row.get("graph_json")))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod parse_taint_tests {
+    use super::*;
+    use crate::taint::{FlowPolicy, Secrecy};
+
+    #[test]
+    fn unparseable_label_fails_closed_on_secrecy() {
+        let t = parse_taint("garbage");
+        assert_eq!(t.secrecy, Secrecy::Secret);
+        assert!(t.flow_to(FlowPolicy::PUBLIC_SINK).is_err());
+    }
+
+    #[test]
+    fn legacy_and_packed_labels_still_parse() {
+        assert_eq!(parse_taint("Untrusted"), TaintLabel::UNTRUSTED_PUBLIC);
+        assert_eq!(parse_taint(&TaintLabel::MUTATED.to_storage()), TaintLabel::MUTATED);
     }
 }
