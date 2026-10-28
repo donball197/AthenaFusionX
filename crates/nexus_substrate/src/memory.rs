@@ -751,5 +751,100 @@ mod scoped_recall_tests {
         // strictest label. The important assertion is that a strict
         // prompt-sink policy rejects it.
         assert!(TaintLabel::UNTRUSTED_PUBLIC.flow_to(FlowPolicy::INTERNAL_SINK).is_err());
+        // Guard against a pathological `flow_to` that rejects everything.
+        assert!(TaintLabel::INTERNAL.flow_to(FlowPolicy::INTERNAL_SINK).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod scoped_recall_e2e_tests {
+    use super::*;
+    use crate::taint::{FlowPolicy, TaintLabel};
+    use crate::vector_bridge::EMBEDDING_DIM;
+
+    fn temp_db_path() -> std::path::PathBuf {
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("mp_e2e_{}_{}.db", std::process::id(), nanos))
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    /// The property under test: a stored row tagged UNTRUSTED_PUBLIC must not
+    /// survive a prompt-bound recall under FlowPolicy::INTERNAL_SINK.
+    #[tokio::test]
+    async fn untrusted_row_excluded_from_internal_sink_recall() {
+        // :memory: is unsafe: max_connections(5) means each pool connection
+        // gets its own DB, so schema/inserts land in one connection and
+        // queries in another. Use a temp file.
+        let db = temp_db_path();
+        cleanup(&db);
+
+        let palace = MemoryPalace::new(db.to_str().unwrap()).await.expect("open palace");
+
+        let emb_internal = vec![1.0f32; EMBEDDING_DIM];
+        let mut emb_untrusted = vec![1.0f32; EMBEDDING_DIM];
+        emb_untrusted[0] = 0.5;
+
+        palace
+            .store_memory(
+                "test",
+                "untrusted-key",
+                "[UNTRUSTED_MARKER] attacker-controlled content",
+                TaintLabel::UNTRUSTED_PUBLIC,
+                Some(emb_untrusted),
+            )
+            .await
+            .expect("store untrusted");
+
+        palace
+            .store_memory(
+                "test",
+                "internal-key",
+                "[INTERNAL_MARKER] trusted content",
+                TaintLabel::INTERNAL,
+                Some(emb_internal.clone()),
+            )
+            .await
+            .expect("store internal");
+
+        // Sanity: both rows must be candidates before the scoped filter.
+        let all = palace.semantic_search(&emb_internal, 10).await.expect("unscoped recall");
+        assert_eq!(
+            all.len(),
+            2,
+            "both rows must be candidates before the scoped filter; got {} rows — \
+             store_memory may not be committing to the vault",
+            all.len()
+        );
+
+        let scoped = palace
+            .semantic_search_taint_scoped(&emb_internal, 10, FlowPolicy::INTERNAL_SINK)
+            .await
+            .expect("scoped recall");
+
+        assert_eq!(
+            scoped.len(),
+            1,
+            "untrusted row must be filtered out; got {} rows: {:?}",
+            scoped.len(),
+            scoped.iter().map(|m| &m.result).collect::<Vec<_>>()
+        );
+        assert!(
+            scoped[0].result.contains("[INTERNAL_MARKER]"),
+            "surviving row must be the internal one; got {:?}",
+            scoped[0].result
+        );
+        assert!(
+            !scoped.iter().any(|m| m.result.contains("[UNTRUSTED_MARKER]")),
+            "untrusted marker leaked past INTERNAL_SINK"
+        );
+
+        drop(palace);
+        cleanup(&db);
     }
 }
