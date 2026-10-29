@@ -63,42 +63,21 @@ pub struct AgentProfile {
 
 pub struct IntelligentRouter;
 impl IntelligentRouter {
+
+    fn resolve_max_turns() -> u8 {
+        std::env::var("NEXUS_MAX_TURNS")
+            .ok()
+            .and_then(|s| s.parse::<u8>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(8)
+    }
+
     pub fn classify(d: &str) -> DirectiveClass {
         let d = d.to_lowercase();
         let trimmed = d.trim();
 
-        // 1. Explicit Targeted Edits & Patches (highest precedence for code modifications)
-        if ["fix", "patch", "edit", "replace"].iter().any(|k| trimmed.contains(k)) {
-            return DirectiveClass::TargetedEdit { file_hint: "target".into() };
-        }
-
-        // 2. Feature Builds & Implementations
-        if ["build", "implement", "create", "add feature", "extend", "generate"]
-            .iter()
-            .any(|k| trimmed.contains(k))
-        {
-            return DirectiveClass::FeatureBuild;
-        }
-
-        // 3. Shell / Command Operations
-        if [
-            "cargo check",
-            "cargo test",
-            "cargo build",
-            "ls ",
-            "find ",
-            "git ",
-            "cat ",
-            "rm ",
-            "sh ",
-        ]
-        .iter()
-        .any(|k| trimmed.starts_with(k) || trimmed.contains(&format!(" {k}")))
-        {
-            return DirectiveClass::ShellOp;
-        }
-
-        // 4. Security Audits (Require specific security terms or explicit security audit phrase)
+        // 1. Security Audits first (F-003): must beat TargetedEdit so
+        // "security audit fix" / "cve patch" stay SecurityAudit.
         if [
             "vulnerability",
             "cve",
@@ -116,6 +95,37 @@ impl IntelligentRouter {
                     || trimmed.contains("code")))
         {
             return DirectiveClass::SecurityAudit;
+        }
+
+        // 2. Explicit Targeted Edits & Patches
+        if ["fix", "patch", "edit", "replace"].iter().any(|k| trimmed.contains(k)) {
+            return DirectiveClass::TargetedEdit { file_hint: "target".into() };
+        }
+
+        // 3. Feature Builds & Implementations
+        if ["build", "implement", "create", "add feature", "extend", "generate"]
+            .iter()
+            .any(|k| trimmed.contains(k))
+        {
+            return DirectiveClass::FeatureBuild;
+        }
+
+        // 4. Shell / Command Operations
+        if [
+            "cargo check",
+            "cargo test",
+            "cargo build",
+            "ls ",
+            "find ",
+            "git ",
+            "cat ",
+            "rm ",
+            "sh ",
+        ]
+        .iter()
+        .any(|k| trimmed.starts_with(k) || trimmed.contains(&format!(" {k}")))
+        {
+            return DirectiveClass::ShellOp;
         }
 
         // 5. Repo Doctor / Diagnostics
@@ -161,22 +171,29 @@ MANDATORY SCHEMA:
   { "type": "halt", "reasoning": "..." }
 ]"#;
 
+        // F-002: same authority as AgentFactory (pin → .env → cascade → global).
         let (primary_model, budget) = match class {
             DirectiveClass::SecurityAudit => {
-                (std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_default(), ContextBudget::security())
+                (nexus_model_hub::factory::get_heavy_model(), ContextBudget::security())
             }
             DirectiveClass::RepoDoctor => {
-                (std::env::var("NEXUS_HEAVY_MODEL").unwrap_or_default(), ContextBudget::doctor())
+                (nexus_model_hub::factory::get_heavy_model(), ContextBudget::doctor())
             }
             DirectiveClass::Inquiry => {
-                (std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_default(), ContextBudget::minimal())
+                (nexus_model_hub::factory::get_flash_lite_model(), ContextBudget::minimal())
             }
             _ => {
-                (std::env::var("NEXUS_LIGHT_MODEL").unwrap_or_default(), ContextBudget::standard())
+                (nexus_model_hub::factory::get_flash_lite_model(), ContextBudget::standard())
             }
         };
 
-        AgentProfile { class, primary_model, max_turns: 8, budget, persona: persona.to_string() }
+        AgentProfile {
+            class,
+            primary_model,
+            max_turns: Self::resolve_max_turns(),
+            budget,
+            persona: persona.to_string(),
+        }
     }
 }
 
@@ -192,6 +209,11 @@ mod tests {
         );
         assert_eq!(
             IntelligentRouter::classify("Perform full system security audit"),
+            DirectiveClass::SecurityAudit
+        );
+        // F-003: security terms beat "fix"/"patch"
+        assert_eq!(
+            IntelligentRouter::classify("security audit fix for CVE-2024-0001"),
             DirectiveClass::SecurityAudit
         );
         // "perform " contains the characters "rm ", but is not a shell command.
