@@ -25,7 +25,24 @@ impl DagExecutor {
         }
     }
 
-    fn execute_grounded_task(description: &str, _evidence_context: &str) -> Option<String> {
+    fn execute_grounded_task(description: &str, evidence_context: &str) -> Option<String> {
+        // F-006: retain parent evidence in every successful host/minion result.
+        let with_parent = |body: String| -> String {
+            if evidence_context.trim().is_empty() {
+                body
+            } else {
+                let take = evidence_context.len().min(2048);
+                format!(
+                    "[PARENT_EVIDENCE len={}]\n{}\n[END_PARENT_EVIDENCE]\n{}",
+                    evidence_context.len(),
+                    &evidence_context[..take],
+                    body
+                )
+            }
+        };
+
+        let _f006_parent_len = evidence_context.len(); // F-006: param is live
+
         let desc_lower = description.to_lowercase();
 
         // 1. Direct Physical Shell Execution for Compiler & Build Checks
@@ -45,7 +62,13 @@ impl DagExecutor {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
             let status_code = output.status.code().unwrap_or(-1);
-            return Some(format!("[CMD_OK] Exit Status: {}\n{}", status_code, combined.trim()));
+            let body = format!("[CMD_OK] Exit Status: {}\n{}", status_code, combined.trim());
+            // F-005: nonzero cargo check must not yield Completed via Some(...)
+            if !output.status.success() {
+                return None;
+            }
+            // F-006: retain parent evidence
+            return Some(with_parent(body));
         }
 
         // 2. Direct Physical Filesystem Scans

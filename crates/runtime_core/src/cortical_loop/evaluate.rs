@@ -122,8 +122,9 @@ impl CorticalLoop {
                 // Search relevance must inspect the action that actually
                 // executed, never the strategist's natural-language proposal.
                 let executed_action_lower = executed_action.to_ascii_lowercase();
-                let is_search_like = !executed_action_lower.contains("halt") && (executed_action_lower.contains("search_code")
-                    || executed_action_lower.contains("search_memory"));
+                let is_search_like = !executed_action_lower.contains("halt")
+                    && (executed_action_lower.contains("search_code")
+                        || executed_action_lower.contains("search_memory"));
                 if is_search_like {
                     let query_hint = executed_action
                         .lines()
@@ -303,6 +304,18 @@ impl CorticalLoop {
                         "CURRENT-TURN PHYSICAL EVIDENCE:\n{}\n\n                         HISTORICAL TASK EVIDENCE (CONTEXT ONLY):\n{}",
                         evidence, sanitized_history
                     );
+                    // A write-artifact mission is judged on the artifact itself: the evidence
+                    // otherwise holds only `[WRITE_OK] <path>`, never the content.
+                    let verification_evidence = {
+                        let mut v = verification_evidence;
+                        for p in &session.contract.required_artifact_paths {
+                            if let Ok(body) = std::fs::read_to_string(&p.path) {
+                                let body: String = body.chars().take(12_000).collect();
+                                v.push_str(&format!("\n\nARTIFACT CONTENT ({}):\n{}", p.path, body));
+                            }
+                        }
+                        v
+                    };
 
                     match EpistemicEngine::verify_outcome(
                         &self.client,
