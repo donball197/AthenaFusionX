@@ -456,17 +456,14 @@ impl RoboticExecutor {
                 // directory is satisfiable, but under a distinct header so the
                 // coverage ledger (keyed on FULL FILE CONTENT:) does not treat a
                 // listing as a fully-read file.
-                let is_dir_listing = tokio::fs::metadata(&safe_path)
-                    .await
-                    .map(|m| m.is_dir())
-                    .unwrap_or(false);
+                let is_dir_listing =
+                    tokio::fs::metadata(&safe_path).await.map(|m| m.is_dir()).unwrap_or(false);
                 let content = if is_dir_listing {
                     let mut names: Vec<String> = Vec::new();
                     let mut rd = tokio::fs::read_dir(&safe_path).await?;
                     while let Some(entry) = rd.next_entry().await? {
                         let name = entry.file_name().to_string_lossy().to_string();
-                        let is_dir =
-                            entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
                         names.push(if is_dir { format!("{}/", name) } else { name });
                     }
                     names.sort();
@@ -522,7 +519,8 @@ impl RoboticExecutor {
                     content.clone()
                 };
 
-                let header = if is_dir_listing { "DIRECTORY LISTING:" } else { "FULL FILE CONTENT:" };
+                let header =
+                    if is_dir_listing { "DIRECTORY LISTING:" } else { "FULL FILE CONTENT:" };
                 Ok(format!("[READ_OK] {}\n{}\n{}", path, header, return_content))
             }
             MotorAction::ReadFunction { path, function_name } => {
@@ -839,7 +837,13 @@ impl RoboticExecutor {
                     .map_err(|e| anyhow!("SEMANTIC_SEARCH_EMBEDDING_FAILED: {}", e))?;
 
                 let results = memory
-                    .semantic_search(&emb, 12)
+                    .semantic_search_scoped(
+                        &emb,
+                        12,
+                        nexus_substrate::episode::RecallScope::ExplicitCrossEpisode,
+                        &self.episode,
+                        nexus_substrate::taint::FlowPolicy::INTERNAL_SINK,
+                    )
                     .await
                     .map_err(|e| anyhow!("SEMANTIC_SEARCH_VECTOR_RECALL_FAILED: {}", e))?;
 

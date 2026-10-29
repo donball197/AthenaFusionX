@@ -39,7 +39,6 @@ impl CorticalLoop {
             }
         }
 
-
         let status =
             ContractEvaluator::evaluate(&session.contract, &session.local_evidence, belief);
 
@@ -93,8 +92,7 @@ impl CorticalLoop {
                 && (hc::wants_pub_items(&session.contract.objective)
                     || hc::wants_pub_items(mission))
             {
-                let (grounded, ungrounded) =
-                    hc::check_pub_claims(content, &session.local_evidence);
+                let (grounded, ungrounded) = hc::check_pub_claims(content, &session.local_evidence);
                 if !ungrounded.is_empty() || grounded.is_empty() {
                     let names = ungrounded
                         .iter()
@@ -694,7 +692,8 @@ mod contract_fact_tests {
     use crate::completion_engine::CompletionCondition as CC;
 
     const CMD: &str = "python3 -c \"import math_ops; print(math_ops.divide(10, 0))\"";
-    const PATCHED: &str = "[PATCH_FUNCTION_OK] math_ops.py:divide\nUpdated function 'divide' in math_ops.py\n";
+    const PATCHED: &str =
+        "[PATCH_FUNCTION_OK] math_ops.py:divide\nUpdated function 'divide' in math_ops.py\n";
 
     fn run(c: &str) -> AgentAction {
         serde_json::from_value(serde_json::json!({"type": "execute_command", "command": c}))
@@ -730,10 +729,9 @@ mod contract_fact_tests {
 
     #[test]
     fn non_command_actions_are_never_bypassed() {
-        let read: AgentAction = serde_json::from_value(
-            serde_json::json!({"type": "read_file", "path": "math_ops.py"}),
-        )
-        .expect("read_file JSON must deserialize as AgentAction");
+        let read: AgentAction =
+            serde_json::from_value(serde_json::json!({"type": "read_file", "path": "math_ops.py"}))
+                .expect("read_file JSON must deserialize as AgentAction");
         assert!(!is_required_verification_command(&compound(), PATCHED, &read));
     }
 

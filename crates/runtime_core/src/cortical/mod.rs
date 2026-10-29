@@ -15,5 +15,5 @@ pub(crate) mod critic_filter;
 
 pub(crate) mod prompt_builder;
 
-pub(crate) mod terminal_gate;
 pub mod protected_path;
+pub(crate) mod terminal_gate;

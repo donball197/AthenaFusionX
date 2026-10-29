@@ -89,6 +89,18 @@ impl MemoryCortex {
         Ok(result)
     }
 
+    /// Taint- and episode-scoped raw recall (rows, not a ranked RecallResult).
+    pub async fn semantic_search_scoped(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+        scope: nexus_substrate::episode::RecallScope,
+        current: &nexus_substrate::episode::EpisodeContext,
+        policy: nexus_substrate::taint::FlowPolicy,
+    ) -> Result<Vec<AgentMemory>> {
+        self.palace.semantic_search_scoped(embedding, limit, scope, current, policy).await
+    }
+
     pub async fn semantic_search(
         &self,
         embedding: &[f32],

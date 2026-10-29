@@ -73,34 +73,62 @@ impl IntelligentRouter {
         }
 
         // 2. Feature Builds & Implementations
-        if ["build", "implement", "create", "add feature", "extend", "generate"].iter().any(|k| trimmed.contains(k)) {
+        if ["build", "implement", "create", "add feature", "extend", "generate"]
+            .iter()
+            .any(|k| trimmed.contains(k))
+        {
             return DirectiveClass::FeatureBuild;
         }
 
         // 3. Shell / Command Operations
-        if ["cargo check", "cargo test", "cargo build", "ls ", "find ", "git ", "cat ", "rm ", "sh "]
-            .iter()
-            .any(|k| trimmed.starts_with(k) || trimmed.contains(&format!(" {k}")))
+        if [
+            "cargo check",
+            "cargo test",
+            "cargo build",
+            "ls ",
+            "find ",
+            "git ",
+            "cat ",
+            "rm ",
+            "sh ",
+        ]
+        .iter()
+        .any(|k| trimmed.starts_with(k) || trimmed.contains(&format!(" {k}")))
         {
             return DirectiveClass::ShellOp;
         }
 
         // 4. Security Audits (Require specific security terms or explicit security audit phrase)
-        if ["vulnerability", "cve", "taint", "exploit", "sqli", "security audit", "penetration test"]
-            .iter()
-            .any(|k| trimmed.contains(k)) 
-            || (trimmed.contains("audit") && (trimmed.contains("security") || trimmed.contains("system") || trimmed.contains("code")))
+        if [
+            "vulnerability",
+            "cve",
+            "taint",
+            "exploit",
+            "sqli",
+            "security audit",
+            "penetration test",
+        ]
+        .iter()
+        .any(|k| trimmed.contains(k))
+            || (trimmed.contains("audit")
+                && (trimmed.contains("security")
+                    || trimmed.contains("system")
+                    || trimmed.contains("code")))
         {
             return DirectiveClass::SecurityAudit;
         }
 
         // 5. Repo Doctor / Diagnostics
-        if ["diagnose", "doctor", "fix repo", "suture", "repair", "preflight"].iter().any(|k| trimmed.contains(k)) {
+        if ["diagnose", "doctor", "fix repo", "suture", "repair", "preflight"]
+            .iter()
+            .any(|k| trimmed.contains(k))
+        {
             return DirectiveClass::RepoDoctor;
         }
 
         // 6. Wasm Forge
-        if ["wasm", "webassembly", "wat", "zig", "wasm_tester"].iter().any(|k| trimmed.contains(k)) {
+        if ["wasm", "webassembly", "wat", "zig", "wasm_tester"].iter().any(|k| trimmed.contains(k))
+        {
             return DirectiveClass::WasmForge;
         }
 
@@ -167,17 +195,11 @@ mod tests {
             DirectiveClass::SecurityAudit
         );
         // "perform " contains the characters "rm ", but is not a shell command.
-        assert_ne!(
-            IntelligentRouter::classify("Perform a system review"),
-            DirectiveClass::ShellOp
-        );
+        assert_ne!(IntelligentRouter::classify("Perform a system review"), DirectiveClass::ShellOp);
         assert_eq!(
             IntelligentRouter::classify("Explain how the router works"),
             DirectiveClass::Inquiry
         );
-        assert_eq!(
-            IntelligentRouter::classify("cargo test --workspace"),
-            DirectiveClass::ShellOp
-        );
+        assert_eq!(IntelligentRouter::classify("cargo test --workspace"), DirectiveClass::ShellOp);
     }
 }

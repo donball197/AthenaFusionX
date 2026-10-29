@@ -699,8 +699,7 @@ mod dir_child_tests {
         let d = temp_dir("dir_child_test_d");
         let child = d.join("f.rs").to_string_lossy().to_string();
         let read = act(serde_json::json!({"type": "read_file", "path": child.clone()}));
-        let write =
-            act(serde_json::json!({"type": "write_file", "path": child, "content": "x"}));
+        let write = act(serde_json::json!({"type": "write_file", "path": child, "content": "x"}));
         // strategy path is not an existing directory
         assert!(!is_dir_child_read("read_file:/nonexistent_dir_xyz_123", &read));
         // action is a write, not a read
@@ -741,7 +740,8 @@ fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
 mod halt_release_tests {
     use super::halt_rejected_since_last_evidence;
 
-    const REJECT: &str = "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable.\n";
+    const REJECT: &str =
+        "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable.\n";
 
     #[test]
     fn no_rejection_means_no_release() {

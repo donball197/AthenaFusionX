@@ -514,10 +514,7 @@ fn relativize_to_cwd(p: &str) -> String {
     std::env::current_dir()
         .ok()
         .and_then(|cwd| {
-            std::path::Path::new(p)
-                .strip_prefix(&cwd)
-                .ok()
-                .map(|r| r.to_string_lossy().to_string())
+            std::path::Path::new(p).strip_prefix(&cwd).ok().map(|r| r.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| p.to_string())
 }
@@ -554,10 +551,7 @@ pub(crate) fn grounded_patch_target(evidence: &str) -> Option<(String, Option<St
 pub(crate) fn patch_command_phase(evidence: &str, patch_done: bool) -> PatchCommandPhase {
     let lines: Vec<&str> = evidence.lines().collect();
     let last_patch = lines.iter().rposition(|l| {
-        matches!(
-            marker_token(l),
-            Some("PATCH_FUNCTION_OK" | "DIFF_PATCH_OK" | "REPLACE_LINES_OK")
-        )
+        matches!(marker_token(l), Some("PATCH_FUNCTION_OK" | "DIFF_PATCH_OK" | "REPLACE_LINES_OK"))
     });
     let last_fail = lines.iter().rposition(|l| l.trim_start().starts_with("[ACTION FAILED]"));
     let failed_after_patch = match (last_patch, last_fail) {

@@ -35,7 +35,9 @@ pub fn cited_ranges(evidence: &str) -> Vec<(u32, u32)> {
 /// Parses "lines 1-806", "Lines 201–648", "(150-350)" style ranges.
 fn ranges_in(text: &str) -> Vec<(u32, u32)> {
     let lower = text.to_lowercase();
-    if !lower.contains("line") { return Vec::new(); }
+    if !lower.contains("line") {
+        return Vec::new();
+    }
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -95,7 +97,6 @@ pub fn halt_range_gate(evidence: &str) -> Option<String> {
     }
     None
 }
-
 
 /// Names cited only as `ident` (no "lines X-Y" clause).
 #[allow(dead_code)]

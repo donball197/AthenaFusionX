@@ -184,9 +184,17 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
                     let mutarg = args.iter().skip(1).any(|t| {
                         matches!(
                             t.as_str(),
-                            "-d" | "-D" | "-m" | "-M" | "-c" | "-C" | "-f"
-                                | "--delete" | "--move" | "--copy"
-                                | "--edit-description" | "--set-upstream-to"
+                            "-d" | "-D"
+                                | "-m"
+                                | "-M"
+                                | "-c"
+                                | "-C"
+                                | "-f"
+                                | "--delete"
+                                | "--move"
+                                | "--copy"
+                                | "--edit-description"
+                                | "--set-upstream-to"
                                 | "--unset-upstream"
                         ) || (!t.starts_with('-') && t != "branch")
                     });
@@ -270,7 +278,6 @@ mod tests {
         assert!(violates_read_only(&action), "RunTests must be rejected under READ_ONLY");
     }
 }
-
 
 #[cfg(test)]
 mod read_only_gate_constants_tests {
@@ -412,11 +419,8 @@ pub(crate) fn mission_declares_read_only(text: &str) -> bool {
     }
     NEGATED.iter().any(|p| {
         occurrences(p).into_iter().any(|end| {
-            let next_word: String = t[end..]
-                .trim_start()
-                .chars()
-                .take_while(|c| c.is_alphabetic())
-                .collect();
+            let next_word: String =
+                t[end..].trim_start().chars().take_while(|c| c.is_alphabetic()).collect();
             !SCOPE_WORDS.contains(&next_word.as_str())
         })
     })
@@ -447,7 +451,9 @@ mod mission_read_only_tests {
 
     #[test]
     fn a2_a3_style_negations() {
-        assert!(ro("One file to 100%, then the other. No third file. No execute_command. No edits."));
+        assert!(ro(
+            "One file to 100%, then the other. No third file. No execute_command. No edits."
+        ));
         assert!(ro("Read-only. No edits."));
         assert!(ro("Strictly read-only. No other commands."));
         assert!(ro("Do not modify any file."));
@@ -457,7 +463,9 @@ mod mission_read_only_tests {
     fn scoped_carve_outs_and_mutation_missions_are_not_read_only() {
         assert!(!ro("Patch function foo in a.rs. No edits to other files."));
         assert!(!ro("Fix the parser and add tests."));
-        assert!(!ro("Write the report. WRITE_OK: out/report.md. No edits elsewhere. Read-only otherwise."));
+        assert!(!ro(
+            "Write the report. WRITE_OK: out/report.md. No edits elsewhere. Read-only otherwise."
+        ));
         assert!(!ro("The reeditor and the proofreadonly crate"));
     }
 

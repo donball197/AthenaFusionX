@@ -11,14 +11,8 @@
 use crate::agent_protocol::AgentAction;
 
 const PROTECTED_DIRS: &[&str] = &["vendor", "third_party"];
-const MUTATING_KINDS: &[&str] = &[
-    "write_file",
-    "patch_file",
-    "replace_lines",
-    "atomic_patch",
-    "diff_patch",
-    "patch_function",
-];
+const MUTATING_KINDS: &[&str] =
+    &["write_file", "patch_file", "replace_lines", "atomic_patch", "diff_patch", "patch_function"];
 const PATH_KEYS: &[&str] = &["path", "file_path", "filepath", "file", "target_path", "target"];
 
 fn normalize_path(p: &str) -> String {
@@ -54,10 +48,7 @@ fn violation_in_json(
         }
     };
     let path: Option<String> = if MUTATING_KINDS.contains(&kind.as_str()) {
-        PATH_KEYS
-            .iter()
-            .find_map(|k| body.get(*k).and_then(|x| x.as_str()))
-            .map(str::to_string)
+        PATH_KEYS.iter().find_map(|k| body.get(*k).and_then(|x| x.as_str())).map(str::to_string)
     } else if kind == "execute_command" {
         body.get("command").and_then(|c| c.as_str()).and_then(shell_target)
     } else {
@@ -89,7 +80,9 @@ mod protected_path_tests {
     use super::*;
     use serde_json::json;
 
-    fn no_shell(_: &str) -> Option<String> { None }
+    fn no_shell(_: &str) -> Option<String> {
+        None
+    }
     fn redirect_shell(c: &str) -> Option<String> {
         c.split_once("> ").map(|(_, p)| p.trim().to_string())
     }
@@ -106,23 +99,44 @@ mod protected_path_tests {
 
     #[test]
     fn blocks_relative_and_dot_slash_spellings() {
-        assert!(check(json!({"type":"replace_lines","path":"./vendor/openfang/x.rs"}), &[]).is_some());
-        assert!(check(json!({"type":"write_file","path":"vendor/openfang/Cargo.toml","content":"x"}), &[]).is_some());
+        assert!(
+            check(json!({"type":"replace_lines","path":"./vendor/openfang/x.rs"}), &[]).is_some()
+        );
+        assert!(check(
+            json!({"type":"write_file","path":"vendor/openfang/Cargo.toml","content":"x"}),
+            &[]
+        )
+        .is_some());
         assert!(check(json!({"type":"diff_patch","path":"third_party/lib/a.c"}), &[]).is_some());
     }
 
     #[test]
     fn reads_and_searches_are_never_refused() {
-        assert!(check(json!({"type":"read_file","path":"vendor/openfang/Cargo.toml"}), &[]).is_none());
-        assert!(check(json!({"type":"read_file_chunk","path":"vendor/openfang/a.rs","start_line":1}), &[]).is_none());
-        assert!(check(json!({"type":"search_code","path":"vendor/openfang","query":"wasm"}), &[]).is_none());
+        assert!(
+            check(json!({"type":"read_file","path":"vendor/openfang/Cargo.toml"}), &[]).is_none()
+        );
+        assert!(check(
+            json!({"type":"read_file_chunk","path":"vendor/openfang/a.rs","start_line":1}),
+            &[]
+        )
+        .is_none());
+        assert!(check(json!({"type":"search_code","path":"vendor/openfang","query":"wasm"}), &[])
+            .is_none());
     }
 
     #[test]
     fn ordinary_edits_and_lookalike_directories_pass() {
         assert!(check(json!({"type":"patch_function","path":"crates/runtime_core/src/x.rs","function_name":"f","new_body":"x"}), &[]).is_none());
-        assert!(check(json!({"type":"write_file","path":"crates/vendor_tools/src/lib.rs","content":"x"}), &[]).is_none());
-        assert!(check(json!({"type":"write_file","path":"ROADMAP_OPENFANG_COMPARISON.md","content":"x"}), &[]).is_none());
+        assert!(check(
+            json!({"type":"write_file","path":"crates/vendor_tools/src/lib.rs","content":"x"}),
+            &[]
+        )
+        .is_none());
+        assert!(check(
+            json!({"type":"write_file","path":"ROADMAP_OPENFANG_COMPARISON.md","content":"x"}),
+            &[]
+        )
+        .is_none());
     }
 
     #[test]
@@ -141,7 +155,8 @@ mod protected_path_tests {
     #[test]
     fn shell_redirection_into_vendor_is_refused() {
         let cmd = |c: &str| json!({"type":"execute_command","command":c});
-        assert!(violation_in_json(&cmd("echo hi > vendor/openfang/a.txt"), &[], redirect_shell).is_some());
+        assert!(violation_in_json(&cmd("echo hi > vendor/openfang/a.txt"), &[], redirect_shell)
+            .is_some());
         assert!(violation_in_json(&cmd("ls vendor/openfang/crates"), &[], redirect_shell).is_none());
         assert!(violation_in_json(&cmd("echo hi > /tmp/out.txt"), &[], redirect_shell).is_none());
     }

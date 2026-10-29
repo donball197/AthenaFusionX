@@ -32,10 +32,18 @@ impl ProbabilisticMemory {
         if let Ok(query_vec) =
             nexus_substrate::vector_bridge::get_embedding(api_key, current_directive).await
         {
-            if let Ok(memories) = memory.semantic_search(&query_vec, 3).await {
+            if let Ok(memories) = memory
+                .semantic_search_scoped(
+                    &query_vec,
+                    3,
+                    nexus_substrate::episode::RecallScope::ExplicitCrossEpisode,
+                    &nexus_substrate::episode::EpisodeContext::default(),
+                    nexus_substrate::taint::FlowPolicy::INTERNAL_SINK,
+                )
+                .await
+            {
                 for m in memories {
-                    if m.result.contains("[HIGH_FITNESS_PATTERN]")
-                        || m.result.contains("[COMPILE_OK]")
+                    if has_marker(&m, "[HIGH_FITNESS_PATTERN]") || has_marker(&m, "[COMPILE_OK]")
                     {
                         positive_priors.push(MemoryPrior {
                             directive: m.directive.clone(),
@@ -43,9 +51,9 @@ impl ProbabilisticMemory {
                             evidence: m.result.lines().take(8).collect::<Vec<_>>().join("\n"),
                             confidence: 0.95,
                         });
-                    } else if m.result.contains("[COMPILE_FAIL]")
-                        || m.result.contains("[ACTION_GATE_BLOCKED]")
-                        || m.result.contains("[MUTATION_REVERTED]")
+                    } else if has_marker(&m, "[COMPILE_FAIL]")
+                        || has_marker(&m, "[ACTION_GATE_BLOCKED]")
+                        || has_marker(&m, "[MUTATION_REVERTED]")
                     {
                         negative_constraints.push(format!(
                             "NEGATIVE CONSTRAINT (Avoid on '{}'): {}",
@@ -112,5 +120,50 @@ impl ProbabilisticMemory {
         }
 
         Ok(())
+    }
+}
+
+/// A marker counts only when a result line STARTS with it, and never for rows
+/// that came from file reads (source files merely mention these strings).
+fn has_marker(m: &nexus_substrate::memory::AgentMemory, marker: &str) -> bool {
+    let from_file_read = ["ReadFile", "ReadFunction", "ReadFileChunk"]
+        .iter()
+        .any(|o| m.origin.eq_ignore_ascii_case(o));
+    !from_file_read && m.result.lines().any(|l| l.trim_start().starts_with(marker))
+}
+
+#[cfg(test)]
+mod has_marker_tests {
+    use super::has_marker;
+    use nexus_substrate::memory::AgentMemory;
+
+    fn mem(origin: &str, result: &str) -> AgentMemory {
+        AgentMemory {
+            id: 1,
+            origin: origin.to_string(),
+            directive: "d".to_string(),
+            result: result.to_string(),
+            taint_label: nexus_substrate::taint::TaintLabel::OBSERVED,
+            episode: Default::default(),
+            timestamp: "0".to_string(),
+        }
+    }
+
+    #[test]
+    fn file_read_rows_never_carry_markers() {
+        assert!(!has_marker(&mem("ReadFile", "[COMPILE_OK] fine"), "[COMPILE_OK]"));
+    }
+
+    #[test]
+    fn line_start_marker_from_a_real_source_counts() {
+        assert!(has_marker(&mem("EvolutionEngine", "x\n[COMPILE_OK] fine"), "[COMPILE_OK]"));
+    }
+
+    #[test]
+    fn marker_mentioned_mid_line_does_not_count() {
+        assert!(!has_marker(
+            &mem("ExecuteCommand", "println!(\"[COMPILE_OK]\");"),
+            "[COMPILE_OK]"
+        ));
     }
 }

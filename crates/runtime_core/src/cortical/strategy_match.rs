@@ -225,7 +225,6 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
     true
 }
 
-
 /// Return true if `action_path` is still a mandatory unread target.
 /// Callers pass paths from the node contract that are not yet fully covered.
 pub fn is_mandatory_unread_path(action_path: &str, mandatory_unread: &[String]) -> bool {
@@ -352,9 +351,8 @@ mod action_matches_strategy_tests {
 
     #[test]
     fn write_file_against_write_file_strategy_is_accepted() {
-        let action = act(
-            r#"[{"type":"write_file","path":"out.md","content":"hello","reasoning":"test"}]"#,
-        );
+        let action =
+            act(r#"[{"type":"write_file","path":"out.md","content":"hello","reasoning":"test"}]"#);
         assert!(action_matches_strategy("write_file:out.md", &action));
     }
 
@@ -364,13 +362,11 @@ mod action_matches_strategy_tests {
         // from the directive, but the action's command was the bare shell
         // command. Contract check passed but strategy check failed, deadlocking
         // the cortex. Both sides must normalize the same way.
-        let action = act(
-            r#"[{"type":"execute_command","command":"find X | wc -l","reasoning":"test"}]"#,
-        );
+        let action =
+            act(r#"[{"type":"execute_command","command":"find X | wc -l","reasoning":"test"}]"#);
         assert!(action_matches_strategy(
             "execute_command:find X | wc -l and report stdout.",
             &action
         ));
     }
-
 }

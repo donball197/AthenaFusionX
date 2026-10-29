@@ -57,7 +57,13 @@ pub fn classify_duplicate(
             return FilterOutcome::AllowRetry; // earlier write failed
         }
     }
-    if matches!(action, AgentAction::ReadFileChunk { .. } | AgentAction::SearchCode { .. } | AgentAction::ReadFile { .. } | AgentAction::ReadFunction { .. }) {
+    if matches!(
+        action,
+        AgentAction::ReadFileChunk { .. }
+            | AgentAction::SearchCode { .. }
+            | AgentAction::ReadFile { .. }
+            | AgentAction::ReadFunction { .. }
+    ) {
         return FilterOutcome::AllowRetry;
     }
     FilterOutcome::FilterAndDecay
@@ -81,4 +87,3 @@ pub fn halt_reasoning_fingerprint(reasoning: &str) -> u64 {
 pub fn halt_action_key(reasoning: &str) -> String {
     format!("halt:{:x}", halt_reasoning_fingerprint(reasoning))
 }
-

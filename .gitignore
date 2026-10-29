@@ -121,3 +121,8 @@ scout_models3.py
 secret.json
 __pycache__/
 mirror/
+.patch_backups/
+vendor/
+*.bak
+*.bak[0-9]
+*.bak[0-9][0-9]
