@@ -1,0 +1,20 @@
+[system]
+environment = "production"
+log_level = "info"
+
+[cognition]
+max_reasoning_turns = 15
+belief_threshold = 0.85
+reflection_enabled = true
+
+[memory]
+max_context_size = 8000
+semantic_search = true
+
+[security]
+sandbox_enabled = true
+allow_root_filesystem = false
+require_verification = true
+
+[executor]
+require_snapshot_before_mutation = true

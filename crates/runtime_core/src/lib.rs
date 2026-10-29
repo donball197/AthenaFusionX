@@ -1,24 +1,27 @@
-pub mod schema_law;
 pub mod agent_protocol;
-pub mod agent_runtime;
-pub mod agents;
 pub mod arbiter_agent;
-pub mod ast_editor;
 pub mod cli_utils;
 pub mod cluster;
+pub mod cmd_match;
 pub mod cognition;
 pub mod cognition_graph;
 pub mod conductor;
+pub mod cortex;
+pub(crate) mod cortical;
 pub mod cortical_loop;
+pub mod coverage;
 pub mod critic;
 pub mod diff;
 pub mod distributed_scheduler;
 pub mod epistemic_engine;
 pub mod event_bus;
+pub mod evidence_markers;
 pub mod evolution_engine;
 pub mod executor;
 pub mod fitness_evaluator;
 pub mod governance;
+pub mod halt_gate;
+pub mod health_check;
 pub mod hypothesis;
 pub mod hypothesis_engine;
 pub mod json_parser;
@@ -33,11 +36,68 @@ pub mod orchestrator;
 pub mod orchestrator_v2;
 pub mod podman;
 pub mod policy;
+pub mod proposal_sanitize;
+pub mod provider;
 pub mod router;
 pub mod runtime_metrics;
 pub mod shared_state;
+pub mod sidecar_host;
 pub mod task_manager;
-pub mod task_manager_v4;
+pub mod truncation;
 pub mod wasm_forge;
 pub mod wasm_runtime;
 pub mod world_model;
+
+pub mod action_gate;
+pub mod action_intercept;
+pub mod ast_editor;
+pub mod bayesian_calibration;
+pub mod belief_causality;
+pub mod belief_feedback;
+pub mod belief_policy;
+pub mod belief_transition;
+pub mod belief_update;
+pub mod belief_validation;
+pub mod causal_recall;
+pub mod client;
+pub mod cognitive_events;
+pub mod compile_remediation;
+pub mod completion_engine;
+pub mod config;
+pub mod evidence;
+pub mod evidence_paths;
+pub mod executive_cortex;
+pub mod goal_adaptation;
+pub mod intent_contract;
+pub mod memory_consolidation;
+pub mod memory_cortex;
+pub mod memory_recall;
+pub mod memory_semantic;
+pub mod memory_types;
+pub mod motor_cortex;
+pub mod outcome_verifier;
+pub mod reflection_engine;
+pub mod tools;
+pub use client::ApiClient;
+pub use config::NexusConfig;
+pub mod anti_loop;
+pub mod contract_status;
+pub mod epistemic_tuple;
+pub mod probabilistic_memory;
+pub mod sovereign_core;
+
+// Phase 1 Architecture Evolution Modules
+pub mod mcp;
+pub mod sum_tree_buffer;
+pub mod virtual_fs;
+
+#[cfg(test)]
+mod extract_command_tests;
+pub(crate) mod revert;
+
+pub(crate) mod halt_support;
+#[cfg(test)]
+mod semantic_gate_tests;
+
+#[cfg(test)]
+mod write_noop_tests;

@@ -1,0 +1,24 @@
+[package]
+name = "benchmark-runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+nexus_ide_backend = { path = "../../bins/ide_backend" }
+rayon = "1.8"
+wasmtime = "48.0.4"
+wasmtime-wasi = "48.0.4"
+
+[[bin]]
+name = "benchmark-runner"
+path = "src/main.rs"
+
+[[bin]]
+name = "wasm-bridge-host"
+path = "src/wasm_bridge_host.rs"
+
+[lints]
+workspace = true

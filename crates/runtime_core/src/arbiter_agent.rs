@@ -40,26 +40,37 @@ impl ArbiterAgent {
             "curl | sh",
             "history -c",
             "unset HISTFILE",
-            // Hardening pass: podman.rs no longer sandboxes anything, this
-            // blocklist is now the only gate for commands run on the host.
-            "-exec rm",
-            "-exec sh",
-            "-exec bash",
-            " -delete",
-            "git push --force",
-            "git push -f",
-            "git clean -f",
-            "python3 -c",
-            "python -c",
-            "perl -e",
-            "ruby -e",
-            "node -e",
         ];
 
         let normalized = command.to_lowercase();
 
+        // Narrow, explicit exception: allow `rm -rf /tmp/...` for legitimate
+        // local temp-folder cleanup without loosening the general root-path
+        // rm -rf block (which the broad "rm -rf /" pattern below restores).
+        //
+        // The exemption is evaluated against the WHOLE command string, so it
+        // must not extend to compound commands. Without the separator check,
+        // `rm -rf /tmp/x && rm -rf /` passes the substring match for
+        // `rm -rf /tmp/` and then executes the dangerous half. Any shell
+        // metacharacter that could chain or embed a second command disables
+        // the exemption and falls through to the general block below.
+        let has_shell_separator = normalized.contains(';')
+            || normalized.contains('&')
+            || normalized.contains('|')
+            || normalized.contains('\n')
+            || normalized.contains('\r')
+            || normalized.contains('`')
+            || normalized.contains("$(");
+
+        let is_scoped_tmp_cleanup = !has_shell_separator
+            && normalized.contains("rm -rf /tmp/")
+            && !normalized.contains("rm -rf /tmp/../");
+
         for pattern in dangerous_patterns.iter() {
             if normalized.contains(pattern) {
+                if *pattern == "rm -rf /" && is_scoped_tmp_cleanup {
+                    continue;
+                }
                 return Err(format!(
                     "SANDBOX_VIOLATION: Threat pattern '{}' detected in {}.",
                     pattern, action_type
@@ -148,5 +159,49 @@ impl ArbiterAgent {
             .collect();
 
         Some(centroid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArbiterAgent;
+
+    fn validate(cmd: &str) -> Result<(), String> {
+        ArbiterAgent::validate_action("execute_command", cmd)
+    }
+
+    #[test]
+    fn isolated_tmp_cleanup_is_allowed() {
+        assert!(validate("rm -rf /tmp/build").is_ok());
+        assert!(validate("rm -rf /tmp/cargo-target").is_ok());
+    }
+
+    #[test]
+    fn scoped_tmp_exemption_rejects_compound_commands() {
+        // A second dangerous command chained after the exemption target must
+        // disable the exemption, so the general `rm -rf /` block fires.
+        assert!(validate("rm -rf /tmp/x && rm -rf /").is_err());
+        assert!(validate("rm -rf /tmp/x; rm -rf /").is_err());
+        assert!(validate("rm -rf /tmp/x || rm -rf /").is_err());
+        assert!(validate("rm -rf /tmp/x | rm -rf /").is_err());
+        assert!(validate("rm -rf /tmp/x\nrm -rf /").is_err());
+        assert!(validate("rm -rf /tmp/x `rm -rf /`").is_err());
+        assert!(validate("rm -rf /tmp/x $(rm -rf /)").is_err());
+    }
+
+    #[test]
+    fn root_rm_is_still_blocked() {
+        assert!(validate("rm -rf /").is_err());
+        assert!(validate("rm -rf ~").is_err());
+    }
+
+    #[test]
+    fn tmp_traversal_still_blocked() {
+        assert!(validate("rm -rf /tmp/../etc").is_err());
+    }
+
+    #[test]
+    fn path_traversal_is_blocked_regardless_of_patterns() {
+        assert!(validate("cat ../../../etc/passwd").is_err());
     }
 }

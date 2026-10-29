@@ -1,0 +1,12 @@
+[package]
+name = "logic_cell"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]

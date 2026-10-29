@@ -1,0 +1,4 @@
+crates/nexus_model_hub/src/lib.rs:pub trait ModelProvider: Send + Sync {
+crates/runtime_core/src/agent_runtime/engine.rs:pub trait ExecutableAgent: Send + Sync {
+crates/runtime_core/src/logger.rs:pub trait Logger {
+crates/runtime_core/src/wasm_component_interface.rs:pub trait WasmComponent {

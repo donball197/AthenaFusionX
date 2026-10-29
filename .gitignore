@@ -61,3 +61,68 @@ wire_modes_and_governance.py
 .env
 *.db*
 target_dummy/
+genesis_lab/target/
+
+# Rust Artifacts
+target/
+**/target/
+*.rlib
+*.so
+repository_analysis/symbol_graph.json
+*.safetensors
+.cargo/config.toml
+.nexus_debug/
+.nexus_debug/
+.envt
+.nexus_ui_token
+*.bak
+*.bak2
+*_dump.txt
+daemon.log
+*.cwasm
+
+# Environment & Credentials
+.env
+.env.*
+.nexus_ui_token
+
+# Databases & Runtime Sockets
+*.db
+*.db-wal
+*.db-shm
+
+# Build Artifacts & Audit Targets
+nexus_audit_target/
+.nexus_debug/
+daemon.log
+/tmp/
+.cargo/config.toml
+server.log
+*.log
+*.bak.*
+*.sha256.*
+*.bak.*
+*~
+attic/
+
+# local runtime logs and scratch tooling
+daemon.log
+cortical_loop_inventory.txt
+extract_strategy_match.sh
+model_preflight.py
+scout_models3.py
+
+# local runtime logs and scratch tooling
+daemon.log
+cortical_loop_inventory.txt
+extract_strategy_match.sh
+model_preflight.py
+scout_models3.py
+secret.json
+__pycache__/
+mirror/
+.patch_backups/
+vendor/
+*.bak
+*.bak[0-9]
+*.bak[0-9][0-9]

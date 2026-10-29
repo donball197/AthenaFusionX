@@ -1,74 +1,104 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Context, Result};
+use nexus_ast_tool::mutation::{MutationStrategy, ReplaceFunctionBody};
 use std::fs;
-use tree_sitter::{Parser, Query, QueryCursor};
 
 pub struct AstEditor;
 
 impl AstEditor {
-    /// update_function: Finds a function by name and replaces its entire body.
-    /// This is the "Semantic Precision" upgrade to replace simple string diffs.
-    pub fn read_function(path: &str, function_name: &str) -> Result<String> {
-        let source_code = fs::read_to_string(path)?;
-        let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_rust::language())?;
+    /// AST-aware function patching powered by nexus_ast_tool's ReplaceFunctionBody.
+    /// Safely replaces the body of the target function or impl method while
+    /// preserving external comments, visibility, attributes, and file formatting.
+    pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
+        let source = fs::read_to_string(path)
+            .with_context(|| format!("AstEditor failed to read source file at '{}'", path))?;
 
-        let tree = parser
-            .parse(&source_code, None)
-            .ok_or_else(|| anyhow!("AST_PARSE_FAIL: Could not parse {}", path))?;
+        let strategy = ReplaceFunctionBody;
+        let patched = strategy.apply(&source, function_name, new_body).map_err(|e| {
+            anyhow::anyhow!(
+                "AstEditor failed to patch function '{}' in '{}': {}",
+                function_name,
+                path,
+                e
+            )
+        })?;
 
-        let query_str = format!(
-            "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
-            function_name
-        );
-        let query = Query::new(&tree_sitter_rust::language(), &query_str)?;
-        let mut cursor = QueryCursor::new();
-        let matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
-        for m in matches {
-            for capture in m.captures {
-                if capture.index == 1 {
-                    let node = capture.node;
-                    let start = node.start_byte();
-                    let end = node.end_byte();
-                    return Ok(source_code[start..end].to_string());
-                }
-            }
-        }
+        Ok(patched)
+    }
+}
 
-        Err(anyhow!("FUNCTION_NOT_FOUND: Could not find function '{}' in {}", function_name, path))
+#[cfg(test)]
+mod tests {
+    use super::AstEditor;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn patches_free_function_body() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "// Header comment
+fn calculate(x: i32) -> i32 {{
+    x * 2
+}}
+"
+        )
+        .unwrap();
+
+        let patched =
+            AstEditor::update_function(file.path().to_str().unwrap(), "calculate", "x * 10 + 5")
+                .unwrap();
+
+        assert!(patched.contains("// Header comment"));
+        assert!(patched.contains("fn calculate(x: i32) -> i32"));
+        assert!(patched.contains("x * 10 + 5"));
+        assert!(!patched.contains("x * 2"));
     }
 
-    pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
-        let source_code = fs::read_to_string(path)?;
-        let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_rust::language())?;
+    #[test]
+    fn patches_impl_method_body() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "struct Math;
+impl Math {{
+    pub fn evaluate(&self) -> bool {{
+        false
+    }}
+}}
+"
+        )
+        .unwrap();
 
-        let tree = parser
-            .parse(&source_code, None)
-            .ok_or_else(|| anyhow!("AST_PARSE_FAIL: Could not parse {}", path))?;
+        let patched =
+            AstEditor::update_function(file.path().to_str().unwrap(), "evaluate", "true").unwrap();
 
-        // Query to find the specific function node
-        let query_str = format!(
-            "(function_item name: (identifier) @name (#eq? @name \"{}\")) @func",
-            function_name
-        );
-        let query = Query::new(&tree_sitter_rust::language(), &query_str)?;
-        let mut cursor = QueryCursor::new();
-        let matches = cursor.matches(&query, tree.root_node(), source_code.as_bytes());
-        for m in matches {
-            for capture in m.captures {
-                if capture.index == 1 {
-                    // The @func capture
-                    let node = capture.node;
-                    let start = node.start_byte();
-                    let end = node.end_byte();
+        assert!(patched.contains("struct Math;"));
+        assert!(patched.contains("pub fn evaluate(&self) -> bool"));
+        assert!(patched.contains("true"));
+        assert!(!patched.contains("false"));
+    }
 
-                    let mut new_code = source_code.clone();
-                    new_code.replace_range(start..end, new_body);
-                    return Ok(new_code);
-                }
-            }
-        }
+    #[test]
+    fn accepts_full_fn_declaration_payload_gracefully() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "fn answer() -> i32 {{
+    0
+}}"
+        )
+        .unwrap();
 
-        Err(anyhow!("FUNCTION_NOT_FOUND: Could not find function '{}' in {}", function_name, path))
+        // Model sometimes outputs the full fn signature inside new_body
+        let patched = AstEditor::update_function(
+            file.path().to_str().unwrap(),
+            "answer",
+            "fn answer() -> i32 { 42 }",
+        )
+        .unwrap();
+
+        assert!(patched.contains("42"));
+        assert!(!patched.contains("0"));
     }
 }

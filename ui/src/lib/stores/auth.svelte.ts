@@ -20,7 +20,7 @@ export async function bootAuth() {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key: masterKey })
+            body: JSON.stringify({password: masterKey })
         });
         
         if (res.ok) {

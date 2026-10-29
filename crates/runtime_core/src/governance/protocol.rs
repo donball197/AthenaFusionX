@@ -1,8 +1,8 @@
-// governance/protocol.rs — v2.0 [MERKLE_CHAIN]
+// governance/protocol.rs — v3.0 [SECURE_MERKLE_CHAIN]
 use crate::agent_protocol::AgentAction;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
@@ -10,27 +10,56 @@ use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleLeaf {
-    pub action: AgentAction,
-    pub actor_id: String,
-    pub timestamp: u64,
-    pub hash: u64,
+    action: AgentAction,
+    actor_id: String,
+    timestamp: u64,
+    hash: String,
 }
 
 impl MerkleLeaf {
     pub fn new(action: AgentAction, actor_id: &str) -> Self {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        let mut hasher = DefaultHasher::new();
-        serde_json::to_vec(&action).unwrap_or_default().hash(&mut hasher);
-        actor_id.hash(&mut hasher);
-        ts.hash(&mut hasher);
-        Self { action, actor_id: actor_id.to_string(), timestamp: ts, hash: hasher.finish() }
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Prevent serialization failures from silently breaking the chain
+        let action_bytes = serde_json::to_vec(&action)
+            .unwrap_or_else(|_| b"CRITICAL_SERIALIZATION_FAILURE".to_vec());
+
+        let mut hasher = Sha256::new();
+        hasher.update(&action_bytes);
+        hasher.update(actor_id.as_bytes());
+        hasher.update(ts.to_be_bytes());
+        
+        Self {
+            action,
+            actor_id: actor_id.to_string(),
+            timestamp: ts,
+            hash: format!("{:x}", hasher.finalize()),
+        }
+    }
+
+    pub fn hash(&self) -> &str {
+        &self.hash
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceLog {
-    pub history: Vec<MerkleLeaf>,
-    pub root_hash: u64,
+    history: VecDeque<MerkleLeaf>,
+    root_hash: String,
+    max_capacity: usize,
+}
+
+impl Default for GovernanceLog {
+    fn default() -> Self {
+        Self {
+            history: VecDeque::with_capacity(1000),
+            root_hash: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            max_capacity: 1000,
+        }
+    }
 }
 
 impl GovernanceLog {
@@ -43,28 +72,32 @@ impl GovernanceLog {
     }
 
     /// record: Chains a new leaf into the Merkle root.
-    /// Root = Hash(OldRoot ++ NewLeaf)
+    /// Root = SHA256(OldRoot ++ NewLeaf)
     pub fn record(&mut self, action: AgentAction, actor_id: &str) {
         let leaf = MerkleLeaf::new(action, actor_id);
 
-        let mut hasher = DefaultHasher::new();
-        self.root_hash.hash(&mut hasher);
-        leaf.hash.hash(&mut hasher);
-        self.root_hash = hasher.finish();
+        let mut hasher = Sha256::new();
+        hasher.update(self.root_hash.as_bytes());
+        hasher.update(leaf.hash.as_bytes());
+        self.root_hash = format!("{:x}", hasher.finalize());
 
-        self.history.push(leaf);
+        if self.history.len() >= self.max_capacity {
+            self.history.pop_front();
+        }
+        
+        self.history.push_back(leaf);
 
-        if self.history.len().is_multiple_of(10) {
+        if self.history.len() % 10 == 0 {
             info!(
-                "[34m[GOVERNANCE] Checkpoint: Root=0x{:x} (Size: {})[0m",
+                "[GOVERNANCE] Checkpoint: Root={} (Size: {})",
                 self.root_hash,
                 self.history.len()
             );
         }
     }
 
-    pub fn root(&self) -> u64 {
-        self.root_hash
+    pub fn root(&self) -> &str {
+        &self.root_hash
     }
 
     pub fn len(&self) -> usize {
@@ -76,8 +109,5 @@ impl GovernanceLog {
     }
 }
 
-// Process-wide persistent governance log. Callers should use this
-// instead of constructing their own GovernanceLog, or records get
-// discarded along with the throwaway instance.
 pub static GOVERNANCE: LazyLock<Mutex<GovernanceLog>> =
     LazyLock::new(|| Mutex::new(GovernanceLog::init()));

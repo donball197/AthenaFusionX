@@ -1,0 +1,430 @@
+use crate::client::ApiClient;
+use crate::mutation::get_strategy;
+use anyhow::{anyhow, Result};
+use std::fs;
+use std::path::Path;
+use syn::spanned::Spanned;
+
+pub struct RefactorAgent;
+
+impl RefactorAgent {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Extract a target symbol's source code lines or block roughly for context
+    /// Extract a target symbol's exact source code block for context
+    /// Strict AST-backed source reader for a Rust function or impl method.
+    ///
+    /// Unlike extract_symbol_snippet(), this method:
+    /// - returns the complete declaration/signature plus body
+    /// - supports free functions and impl methods
+    /// - fails explicitly when the requested symbol does not exist
+    /// - never falls back to returning the whole file
+    pub fn read_function_source(file_path: &Path, symbol: &str) -> Result<String> {
+        let source = fs::read_to_string(file_path)
+            .map_err(|e| anyhow!("Failed to read file {}: {e}", file_path.display()))?;
+
+        let file = syn::parse_file(&source)
+            .map_err(|e| anyhow!("Failed to parse Rust file {}: {e}", file_path.display()))?;
+
+        for item in &file.items {
+            if let syn::Item::Fn(function) = item {
+                if function.sig.ident == symbol {
+                    let start = crate::mutation::line_column_to_byte_offset(
+                        &source,
+                        function.span().start(),
+                    );
+                    let end =
+                        crate::mutation::line_column_to_byte_offset(&source, function.span().end());
+
+                    return Ok(source[start..end].to_string());
+                }
+            }
+
+            if let syn::Item::Impl(item_impl) = item {
+                for impl_item in &item_impl.items {
+                    if let syn::ImplItem::Fn(method) = impl_item {
+                        if method.sig.ident == symbol {
+                            let start = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.span().start(),
+                            );
+                            let end = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.span().end(),
+                            );
+
+                            return Ok(source[start..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "Rust function or impl method '{}' not found in {}",
+            symbol,
+            file_path.display()
+        ))
+    }
+
+    pub fn extract_symbol_snippet(file_path: &Path, symbol: &str) -> Result<String> {
+        let source = fs::read_to_string(file_path)
+            .map_err(|e| anyhow!("Failed to read file {}: {e}", file_path.display()))?;
+
+        let file = syn::parse_file(&source)
+            .map_err(|e| anyhow!("Failed to parse file {}: {e}", file_path.display()))?;
+
+        for item in &file.items {
+            if let syn::Item::Fn(syn::ItemFn { sig, block, .. }) = item {
+                if sig.ident == symbol {
+                    let start =
+                        crate::mutation::line_column_to_byte_offset(&source, block.span().start());
+                    let end =
+                        crate::mutation::line_column_to_byte_offset(&source, block.span().end());
+                    return Ok(source[start..end].to_string());
+                }
+            }
+            if let syn::Item::Impl(item_impl) = item {
+                for impl_item in &item_impl.items {
+                    if let syn::ImplItem::Fn(method) = impl_item {
+                        if method.sig.ident == symbol {
+                            let start = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.block.span().start(),
+                            );
+                            let end = crate::mutation::line_column_to_byte_offset(
+                                &source,
+                                method.block.span().end(),
+                            );
+                            return Ok(source[start..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "Rust function or impl method '{}' not found in {}",
+            symbol,
+            file_path.display()
+        ))
+    }
+
+    pub fn apply_refactoring(
+        &self,
+        file_path: &Path,
+        symbol: &str,
+        strategy_name: &str,
+        payload: &str,
+    ) -> Result<()> {
+        let source = fs::read_to_string(file_path)?;
+        let strategy = get_strategy(strategy_name)
+            .ok_or_else(|| anyhow!("Unknown mutation strategy: {}", strategy_name))?;
+
+        println!("==> [RefactorAgent] Validating payload for strategy '{}'...", strategy.name());
+
+        if strategy.name().eq_ignore_ascii_case("ReplaceFunctionBody") {
+            crate::mutation::ReplaceFunctionBody::validate_for_path(
+                file_path, &source, symbol, payload,
+            )
+            .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy.name(), e))?;
+        } else {
+            strategy.validate_payload(payload).map_err(|e| {
+                anyhow!("Payload rejected by strategy '{}': {}", strategy.name(), e)
+            })?;
+        }
+
+        println!("==> [RefactorAgent] Payload accepted by strategy '{}'.", strategy.name());
+
+        println!(
+            "==> [RefactorAgent] Applying strategy '{}' to symbol '{}'...",
+            strategy.name(),
+            symbol
+        );
+
+        let mutated = if strategy.name().eq_ignore_ascii_case("ReplaceFunctionBody") {
+            crate::mutation::ReplaceFunctionBody::apply_for_path(
+                file_path, &source, symbol, payload,
+            )?
+        } else {
+            strategy.apply(&source, symbol, payload)?
+        };
+
+        fs::write(file_path, mutated)?;
+        println!("==> [RefactorAgent] Successfully updated {}", file_path.display());
+        Ok(())
+    }
+
+    pub fn execute_instruction(
+        &self,
+        file_path: &Path,
+        symbol: &str,
+        instruction: &str,
+        strategy_name: &str,
+    ) -> Result<()> {
+        let strategy = if strategy_name.eq_ignore_ascii_case("auto") {
+            Self::classify_instruction(instruction)?
+        } else {
+            strategy_name.to_string()
+        };
+
+        get_strategy(&strategy)
+            .ok_or_else(|| anyhow!("Unauthorized mutation strategy: {}", strategy))?;
+
+        println!("==> [Mutation Policy] Authorized strategy: {}", strategy);
+
+        let snippet = Self::extract_symbol_snippet(file_path, symbol)?;
+
+        // The model generates only the payload. It does not choose the
+        // mutation primitive.
+        let generated_payload = ApiClient::query_model(instruction, symbol, &snippet, &strategy)?;
+
+        println!("==> [ApiClient] Received refactoring payload from model.");
+
+        // Validate before mutation. A model payload is never allowed to reach
+        // the mutation primitive without satisfying its strategy contract.
+        match Self::validate_generated_payload(file_path, symbol, &strategy, &generated_payload) {
+            Ok(()) => {
+                println!("==> [Mutation Boundary] Initial payload accepted for '{}'.", strategy);
+
+                self.apply_refactoring(file_path, symbol, &strategy, &generated_payload)
+            }
+
+            Err(validation_error) => {
+                println!(
+                    "==> [Mutation Boundary] Initial payload rejected for '{}': {}",
+                    strategy, validation_error
+                );
+
+                // Exactly ONE corrective retry. The strategy remains fixed;
+                // the model receives the validator's concrete failure.
+                println!(
+                    "==> [ApiClient] Requesting bounded corrective payload for '{}'.",
+                    strategy
+                );
+
+                let retry_payload = ApiClient::query_model_retry(
+                    instruction,
+                    symbol,
+                    &snippet,
+                    &strategy,
+                    &validation_error.to_string(),
+                    &generated_payload,
+                )?;
+
+                println!("==> [ApiClient] Received corrective payload for '{}'.", strategy);
+
+                Self::validate_generated_payload(file_path, symbol, &strategy, &retry_payload)
+                    .map_err(|retry_error| {
+                        anyhow!(
+                            "Model payload rejected after bounded retry for strategy '{}': {}",
+                            strategy,
+                            retry_error
+                        )
+                    })?;
+
+                println!("==> [Mutation Boundary] Corrective payload accepted for '{}'.", strategy);
+
+                self.apply_refactoring(file_path, symbol, &strategy, &retry_payload)
+            }
+        }
+    }
+
+    fn validate_generated_payload(
+        file_path: &Path,
+        symbol: &str,
+        strategy: &str,
+        payload: &str,
+    ) -> Result<()> {
+        if strategy.eq_ignore_ascii_case("ReplaceFunctionBody") {
+            let source = fs::read_to_string(file_path)?;
+
+            crate::mutation::ReplaceFunctionBody::validate_for_path(
+                file_path, &source, symbol, payload,
+            )
+            .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy, e))
+        } else {
+            let strategy_impl = get_strategy(strategy)
+                .ok_or_else(|| anyhow!("Unauthorized mutation strategy: {}", strategy))?;
+
+            strategy_impl
+                .validate_payload(payload)
+                .map_err(|e| anyhow!("Payload rejected by strategy '{}': {}", strategy, e))
+        }
+    }
+
+    /// Deterministic policy layer for natural-language refactoring requests.
+    ///
+    /// The model is deliberately NOT allowed to select the mutation strategy.
+    // AST_TEST_ONLY
+    fn classify_instruction(instruction: &str) -> Result<String> {
+        let text = instruction.to_ascii_lowercase();
+
+        if text.contains("comment")
+            || text.contains("documentation")
+            || text.contains("document this")
+        {
+            return Ok("InsertComment".into());
+        }
+
+        // More specific mutation intents must be checked before the
+        // generic "return" / "body" matcher below.
+        if text.contains("early return") || text.contains("return early") {
+            return Ok("InsertEarlyReturn".into());
+        }
+
+        if text.contains("variable")
+            || text.contains("body")
+            || text.contains("expression")
+            || text.contains("return")
+        {
+            return Ok("ReplaceFunctionBody".into());
+        }
+
+        if text.contains("rename") {
+            return Ok("RenameSymbol".into());
+        }
+
+        if text.contains("make public")
+            || text.contains("make it public")
+            || text.contains("export")
+        {
+            return Ok("MakePublic".into());
+        }
+
+        if text.contains("replace function body") || text.contains("replace the function body") {
+            return Ok("ReplaceFunctionBody".into());
+        }
+
+        Err(anyhow!(
+            "No safe mutation strategy matches instruction '{}'.              Specify an explicit --strategy or use a supported instruction.",
+            instruction
+        ))
+    }
+}
+
+impl Default for RefactorAgent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RefactorAgent;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempSource {
+        path: PathBuf,
+    }
+
+    impl TempSource {
+        fn new(extension: &str, source: &str) -> Self {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after UNIX_EPOCH")
+                .as_nanos();
+
+            let path = std::env::temp_dir().join(format!(
+                "nexus_ast_tool_agent_{}_{}.{}",
+                std::process::id(),
+                stamp,
+                extension
+            ));
+
+            fs::write(&path, source).expect("temporary source file must be writable");
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempSource {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn apply_refactoring_uses_polyglot_tree_sitter_mutation_path() {
+        let fixtures = [
+            (
+                "py",
+                r#"def target():
+    return 20
+
+def neighbor():
+    return 30
+"#,
+                "target",
+                "return 42",
+            ),
+            (
+                "js",
+                r#"function target() {
+    return 20;
+}
+
+function neighbor() {
+    return 30;
+}
+"#,
+                "target",
+                "return 42;",
+            ),
+            (
+                "ts",
+                r#"function target(): number {
+    return 20;
+}
+
+function neighbor(): number {
+    return 30;
+}
+"#,
+                "target",
+                "return 42;",
+            ),
+        ];
+
+        let agent = RefactorAgent::new();
+
+        for (extension, source, symbol, payload) in fixtures {
+            let file = TempSource::new(extension, source);
+
+            agent
+                .apply_refactoring(file.path(), symbol, "ReplaceFunctionBody", payload)
+                .unwrap_or_else(|error| {
+                    panic!("production mutation path failed for .{extension}: {error}")
+                });
+
+            let mutated = fs::read_to_string(file.path())
+                .expect("mutated temporary source file must be readable");
+
+            assert!(mutated.contains("return 42"), ".{extension} target body was not replaced");
+            assert!(
+                !mutated.contains("return 20"),
+                ".{extension} original target body leaked through"
+            );
+            assert!(
+                mutated.contains("return 30"),
+                ".{extension} neighboring function was modified"
+            );
+
+            let language = crate::polyglot::SupportedLanguage::from_path(file.path())
+                .expect("test fixture extension must map to a supported language");
+
+            assert!(
+                language.parses_cleanly(&mutated),
+                ".{extension} mutated source must remain syntactically valid"
+            );
+        }
+    }
+}

@@ -1,25 +1,11 @@
 use anyhow::{anyhow, Result};
+use axum::{http::StatusCode, response::IntoResponse, Json};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-
 use zeroize::Zeroizing;
-const MIN_KEY_BYTES: usize = 32;
 
-/// Call once at startup. Returns a heap-allocated key that zeroes on drop.
-/// Aborts with a descriptive error if the env var is missing or too short.
-pub fn load_key_at_startup() -> anyhow::Result<Zeroizing<String>> {
-    let key = std::env::var("NEXUS_AUTH_KEY")
-        .map_err(|_| anyhow::anyhow!("NEXUS_AUTH_KEY env var is not set — refusing to start"))?;
-    if key.len() < MIN_KEY_BYTES {
-        return Err(anyhow::anyhow!(
-            "NEXUS_AUTH_KEY is too short ({} bytes). Minimum is {} bytes.",
-            key.len(), MIN_KEY_BYTES
-        ));
-    }
-    Ok(Zeroizing::new(key))
-}
-const DEFAULT_TTL_SECS: u64 = 86_400;
+const MIN_KEY_BYTES: usize = 32;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -28,16 +14,53 @@ pub struct Claims {
     pub iat: usize,
 }
 
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub password: String,
+}
+
+pub async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoResponse {
+    let secret = std::env::var("NEXUS_AUTH_KEY").unwrap_or_default();
+    if payload.password == secret {
+        match issue_sovereign_token() {
+            Ok(token) => {
+                (StatusCode::OK, Json(serde_json::json!({ "token": token }))).into_response()
+            }
+            Err(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "TOKEN_GEN_FAIL" })),
+            )
+                .into_response(),
+        }
+    } else {
+        (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "INVALID_CREDENTIALS" })))
+            .into_response()
+    }
+}
+
+pub fn load_key_at_startup() -> anyhow::Result<Zeroizing<String>> {
+    let key = std::env::var("NEXUS_AUTH_KEY")
+        .map_err(|_| anyhow::anyhow!("NEXUS_AUTH_KEY env var is not set — refusing to start"))?;
+    if key.len() < MIN_KEY_BYTES {
+        return Err(anyhow::anyhow!(
+            "NEXUS_AUTH_KEY is too short ({} bytes). Minimum is {} bytes.",
+            key.len(),
+            MIN_KEY_BYTES
+        ));
+    }
+    Ok(Zeroizing::new(key))
+}
+
+const DEFAULT_TTL_SECS: u64 = 86_400;
+
 fn load_key() -> Result<String> {
-    // Key is validated and loaded once at startup via load_key_at_startup().
-    // This shim reads it again for backward compatibility; prefer passing the
-    // Zeroizing<String> from AppState directly in new code.
     let key = std::env::var("NEXUS_AUTH_KEY")
         .map_err(|_| anyhow!("NEXUS_AUTH_KEY env var is not set"))?;
     if key.len() < MIN_KEY_BYTES {
         return Err(anyhow!(
             "NEXUS_AUTH_KEY is too short ({} bytes). Minimum is {} bytes.",
-            key.len(), MIN_KEY_BYTES
+            key.len(),
+            MIN_KEY_BYTES
         ));
     }
     Ok(key)
@@ -47,10 +70,7 @@ fn token_ttl() -> u64 {
     match std::env::var("NEXUS_TOKEN_TTL_SECS") {
         Ok(v) => match v.parse::<u64>() {
             Ok(secs) => secs,
-            Err(_) => {
-                tracing::warn!("[AUTH] NEXUS_TOKEN_TTL_SECS='{}' is not a valid u64. Using default {}s. Fix your .env file.", v, DEFAULT_TTL_SECS);
-                DEFAULT_TTL_SECS
-            }
+            Err(_) => DEFAULT_TTL_SECS,
         },
         Err(_) => DEFAULT_TTL_SECS,
     }
@@ -78,28 +98,12 @@ pub enum TokenVerdict {
 
 pub fn verify_token_detailed(token: &str) -> Result<TokenVerdict> {
     let key = load_key()?;
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.leeway = 0;
+    let validation = Validation::new(Algorithm::HS256);
     match decode::<Claims>(token, &DecodingKey::from_secret(key.as_bytes()), &validation) {
         Ok(_) => Ok(TokenVerdict::Valid),
-        Err(e) => Ok(match e.kind() {
-            jsonwebtoken::errors::ErrorKind::ExpiredSignature => TokenVerdict::Expired,
-            _ => TokenVerdict::InvalidSignature,
-        }),
-    }
-}
-
-pub fn verify_token(token: &str) -> Result<bool> {
-    match verify_token_detailed(token)? {
-        TokenVerdict::Valid => Ok(true),
-        TokenVerdict::Expired => {
-            tracing::warn!("[AUTH] Token rejected: expired");
-            Ok(false)
-        }
-        TokenVerdict::InvalidSignature => {
-            tracing::warn!("[AUTH] Token rejected: invalid signature");
-            Ok(false)
-        }
-        TokenVerdict::MissingKey => Ok(false),
+        Err(e) => match *e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => Ok(TokenVerdict::Expired),
+            _ => Ok(TokenVerdict::InvalidSignature),
+        },
     }
 }

@@ -1,0 +1,6 @@
+{
+  "phase": 6,
+  "status": "passed",
+  "mutation_map": "repository_analysis/mutation_map.json",
+  "symbol_graph": "repository_analysis/symbol_graph.json"
+}

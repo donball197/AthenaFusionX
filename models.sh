@@ -1,112 +1,74 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -e
 
-# Project Nexus Singularity v3.0 - Cortex Manifest
-# Target: Root Setup Diagnostics & Configuration Generation
+ENV_FILE=".env"
 
-set -e # Exit immediately on uncontrolled errors
-
-# 1. Dependency Validation
-for cmd in curl jq; do
-    if ! command -v "$cmd" &> /dev/null; then
-        echo -e "\033[31m[ERROR] Critical dependency '$cmd' is not installed.\033[0m"
-        exit 1
-    fi
-done
-
-# 2. Environment Sourcing
-if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
-fi
-
-if [ -z "$GEMINI_API_KEY" ]; then
-    echo -e "\033[31m[ERROR] GEMINI_API_KEY is not set in .env\033[0m"
-    exit 1
-fi
-
-echo -e "\033[1;36m>> GENERATING FULL CORTEX MANIFEST [NEXUS v3.0]\033[0m"
-echo -e "\033[90mQuerying Google AI Studio for production-ready text generation endpoints...\033[0m\n"
-
-# 3. Robust API Fetching
-RAW_DATA=$(curl -sS -f "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY" || echo "")
-
-if [ -z "$RAW_DATA" ]; then
-    echo -e "\033[31m[ERROR] Failed to fetch data. Verify network connection and API Key validity.\033[0m"
-    exit 1
-fi
-
-# 4. Ultra-Fast Token Formatter
-format_tokens() {
-    local num=$1
-    if [ "$num" -ge 1000000 ]; then
-        echo "$((num / 1000000)).$(( (num % 1000000) / 100000 ))M"
-    elif [ "$num" -ge 1000 ]; then
-        echo "$((num / 1000)).$(( (num % 1000) / 100 ))K"
-    else
-        echo "$num"
-    fi
+show_current() {
+    echo -e "\n\x1b[1;36m==================================================\x1b[0m"
+    echo -e "\x1b[1;36m>> ATHENAFUSIONX ACTIVE MODEL CONFIGURATION\x1b[0m"
+    echo -e "\x1b[1;36m==================================================\x1b[0m"
+    grep -E '^(NEXUS_PLANNER_MODEL|NEXUS_LIGHT_MODEL|NEXUS_LIGHT_CASCADE|NEXUS_HEAVY_MODEL|NEXUS_HEAVY_CASCADE)=' "$ENV_FILE" || echo "No models set."
+    echo -e "\x1b[1;36m==================================================\x1b[0m\n"
 }
 
-# 5. Output Generation
-printf "\033[1;37m%-35s | %-10s | %-8s | %-8s | %-4s | %-25s\033[0m\n" "MODEL ID" "VERSION" "IN_TOK" "OUT_TOK" "TEMP" "DISPLAY NAME"
-printf "%-35s-|-%-10s-|-%-8s-|-%-8s-|-%-4s-|-%-25s\n" "-----------------------------------" "----------" "--------" "--------" "----" "-------------------------"
-
-# Parse with jq: Filter specifically for generateContent to exclude pure embedding/image models
-echo "$RAW_DATA" | jq -r '
-    .models[] | 
-    select(.supportedGenerationMethods != null) |
-    select(.supportedGenerationMethods | index("generateContent")) |
-    [
-        (.name | sub("^models/"; "")), 
-        (.version // "N/A"),
-        (.inputTokenLimit // 0), 
-        (.outputTokenLimit // 0), 
-        (.temperature // 0.0),
-        (.displayName // "N/A")
-    ] | @tsv
-' | while IFS=$'\t' read -r name version in_lim out_lim temp display; do
-
-    # Logic-based Color Coding
-    if [[ "$name" == *"3.5"* ]] || [[ "$name" == *"3.1"* ]]; then
-        COLOR="\033[1;32m" # Green (Cutting Edge)
-    elif [[ "$name" == *"gemma"* ]]; then
-        COLOR="\033[1;35m" # Purple (Open Weights Reasoning)
-    elif [[ "$name" == *"deep-research"* ]]; then
-        COLOR="\033[1;33m" # Yellow (Specialist)
-    elif [[ "$name" == *"preview"* ]] || [[ "$name" == *"latest"* ]]; then
-        COLOR="\033[36m"   # Cyan (Experimental)
-    else
-        COLOR="\033[0m"    # Default
+set_tier() {
+    local tier="$1"
+    local model="$2"
+    if [ -z "$tier" ] || [ -z "$model" ]; then
+        echo -e "\x1b[31mUsage: ./models.sh set [planner|light|heavy|light_cascade|heavy_cascade] <provider/model>\x1b[0m"
+        exit 1
     fi
 
-    in_fmt=$(format_tokens "$in_lim")
-    out_fmt=$(format_tokens "$out_lim")
-    
-    # Safely truncate display name
-    if [ "${#display}" -gt 24 ]; then 
-        disp_fmt="${display:0:21}..."
-    else
-        disp_fmt="$display"
-    fi
+    case "$tier" in
+        planner) sed -i "s|^NEXUS_PLANNER_MODEL=.*|NEXUS_PLANNER_MODEL=${model}|" "$ENV_FILE" ;;
+        light) sed -i "s|^NEXUS_LIGHT_MODEL=.*|NEXUS_LIGHT_MODEL=${model}|" "$ENV_FILE" ;;
+        heavy) sed -i "s|^NEXUS_HEAVY_MODEL=.*|NEXUS_HEAVY_MODEL=${model}|" "$ENV_FILE" ;;
+        light_cascade) sed -i "s|^NEXUS_LIGHT_CASCADE=.*|NEXUS_LIGHT_CASCADE=${model}|" "$ENV_FILE" ;;
+        heavy_cascade) sed -i "s|^NEXUS_HEAVY_CASCADE=.*|NEXUS_HEAVY_CASCADE=${model}|" "$ENV_FILE" ;;
+        *) echo -e "\x1b[31mUnknown tier '$tier'\x1b[0m"; exit 1 ;;
+    esac
+    echo -e "\x1b[1;32m[+] Updated ${tier} -> ${model}\x1b[0m"
+    show_current
+}
 
-    printf "${COLOR}%-35s\033[0m | %-10s | %-8s | %-8s | %-4s | %-25s\n" "$name" "$version" "$in_fmt" "$out_fmt" "$temp" "$disp_fmt"
-done
+apply_preset() {
+    local preset="$1"
+    case "$preset" in
+        speed)
+            echo -e "\x1b[1;33m>> Applying [SPEED & LOW-LATENCY] Preset...\x1b[0m"
+            sed -i "s|^NEXUS_PLANNER_MODEL=.*|NEXUS_PLANNER_MODEL=google/gemini-3.6-flash|" "$ENV_FILE"
+            sed -i "s|^NEXUS_LIGHT_MODEL=.*|NEXUS_LIGHT_MODEL=google/gemini-3.6-flash|" "$ENV_FILE"
+            sed -i "s|^NEXUS_LIGHT_CASCADE=.*|NEXUS_LIGHT_CASCADE=nvidia/ising-calibration-1.5-31b|" "$ENV_FILE"
+            sed -i "s|^NEXUS_HEAVY_MODEL=.*|NEXUS_HEAVY_MODEL=google/gemini-3.6-flash|" "$ENV_FILE"
+            sed -i "s|^NEXUS_HEAVY_CASCADE=.*|NEXUS_HEAVY_CASCADE=nvidia/deepseek-ai/deepseek-v4-flash-0731|" "$ENV_FILE"
+            ;;
+        surgery|deep)
+            echo -e "\x1b[1;33m>> Applying [DEEP CODE SURGERY & HIGH-ACCURACY] Preset...\x1b[0m"
+            sed -i "s|^NEXUS_PLANNER_MODEL=.*|NEXUS_PLANNER_MODEL=nvidia/deepseek-ai/deepseek-v4-flash-0731|" "$ENV_FILE"
+            sed -i "s|^NEXUS_LIGHT_MODEL=.*|NEXUS_LIGHT_MODEL=nvidia/ising-calibration-1.5-31b|" "$ENV_FILE"
+            sed -i "s|^NEXUS_LIGHT_CASCADE=.*|NEXUS_LIGHT_CASCADE=google/gemini-3.6-flash|" "$ENV_FILE"
+            sed -i "s|^NEXUS_HEAVY_MODEL=.*|NEXUS_HEAVY_MODEL=nvidia/deepseek-ai/deepseek-v4-flash-0731|" "$ENV_FILE"
+            sed -i "s|^NEXUS_HEAVY_CASCADE=.*|NEXUS_HEAVY_CASCADE=google/gemini-3.6-flash|" "$ENV_FILE"
+            ;;
+        bob)
+            echo -e "\x1b[1;33m>> Applying [BOB AGENT HYBRID MESH] Preset...\x1b[0m"
+            sed -i "s|^NEXUS_PLANNER_MODEL=.*|NEXUS_PLANNER_MODEL=google/gemini-3.6-flash|" "$ENV_FILE"
+            sed -i "s|^NEXUS_LIGHT_MODEL=.*|NEXUS_LIGHT_MODEL=bob/agent-v1|" "$ENV_FILE"
+            sed -i "s|^NEXUS_LIGHT_CASCADE=.*|NEXUS_LIGHT_CASCADE=nvidia/ising-calibration-1.5-31b,google/gemini-3.6-flash|" "$ENV_FILE"
+            sed -i "s|^NEXUS_HEAVY_MODEL=.*|NEXUS_HEAVY_MODEL=bob/agent-v1|" "$ENV_FILE"
+            sed -i "s|^NEXUS_HEAVY_CASCADE=.*|NEXUS_HEAVY_CASCADE=nvidia/deepseek-ai/deepseek-v4-flash-0731|" "$ENV_FILE"
+            ;;
+        *)
+            echo -e "\x1b[31mUnknown preset. Available presets: speed | deep | bob\x1b[0m"
+            exit 1
+            ;;
+    esac
+    show_current
+}
 
-echo -e "\n\033[1;36m>> RECOMMENDED RUST CASCADE (crates/runtime_core/src/model_config.rs)\033[0m"
-echo -e "Based on the live endpoints above, your engine should use these exact IDs to prevent 404s/429s:"
-echo -e "\033[90m// ⚡ THE DEEP CASCADE: Auto-Generated by models.sh\033[0m"
-echo -e "\033[32mpub fn get_light_models() -> Vec<String> {\033[0m"
-echo -e "    vec!["
-echo -e "        \033[33m\"gemini-3.5-flash\".to_string()\033[0m,      // Tier 1: Fastest standard model"
-echo -e "        \033[33m\"gemini-3.1-flash-lite\".to_string()\033[0m, // Tier 2: Low-latency fallback"
-echo -e "        \033[33m\"gemini-2.5-flash\".to_string()\033[0m,      // Tier 3: Verified rock-solid fallback"
-echo -e "    ]"
-echo -e "\033[32m}\033[0m\n"
-echo -e "\033[32mpub fn get_heavy_models() -> Vec<String> {\033[0m"
-echo -e "    vec!["
-echo -e "        \033[33m\"gemma-4-31b-it\".to_string()\033[0m,        // Tier 1: Heavy Open Weights reasoning"
-echo -e "        \033[33m\"gemini-3.1-pro-preview\".to_string()\033[0m,  // Tier 2: Complex system context"
-echo -e "        \033[33m\"gemma-4-26b-a4b-it\".to_string()\033[0m,    // Tier 3: MoE fallback"
-echo -e "    ]"
-echo -e "\033[32m}\033[0m"
+case "$1" in
+    set) set_tier "$2" "$3" ;;
+    preset|profile|apply) apply_preset "$2" ;;
+    list|show|"") show_current ;;
+    *) echo "Usage: ./models.sh [show | set <tier> <model> | preset <speed|deep|bob>]" ;;
+esac

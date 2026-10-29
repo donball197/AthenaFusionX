@@ -1,0 +1,11 @@
+{
+  "total_files": 2270,
+  "total_symbols": 40973,
+  "symbols_by_type": {
+    "Rust Trait": 9,
+    "Python Function": 34429,
+    "Rust Struct": 526,
+    "Rust Function": 687,
+    "Python Class": 5322
+  }
+}

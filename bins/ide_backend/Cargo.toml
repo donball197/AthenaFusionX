@@ -1,4 +1,5 @@
 [package]
+autobins = false
 name = "nexus_ide_backend"
 version = "0.1.0"
 edition = "2021"
@@ -9,12 +10,11 @@ zeroize = { version = "1.8", features = ["derive"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 nexus_runtime_core = { path = "../../crates/runtime_core" }
 nexus_substrate = { path = "../../crates/nexus_substrate" }
-notify-debouncer-full = "0.7"
+nexus_model_hub = { path = "../../crates/nexus_model_hub" }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 axum = { workspace = true }
-tower-http = { workspace = true }
 jsonwebtoken = { workspace = true }
 dotenvy = { workspace = true }
 anyhow = { workspace = true }
@@ -27,5 +27,19 @@ mime_guess = { workspace = true }
 parking_lot = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
-nexus_model_hub = { path = "../../crates/nexus_model_hub" }
-once_cell = "1.19"
+once_cell = { workspace = true }
+opentelemetry = { version = "0.32", features = ["trace"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "system_monitor_bench"
+harness = false
+
+[[bin]]
+name = "nexus-ide-backend"
+path = "src/main.rs"
+
+[lints]
+workspace = true

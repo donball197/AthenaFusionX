@@ -1,0 +1,10 @@
+[package]
+name = "nexus_executive_cortex"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus_runtime_core = { path = "../runtime_core" }
+
+[lints]
+workspace = true

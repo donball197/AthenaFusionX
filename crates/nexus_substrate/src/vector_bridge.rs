@@ -1,61 +1,59 @@
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::json;
+use std::env;
 
-pub async fn get_embedding(api_key: &str, text: &str) -> Result<Vec<f32>> {
-    // 1. ATTEMPT CUTTING-EDGE LOCAL LITERT MINION (Reflex Embedder)
-    // We use a fast timeout (800ms) so it doesn't block if the minion is offline
-    let local_client = Client::builder().timeout(std::time::Duration::from_millis(800)).build()?;
+/// Single source of truth for the embedding space. Must match the gateway model.
+pub const EMBEDDING_DIM: usize = 768;
+pub const EMBEDDING_MODEL: &str = "granite-embedding-311m-r2";
 
-    let local_url = "http://127.0.0.1:5001/embed";
-    let local_payload = json!({ "text": text });
+pub async fn get_embedding(_api_key: &str, text: &str) -> Result<Vec<f32>> {
+    // The Edge gateway is the authoritative embedding provider.
+    // Do not silently mix embedding models: all persisted/query vectors
+    // must remain in the same EMBEDDING_DIM-dimensional vector space.
+    let edge_url = env::var("NEXUS_EMBEDDING_URL").or_else(|_| {
+        env::var("NEXUS_EMBEDDING_GATEWAY")
+            .map(|g| format!("{}/embeddings", g.trim_end_matches('/')))
+    })?;
 
-    if let Ok(res) = local_client.post(local_url).json(&local_payload).send().await {
-        if res.status().is_success() {
-            let body: serde_json::Value = res.json().await.unwrap_or_default();
-            if let Some(values) = body.pointer("/embedding").and_then(|v| v.as_array()) {
-                let mut vector = Vec::with_capacity(values.len());
-                for v in values {
-                    if let Some(f) = v.as_f64() {
-                        vector.push(f as f32);
-                    }
-                }
-                // ⚡ MINION SUCCESS: Return local vector immediately!
-                return Ok(vector);
-            }
-        }
-    }
+    let model =
+        env::var("NEXUS_EMBEDDING_MODEL").unwrap_or_else(|_| "granite-311m-edge".to_string());
 
-    // 2. FALLBACK TO CLOUD IF LOCAL MINION IS OFFLINE
-    // Wait for token quota to prevent Rate Limit bans
-    let _ = crate::token_ledger::wait_for_quota("gemini-embedding-2", 500).await;
-
-    let external_client = Client::new();
-    let url =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent";
-
+    let client = Client::new();
     let payload = json!({
-        "model": "models/gemini-embedding-2",
-        "content": { "parts": [{ "text": text }] }
+        "input": text,
+        "model": model
     });
 
-    let res = external_client
-        .post(url)
-        .header("x-goog-api-key", api_key.trim())
-        .json(&payload)
-        .send()
-        .await?;
-    let body: serde_json::Value = res.json().await?;
+    let res = client.post(&edge_url).json(&payload).send().await.map_err(|e| {
+        anyhow::anyhow!("Embedding Edge gateway request failed at {}: {}", edge_url, e)
+    })?;
 
-    let mut vector = Vec::new();
-    if let Some(values) = body.pointer("/embedding/values").and_then(|v| v.as_array()) {
-        for v in values {
-            if let Some(f) = v.as_f64() {
-                vector.push(f as f32);
-            }
-        }
-    } else {
-        return Err(anyhow::anyhow!("API REJECTED EMBEDDING. Raw response: {}", body));
+    let status = res.status();
+    let body: serde_json::Value = res.json().await.map_err(|e| {
+        anyhow::anyhow!("Embedding Edge gateway returned invalid JSON (HTTP {}): {}", status, e)
+    })?;
+
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "Embedding Edge gateway rejected request (HTTP {}): {}",
+            status,
+            body
+        ));
+    }
+
+    let arr = body.pointer("/data/0/embedding").and_then(|v| v.as_array()).ok_or_else(|| {
+        anyhow::anyhow!("Embedding Edge gateway response missing data[0].embedding: {}", body)
+    })?;
+
+    let vector: Vec<f32> = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+
+    if vector.len() != EMBEDDING_DIM {
+        return Err(anyhow::anyhow!(
+            "Embedding dimension mismatch: expected {}, got {}",
+            EMBEDDING_DIM,
+            vector.len()
+        ));
     }
 
     Ok(vector)

@@ -1,0 +1,6 @@
+{
+ "lesson":
+ "Generated artifacts require explicit workspace isolation",
+ "strategy":
+ "Intent -> Sandbox -> Isolation -> Compile -> Test -> Evidence"
+}

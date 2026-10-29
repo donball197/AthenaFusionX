@@ -1,0 +1,236 @@
+crates/identity/src/lib.rs:pub struct Identity {
+crates/memory_graph/src/lib.rs:pub struct MemoryGraph {
+crates/mesh/src/lib.rs:pub struct MeshMessage {
+crates/nexus_model_hub/src/factory.rs:pub struct AgentFactory;
+crates/nexus_model_hub/src/universal_provider.rs:pub struct UniversalProvider;
+crates/nexus_model_hub/src/neural_agent.rs:pub struct ContextPacket {
+crates/nexus_model_hub/src/neural_agent.rs:pub struct MicroAgentBuilder {
+crates/nexus_model_hub/src/neural_agent.rs:pub struct MicroAgent {
+crates/nexus_search/src/lib.rs:pub struct VectorVault {
+crates/nexus_substrate/src/kernel/safe_kernel.rs:pub struct SafeKernel;
+crates/nexus_substrate/src/kernel/safe_vmo.rs:pub struct SafeVmo {
+crates/nexus_substrate/src/kernel/temp_vmo.rs:pub struct TempVmoFs;
+crates/nexus_substrate/src/sqlite_store.rs:pub struct SqliteStore {
+crates/nexus_substrate/src/genome_vault.rs:pub struct GenomeRecord {
+crates/nexus_substrate/src/genome_vault.rs:pub struct GenomeVault {
+crates/nexus_substrate/src/memory.rs:pub struct AgentMemory {
+crates/nexus_substrate/src/memory.rs:pub struct SutureRecoveryRecord {
+crates/nexus_substrate/src/memory.rs:pub struct MemoryPalace {
+crates/nexus_substrate/src/token_ledger.rs:pub struct ModelQuota {
+crates/nexus_substrate/src/token_ledger.rs:struct WindowEntry {
+crates/nexus_substrate/src/token_ledger.rs:struct ModelWindow {
+crates/nexus_substrate/src/token_ledger.rs:pub struct TokenLedger {
+crates/nexus_substrate/src/vmo_handler.rs:pub struct SafeVmo {
+crates/nexus_substrate/src/vmo_handler.rs:pub struct VmoHandler {
+crates/protocol/src/interface.rs:pub struct FabricMessage {
+crates/runtime_core/src/agent_runtime/engine.rs:pub struct Task {
+crates/runtime_core/src/agent_runtime/engine.rs:pub struct TaskResult {
+crates/runtime_core/src/agent_runtime/sandbox.rs:pub struct Sandbox {
+crates/runtime_core/src/agents/auditor_agent.rs:pub struct AuditorAgent {
+crates/runtime_core/src/agents/scout_agent.rs:pub struct ScoutAgent;
+crates/runtime_core/src/agents/shell_agent.rs:pub struct ShellAgent;
+crates/runtime_core/src/agents/v2_worker.rs:pub struct WorkerAgent;
+crates/runtime_core/src/agents/memory_actor.rs:pub struct MemoryActor {
+crates/runtime_core/src/agents/agentic_runtime.rs:pub struct SubstrateContext {
+crates/runtime_core/src/agents/agentic_runtime.rs:pub struct AgenticRuntime {
+crates/runtime_core/src/agents/agentic_runtime.rs:pub struct DuetResourceGuard;
+crates/runtime_core/src/agents/agentic_runtime.rs:pub struct SystemVitals {
+crates/runtime_core/src/agents/agentic_runtime.rs:pub struct DomBridge;
+crates/runtime_core/src/agents/general_agent.rs:pub struct GeneralAgentConfig {
+crates/runtime_core/src/ast_editor.rs:pub struct AstEditor;
+crates/runtime_core/src/cluster.rs:pub struct ClusterNode {
+crates/runtime_core/src/cluster.rs:pub struct ClusterMesh {
+crates/runtime_core/src/cognition/meta_reasoner.rs:pub struct GoTResolution {
+crates/runtime_core/src/cognition/meta_reasoner.rs:pub struct Hypothesis {
+crates/runtime_core/src/cognition/meta_reasoner.rs:pub struct MetaReasoner;
+crates/runtime_core/src/cognition/critic.rs:pub struct CriticAgent;
+crates/runtime_core/src/diff.rs:pub struct DiffEngine;
+crates/runtime_core/src/distributed_scheduler.rs:pub struct DistributedScheduler {
+crates/runtime_core/src/event_bus.rs:pub struct EventRef {
+crates/runtime_core/src/event_bus.rs:pub struct EventBus {
+crates/runtime_core/src/fitness_evaluator.rs:pub struct FitnessReport {
+crates/runtime_core/src/fitness_evaluator.rs:pub struct FitnessEvaluator;
+crates/runtime_core/src/governance/protocol.rs:pub struct MerkleLeaf {
+crates/runtime_core/src/governance/protocol.rs:pub struct GovernanceLog {
+crates/runtime_core/src/hypothesis.rs:pub struct Hypothesis {
+crates/runtime_core/src/hypothesis.rs:pub struct HypothesisGenerator;
+crates/runtime_core/src/hypothesis_engine.rs:pub struct Hypothesis {
+crates/runtime_core/src/hypothesis_engine.rs:pub struct GoTResolution {
+crates/runtime_core/src/hypothesis_engine.rs:pub struct HypothesisEngine;
+crates/runtime_core/src/lazarus_vault.rs:pub struct Snapshot {
+crates/runtime_core/src/logger.rs:pub struct FileLogger {
+crates/runtime_core/src/logic_engine.rs:pub struct LogicEngine;
+crates/runtime_core/src/memory_actor.rs:pub struct MemoryActor {
+crates/runtime_core/src/metrics.rs:pub struct NexusMetrics {
+crates/runtime_core/src/orchestrator.rs:pub struct Orchestrator;
+crates/runtime_core/src/orchestrator_v2/got_engine.rs:pub struct GraphOfThoughts;
+crates/runtime_core/src/orchestrator_v2/scheduler.rs:pub struct Scheduler;
+crates/runtime_core/src/orchestrator_v2/task_graph.rs:pub struct TaskExecutionState {
+crates/runtime_core/src/orchestrator_v2/task_graph.rs:pub struct TaskNode {
+crates/runtime_core/src/orchestrator_v2/task_graph.rs:pub struct TaskGraph {
+crates/runtime_core/src/orchestrator_v2/verifier.rs:pub struct Verifier;
+crates/runtime_core/src/orchestrator_v2/planner.rs:pub struct PlannerAgent;
+crates/runtime_core/src/orchestrator_v2/critic.rs:pub struct CriticAgent;
+crates/runtime_core/src/runtime_metrics.rs:pub struct RuntimeMetrics {
+crates/runtime_core/src/shared_state.rs:pub struct VmoState {
+crates/runtime_core/src/wasm_forge.rs:pub struct WasmForge;
+crates/runtime_core/src/agent_protocol.rs:pub struct AgentDirective {
+crates/runtime_core/src/agent_protocol.rs:pub struct SubagentReturn {
+crates/runtime_core/src/config_loader.rs:pub struct Config {
+crates/runtime_core/src/critic.rs:pub struct CriticVerdict {
+crates/runtime_core/src/critic.rs:pub struct Critic;
+crates/runtime_core/src/evidence/belief.rs:pub struct BeliefVector {
+crates/runtime_core/src/evidence/graph.rs:pub struct EvidenceGraph {
+crates/runtime_core/src/evidence/manager.rs:pub struct EvidenceManager;
+crates/runtime_core/src/evidence/types.rs:pub struct Observation {
+crates/runtime_core/src/evidence/types.rs:pub struct Evidence {
+crates/runtime_core/src/light_verifier.rs:pub struct LightVerifier;
+crates/runtime_core/src/observation_adapter.rs:pub struct ObservationAdapter;
+crates/runtime_core/src/policy.rs:pub struct ExecutionSandbox {
+crates/runtime_core/src/router.rs:pub struct ContextBudget {
+crates/runtime_core/src/router.rs:pub struct AgentProfile {
+crates/runtime_core/src/router.rs:pub struct IntelligentRouter;
+crates/runtime_core/src/wasm_component_interface.rs:pub struct ComponentManager {
+crates/runtime_core/src/wasm_runtime.rs:pub struct WasmRuntime;
+crates/runtime_core/src/world_model.rs:pub struct WorkspaceNode {
+crates/runtime_core/src/world_model.rs:pub struct WorldModel {
+crates/runtime_core/src/fabric.rs:pub struct MessageFabric {
+crates/runtime_core/src/cognition_graph.rs:pub struct VerificationReport {
+crates/runtime_core/src/cognition_graph.rs:pub struct CognitiveNode {
+crates/runtime_core/src/cognition_graph.rs:pub struct GraphEdge {
+crates/runtime_core/src/cognition_graph.rs:pub struct CognitiveGraph {
+crates/runtime_core/src/conductor.rs:pub struct Conductor;
+crates/runtime_core/src/conductor.rs:pub struct TurnContext<'a> {
+crates/runtime_core/src/podman.rs:pub struct PodmanShield;
+crates/runtime_core/src/verification.rs:pub struct VerificationReport {
+crates/runtime_core/src/intent_contract.rs:pub struct IntentContract {
+crates/runtime_core/src/motor_cortex.rs:pub struct MotorCortex;
+crates/runtime_core/src/motor_cortex.rs:pub struct MotorCommand {
+crates/runtime_core/src/executive_cortex.rs:pub struct GoalNode {
+crates/runtime_core/src/executive_cortex.rs:pub struct ExecutiveCortex {
+crates/runtime_core/src/task_manager.rs:pub struct TaskContext {
+crates/runtime_core/src/cortical_loop.rs:pub struct CorticalLoop {
+crates/runtime_core/src/evolution_engine.rs:pub struct EvolutionEngine;
+crates/runtime_core/src/decision_dispatcher.rs:pub struct RuntimeDispatcher;
+crates/runtime_core/src/executor.rs:pub struct RoboticExecutor {
+crates/runtime_core/src/memory_types.rs:pub struct CognitiveMemory {
+crates/runtime_core/src/memory_cortex.rs:pub struct MemoryCortex {
+crates/runtime_core/src/memory_consolidation.rs:pub struct MemoryConsolidator;
+crates/runtime_core/src/reflection_engine.rs:pub struct ReflectionEngine;
+crates/runtime_core/src/memory_recall.rs:pub struct RecallRequest {
+crates/runtime_core/src/memory_recall.rs:pub struct RecallResult {
+crates/runtime_core/src/memory_recall.rs:pub struct MemoryRecallEngine;
+crates/runtime_core/src/belief_engine.rs:pub struct BeliefState {
+crates/runtime_core/src/belief_engine.rs:pub struct BeliefEvidence {
+crates/runtime_core/src/belief_engine.rs:pub struct BeliefEngine;
+crates/runtime_core/src/belief_update.rs:pub struct BeliefUpdate {
+crates/runtime_core/src/belief_feedback.rs:pub struct BeliefUpdateEvent {
+crates/runtime_core/src/belief_policy.rs:pub struct BeliefDecision {
+crates/runtime_core/src/belief_policy.rs:pub struct BeliefDecisionPolicy;
+crates/runtime_core/src/goal_adaptation.rs:pub struct GoalAdaptationDecision {
+crates/runtime_core/src/goal_adaptation.rs:pub struct GoalAdaptationEngine;
+crates/runtime_core/src/outcome_verifier.rs:pub struct OutcomeAssessment {
+crates/runtime_core/src/outcome_verifier.rs:pub struct OutcomeVerifier;
+crates/runtime_core/src/strategy_revision.rs:pub struct StrategyRevision;
+crates/runtime_core/src/cognition_loop.rs:pub struct CognitiveLoop {
+crates/runtime_core/src/memory_semantic.rs:pub struct SemanticMemory {
+crates/runtime_core/src/belief_delta.rs:pub struct BeliefDelta {
+crates/runtime_core/src/belief_audit.rs:pub struct BeliefAudit;
+crates/runtime_core/src/belief_transition.rs:pub struct BeliefTransitionEvent {
+crates/runtime_core/src/belief_transition_audit.rs:pub struct BeliefTransitionAudit;
+crates/runtime_core/src/belief_causality.rs:pub struct BeliefCause {
+crates/runtime_core/src/belief_causality_audit.rs:pub struct BeliefCausalityAudit;
+crates/runtime_core/src/causal_recall.rs:pub struct CausalRecall {
+crates/runtime_core/src/belief_prediction.rs:pub struct BeliefPrediction {
+crates/runtime_core/src/belief_validation.rs:pub struct BeliefValidationEvent {
+crates/runtime_core/src/belief_validation_engine.rs:pub struct BeliefValidationEngine;
+crates/runtime_core/src/arbiter_agent.rs:pub struct ArbiterAgent {
+crates/runtime_core/src/mutation_ledger.rs:pub struct MutationRecord {
+crates/runtime_core/src/mutation_critic.rs:pub struct MutationEvaluation {
+crates/runtime_core/src/mutation_critic_audit.rs:pub struct MutationCriticAudit;
+crates/runtime_core/src/mutation_evidence.rs:pub struct MutationEvidence {
+crates/runtime_core/src/mutation_evidence_audit.rs:pub struct MutationEvidenceAudit;
+crates/runtime_core/src/mutation/locator.rs:pub struct LocatedFunction {
+crates/runtime_core/src/mutation/locator.rs:pub struct FunctionLocator;
+crates/runtime_core/src/mutation/ast_analyzer.rs:pub struct AstMutationCandidate {
+crates/runtime_core/src/mutation/ast_analyzer.rs:pub struct AstAnalyzer;
+crates/runtime_core/src/mutation/patch_function.rs:pub struct PatchFunction {
+crates/runtime_core/src/mutation/mutation_contract.rs:pub struct MutationContract {
+crates/runtime_core/src/mutation/transaction.rs:pub struct MutationTransaction {
+crates/runtime_core/src/mutation/rollback.rs:pub struct RollbackManager;
+crates/runtime_core/src/mutation/controller.rs:pub struct MutationController;
+crates/runtime_core/src/mutation/governor.rs:pub struct MutationGovernor;
+crates/runtime_core/src/mutation/policy.rs:pub struct MutationPolicy {
+crates/runtime_core/src/mutation/risk.rs:pub struct MutationRisk {
+crates/runtime_core/src/mutation/approval.rs:pub struct MutationApproval {
+crates/runtime_core/src/mutation_memory/record.rs:pub struct MutationMemoryRecord {
+crates/runtime_core/src/mutation_memory/store.rs:pub struct MutationMemory {
+crates/runtime_core/src/build_genesis/proposal.rs:pub struct BuildProposal {
+crates/runtime_core/src/build_genesis/planner.rs:pub struct BuildPlanner;
+crates/runtime_core/src/build_genesis/executor.rs:pub struct BuildExecutor;
+crates/runtime_core/src/build_genesis/evidence.rs:pub struct BuildEvidence {
+crates/runtime_core/src/build_genesis/policy.rs:pub struct BuildPolicy;
+crates/runtime_core/src/build_genesis_v2/intent.rs:pub struct BuildIntent {
+crates/runtime_core/src/build_genesis_v2/sandbox.rs:pub struct SandboxBuilder;
+crates/runtime_core/src/build_genesis_v2/oracle.rs:pub struct CompileResult {
+crates/runtime_core/src/build_genesis_v2/oracle.rs:pub struct CompileOracle;
+crates/runtime_core/src/build_genesis_v2/evidence.rs:pub struct BuildEvidence {
+crates/runtime_core/src/build_genesis_v2/governor_bridge.rs:pub struct BuildGovernor;
+crates/runtime_core/src/build_genesis_v2/memory_bridge.rs:pub struct BuildMemoryBridge;
+crates/runtime_core/src/build_genesis_v2/graph.rs:pub struct BuildNode {
+crates/runtime_core/src/build_genesis_v2/graph.rs:pub struct BuildGraph {
+crates/runtime_core/src/epistemic_engine.rs.c2a57484.snap:pub struct CriticResponse {
+crates/runtime_core/src/epistemic_engine.rs.c2a57484.snap:pub struct EpistemicEngine;
+crates/runtime_core/src/epistemic_engine.rs:pub struct CriticResponse {
+crates/runtime_core/src/epistemic_engine.rs:pub struct EpistemicEngine;
+crates/runtime_core/src/repository_intelligence/scanner.rs:pub struct RepositoryScannerConfig {
+crates/runtime_core/src/repository_intelligence/scanner.rs:pub struct Scanner {
+crates/runtime_core/src/repository_intelligence/inventory.rs:pub struct InventoryItem {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs:pub struct NodeId(pub String);
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs:pub struct Node {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs:pub struct Edge {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs:pub struct GraphMetadata {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs:pub struct DependencyGraph {
+crates/runtime_core/src/repository_intelligence/impact.rs:pub struct ImpactReport {
+crates/runtime_core/src/repository_intelligence/proposal.rs:pub struct Proposal {
+crates/runtime_core/src/repository_intelligence/evidence.rs:pub struct Evidence {
+crates/runtime_core/src/repository_intelligence/scanner.rs.dc926359.snap:pub struct Scanner;
+crates/runtime_core/src/repository_intelligence/scanner.rs.f39566ed.snap:pub struct RepositoryScannerConfig {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs.0102c06c.snap:pub struct NodeId(pub String);
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs.0102c06c.snap:pub struct Node {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs.0102c06c.snap:pub struct Edge {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs.0102c06c.snap:pub struct GraphMetadata {
+crates/runtime_core/src/repository_intelligence/dependency_graph.rs.0102c06c.snap:pub struct DependencyGraph {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs.1f374c11.snap:pub struct SymbolId(pub String);
+crates/runtime_core/src/repository_intelligence/symbol_index.rs.1f374c11.snap:pub struct Span {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs.1f374c11.snap:pub struct SymbolInfo {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs.1f374c11.snap:pub struct SymbolReference {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs.1f374c11.snap:pub struct SymbolIndex {
+crates/runtime_core/src/repository_intelligence/impact.rs.f15b4e80.snap:pub struct ImpactReport {
+crates/runtime_core/src/repository_intelligence/planner.rs.474f5653.snap:pub struct PlannerConfig {
+crates/runtime_core/src/repository_intelligence/proposal.rs.d7743777.snap:pub struct Proposal {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs:pub struct SymbolId(pub String);
+crates/runtime_core/src/repository_intelligence/symbol_index.rs:pub struct Span {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs:pub struct SymbolInfo {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs:pub struct SymbolReference {
+crates/runtime_core/src/repository_intelligence/symbol_index.rs:pub struct SymbolIndex {
+crates/runtime_core/src/repository_intelligence/planner.rs:pub struct RepositoryScope {
+crates/runtime_core/src/repository_intelligence/planner.rs:pub struct PlanningConstraints {
+crates/runtime_core/src/repository_intelligence/planner.rs:pub struct OutputFormat {
+crates/runtime_core/src/repository_intelligence/planner.rs:pub struct IntelligencePlanner {
+crates/runtime_core/src/mutation_critic.rs.7055249a.snap:pub struct MutationEvaluation {
+crates/runtime_core/src/mutation_critic.rs.7055249a.snap:pub struct MutationCritic;
+crates/runtime_core/src/adaptive_mission/state.rs:pub struct MissionState {
+crates/runtime_core/src/adaptive_mission/dag.rs:pub struct MissionDag {
+crates/runtime_core/src/adaptive_mission/validator.rs:pub struct AssumptionValidator {
+crates/runtime_core/src/adaptive_mission/assumptions.rs:pub struct Assumption {
+crates/runtime_core/src/adaptive_mission/assumptions.rs:pub struct DAGNodeAssumption {
+crates/evolution_engine/src/compiler.rs:pub struct PromptCompiler;
+crates/evolution_engine/src/director.rs:pub struct EvolutionDirector {
+crates/evolution_engine/src/fitness_evaluator.rs:pub struct FitnessScore {
+crates/evolution_engine/src/fitness_evaluator.rs:pub struct FitnessEvaluator;
+crates/evolution_engine/src/genome.rs:pub struct CognitiveWeights {
+crates/evolution_engine/src/genome.rs:pub struct SystemGenome {
+crates/evolution_engine/src/mutator.rs:pub struct Mutator;
+crates/evolution_engine/src/repository.rs:pub struct GenomeEvaluation {
+crates/evolution_engine/src/repository.rs:pub struct GenomeRepository {

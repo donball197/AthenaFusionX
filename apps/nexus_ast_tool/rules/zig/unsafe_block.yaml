@@ -1,0 +1,8 @@
+id: "ZIG_UNSAFE_BLOCK"
+language: "zig"
+severity: "Medium"
+description: "Pointer-cast/reinterpretation builtins that bypass Zig's normal type/memory safety checks and require manual verification (Zig has no 'unsafe' block; this is the closest analog)."
+tree_sitter_query: |
+  (builtin_function
+    (builtin_identifier) @builtin (#match? @builtin "^@(ptrCast|alignCast|intFromPtr|ptrFromInt|truncate|bitCast)$")
+  ) @danger.unsafe_block

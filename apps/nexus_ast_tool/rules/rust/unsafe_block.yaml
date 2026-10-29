@@ -1,0 +1,6 @@
+id: "RUST_UNSAFE_BLOCK"
+language: "rust"
+severity: "Medium"
+description: "Unsafe block detected. Requires AI verification of memory safety."
+tree_sitter_query: |
+  (unsafe_block) @danger.unsafe_block

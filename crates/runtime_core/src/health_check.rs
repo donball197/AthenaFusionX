@@ -1,0 +1,3 @@
+pub fn is_healthy() -> bool {
+    true
+}

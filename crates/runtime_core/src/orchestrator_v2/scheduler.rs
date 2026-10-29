@@ -3,6 +3,17 @@ use crate::orchestrator_v2::verifier::VerificationResult;
 
 pub struct Scheduler;
 
+/// v1.9 residual-driven priority.
+/// Higher residual → expand first. impact/mission_priority weight the mission value.
+pub fn residual_priority(
+    residual: f32,
+    impact: f32,
+    mission_priority: f32,
+    dependency_weight: f32,
+) -> f32 {
+    residual * impact * mission_priority * (1.0 + dependency_weight)
+}
+
 impl Scheduler {
     const MAX_RETRIES: u8 = 2;
 

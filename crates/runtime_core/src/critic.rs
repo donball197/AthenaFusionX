@@ -32,9 +32,16 @@ impl Critic {
             || observations.contains("[DIFF_PATCH_OK]")
             || observations.contains("[PATCH_FUNCTION_OK]")
             || observations.contains("success");
-        let has_read = observations.contains("[READ_OK]");
-        let has_cmd = observations.contains("[CMD_OK]");
-        let has_search = observations.contains("[SEARCH_OK]");
+
+        let has_read = observations.contains("[READ_OK]")
+            || observations.contains("[READ_CHUNK_OK]")
+            || observations.contains("[READ_FUNCTION_OK]");
+
+        let has_cmd = observations.contains("[CMD_OK]") || observations.contains("[EXEC_OK]");
+
+        let has_search = observations.contains("[SEARCH_OK]")
+            || observations.contains("[SEARCH_CODE_OK]")
+            || observations.contains("[SEARCH_MEMORY_OK]");
 
         let approved = has_write || has_read || has_cmd || has_search;
         let confidence = if approved { 0.95 } else { 0.4 };
@@ -45,10 +52,13 @@ impl Critic {
             reason: if approved {
                 "Concrete success indicators found in action history.".into()
             } else {
-                "Missing concrete success indicators (Read/Write/Cmd).".into()
+                "Missing concrete success indicators (Read/Write/Cmd/Search).".into()
             },
             suggested_recovery: if !approved {
-                Some("Perform a read, write, or command execution to gather evidence.".into())
+                Some(
+                    "Perform a read, write, search, or command execution to gather evidence."
+                        .into(),
+                )
             } else {
                 None
             },

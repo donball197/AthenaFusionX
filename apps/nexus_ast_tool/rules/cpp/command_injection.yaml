@@ -1,0 +1,8 @@
+id: "CPP_COMMAND_INJECTION"
+language: "cpp"
+severity: "High"
+description: "Unsanitized system() call with user-controlled input."
+tree_sitter_query: |
+  (call_expression
+    function: (identifier) @func_name (#match? @func_name "^(system|popen)$")
+  ) @danger.command_injection

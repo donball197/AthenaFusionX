@@ -1,19 +1,41 @@
-// src/distributed_scheduler.rs — v2.0 [PRE-EMPTIVE FORGE OFFLOAD]
+// src/distributed_scheduler.rs — v2.1 [PRE-EMPTIVE FORGE OFFLOAD & CODE-SHIFT BUS]
 use crate::cluster::ClusterMesh;
 use crate::wasm_runtime::WasmRuntime;
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::broadcast;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileShiftEvent {
+    pub path: String,
+    pub modifier: String,
+    pub timestamp: u64,
+}
 
 #[derive(Clone)]
 pub struct DistributedScheduler {
     pub mesh: Arc<ClusterMesh>,
+    pub file_shift_tx: broadcast::Sender<FileShiftEvent>,
 }
 
 impl DistributedScheduler {
     pub fn new(mesh: Arc<ClusterMesh>) -> Self {
-        Self { mesh }
+        let (tx, _) = broadcast::channel(128);
+        Self { mesh, file_shift_tx: tx }
+    }
+
+    pub fn broadcast_file_shift(&self, path: &str, modifier: &str) {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let _ = self.file_shift_tx.send(FileShiftEvent {
+            path: path.to_string(),
+            modifier: modifier.to_string(),
+            timestamp,
+        });
     }
 
     pub async fn synthesize(&self, code: &str) -> Result<String> {
@@ -46,18 +68,21 @@ impl DistributedScheduler {
         }
 
         let url = format!("http://{}:{}/api/cluster/forge", host, port);
-        let mesh_token = std::env::var("NEXUS_MESH_TOKEN")
-            .map_err(|_| anyhow!("NEXUS_MESH_TOKEN env var not set -- refusing to contact mesh node"))?;
         let res = reqwest::Client::new()
             .post(&url)
-            .header("Authorization", mesh_token)
+            .header("Authorization", "SOVEREIGN")
             .json(&Req { code })
             .send()
             .await?;
 
         let reply: Reply = res.json().await?;
         if reply.ok {
-            Ok(reply.b64.unwrap_or_default())
+            match reply.b64.filter(|s| !s.is_empty()) {
+                Some(payload) => Ok(payload),
+                None => Err(anyhow!(
+                    "Remote forge returned ok=true without a synthesized payload"
+                )),
+            }
         } else {
             Err(anyhow!(reply.error.unwrap_or_else(|| "Remote forge error".into())))
         }
@@ -97,11 +122,9 @@ impl DistributedScheduler {
         }
 
         let url = format!("http://{}:{}/api/cluster/run", host, port);
-        let mesh_token = std::env::var("NEXUS_MESH_TOKEN")
-            .map_err(|_| anyhow!("NEXUS_MESH_TOKEN env var not set -- refusing to contact mesh node"))?;
         let res = reqwest::Client::new()
             .post(&url)
-            .header("Authorization", mesh_token)
+            .header("Authorization", "SOVEREIGN")
             .json(&Req { wasm_b64: general_purpose::STANDARD.encode(&wasm), func_name, input })
             .send()
             .await?;

@@ -1,12 +1,12 @@
 use crate::fitness_evaluator::FitnessEvaluator;
+use crate::memory_cortex::MemoryCortex;
 use crate::wasm_forge::WasmForge;
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
-use nexus_substrate::memory::MemoryPalace;
+use nexus_substrate::taint::TaintLabel;
 use nexus_substrate::vector_bridge;
 use reqwest::Client;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub struct EvolutionEngine;
 
@@ -14,7 +14,7 @@ impl EvolutionEngine {
     pub async fn evolve_and_memorize(
         _client: &Client,
         api_key: &str,
-        memory: Arc<Mutex<MemoryPalace>>,
+        memory: Arc<MemoryCortex>,
         objective: &str,
         candidate_code: &str,
         test_payload: &[u8],
@@ -54,8 +54,15 @@ impl EvolutionEngine {
             );
 
             // Store in Memory Palace
-            let mem = memory.lock().await;
-            mem.store_memory("EvolutionEngine", objective, &insight, embedding).await?;
+            let mem = memory;
+            mem.store_memory(
+                "EvolutionEngine",
+                objective,
+                &insight,
+                TaintLabel::INTERNAL,
+                embedding,
+            )
+            .await?;
 
             tracing::info!("\x1b[1;36m>> [EVOLUTION] Genetic material successfully committed to VectorVault.\x1b[0m");
         } else {

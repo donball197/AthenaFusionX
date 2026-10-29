@@ -18,8 +18,8 @@ pub async fn list_snapshots() -> Result<Vec<Snapshot>> {
     if !Path::new(CATALOG).exists() {
         return Ok(vec![]);
     }
-    let raw = fs::read_to_string(CATALOG).await?;
-    let snapshots: Vec<Snapshot> = serde_json::from_str(&raw)?;
+    let raw_json = fs::read_to_string(CATALOG).await?;
+    let snapshots: Vec<Snapshot> = serde_json::from_str(&raw_json)?;
     Ok(snapshots)
 }
 

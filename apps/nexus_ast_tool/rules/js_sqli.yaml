@@ -1,0 +1,13 @@
+id: "SQL_INJECTION"
+language: "javascript"
+severity: "High"
+description: "Database query execution with template string interpolation or concatenation."
+tree_sitter_query: |
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#match? @method "^(query|execute)$"))
+    arguments: (arguments (template_string (template_substitution)) @danger.sql_injection)
+  )
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#match? @method "^(query|execute)$"))
+    arguments: (arguments (binary_expression) @danger.sql_injection)
+  )

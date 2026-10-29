@@ -1,0 +1,13 @@
+{
+  "phase": 7.5,
+  "timestamp": "2026-08-02T01:31:51-04:00",
+  "artifacts": {
+    "mutation_map": "repository_analysis/mutation_map.json",
+    "symbol_graph": "repository_analysis/symbol_graph.json"
+  },
+  "logs": {
+    "path_denials": "repository_analysis/evidence/path_denials.log",
+    "translator_failures": "repository_analysis/evidence/translator_failures.log",
+    "abandoned_strategies": "repository_analysis/evidence/abandoned_strategies.log"
+  }
+}

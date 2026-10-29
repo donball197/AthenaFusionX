@@ -1,0 +1,7 @@
+id: JS_XSS
+language: javascript
+severity: High
+description: Unsafe DOM injection via dangerouslySetInnerHTML or arbitrary script evaluation via eval().
+tree_sitter_query: >
+  (call_expression function: (identifier) @func_name (#eq? @func_name "eval")) @danger.code_execution
+  (pair key: (property_identifier) @prop (#eq? @prop "dangerouslySetInnerHTML")) @danger.xss

@@ -1,0 +1,6 @@
+{
+  "target_node": "core_authentication::validate_token",
+  "total_dependents": 142,
+  "risk_level": "CRITICAL",
+  "impacted_nodes": ["api::auth", "middleware::session", "database::user_ops"]
+}

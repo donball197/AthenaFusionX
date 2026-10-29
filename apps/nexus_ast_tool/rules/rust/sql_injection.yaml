@@ -1,0 +1,23 @@
+id: "RUST_SQL_INJECTION"
+language: "rust"
+severity: "High"
+description: "Unsafe dynamic SQL query construction or formatting passed to database execute/query sinks."
+tree_sitter_query: |
+  (call_expression
+    function: (field_expression
+      field: (field_identifier) @method (#match? @method "^(execute|execute_batch|query|query_row|query_as|prepare)$")
+    )
+    arguments: (arguments
+      [
+        (macro_invocation
+          macro: (identifier) @macro (#match? @macro "^(format|format_args)$")
+        )
+        (binary_expression)
+      ] @danger.sql_injection
+    )
+  )
+
+  (macro_invocation
+    macro: (identifier) @macro_name (#match? @macro_name "^(format|format_args)$")
+    (token_tree) @danger.sql_injection (#match? @danger.sql_injection "(?i)(SELECT\\s+.+\\s+FROM|INSERT\\s+INTO|UPDATE\\s+.+\\s+SET|DELETE\\s+FROM)")
+  )

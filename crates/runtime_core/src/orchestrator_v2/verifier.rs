@@ -10,6 +10,52 @@ pub enum VerificationResult {
 
 pub struct Verifier;
 
+fn read_evidence_matches_path(evidence: &str, expected_path: &str) -> bool {
+    evidence.lines().any(|line| {
+        if let Some(path) = line.strip_prefix("[READ_OK]") {
+            return crate::evidence_paths::paths_equivalent(path.trim(), expected_path);
+        }
+
+        if let Some(rest) = line.strip_prefix("[READ_CHUNK_OK] File: ") {
+            return rest
+                .split(" | ")
+                .next()
+                .map(|p| crate::evidence_paths::paths_equivalent(p, expected_path))
+                .unwrap_or(false);
+        }
+
+        // A path-qualified read failure (e.g. ENOENT) or a path-scoped
+        // search that found nothing is still a completed, evidenced
+        // inspection of the target location -- the location was checked
+        // and found empty/absent. This node-level DAG verifier is a
+        // separate, independent copy of the same READ_OK matching logic
+        // already extended in outcome_verifier.rs's ReadPathAcquired
+        // check and cortical_loop.rs's confirmed-absence terminal check;
+        // without this, the cortex can correctly complete a node on
+        // confirmed-absence evidence, only for this sibling verifier to
+        // immediately reject the same evidence as insufficient.
+        if let Some(rest) = line.strip_prefix("[ACTION FAILED] path=") {
+            // CONFIRMED-ABSENCE ONLY (see evidence_paths::is_confirmed_absence).
+            return rest
+                .split(" OS rejected action")
+                .next()
+                .map(|p| crate::evidence_paths::paths_equivalent(p, expected_path))
+                .unwrap_or(false)
+                && crate::evidence_paths::is_confirmed_absence(rest);
+        }
+
+        if let Some(rest) = line.strip_prefix("[SEARCH_CODE_OK] Path: ") {
+            return rest
+                .split(" | ")
+                .next()
+                .map(|p| crate::evidence_paths::paths_equivalent(p, expected_path))
+                .unwrap_or(false);
+        }
+
+        false
+    })
+}
+
 impl Verifier {
     /// LocalDiagnosis Layer: Cheap, deterministic heuristic matching.
     pub fn diagnose_output(stderr: &str, stdout: &str) -> VerificationResult {
@@ -51,12 +97,325 @@ impl Verifier {
         if diagnosis != VerificationResult::Success {
             return diagnosis;
         }
-
         if criteria.is_empty() {
-            return VerificationResult::Success;
+            return VerificationResult::Escalate("Node has no explicit success criteria.".into());
         }
 
-        // TODO: Phase 2 Low-temp Gemma API semantic verification.
+        Self::evaluate_contract_criteria(stdout, criteria)
+    }
+
+    /// Deterministic contract verification based on explicit node criteria.
+    ///
+    /// Explicit success criteria are authoritative. Legacy node-id rules are
+    /// retained only for older persisted DAG nodes that have no criteria.
+    pub fn verify_contract(
+        node_id: &str,
+        evidence: &str,
+        criteria: &[String],
+    ) -> VerificationResult {
+        if !criteria.is_empty() {
+            return Self::evaluate_contract_criteria(evidence, criteria);
+        }
+        // Unknown nodes fail closed. A verifier must never silently
+        // authorize an unrecognized node.
+        VerificationResult::Escalate(format!(
+            "No verification contract exists for node '{}'",
+            node_id
+        ))
+    }
+
+    fn evaluate_contract_criteria(evidence: &str, criteria: &[String]) -> VerificationResult {
+        if criteria.is_empty() {
+            return VerificationResult::Escalate(
+                "Cannot verify node: success criteria are empty.".into(),
+            );
+        }
+
+        for criterion in criteria {
+            let criterion = criterion.trim();
+
+            let satisfied = if criterion == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED" {
+                evidence.contains("[DAG NODE COMPLETE]")
+            } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
+                read_evidence_matches_path(evidence, path.trim())
+            } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
+                let mut parts = target.splitn(2, ':');
+                let path = parts.next().unwrap_or("").trim();
+                let func = parts.next().unwrap_or("").trim();
+                crate::evidence_markers::read_function_marker_satisfies(evidence, path, func)
+            } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
+                crate::evidence_markers::search_term_satisfied(evidence, target)
+            } else if criterion == "ANALYSIS_OK" {
+                evidence.contains("[HALT]")
+            } else if criterion == "SEARCH_MEMORY_OK" {
+                evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
+            } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
+                let target = path.trim();
+                crate::evidence_markers::write_path_satisfied(evidence, target)
+            } else if criterion == "CMD_OK" {
+                // A bare [CMD_OK] substring is not proof of success. The
+                // verifier must require the marker on its own line followed
+                // by a zero exit status, matching the emission shape of both
+                // the executor's ExecuteCommand branch:
+                //     [CMD_OK] Command: <cmd>
+                //     Status: exit status: 0
+                //
+                // Without this binding, literal text "[CMD_OK]" appearing in
+                // a file that was read into evidence (via [READ_OK]) would
+                // satisfy the criterion without any command having run.
+                //
+                // The original check required the Status line to be the
+                // LITERAL NEXT line after [CMD_OK], which assumes a
+                // single-line command. The executor's format string embeds
+                // command.trim() verbatim before the Status line, so a
+                // multi-line command (e.g. python3 -c with a multi-line
+                // script) pushes Status several lines further down.
+                // Confirmed root cause (2026-09-26): the ALL/ANY duality
+                // mission's verification Python script executed successfully
+                // (STDOUT confirmed all checks passed) but was rejected with
+                // "Mandatory success criterion not satisfied: CMD_OK" because
+                // the line immediately after [CMD_OK] was the script's own
+                // first line of source, not "Status: exit status: 0".
+                //
+                // Fix: scan forward from [CMD_OK] for the Status line,
+                // bounded by the next bracketed marker so a Status line
+                // belonging to a later, unrelated command block can't be
+                // matched instead.
+                let lines: Vec<&str> = evidence.lines().collect();
+                lines.iter().enumerate().any(|(i, line)| {
+                    // Trimmed: an indented [CMD_OK] counts. Scan bounded by
+                    // is_marker_line so bracketed command output does not
+                    // truncate the scan early.
+                    line.trim_start().starts_with("[CMD_OK]")
+                        && lines[i + 1..]
+                            .iter()
+                            .take_while(|l| !crate::evidence_paths::is_marker_line(l))
+                            .any(|l| l.trim() == "Status: exit status: 0")
+                })
+            } else if criterion == "PATCH_FUNCTION_OK" {
+                evidence.contains("[PATCH_FUNCTION_OK]")
+                    || evidence.contains("[PATCH_IDEMPOTENT_OK]")
+            } else if let Some(func) = criterion.strip_prefix("PATCH_FUNCTION_OK:") {
+                let mut parts = func.splitn(2, ':');
+                let path = parts.next().unwrap_or("").trim();
+                let name = parts.next().unwrap_or("").trim();
+                (evidence.contains("[PATCH_FUNCTION_OK]")
+                    || evidence.contains("[PATCH_IDEMPOTENT_OK]"))
+                    && (evidence.contains(func)
+                        || (!path.is_empty()
+                            && !name.is_empty()
+                            && evidence.contains(path)
+                            && evidence.contains(name))
+                        || (!name.is_empty() && evidence.contains(name)))
+            } else if criterion == "DIFF_PATCH_OK" {
+                evidence.contains("[DIFF_PATCH_OK]")
+            } else if let Some(path) = criterion.strip_prefix("DIFF_PATCH_OK:") {
+                evidence.contains("[DIFF_PATCH_OK]") && evidence.contains(path)
+            } else if criterion == "REPLACE_LINES_OK" {
+                evidence.contains("[REPLACE_LINES_OK]")
+            } else if let Some(path) = criterion.strip_prefix("REPLACE_LINES_OK:") {
+                evidence.contains("[REPLACE_LINES_OK]") && evidence.contains(path)
+            } else if criterion == "DAG_LINEAGE_OK" {
+                crate::outcome_verifier::verify_lineage_provenance(evidence)
+            } else {
+                return VerificationResult::Escalate(format!(
+                    "Unknown success criterion: {}",
+                    criterion
+                ));
+            };
+
+            if !satisfied {
+                return VerificationResult::Retry(format!(
+                    "Mandatory success criterion not satisfied: {}",
+                    criterion
+                ));
+            }
+        }
+
         VerificationResult::Success
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VerificationResult, Verifier};
+
+    #[test]
+    fn search_memory_ok_requires_physical_evidence() {
+        let criteria = vec!["SEARCH_MEMORY_OK".to_string()];
+
+        let success = Verifier::verify_contract(
+            "task_1",
+            "[SEARCH_MEMORY_OK] Found semantic context: host observations involving uptime, filesystem, available memory, and load average",
+            &criteria,
+        );
+        assert_eq!(success, VerificationResult::Success);
+
+        let empty = Verifier::verify_contract(
+            "task_1",
+            "[SEARCH_MEMORY_EMPTY] Semantic search completed successfully but returned zero matches",
+            &criteria,
+        );
+        assert!(matches!(empty, VerificationResult::Retry(_)));
+
+        let unrelated =
+            Verifier::verify_contract("task_1", "[SEARCH_CODE_OK] host observations", &criteria);
+        assert!(matches!(unrelated, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn idempotent_patch_satisfies_node_verifier() {
+        let criteria = vec!["PATCH_FUNCTION_OK:calculate_total".to_string()];
+        let evidence = "[PATCH_IDEMPOTENT_OK] src/math.rs:calculate_total\nPatchFunction already satisfied; source unchanged.";
+
+        let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+    }
+
+    #[test]
+    fn read_function_rejects_marker_and_target_from_different_records() {
+        let criteria = vec!["READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()];
+
+        let evidence = concat!(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/foo.rs:actual_a\n",
+            "File: crates/runtime_core/src/foo.rs | Function: actual_a\n",
+            "EXACT AST SOURCE:\n",
+            "fn actual_a() {}\n",
+            "Observed reference to crates/runtime_core/src/bar.rs\n",
+            "Discussion mentions target_b\n",
+        );
+
+        let result = Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
+
+        assert!(matches!(result, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn read_function_accepts_exact_marker_record() {
+        let criteria = vec!["READ_FUNCTION_OK:crates/runtime_core/src/bar.rs:target_b".to_string()];
+
+        let evidence = concat!(
+            "[READ_FUNCTION_OK] crates/runtime_core/src/bar.rs:target_b\n",
+            "File: crates/runtime_core/src/bar.rs | Function: target_b\n",
+            "EXACT AST SOURCE:\n",
+            "fn target_b() {}\n",
+        );
+
+        let result = Verifier::verify_contract("read_function_contract_test", evidence, &criteria);
+
+        assert_eq!(result, VerificationResult::Success);
+    }
+
+    #[test]
+    fn patch_function_ok_verifies_successfully() {
+        let criteria = vec!["PATCH_FUNCTION_OK:calculate_total".to_string()];
+        let evidence = "[PATCH_FUNCTION_OK] Updated function 'calculate_total' in src/math.rs";
+
+        let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+
+        let wrong_func_criteria = vec!["PATCH_FUNCTION_OK:calculate_discount".to_string()];
+        let failed = Verifier::verify_contract("task_mutate", evidence, &wrong_func_criteria);
+        assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn diff_patch_ok_verifies_successfully() {
+        let criteria = vec!["DIFF_PATCH_OK:src/lib.rs".to_string()];
+        let evidence = "[DIFF_PATCH_OK] Applied changes to src/lib.rs";
+
+        let result = Verifier::verify_contract("task_mutate", evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+
+        let wrong_path_criteria = vec!["DIFF_PATCH_OK:src/main.rs".to_string()];
+        let failed = Verifier::verify_contract("task_mutate", evidence, &wrong_path_criteria);
+        assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn dag_lineage_ok_verifies_with_content_hash() {
+        use sha2::{Digest, Sha256};
+
+        let criteria = vec!["DAG_LINEAGE_OK".to_string()];
+        let payload = "[PATCH_FUNCTION_OK] Updated function 'route' in router.rs";
+        let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+        let evidence = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]",
+            digest, payload, digest
+        );
+
+        let result = Verifier::verify_contract("task_verify", &evidence, &criteria);
+        assert_eq!(result, VerificationResult::Success);
+
+        let tampered = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{} modified\n[DAG LINEAGE COMPLETE sha256:{}]",
+            digest, payload, digest
+        );
+        let failed = Verifier::verify_contract("task_verify", &tampered, &criteria);
+        assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+}
+
+#[cfg(test)]
+mod read_chunk_verifier_tests {
+    use super::{VerificationResult, Verifier};
+
+    fn criterion() -> Vec<String> {
+        vec!["READ_OK:crates/runtime_core/src/cortical_loop.rs".to_string()]
+    }
+
+    #[test]
+    fn read_ok_accepts_exact_whole_file_marker() {
+        let evidence = "[READ_OK] crates/runtime_core/src/cortical_loop.rs\n";
+
+        assert!(matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_accepts_exact_chunk_marker() {
+        let evidence =
+            "[READ_CHUNK_OK] File: crates/runtime_core/src/cortical_loop.rs | Lines 1-100 of 500\n";
+
+        assert!(matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_rejects_chunk_for_different_file() {
+        let evidence =
+            "[READ_CHUNK_OK] File: crates/runtime_core/src/other.rs | Lines 1-100 of 500\n";
+
+        assert!(!matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_rejects_whole_file_marker_for_different_file() {
+        let evidence = "[READ_OK] crates/runtime_core/src/other.rs\n";
+
+        assert!(!matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
+    }
+
+    #[test]
+    fn read_ok_rejects_marker_and_path_from_different_records() {
+        let evidence = concat!(
+            "[READ_CHUNK_OK] File: crates/runtime_core/src/other.rs | Lines 1-100 of 500\n",
+            "Observed reference to crates/runtime_core/src/cortical_loop.rs\n",
+        );
+
+        assert!(!matches!(
+            Verifier::verify_contract("read_chunk_contract_test", evidence, &criterion(),),
+            VerificationResult::Success
+        ));
     }
 }

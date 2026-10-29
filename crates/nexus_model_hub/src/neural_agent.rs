@@ -57,11 +57,8 @@ impl MicroAgentBuilder {
         if self.model.is_none() {
             return Err(BuilderError::MissingField("model".to_string()));
         }
-        
-        Ok(MicroAgent {
-            memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)),
-            tx,
-        })
+
+        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)), tx })
     }
 }
 
@@ -76,10 +73,7 @@ impl MicroAgent {
     }
 
     pub fn init(tx: broadcast::Sender<String>) -> Result<Self> {
-        Ok(MicroAgent {
-            memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)),
-            tx,
-        })
+        Ok(MicroAgent { memory: Mutex::new(VecDeque::with_capacity(MAX_HISTORY_TURNS * 2)), tx })
     }
 
     pub async fn prepare_and_run(
@@ -90,36 +84,34 @@ impl MicroAgent {
         context: ContextPacket,
     ) -> Result<(String, u128)> {
         let start = Instant::now();
-        let model = context.model_override.as_deref().unwrap_or("gemma-4-31b-it");
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-            model,
-            api_key.trim()
-        );
+        let default_model = std::env::var("NEXUS_HEAVY_CASCADE")
+            .ok()
+            .and_then(|cascade| {
+                cascade
+                    .split(',')
+                    .map(str::trim)
+                    .find(|model| !model.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| std::env::var("NEXUS_HEAVY_MODEL").ok())
+            .unwrap_or_default();
 
-        let system_instruction = context.system_prompt.unwrap_or_else(|| "You are NEXUS.".to_string());
+        let model = context.model_override.as_deref().unwrap_or(&default_model);
 
-        let mut enriched = format!("SYSTEM: {}
+        // 1. Build the enriched text first
+        let system_instruction =
+            context.system_prompt.clone().unwrap_or_else(|| "You are NEXUS.".to_string());
 
-USER REQUEST:
-{}", system_instruction, user_text);
+        let mut enriched =
+            format!("SYSTEM: {}\n\nUSER REQUEST:\n{}", system_instruction, user_text);
         if let Some(code) = &context.file_content {
-            enriched += &format!("
-
-ACTIVE FILE CONTENT:
-```
-{}
-```", code);
+            enriched += &format!("\n\nACTIVE FILE CONTENT:\n```\n{}\n```", code);
         }
         if let Some(logs) = &context.terminal_log {
-            enriched += &format!("
-
-RECENT TERMINAL LOGS:
-```
-{}
-```", logs);
+            enriched += &format!("\n\nRECENT TERMINAL LOGS:\n```\n{}\n```", logs);
         }
 
+        // 2. Setup and trim history with the new text
         let mut history: Vec<Value> = self.memory.lock().unwrap().iter().cloned().collect();
         trim_history_token_aware(&mut history, &enriched);
 
@@ -128,15 +120,97 @@ RECENT TERMINAL LOGS:
             "parts": [{"text": enriched}]
         }));
 
-        let payload = json!({
-            "contents": history,
-            "generationConfig": {
-                "maxOutputTokens": 8192,
-                "temperature": 0.15
-            }
-        });
+        // 3. Now branch on API Provider with `history` fully available
+        let is_reflection = model.to_ascii_lowercase().contains("beam")
+            || model.to_ascii_lowercase().contains("reflection");
+        let is_gemini = model.contains("gemini") || model.contains("gemma");
+        let (url, req_payload) = if is_gemini {
+            let u = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+                model,
+                api_key.trim()
+            );
+            let p = json!({
+                "contents": history,
+                "generationConfig": { "maxOutputTokens": 8192, "temperature": 0.15 }
+            });
+            (u, p)
+        } else {
+            let u = if is_reflection {
+                let base = std::env::var("REFLECTION_BASE_URL")
+                    .unwrap_or_else(|_| "https://api.reflection.ai/openai/v1".to_string());
+                let clean = base.trim_end_matches('/');
+                if clean.ends_with("/chat/completions") {
+                    clean.to_string()
+                } else {
+                    format!("{}/chat/completions", clean)
+                }
+            } else {
+                "https://integrate.api.nvidia.com/v1/chat/completions".to_string()
+            };
 
-        let response = client.post(&url).json(&payload).send().await.context("API request failed")?;
+            let mut messages = Vec::new();
+            if let Some(sys) = &context.system_prompt {
+                messages.push(json!({"role": "system", "content": sys}));
+            }
+            for msg in &history {
+                if let Some(role) = msg.get("role").and_then(|r| r.as_str()) {
+                    if let Some(text) = msg.pointer("/parts/0/text").and_then(|t| t.as_str()) {
+                        let mapped_role = if role == "model" { "assistant" } else { "user" };
+                        messages.push(json!({"role": mapped_role, "content": text}));
+                    }
+                }
+            }
+
+            let mut p = json!({
+                "model": model,
+                "messages": messages,
+                "temperature": 0.15,
+                "max_tokens": 8192,
+                "stream": true
+            });
+
+            // Nemotron reasoning is explicitly disabled for concise/structured
+            // runtime calls. Keep this model-specific: other NVIDIA-hosted
+            // models may use different reasoning controls.
+            if model.to_ascii_lowercase().contains("nemotron") {
+                p["chat_template_kwargs"] = json!({
+                    "enable_thinking": false,
+                    "thinking": false,
+                    "force_nonempty_content": true
+                });
+            }
+
+            if model.starts_with("z-ai/") {
+                if let Some(o) = p.as_object_mut() {
+                    o.remove("chat_template_kwargs");
+                }
+                p["reasoning_effort"] = json!("low");
+            }
+
+            (u, p)
+        };
+
+        let mut rb = client.post(&url).json(&req_payload);
+        if is_reflection {
+            let key = std::env::var("REFLECTION_API_KEY")
+                .unwrap_or_else(|_| api_key.to_string());
+            if key.trim().is_empty() {
+                anyhow::bail!("REFLECTION_API_KEY is missing for the selected Beam model");
+            }
+            rb = rb.bearer_auth(key.trim());
+        } else if !is_gemini {
+            let key = std::env::var("NVIDIA_API_KEY").unwrap_or_else(|_| api_key.to_string());
+            rb = rb.bearer_auth(key.trim());
+        }
+        let response = rb.send().await.context("API request failed")?;
+
+        if !response.status().is_success() {
+            let st = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API HTTP {}: {}", st, body);
+        }
+
         let mut full_response = String::new();
         let mut byte_buffer = Vec::new();
         let mut stream = response.bytes_stream();
@@ -148,21 +222,46 @@ RECENT TERMINAL LOGS:
                     let line_bytes: Vec<u8> = byte_buffer.drain(..=pos).collect();
                     let line = String::from_utf8_lossy(&line_bytes);
                     let clean = line.trim_start_matches("data: ").trim();
-                    if clean.is_empty() || clean == "[DONE]" { continue; }
+                    if clean.is_empty() || clean == "[DONE]" {
+                        continue;
+                    }
 
                     if let Ok(val) = serde_json::from_str::<Value>(clean) {
-                        if let Some(parts) = val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+                        // OpenAI-compatible (NVIDIA NIM) SSE shape
+                        if let Some(delta) = val.pointer("/choices/0/delta") {
+                            if let Some(r) = delta.get("reasoning_content").and_then(|t| t.as_str())
+                            {
+                                let _ = self.tx.send(
+                                    json!({"type": "NEURAL_THOUGHT", "payload": r}).to_string(),
+                                );
+                            }
+                            if let Some(token) = delta.get("content").and_then(|t| t.as_str()) {
+                                full_response.push_str(token);
+                                let _ = self.tx.send(
+                                    json!({"type": "NEURAL_STREAM", "payload": token}).to_string(),
+                                );
+                            }
+                        }
+                        if let Some(parts) =
+                            val.pointer("/candidates/0/content/parts").and_then(|v| v.as_array())
+                        {
                             for part in parts {
                                 if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
                                     if let Some(token) = part.get("text").and_then(|t| t.as_str()) {
-                                        let _ = self.tx.send(json!({"type": "NEURAL_THOUGHT", "payload": token}).to_string());
+                                        let _ = self.tx.send(
+                                            json!({"type": "NEURAL_THOUGHT", "payload": token})
+                                                .to_string(),
+                                        );
                                     }
                                     continue;
                                 }
-                                
+
                                 if let Some(token) = part.get("text").and_then(|t| t.as_str()) {
                                     full_response.push_str(token);
-                                    let _ = self.tx.send(json!({"type": "NEURAL_STREAM", "payload": token}).to_string());
+                                    let _ = self.tx.send(
+                                        json!({"type": "NEURAL_STREAM", "payload": token})
+                                            .to_string(),
+                                    );
                                 }
                             }
                         }
@@ -197,21 +296,31 @@ fn rough_token_count(text: &str) -> usize {
 fn estimate_message_tokens(msg: &Value) -> usize {
     let empty_vec = Vec::new();
     let parts = msg.pointer("/parts").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
-    parts.iter()
-        .filter_map(|p| p.get("text").and_then(|t| t.as_str()).or_else(|| p.get("functionCall").and_then(|fc| fc.as_str())).or_else(|| p.get("functionResponse").and_then(|fr| fr.as_str())))
+    parts
+        .iter()
+        .filter_map(|p| {
+            p.get("text")
+                .and_then(|t| t.as_str())
+                .or_else(|| p.get("functionCall").and_then(|fc| fc.as_str()))
+                .or_else(|| p.get("functionResponse").and_then(|fr| fr.as_str()))
+        })
         .map(rough_token_count)
         .sum::<usize>()
         + 10
 }
 
 fn trim_history_token_aware(history: &mut Vec<Value>, current_user_msg: &str) {
-    if history.is_empty() { return; }
+    if history.is_empty() {
+        return;
+    }
 
     let current_tokens = rough_token_count(current_user_msg) + RESERVED_TOKENS;
     let mut total_tokens: usize = history.iter().map(estimate_message_tokens).sum();
     total_tokens += current_tokens;
 
-    if total_tokens <= SOFT_TOKEN_LIMIT { return; }
+    if total_tokens <= SOFT_TOKEN_LIMIT {
+        return;
+    }
 
     while total_tokens > SOFT_TOKEN_LIMIT && history.len() >= 4 {
         if let (Some(old_user), Some(old_model)) = (history.first(), history.get(1)) {

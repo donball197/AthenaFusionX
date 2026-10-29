@@ -1,0 +1,63 @@
+name: Nexus Singularity Auto-Heal
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  nexus-security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Nuke Sccache Configs
+        run: |
+          rm -rf .cargo/
+          rm -f ~/.cargo/config.toml ~/.cargo/config
+
+      - name: Build AthenaFusionX (Nexus AST Tool)
+        run: cargo build --release -p nexus_ast_tool
+
+      - name: Run Autonomous Security Audit & Auto-Heal
+        env:
+          GEMINI_API_KEY: ${{ secrets.ATHENA_KEYS }}
+          NVIDIA_API_KEY: ${{ secrets.ATHENA_KEYS }}
+          NEXUS_LIGHT_MODEL: "z-ai/glm-5.2"
+          NEXUS_HEAVY_MODEL: "z-ai/glm-5.2"
+        run: |
+          ./target/release/nexus_ast_tool audit --path . --ai-triage --auto-heal --generate-report
+
+      - name: Post Bug Bounty Report to PR
+        if: hashFiles('bounty_report.md') != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('bounty_report.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "🤖 **AthenaFusionX Security Audit Complete**\n\n" + report
+            });
+
+      - name: Commit Auto-Healed Patches
+        if: hashFiles('bounty_report.md') != ''
+        run: |
+          git config --global user.name "AthenaFusionX (Auto-Healer)"
+          git config --global user.email "athena@singularity.local"
+          git add -u
+          git commit -m "chore(security): 🛡️ Auto-healed vulnerabilities detected by Nexus Singularity" || echo "No changes to commit"
+          git push origin HEAD:${{ github.head_ref }}

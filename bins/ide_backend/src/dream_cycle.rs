@@ -1,17 +1,14 @@
-//! DreamCycle — background task that wakes every 30 minutes, pulls random
-//! memory strands from the MemoryPalace, and asks the LLM to synthesise an
-//! architectural insight which is stored back as a system_insight.
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
-use tokio::time::{interval, Duration};
 use nexus_substrate::memory::MemoryPalace;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio::time::{interval, Duration};
 
 pub fn init() {
     tracing::info!(">> [DREAM_CYCLE] Subconscious synthesis engine initialised");
 }
 
 pub fn spawn(
-    memory: Arc<Mutex<MemoryPalace>>,
+    palace: Arc<MemoryPalace>,
     tx: broadcast::Sender<String>,
     client: reqwest::Client,
     api_key: String,
@@ -19,28 +16,26 @@ pub fn spawn(
 ) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(30 * 60));
-        ticker.tick().await; // skip immediate first tick
-
+        ticker.tick().await;
         loop {
             ticker.tick().await;
             tracing::info!("[DREAM_CYCLE] Beginning synthesis pass…");
-
             let _ = tx.send(
                 serde_json::json!({"type":"LOG_EVENT","payload":"[DREAM] Synthesis cycle awakening…"})
                     .to_string()
             );
 
-            let strands = {
-                let mem = memory.lock().await;
-                mem.fetch_random_strands(8).await.unwrap_or_default()
-            };
+            let strands = palace
+                .fetch_random_strands_scoped(8, nexus_substrate::taint::FlowPolicy::INTERNAL_SINK)
+                .await
+                .unwrap_or_default();
 
             if strands.is_empty() {
-                tracing::info!("[DREAM_CYCLE] No strands to synthesise");
                 continue;
             }
 
-            let context = strands.iter()
+            let context = strands
+                .iter()
                 .map(|s| format!("DIRECTIVE: {}\nRESULT: {}", s.directive, s.result))
                 .collect::<Vec<_>>()
                 .join("\n---\n");
@@ -51,17 +46,18 @@ pub fn spawn(
                 context
             );
 
-            // ✅ FIXED: ContextPacket comes from nexus_model_hub
             let ctx = nexus_model_hub::neural_agent::ContextPacket {
                 system_prompt: Some("Output plain text only. One paragraph.".into()),
-                model_override: Some("gemma-4-26b-a4b-it".into()),
+                model_override: Some(
+                    std::env::var("NEXUS_HEAVY_MODEL")
+                        .unwrap_or_else(|_| "nvidia/nemotron-3-ultra-550b-a55b".into()),
+                ),
                 ..Default::default()
             };
 
             match orchestrator.run(prompt, ctx, &client, &api_key, Some(tx.clone())).await {
                 Ok(insight) => {
-                    let mem = memory.lock().await;
-                    if let Err(e) = mem.store_insight(&insight).await {
+                    if let Err(e) = palace.store_insight(&insight).await {
                         tracing::warn!("[DREAM_CYCLE] Failed to store insight: {}", e);
                     } else {
                         tracing::info!("[DREAM_CYCLE] Insight stored");

@@ -1,9 +1,9 @@
 //! EdgeWorker — handles registration of remote cluster nodes via HTTP POST
 //! to /api/cluster/register.  Routes are wired in server.rs.
-use axum::{extract::State, Json, response::IntoResponse};
-use std::sync::Arc;
 use crate::server::AppState;
+use axum::{extract::State, response::IntoResponse, Json};
 use nexus_runtime_core::cluster::ClusterNode;
+use std::sync::Arc;
 
 pub fn init() {
     tracing::info!(">> [EDGE_WORKER] Peer registration handler online");

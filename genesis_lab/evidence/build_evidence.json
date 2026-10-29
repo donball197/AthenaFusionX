@@ -1,0 +1,7 @@
+{
+ "artifact":"genesis_lab_fibonacci_v1",
+ "hash":"7682344094d1f1a7de6e235905a8ee7bd8a8583d11e1f7cc7be5a693959a8926",
+ "cargo_check":"PASS",
+ "tests":"PASS",
+ "workspace_boundary":"ISOLATED"
+}

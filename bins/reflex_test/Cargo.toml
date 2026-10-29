@@ -6,3 +6,6 @@ version.workspace = true
 [dependencies]
 anyhow.workspace = true
 # ⚡ HEAVY CANDLE DEPENDENCIES PURGED FOR LITERT MINION TRANSITION
+
+[lints]
+workspace = true

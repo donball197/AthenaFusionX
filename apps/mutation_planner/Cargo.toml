@@ -1,0 +1,19 @@
+[package]
+autobins = false
+name = "mutation_planner"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+dotenvy.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[[bin]]
+name = "mutation-planner"
+path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -1,1 +1,0 @@
-Create a Flask web server in Python that reads prices.csv and displays the current Bitcoin price on a clean HTML page. Ensure it auto-refreshes every 30 seconds.

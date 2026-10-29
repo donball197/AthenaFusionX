@@ -1,12 +1,11 @@
 //! Broker — deduplicates rapid fire directives within a 200 ms window
 //! so the same button-mash doesn't flood the agent pipeline.
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
-use once_cell::sync::Lazy;
 
-static LAST_FIRE: Lazy<Mutex<HashMap<String, Instant>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static LAST_FIRE: Lazy<Mutex<HashMap<String, Instant>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 const DEBOUNCE_MS: u128 = 200;
 

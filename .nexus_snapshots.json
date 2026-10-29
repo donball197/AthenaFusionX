@@ -1,156 +1,1402 @@
 [
   {
-    "id": "18bf68236218d777",
-    "path": "ui/src/app.css",
-    "hash": "033f40cb7c023a16",
+    "id": "18c1e0183a320f75",
+    "path": "crates/runtime_core/src/executor.rs",
+    "hash": "dc67572ce54e310d",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783258478"
+    "timestamp": "1783953322"
   },
   {
-    "id": "18bf682583ef802f",
-    "path": "ui/src/lib/components/WorkspaceShell.svelte",
-    "hash": "0b3d24af7c16369b",
+    "id": "18c1e052b091f9bf",
+    "path": "crates/runtime_core/src/executor.rs",
+    "hash": "2fc1a36d2152c88f",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783258487"
+    "timestamp": "1783953573"
   },
   {
-    "id": "18bf682ebb262b10",
-    "path": "ui/src/app.css",
-    "hash": "59ab56ed7dc49ada",
+    "id": "18c1e5143ead973f",
+    "path": "Wasm_Execution_Vitals.md",
+    "hash": "e6b67d581d7dc86b",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783258527"
+    "timestamp": "1783958802"
   },
   {
-    "id": "18bfc7e6fb8e03c1",
-    "path": "bins/ide_backend/Cargo.toml",
-    "hash": "63a9b81b3f02eb02",
+    "id": "18c2ca6559d9f1f5",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "b4476f0a9403788a",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783363772"
+    "timestamp": "1784210939"
   },
   {
-    "id": "18bfc7ee6d3e7877",
-    "path": "bins/ide_backend/Cargo.toml",
-    "hash": "13a816aaa1c780a3",
+    "id": "18c2ca69aec6e9f2",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "ad76527ca63e342e",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783363804"
+    "timestamp": "1784210957"
   },
   {
-    "id": "18bfc7f77ae58d92",
-    "path": "bins/ide_backend/Cargo.toml",
-    "hash": "13a816aaa1c780a3",
+    "id": "18c2ca8671d2b86b",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "5cecbd6300f870fd",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783363843"
+    "timestamp": "1784211081"
   },
   {
-    "id": "18bfc8381556551e",
-    "path": "crates/runtime_core/src/cognition_graph.rs",
-    "hash": "a1a550cadadbd3a2",
+    "id": "18c2ca9199a04b48",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "ef733bd65f9bdb54",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783364120"
+    "timestamp": "1784211129"
   },
   {
-    "id": "18c0142e3bd524c7",
+    "id": "18c2ca963a0248b8",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "bfc779b9c994a606",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784211148"
+  },
+  {
+    "id": "18c2ca9ce6a53aa6",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "bfc779b9c994a606",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784211177"
+  },
+  {
+    "id": "18c2caa3343da3b1",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "bfc779b9c994a606",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784211204"
+  },
+  {
+    "id": "18c2caa7ba0e22bd",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "3b85a56110210ed2",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784211224"
+  },
+  {
+    "id": "18c2cf1af282ebe1",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "2fa5fffdb89d1f75",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216117"
+  },
+  {
+    "id": "18c2cf2da2c6f352",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "c1fbd7efa6958626",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216197"
+  },
+  {
+    "id": "18c2cfa10791014d",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "c1fbd7efa6958626",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216692"
+  },
+  {
+    "id": "18c2cfa4e3f62a26",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "26742a3b12fa3a8e",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216709"
+  },
+  {
+    "id": "18c2cfafc2ba22c5",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "536aa61dc302b927",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216756"
+  },
+  {
+    "id": "18c2cfbb720bed44",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "c60c5788fdbb744d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216806"
+  },
+  {
+    "id": "18c2cfc24ed273bc",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "e20cb6ee05aa9433",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216835"
+  },
+  {
+    "id": "18c2cfd8c42af9f5",
+    "path": "Wasm_Execution_Vitals.md",
+    "hash": "602ab2bbef63ecc2",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216932"
+  },
+  {
+    "id": "18c2cfe7d664fd28",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "e20cb6ee05aa9433",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784216997"
+  },
+  {
+    "id": "18c2d45a7a029c71",
+    "path": "crates/runtime_core/src/model_config.rs",
+    "hash": "38cd7ef3ede03d39",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784221887"
+  },
+  {
+    "id": "18c2d460031fe0a7",
+    "path": "crates/runtime_core/src/model_config.rs",
+    "hash": "c38094505de380af",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784221911"
+  },
+  {
+    "id": "18c2d89dd1d70db4",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "9bd3e77a5231ee12",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784226574"
+  },
+  {
+    "id": "18c2d8b352437f13",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "0ec8a59f8d27c5d9",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784226667"
+  },
+  {
+    "id": "18c2d8bd3dbedb29",
+    "path": "crates/runtime_core/src/wasm_runtime.rs",
+    "hash": "0ec8a59f8d27c5d9",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784226709"
+  },
+  {
+    "id": "18c316547944d0d9",
+    "path": "scripts/validate_env.sh",
+    "hash": "80ff0bacfef8bacb",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784294429"
+  },
+  {
+    "id": "18c3258039c57f0f",
+    "path": "crates/protocol/src/lib.rs",
+    "hash": "9b9ab57eedcc89b2",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784311110"
+  },
+  {
+    "id": "18c32733cd098c46",
+    "path": "crates/runtime_core/src/task_manager_v4.rs",
+    "hash": "3a7a1d268dd0a6dd",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784312980"
+  },
+  {
+    "id": "18c38dd5bcc5f7cb",
+    "path": "Scouting_Report",
+    "hash": "87034472195b8e00",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784425826"
+  },
+  {
+    "id": "18c390e7cd619db1",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "ab134186d72b64f9",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784429202"
+  },
+  {
+    "id": "18c3926c1fd0ea2f",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "abfa85159b133b55",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784430870"
+  },
+  {
+    "id": "18c392752b0f51b3",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "64685f1fb324f781",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784430909"
+  },
+  {
+    "id": "18c3927ebf73c17b",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "89195a38ca38afb5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784430950"
+  },
+  {
+    "id": "18c3928820d7c6f5",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "3a5e03e91e738ba3",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784430990"
+  },
+  {
+    "id": "18c392907875deff",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "2a6f2fbdd3a8d81d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784431026"
+  },
+  {
+    "id": "18c3929a87e1d258",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "e765d6909ebd79aa",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784431069"
+  },
+  {
+    "id": "18c3963dd79a33e6",
+    "path": "Upwork_Profile.md",
+    "hash": "9c1012cae9972fff",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784435069"
+  },
+  {
+    "id": "18c3964d0d4d4bb5",
+    "path": "Proposal_Template.md",
+    "hash": "20b9fafafc757165",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784435135"
+  },
+  {
+    "id": "18c3b67a977de1ca",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "e9d3655003c5569d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784470515"
+  },
+  {
+    "id": "18c3baa9b0c3a536",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "d487592a4d2bfd34",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784475115"
+  },
+  {
+    "id": "18c3bab258c4dcf5",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "440fc432dd936966",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784475152"
+  },
+  {
+    "id": "18c3babaffa4c0cd",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "114ce3cd36f0e8c0",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784475189"
+  },
+  {
+    "id": "18c3c0974dfff2f2",
+    "path": "./crates/protocol/src/error.rs",
+    "hash": "be2dc7157fbdd713",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784481633"
+  },
+  {
+    "id": "18c3c09b2a9f9873",
+    "path": "./crates/protocol/src/error.rs",
+    "hash": "be2dc7157fbdd713",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784481650"
+  },
+  {
+    "id": "18c3c0aaf36f66b0",
+    "path": "./crates/protocol/src/error.rs",
+    "hash": "be2dc7157fbdd713",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784481717"
+  },
+  {
+    "id": "18c3c0bb494e67ab",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "9feaecdf8f921a1c",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784481787"
+  },
+  {
+    "id": "18c3c0c39cdecd30",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "12a6a07b6107e7b7",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784481823"
+  },
+  {
+    "id": "18c4c3ca617eca05",
+    "path": "tests/diagnostic_pulse.rs",
+    "hash": "749a48893e0734db",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784766626"
+  },
+  {
+    "id": "18c4d065b78807a2",
     "path": "apps/hello_world/main.rs",
-    "hash": "6ddf42ae3ffa1725",
+    "hash": "7cae39e42bdb4d08",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783447641"
+    "timestamp": "1784780487"
   },
   {
-    "id": "18c017d6fb48701f",
-    "path": "crates/memory_graph/src/lib.rs",
-    "hash": "81c3443d6030367e",
+    "id": "18c4d0677ad6e952",
+    "path": "apps/hello_world/main.rs",
+    "hash": "14adf8689fe32483",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783451664"
+    "timestamp": "1784780495"
   },
   {
-    "id": "18c0189970345d2d",
-    "path": "crates/memory_graph/src/lib.rs",
-    "hash": "ee39a699e37b1d65",
+    "id": "18c4eca7662e70dd",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783452499"
+    "timestamp": "1784811556"
   },
   {
-    "id": "18c0205720bc5036",
-    "path": "jcode_dissection.md",
-    "hash": "67e6f070b1df20bd",
+    "id": "18c4ecbd54fc00f3",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9df8db815bac84f6",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783461011"
+    "timestamp": "1784811650"
   },
   {
-    "id": "18c0a4c07596e65f",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "7b93657b593030e6",
+    "id": "18c4ecc466ded7ab",
+    "path": "apps/hello_world/main.rs",
+    "hash": "7dcf06fb97be7dd2",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783606598"
+    "timestamp": "1784811680"
   },
   {
-    "id": "18c0a4d2a09630e5",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "74aa942ab0b0bf23",
+    "id": "18c4eccc72e27b06",
+    "path": "apps/hello_world/main.rs",
+    "hash": "544f96663d886356",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783606676"
+    "timestamp": "1784811715"
   },
   {
-    "id": "18c0a4de38d0c15a",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "6c07f641729aafda",
+    "id": "18c4ecd5fc46d13b",
+    "path": "apps/hello_world/main.rs",
+    "hash": "7dcf06fb97be7dd2",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783606726"
+    "timestamp": "1784811756"
   },
   {
-    "id": "18c0a51500f21524",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "7bd33835fa927268",
+    "id": "18c4ece0678f1891",
+    "path": "apps/hello_world/main.rs",
+    "hash": "7dcf06fb97be7dd2",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783606962"
+    "timestamp": "1784811800"
   },
   {
-    "id": "18c0a566aff94b59",
-    "path": "crates/nexus_model_hub/Cargo.toml",
-    "hash": "d118ff34c29f3f3a",
+    "id": "18c4ece61addb636",
+    "path": "apps/hello_world/main.rs",
+    "hash": "7dcf06fb97be7dd2",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783607312"
+    "timestamp": "1784811825"
   },
   {
-    "id": "18c0a58187ee989f",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "ab25758689548097",
+    "id": "18c4eced4dc39b2f",
+    "path": "apps/hello_world/main.rs",
+    "hash": "7dcf06fb97be7dd2",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783607428"
+    "timestamp": "1784811856"
   },
   {
-    "id": "18c0a5a64f9f1f11",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "ab25758689548097",
+    "id": "18c4ed087bb2b3f8",
+    "path": "apps/hello_world/main.rs",
+    "hash": "7dcf06fb97be7dd2",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783607586"
+    "timestamp": "1784811973"
   },
   {
-    "id": "18c0a61597935f93",
-    "path": "crates/nexus_model_hub/src/neural_agent.rs",
-    "hash": "ab25758689548097",
+    "id": "18c4ed0e408b13eb",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783608064"
+    "timestamp": "1784811997"
   },
   {
-    "id": "18c0ac89ef01042d",
-    "path": "crates/runtime_core/src/distributed_scheduler.rs",
-    "hash": "1190d49f5d27eadb",
+    "id": "18c4ed165c99d2be",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783615160"
+    "timestamp": "1784812032"
   },
   {
-    "id": "18c14f85316d4cf1",
+    "id": "18c4ed1f0967b327",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812069"
+  },
+  {
+    "id": "18c4ed25c2bf4b44",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812098"
+  },
+  {
+    "id": "18c4ed2df6651716",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812134"
+  },
+  {
+    "id": "18c4ed37bd1a29c7",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812175"
+  },
+  {
+    "id": "18c4ed416bbacf9f",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812217"
+  },
+  {
+    "id": "18c4ed4a933151a1",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812256"
+  },
+  {
+    "id": "18c4ed52343fed1d",
+    "path": "apps/hello_world/main.rs",
+    "hash": "8d3d44e0cc129720",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812289"
+  },
+  {
+    "id": "18c4ed5c129d5a30",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812332"
+  },
+  {
+    "id": "18c4ed635fbc7966",
+    "path": "apps/hello_world/main.rs",
+    "hash": "8d3d44e0cc129720",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812363"
+  },
+  {
+    "id": "18c4ed6b927d8438",
+    "path": "apps/hello_world/main.rs",
+    "hash": "9094b79acf0b9768",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784812398"
+  },
+  {
+    "id": "18c4f5f5243bae15",
+    "path": "crates/nexus_substrate/src/token_ledger.rs",
+    "hash": "b79031f7792be4a5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784821785"
+  },
+  {
+    "id": "18c4f5f5df515d6f",
+    "path": "crates/nexus_substrate/src/token_ledger.rs",
+    "hash": "b79031f7792be4a5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784821788"
+  },
+  {
+    "id": "18c4f61b7309b2bb",
+    "path": "crates/nexus_substrate/src/token_ledger.rs",
+    "hash": "b79031f7792be4a5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784821950"
+  },
+  {
+    "id": "18c4f629e5d7cfc6",
+    "path": "crates/nexus_substrate/src/token_ledger.rs",
+    "hash": "b79031f7792be4a5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784822012"
+  },
+  {
+    "id": "18c4f63df84a6962",
+    "path": "crates/nexus_substrate/src/token_ledger.rs",
+    "hash": "b79031f7792be4a5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784822098"
+  },
+  {
+    "id": "18c4f9e46f420706",
+    "path": "crates/runtime_core/src/light_verifier.rs",
+    "hash": "36d6a13eef414a16",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1784826111"
+  },
+  {
+    "id": "18c5ba2840f51819",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "1bb8c09d3e39634b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785037509"
+  },
+  {
+    "id": "18c5bc523e2b13f4",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "5a610573966cd5fc",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785039888"
+  },
+  {
+    "id": "18c5be1bb91b3c8b",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "be158a4f34c4dcd5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785041853"
+  },
+  {
+    "id": "18c5be21f8b10b84",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "e7f912fd44fc81d5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785041880"
+  },
+  {
+    "id": "18c5be3f5769b86c",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "61d23d092838c7f0",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785042006"
+  },
+  {
+    "id": "18c5be44ebe5812f",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "28aa53467b0b4576",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785042030"
+  },
+  {
+    "id": "18c5be4ee2eb13d0",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "bb2b2e0c150b280d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785042073"
+  },
+  {
+    "id": "18c5be5ed0950660",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "bdecf2c627d0facf",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785042141"
+  },
+  {
+    "id": "18c5be66419673b2",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "69e679428cc40a5c",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785042173"
+  },
+  {
+    "id": "18c5be70d4f81e55",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "8584b6c4d7c8f34b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785042219"
+  },
+  {
+    "id": "18c5c3e4e0282696",
+    "path": "apps/logic_cell/src/lib.rs",
+    "hash": "64e7f4d84bfdd878",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785048215"
+  },
+  {
+    "id": "18c5cced44a0ae74",
+    "path": "apps/logic_cell/src/lib.rs",
+    "hash": "64e7f4d84bfdd878",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785058146"
+  },
+  {
+    "id": "18c5e3d139f2bab1",
+    "path": "vault_migration_plan.md",
+    "hash": "6b29c3705e3f3276",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785083315"
+  },
+  {
+    "id": "18c5e3d78d4d026f",
+    "path": "remediation_plan.md",
+    "hash": "babf746ddef5c24d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785083342"
+  },
+  {
+    "id": "18c5e83510a6179e",
+    "path": "audits/performance_bottleneck_report.md",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785088141"
+  },
+  {
+    "id": "18c5e8832f2c8bf4",
+    "path": "bins/ide_backend/src/gateway_trait.rs",
+    "hash": "c9b0c96f14b6de6a",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785088477"
+  },
+  {
+    "id": "18c5f0b9fa8f6b65",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "d5fe46a46fb5fb33",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785097508"
+  },
+  {
+    "id": "18c609c9da8dcba7",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "d5fe46a46fb5fb33",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785125064"
+  },
+  {
+    "id": "18c60a1f2c85329d",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "d5fe46a46fb5fb33",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785125431"
+  },
+  {
+    "id": "18c62a55b4d211c9",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "11706f2c99f291bd",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785160849"
+  },
+  {
+    "id": "18c62abfcebc787a",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "1a888d567da7d27b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785161305"
+  },
+  {
+    "id": "18c62b0fc50ab3f8",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "d5fe46a46fb5fb33",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785161649"
+  },
+  {
+    "id": "18c62c887e9619a5",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "39d5c8841d5b5d60",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785163267"
+  },
+  {
+    "id": "18c62ca402467f34",
+    "path": "bins/ide_backend/src/system_monitor.rs",
+    "hash": "39d5c8841d5b5d60",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785163385"
+  },
+  {
+    "id": "18c63587b7265611",
+    "path": "architectural_comparison.md",
+    "hash": "1bcd5eae7b2125e6",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785173159"
+  },
+  {
+    "id": "18c635d14b31d1e6",
+    "path": "crates/runtime_core/src/epistemic_engine.rs",
+    "hash": "c2a57484e86bd310",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785173475"
+  },
+  {
+    "id": "18c641c6a5844bfb",
+    "path": "Self_Evolution_Strategy.md",
+    "hash": "c3f9553ce2526249",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785186623"
+  },
+  {
+    "id": "18c64738ba9c1096",
+    "path": "crates/runtime_core/src/lib.rs",
+    "hash": "e7a0e8fa87bd8584",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785192611"
+  },
+  {
+    "id": "18c6498e85a0580d",
+    "path": "crates/runtime_core/src/repository_intelligence/mod.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785195178"
+  },
+  {
+    "id": "18c649909a59ea68",
+    "path": "crates/runtime_core/src/repository_intelligence/mod.rs",
+    "hash": "eddc9f34db687295",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785195187"
+  },
+  {
+    "id": "18c64999afc45dbd",
+    "path": "crates/runtime_core/src/repository_intelligence/scanner.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785195226"
+  },
+  {
+    "id": "18c649a48e44d39c",
+    "path": "crates/runtime_core/src/repository_intelligence/inventory.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785195273"
+  },
+  {
+    "id": "18c64d483c766585",
+    "path": "crates/runtime_core/src/repository_intelligence/scanner.rs",
+    "hash": "dc926359c23f1c7f",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199274"
+  },
+  {
+    "id": "18c64d4b6f4faed7",
+    "path": "crates/runtime_core/src/repository_intelligence/scanner.rs",
+    "hash": "f39566ed31c44ddc",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199288"
+  },
+  {
+    "id": "18c64d567e83da30",
+    "path": "crates/runtime_core/src/repository_intelligence/dependency_graph.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199336"
+  },
+  {
+    "id": "18c64d5c5cd869d8",
+    "path": "crates/runtime_core/src/repository_intelligence/dependency_graph.rs",
+    "hash": "0102c06c580509b6",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199361"
+  },
+  {
+    "id": "18c64d686d7a3ccf",
+    "path": "crates/runtime_core/src/repository_intelligence/symbol_index.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199413"
+  },
+  {
+    "id": "18c64d6e1a0ac473",
+    "path": "crates/runtime_core/src/repository_intelligence/symbol_index.rs",
+    "hash": "1f374c114b317067",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199437"
+  },
+  {
+    "id": "18c64d760452813d",
+    "path": "crates/runtime_core/src/repository_intelligence/impact.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199471"
+  },
+  {
+    "id": "18c64d79b57ea7a8",
+    "path": "crates/runtime_core/src/repository_intelligence/impact.rs",
+    "hash": "f15b4e80d7fe39f1",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199487"
+  },
+  {
+    "id": "18c64d8509fe84c8",
+    "path": "crates/runtime_core/src/repository_intelligence/planner.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199536"
+  },
+  {
+    "id": "18c64d8860005203",
+    "path": "crates/runtime_core/src/repository_intelligence/planner.rs",
+    "hash": "474f5653df20320a",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199550"
+  },
+  {
+    "id": "18c64d95e9f6331f",
+    "path": "crates/runtime_core/src/repository_intelligence/proposal.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199608"
+  },
+  {
+    "id": "18c64d9935078ab0",
+    "path": "crates/runtime_core/src/repository_intelligence/proposal.rs",
+    "hash": "d7743777d2f5b638",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199622"
+  },
+  {
+    "id": "18c64da0c02b0cc3",
+    "path": "crates/runtime_core/src/repository_intelligence/evidence.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785199655"
+  },
+  {
+    "id": "18c64fb17648d8c2",
+    "path": "crates/runtime_core/src/mutation_critic.rs",
+    "hash": "7055249a15c3fb72",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785201925"
+  },
+  {
+    "id": "18c656b39880990c",
+    "path": "bins/ide_backend/Cargo.toml",
+    "hash": "dc0ac8bb3bfcb811",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785209631"
+  },
+  {
+    "id": "18c65889b9cbb8d2",
+    "path": "risk_tier_classification_report.md",
+    "hash": "c4ebdf948b61aad0",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785211650"
+  },
+  {
+    "id": "18c65b83dcb4f036",
+    "path": "crates/runtime_core/src/adaptive_mission/mod.rs",
+    "hash": "b8d7a13725586ccb",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785214924"
+  },
+  {
+    "id": "18c675ee581c9780",
+    "path": "comparison_report.md",
+    "hash": "b6fcf848ddf07e83",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785243968"
+  },
+  {
+    "id": "18c67a23b69d6442",
+    "path": "comparative_analysis.md",
+    "hash": "c897b4ee8e266db8",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785248596"
+  },
+  {
+    "id": "18c67a66a8bbc79f",
+    "path": "strengths_weaknesses_top20.json",
+    "hash": "e765658326ca63dd",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785248883"
+  },
+  {
+    "id": "18c67b04f84d7434",
+    "path": "athenafusionx_advantages.md",
+    "hash": "d35afe5979faaf40",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785249563"
+  },
+  {
+    "id": "18c6964f8cf88722",
+    "path": "bins/ide_backend/src/self_healing_engine.rs",
+    "hash": "ed9797e7ea1a887f",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785279570"
+  },
+  {
+    "id": "18c69dc689cf46f5",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "49714edfb4e284c5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785287778"
+  },
+  {
+    "id": "18c69dd476d08d23",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "cbf29ce484222325",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785287838"
+  },
+  {
+    "id": "18c6a0326598bc09",
+    "path": "bins/ide_backend/src/self_healing_engine.rs",
+    "hash": "51b419b698efd600",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785290440"
+  },
+  {
+    "id": "18c6a11ebbb2ed03",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "3accca2296464953",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785291455"
+  },
+  {
+    "id": "18c6a1bd099ccbe8",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "1ca02644eb422e12",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785292135"
+  },
+  {
+    "id": "18c6a2884178e5c9",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "fe43314eaa613601",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785293008"
+  },
+  {
+    "id": "18c6a2d7085bfb3d",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "adce776b1ea3877d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785293346"
+  },
+  {
+    "id": "18c6a36d93936b3d",
+    "path": "crates/runtime_core/src/lib.rs",
+    "hash": "c4236ff8d334c709",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785293993"
+  },
+  {
+    "id": "18c6a382e8dbf21f",
+    "path": "crates/runtime_core/src/sidecar_host.rs",
+    "hash": "61063367cb8ff936",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785294084"
+  },
+  {
+    "id": "18c6a7dda78d65dd",
+    "path": "bins/ide_backend/src/sidecar_host.rs",
+    "hash": "5b0e685835feb7be",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785298872"
+  },
+  {
+    "id": "18c6a8283c1b0c75",
+    "path": "bins/ide_backend/src/sidecar_host.rs",
+    "hash": "20a8bed77b434e56",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785299193"
+  },
+  {
+    "id": "18c6a8edca1899ea",
+    "path": "crates/runtime_core/src/lib.rs",
+    "hash": "c248152167bfb464",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785300041"
+  },
+  {
+    "id": "18c6aa0c7e9b5528",
+    "path": "crates/runtime_core/src/lib.rs",
+    "hash": "c248152167bfb464",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785301272"
+  },
+  {
+    "id": "18c6d24084c31ddc",
+    "path": "bins/ide_backend/src/main.rs",
+    "hash": "6d64501e65256426",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785345476"
+  },
+  {
+    "id": "18c6da6ea71f36b6",
+    "path": "bins/ide_backend/src/main.rs",
+    "hash": "193a9b3226bc6268",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785354471"
+  },
+  {
+    "id": "18c6f4bb1902d80d",
+    "path": "bins/ide_backend/src/main.rs",
+    "hash": "c4e41968f8eb7324",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785383386"
+  },
+  {
+    "id": "18c714462193e250",
     "path": "bins/cli/src/main.rs",
-    "hash": "f33c88479829c82a",
+    "hash": "a51f6c465be36779",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783794360"
+    "timestamp": "1785418068"
   },
   {
-    "id": "18c155ca8e367a6f",
-    "path": "JCode_Architecture_Analysis.md",
-    "hash": "a23d11344d1944aa",
+    "id": "18c7144bb5ade386",
+    "path": "bins/cli/src/main.rs",
+    "hash": "a51f6c465be36779",
     "directive": "Pre-fix snapshot",
-    "timestamp": "1783801255"
+    "timestamp": "1785418092"
+  },
+  {
+    "id": "18c7273f46905ef9",
+    "path": "./test_polyglot.py",
+    "hash": "cb705883c562ee0f",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785438929"
+  },
+  {
+    "id": "18c727ad952207c1",
+    "path": "apps/hello_sidecar/Cargo.toml",
+    "hash": "29ab84377c37eb10",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785439403"
+  },
+  {
+    "id": "18c727eab2be73a3",
+    "path": "apps/hello_sidecar/Cargo.toml",
+    "hash": "5aa60917afeda846",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785439666"
+  },
+  {
+    "id": "18c73522ebad1100",
+    "path": "EVOLUTION_REPORT.md",
+    "hash": "3b2f253e3352cfdd",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785454201"
+  },
+  {
+    "id": "18c740d1b0785c9a",
+    "path": "bins/ide_backend/src/auth.rs",
+    "hash": "9a3aa1788707d2ce",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785467046"
+  },
+  {
+    "id": "18c75f790628a073",
+    "path": "apps/telemetry_node/src/main.rs",
+    "hash": "a2492c0a490bf784",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785500750"
+  },
+  {
+    "id": "18c768c2622122af",
+    "path": "performance_report_template.md",
+    "hash": "31494f0e999b1342",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785510961"
+  },
+  {
+    "id": "18c8c05ba25734f9",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "110d6b57ab1dda68",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785888752"
+  },
+  {
+    "id": "18c8c0ac0b65c91f",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "783465accb9c5c4e",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889097"
+  },
+  {
+    "id": "18c8c0ade7a62a03",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "a51cf126c2585007",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889105"
+  },
+  {
+    "id": "18c8c0afdc11d904",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "a51cf126c2585007",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889113"
+  },
+  {
+    "id": "18c8c0b27b5aa998",
+    "path": "apps/math_utils/Cargo.toml",
+    "hash": "a51cf126c2585007",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889125"
+  },
+  {
+    "id": "18c8c0bd4251b0f3",
+    "path": "/home/donball197/AthenaFusionX/Cargo.toml",
+    "hash": "1ed7d3b5abbf5e14",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785889171"
+  },
+  {
+    "id": "18c8c5078f2dd174",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "64e7f4d84bfdd878",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893888"
+  },
+  {
+    "id": "18c8c50b22b4b1e8",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893903"
+  },
+  {
+    "id": "18c8c50c9cefbc44",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "e64b3ba572b276e7",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893910"
+  },
+  {
+    "id": "18c8c50dfecd5d47",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893916"
+  },
+  {
+    "id": "18c8c50f60f226a3",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893922"
+  },
+  {
+    "id": "18c8c519f7d48611",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893967"
+  },
+  {
+    "id": "18c8c51b71ab853f",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893973"
+  },
+  {
+    "id": "18c8c51ce9d52a10",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893980"
+  },
+  {
+    "id": "18c8c51e57b77c30",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893986"
+  },
+  {
+    "id": "18c8c51fbb9deb86",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785893992"
+  },
+  {
+    "id": "18c8c5288221d13a",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894030"
+  },
+  {
+    "id": "18c8c529fc689b19",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "5ecedabbeba9d9bd",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894036"
+  },
+  {
+    "id": "18c8c52b5e936002",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894042"
+  },
+  {
+    "id": "18c8c52ce528ff28",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894048"
+  },
+  {
+    "id": "18c8c53423b6cb09",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894079"
+  },
+  {
+    "id": "18c8c538e96d881f",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "d63b54710ba22f28",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894100"
+  },
+  {
+    "id": "18c8c53a3f64853b",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894106"
+  },
+  {
+    "id": "18c8c53badae21aa",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894112"
+  },
+  {
+    "id": "18c8c54172828ae5",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894137"
+  },
+  {
+    "id": "18c8c54b144c439c",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894178"
+  },
+  {
+    "id": "18c8c55e88cc3be4",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894262"
+  },
+  {
+    "id": "18c8c56a2b0a0e75",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894312"
+  },
+  {
+    "id": "18c8c5771fcccdd8",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894367"
+  },
+  {
+    "id": "18c8c589c419c20c",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894447"
+  },
+  {
+    "id": "18c8c59a08c5f525",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "27393556c688d033",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894517"
+  },
+  {
+    "id": "18c8c5b2fb02a4a9",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894624"
+  },
+  {
+    "id": "18c8c5c1ab09b759",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "28cb049a5e4d8cea",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894687"
+  },
+  {
+    "id": "18c8c5cb4cfe8235",
+    "path": "apps/math_utils/src/lib.rs",
+    "hash": "f913215ef2ebb78b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785894729"
+  },
+  {
+    "id": "18c8e020697d1a92",
+    "path": "analyze_audit.py",
+    "hash": "d9f72e40e33c7998",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1785923682"
+  },
+  {
+    "id": "18c93de30c6178d0",
+    "path": "remediation_plan.json",
+    "hash": "efa9d1726f477dad",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026772"
+  },
+  {
+    "id": "18c93deeaef06f9d",
+    "path": "remediation_plan.json",
+    "hash": "ca317b58690d898c",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026822"
+  },
+  {
+    "id": "18c93df52b693d51",
+    "path": "remediation_plan.json",
+    "hash": "4f74b5be15311e87",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026850"
+  },
+  {
+    "id": "18c93dfcb40738e3",
+    "path": "remediation_plan.json",
+    "hash": "0e1e4f660876264b",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026882"
+  },
+  {
+    "id": "18c93e02176606a8",
+    "path": "remediation_plan.json",
+    "hash": "df0e3ee53c9ec26d",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026905"
+  },
+  {
+    "id": "18c93e0d57f75f7d",
+    "path": "remediation_plan.json",
+    "hash": "f3d42d8c583184c5",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026954"
+  },
+  {
+    "id": "18c93e118a145aba",
+    "path": "remediation_plan.json",
+    "hash": "08e4c6c5ed51b105",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026972"
+  },
+  {
+    "id": "18c93e152a86997a",
+    "path": "remediation_plan.json",
+    "hash": "0ad275c6d46db98c",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786026987"
+  },
+  {
+    "id": "18c93e1b76975597",
+    "path": "remediation_plan.json",
+    "hash": "b5c15ebab4b73bd2",
+    "directive": "Pre-fix snapshot",
+    "timestamp": "1786027014"
   }
 ]

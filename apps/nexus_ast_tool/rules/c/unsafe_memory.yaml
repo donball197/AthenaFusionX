@@ -1,0 +1,8 @@
+id: "C_UNSAFE_MEMORY"
+language: "c"
+severity: "High"
+description: "Dangerous memory functions (strcpy, gets, sprintf) that can cause buffer overflows."
+tree_sitter_query: |
+  (call_expression
+    function: (identifier) @func_name (#match? @func_name "^(strcpy|strcat|gets|sprintf|vsprintf|scanf|sscanf)$")
+  ) @danger.unsafe_memory
