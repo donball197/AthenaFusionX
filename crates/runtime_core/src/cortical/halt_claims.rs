@@ -638,6 +638,7 @@ pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>
 }
 
 /// Backticked public-item claims in `report` that are not verified public in `corpus`.
+#[cfg(test)]
 fn unverified_pub_claims(report: &str, corpus: &str) -> Vec<String> {
     check_pub_claims(report, corpus).1
 }
