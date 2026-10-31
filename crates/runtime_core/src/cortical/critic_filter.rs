@@ -21,6 +21,7 @@ impl CorticalLoop {
         let mut filtered_actions: Vec<AgentAction> = Vec::with_capacity(actions.len());
         let mut vetoed_keys: Vec<String> = Vec::new();
         let mut condition_satisfied_seen = false;
+        let mut refused_cmds: Vec<String> = Vec::new();
 
         for action in actions {
             let action_key = attempt_key(session, &action);
@@ -39,6 +40,10 @@ impl CorticalLoop {
                     "\x1b[1;31m>> [ANTI-LOOP] Action [{}] was already refused by the read-only gate; vetoing re-proposal.\x1b[0m",
                     action_key
                 ));
+                refused_cmds.push(match &action {
+                    AgentAction::ExecuteCommand { command, .. } => command.clone(),
+                    _ => action_key.clone(),
+                });
                 vetoed_keys.push(action_key);
                 continue;
             }
@@ -103,6 +108,30 @@ impl CorticalLoop {
                 }
                 filtered_actions.push(action);
             }
+        }
+
+        // REFUSAL -> HALT: when every proposed action was refused by the
+        // read-only gate, report the refusal as a halt finding (once per node)
+        // instead of spinning until belief decays.
+        if filtered_actions.is_empty()
+            && !refused_cmds.is_empty()
+            && !session.local_evidence.contains("[REFUSAL_HALT_EMITTED]")
+        {
+            let cmds: Vec<String> =
+                refused_cmds.iter().map(|c| c.replace('`', "")).collect();
+            let report = format!(
+                "Read-only gate refusal finding: the read-only command gate refused the required command before execution, so no command output was collected and this audit criterion is not met. Refused command: {}. The gate refuses command substitution, redirection and other constructs it cannot prove read-only; the command must be rewritten without them to be retried.",
+                cmds.join(" ; ")
+            );
+            session.local_evidence.push_str("[REFUSAL_HALT_EMITTED]\n");
+            self.log(
+                "\x1b[1;36m>> [ANTI-LOOP] Converting read-only refusal into a halt finding.\x1b[0m"
+                    .to_string(),
+            );
+            return AntiLoopOutcome::Proceed(vec![AgentAction::Halt {
+                _thought_process: None,
+                reasoning: report,
+            }]);
         }
 
         if filtered_actions.is_empty() && condition_satisfied_seen && vetoed_keys.is_empty() {
