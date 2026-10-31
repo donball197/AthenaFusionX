@@ -397,7 +397,8 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
         // 3. Unquoted command after a colon on the same line, e.g.
         //    "run exactly this command: echo 'x' > f". Taken verbatim to end
         //    of line. Trailing prose would make evidence matching fail closed.
-        let line = after.lines().next().unwrap_or("");
+        let line_owned = take_balanced_lines(after);
+        let line = line_owned.as_str();
         if let Some(colon) = line.find(':').filter(|&c| {
             // The colon must introduce the command in the same clause: close
             // to the word "command", no sentence break, no backtick between.
@@ -466,6 +467,34 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
     }
 
     None
+}
+
+/// First line of `text`, extended across following lines while single or
+/// double quotes are unbalanced, so a command whose `printf '%s\n'` became a
+/// real newline is not cut at the first line. Falls back to the first line.
+fn take_balanced_lines(text: &str) -> String {
+    let mut out = String::new();
+    let (mut sq, mut dq) = (false, false);
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
+        for c in line.chars() {
+            match c {
+                '\'' if !dq => sq = !sq,
+                '"' if !sq => dq = !dq,
+                _ => {}
+            }
+        }
+        if !sq && !dq {
+            return out;
+        }
+        if i >= 40 {
+            break;
+        }
+    }
+    text.lines().next().unwrap_or("").to_string()
 }
 
 /// Truncate `line` at the earliest stopper that is NOT inside a quoted span
@@ -750,8 +779,8 @@ impl SubgoalCompletionEngine {
         let read_only = !declared_mutation_criteria
             && (detect_read_only(objective)
                 || detect_read_only(scopes.root_directive)
-                || crate::cortical::read_only_gate::mission_declares_read_only(objective)
-                || crate::cortical::read_only_gate::mission_declares_read_only(
+                || crate::cortical::read_only_gate::mission_read_only_intent(objective)
+                || crate::cortical::read_only_gate::mission_read_only_intent(
                     scopes.root_directive,
                 ));
 
@@ -816,6 +845,20 @@ impl SubgoalCompletionEngine {
                 conditions: vec![CompletionCondition::LineageEvidenceAcquired],
                 is_mutation_task: false,
                 read_only,
+                required_artifact_paths: Vec::new(),
+            };
+        }
+
+        // Negative-evidence probes (e.g. "read a nonexistent file, then halt"): the target
+        // path is declared absent, so ReadPathAcquired can never be met. The halt that
+        // quotes the substrate failure is the deliverable; the verifier still judges it.
+        if is_negative_evidence_probe(classify_text) {
+            return SubgoalContract {
+                node_id: node_id.to_string(),
+                objective: objective.to_string(),
+                conditions: vec![CompletionCondition::HaltDelivered],
+                is_mutation_task: false,
+                read_only: true,
                 required_artifact_paths: Vec::new(),
             };
         }
@@ -2029,5 +2072,49 @@ mod colon_introducer_tests {
             extract_required_command(d).as_deref(),
             Some(r#"python3 -c "import math_ops; print(math_ops.divide(10, 0))""#)
         );
+    }
+}
+
+/// "Read a nonexistent file, then halt with the substrate's error" style probes.
+#[allow(clippy::items_after_test_module)]
+fn is_negative_evidence_probe(lowered: &str) -> bool {
+    let absent = lowered.contains("nonexistent") || lowered.contains("non-existent");
+    let probe = ["failure handling", "hallucinat", "fabricat", "epistemic", "probe"]
+        .iter()
+        .any(|k| lowered.contains(k));
+    absent && probe
+}
+
+#[cfg(test)]
+mod negative_probe_tests {
+    use super::*;
+
+    #[test]
+    fn d4_objective_gets_a_halt_only_contract() {
+        let c = SubgoalCompletionEngine::infer_contract(
+            "task_1",
+            "Use the native read_file tool to inspect the nonexistent file crates/runtime_core/src/nexus_hallucination_probe_99.yaml to verify failure handling and epistemic integrity.",
+        );
+        assert!(c.read_only);
+        assert!(!c.is_mutation_task);
+        assert!(matches!(c.conditions.as_slice(), [CompletionCondition::HaltDelivered]));
+    }
+
+    #[test]
+    fn ordinary_missions_are_not_probes() {
+        assert!(!is_negative_evidence_probe("fix the bug where the config file does not exist"));
+        assert!(!is_negative_evidence_probe("read crates/a/src/lib.rs and summarize"));
+    }
+}
+
+#[cfg(test)]
+mod newline_contract_tests {
+    use super::*;
+
+    #[test]
+    fn required_command_survives_printf_newline_split() {
+        let obj = "Execute the bounded baseline command exactly as specified: cd /r && printf '%s\n' 'A' && printf '%s\n' 'B' && pwd";
+        let cmd = extract_required_command(obj).expect("command extracted");
+        assert!(cmd.ends_with("&& pwd"), "truncated: {cmd:?}");
     }
 }

@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 /// differences (JSON \n renderings vs. live newlines) no longer create
 /// distinct identities.
 pub fn normalize_cmd(raw: &str) -> String {
-    strip_directive_suffix(raw).split_whitespace().collect::<Vec<_>>().join(" ")
+    strip_directive_suffix(raw).replace("\\n", " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Directive phrasing often wraps a command as "Run: <command> and report
@@ -190,5 +190,18 @@ mod tests {
                 normalize_cmd("find X | wc -l")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod literal_newline_tests {
+    use super::cmd_hash;
+
+    #[test]
+    fn literal_backslash_n_equals_real_newline() {
+        assert_eq!(
+            cmd_hash("printf '%s\\n' 'A' && pwd"),
+            cmd_hash("printf '%s\n' 'A' && pwd")
+        );
     }
 }
