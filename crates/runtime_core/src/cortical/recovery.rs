@@ -124,7 +124,7 @@ impl CorticalLoop {
                 || session.local_evidence.contains("[WRITE_OK]");
 
             let read_only_mission = session.contract.read_only
-                || crate::cortical::read_only_gate::mission_declares_read_only(mission);
+                || crate::cortical::read_only_gate::mission_read_only_intent(mission);
 
             if read_ok_done
                 && patch_marker_needed
