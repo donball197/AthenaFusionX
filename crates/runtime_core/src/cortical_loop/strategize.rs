@@ -848,37 +848,45 @@ mod leaked_call_tests {
     }
 }
 
-/// Build the auto-injected halt report from the satisfied command evidence so
-/// it carries real findings instead of a bare one-liner. No backticks and no
+/// Build the auto-injected halt report from the satisfied command evidence.
+/// Uses the last [CMD_OK] block that has a Status line, so a trailing
+/// header-only duplicate block cannot blank the report. No backticks and no
 /// line-range text, so the symbol and range checks have nothing to verify.
 fn auto_halt_report(evidence: &str) -> String {
-    let mut status = String::from("unknown status");
-    let mut hash = String::new();
-    let mut stdout = String::new();
+    let mut blocks: Vec<(String, String, String)> = Vec::new();
+    let mut cur: Option<(String, String, String)> = None;
     let mut in_stdout = false;
     for line in evidence.lines() {
         let t = line.trim_start();
         if t.starts_with("[CMD_OK] Command:") {
-            status = String::from("unknown status");
-            hash.clear();
-            stdout.clear();
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
+            cur = Some((String::new(), String::new(), String::new()));
             in_stdout = false;
-        } else if let Some(s) = t.strip_prefix("Status:") {
-            status = s.trim().to_string();
-        } else if let Some(h) = t.strip_prefix("[CMD_HASH]") {
-            hash = h.trim().to_string();
-        } else if t == "STDOUT:" {
-            in_stdout = true;
-        } else if in_stdout && t.starts_with('[') && t.contains(']') {
-            in_stdout = false;
-        } else if in_stdout {
-            stdout.push_str(line);
-            stdout.push_str(" | ");
+        } else if let Some(b) = cur.as_mut() {
+            if let Some(s) = t.strip_prefix("Status:") {
+                b.0 = s.trim().to_string();
+            } else if let Some(h) = t.strip_prefix("[CMD_HASH]") {
+                b.1 = h.trim().to_string();
+            } else if t == "STDOUT:" {
+                in_stdout = true;
+            } else if in_stdout && t.starts_with('[') && t.contains(']') {
+                in_stdout = false;
+            } else if in_stdout {
+                b.2.push_str(line);
+                b.2.push_str(" | ");
+            }
         }
     }
-    let excerpt: String = stdout.replace('`', "").chars().take(1200).collect();
+    if let Some(b) = cur.take() {
+        blocks.push(b);
+    }
+    let (status, hash, stdout) =
+        blocks.into_iter().rev().find(|b| !b.0.is_empty()).unwrap_or_default();
+    let excerpt: String = stdout.replace('`', "").chars().take(2500).collect();
     format!(
-        "Deterministic contract satisfied: the required read-only command executed with {}. Command hash {}. Captured stdout: {}. This report covers only that command's output and does not establish any other audit criterion.",
+        "Phase A baseline findings from the single required read-only command (status: {}; command hash {}). Captured stdout: {} Outstanding: this command covers repository identity, git status, top processes by RSS, listening sockets as seen by ss, and memory only. It does not cover daemon health, logs, tests, or dependency state, so Phase A is not complete.",
         status, hash, excerpt
     )
 }
@@ -888,12 +896,11 @@ mod auto_halt_report_tests {
     use super::auto_halt_report;
 
     #[test]
-    fn report_is_substantive_and_clean() {
-        let ev = "[CMD_OK] Command: echo hi\nStatus: exit status: 0\n[CMD_HASH] abc123\nSTDOUT:\nROOT=/x\nBRANCH=dev\n";
+    fn report_survives_trailing_header_only_block() {
+        let ev = "[CMD_OK] Command: echo hi\nStatus: exit status: 0\n[CMD_HASH] abc123\nSTDOUT:\nROOT=/x\nBRANCH=dev\n\n\n[CMD_OK] Command: echo hi\n[HALT] earlier\n";
         let r = auto_halt_report(ev);
-        assert!(r.chars().count() >= 50);
+        assert!(r.contains("ROOT=/x") && r.contains("abc123") && r.contains("exit status: 0"));
         assert!(r.ends_with('.'));
-        assert!(r.contains("ROOT=/x") && r.contains("abc123"));
         assert!(!r.contains('`'));
     }
 }
