@@ -26,6 +26,23 @@ impl CorticalLoop {
             let action_key = attempt_key(session, &action);
             let attempt_count = session.global_action_attempt_count(&action_key);
 
+            // REFUSED-ACTION VETO: the read-only gate refuses before an action
+            // ever counts as attempted, so classify_duplicate never sees it and
+            // the same refused proposal was re-admitted every turn (60-turn
+            // spin). Once a refusal marker exists, veto repeats of any action
+            // the gate would refuse again.
+            if session.contract.read_only
+                && crate::cortical::read_only_gate::violates_read_only(&action)
+                && session.local_evidence.contains("[READ_ONLY_VIOLATION]")
+            {
+                self.log(format!(
+                    "\x1b[1;31m>> [ANTI-LOOP] Action [{}] was already refused by the read-only gate; vetoing re-proposal.\x1b[0m",
+                    action_key
+                ));
+                vetoed_keys.push(action_key);
+                continue;
+            }
+
             // STRICT ANTI-LOOP:
             // An identical action that has already crossed the execution
             // boundary is not new evidence. Drop it from the batch, but
