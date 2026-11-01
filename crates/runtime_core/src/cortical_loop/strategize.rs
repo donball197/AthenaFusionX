@@ -993,11 +993,36 @@ mod leaked_call_tests {
     }
 }
 
+/// Drop evidence inherited from earlier DAG nodes so a halt report only
+/// describes what this node itself observed.
+fn strip_lineage_blocks(evidence: &str) -> String {
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if t.starts_with("[DAG LINEAGE INHERITED EVIDENCE") {
+            skipping = true;
+            continue;
+        }
+        if skipping {
+            if t.starts_with("[DAG LINEAGE COMPLETE") {
+                skipping = false;
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Build the auto-injected halt report from the physical evidence already
 /// recorded for this node: the last [CMD_OK] block that has a Status line, plus
 /// any [ACTION FAILED] records. No backticks and no line-range text, so the
 /// symbol and range checks have nothing to verify.
 fn auto_halt_report(evidence: &str) -> String {
+    let own_evidence = strip_lineage_blocks(evidence);
+    let evidence = own_evidence.as_str();
     let lines: Vec<&str> = evidence.lines().collect();
     let mut blocks: Vec<(String, String, String)> = Vec::new();
     let mut cur: Option<(String, String, String)> = None;
@@ -1060,7 +1085,7 @@ fn auto_halt_report(evidence: &str) -> String {
     }
     if parts.is_empty() {
         parts.push(
-            "The deterministic contract for this node is satisfied by the physical evidence markers recorded for it."
+            "This node recorded no physical evidence of its own: its contract was satisfied only by evidence inherited from earlier nodes, so no finding of this node is reported here."
                 .to_string(),
         );
     }
@@ -1090,5 +1115,18 @@ mod auto_halt_report_tests {
         assert!(r.contains("PATH_NOT_FOUND") && r.contains("does not exist"));
         assert!(!r.contains("Phase A") && !r.contains("status: ;"));
         assert!(r.ends_with('.') && !r.contains('`'));
+    }
+}
+
+#[cfg(test)]
+mod lineage_halt_tests {
+    use super::auto_halt_report;
+
+    #[test]
+    fn inherited_only_evidence_is_not_reported_as_own() {
+        let ev = "[DAG LINEAGE INHERITED EVIDENCE sha256:x]\n[CMD_OK] Command: git status\nStatus: exit status: 0\n[CMD_HASH] abc\nSTDOUT:\ndev\n[DAG LINEAGE COMPLETE sha256:x]\n";
+        let r = auto_halt_report(ev);
+        assert!(r.contains("inherited") && !r.contains("abc"));
+        assert!(r.ends_with('.'));
     }
 }
