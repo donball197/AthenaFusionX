@@ -20,6 +20,7 @@ const SAFE_COMMANDS: &[&str] = &[
     // sysinspect: read-only host inspection for runtime/baseline audits.
     "ps", "free", "ss", "netstat", "uptime", "nproc", "df", "du", "uname", "whoami", "id",
     "date", "lscpu", "vmstat", "pgrep", "which", "ulimit", "true", "false",
+    "sed", "sqlite3",
 ];
 const SAFE_GIT: &[&str] = &[
     "log",
@@ -46,6 +47,79 @@ fn norm(tok: &str) -> String {
 }
 
 /// True only for pipelines of allowlisted read-only commands.
+/// True only when a `sqlite3` invocation is a bounded read.
+///
+/// Accepts:
+///   * dot-commands `.schema`, `.tables`, `.indexes`, `.databases`
+///     (no -readonly required; these cannot mutate)
+///   * SQL starting with SELECT / PRAGMA / WITH, gated by `-readonly` AND
+///     free of write or side-effect keywords
+/// Refuses:
+///   * unknown flags
+///   * dot commands outside the allow-list (`.shell`, `.read`, `.output`,
+///     `.import`, `.recover`, `.backup`, etc. — all escape the DB-level
+///     read-only flag)
+///   * SQL containing any write/side-effect keyword
+///   * empty payload (interactive session)
+fn sqlite3_is_safe(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    let mut db_idx: Option<usize> = None;
+    let mut has_readonly = false;
+    for (i, a) in args.iter().enumerate() {
+        if a == "-readonly" || a == "--readonly" {
+            has_readonly = true;
+        } else if a.starts_with('-') {
+            return false;
+        } else if db_idx.is_none() {
+            db_idx = Some(i);
+        }
+    }
+    let Some(db_idx) = db_idx else { return false; };
+    let db = &args[db_idx];
+    if !(db.ends_with(".db") || db.ends_with(".sqlite") || db.ends_with(".sqlite3")) {
+        return false;
+    }
+    let payload_parts: Vec<&str> =
+        args[db_idx + 1..].iter().map(|s| s.as_str()).collect();
+    if payload_parts.is_empty() {
+        return false;
+    }
+    let payload = payload_parts.join(" ").to_lowercase();
+    let payload = payload.trim();
+    if payload.starts_with('.') {
+        let cmd = payload
+            .trim_start_matches('.')
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        return matches!(cmd, "schema" | "tables" | "indexes" | "databases");
+    }
+    if !has_readonly {
+        return false;
+    }
+    const WRITE_WORDS: &[&str] = &[
+        "insert", "update", "delete", "drop", "create", "alter",
+        "attach", "detach", "vacuum", "reindex", "replace",
+    ];
+    const BAD_SUBSTR: &[&str] = &[
+        "load_extension", "writable_schema", "pragma_", "writefile", "readfile",
+        "edit(", "fts3_tokenizer", "zipfile",
+    ];
+    let has_word = |w: &str| {
+        payload
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|tok| tok == w)
+    };
+    if WRITE_WORDS.iter().any(|w| has_word(w)) || BAD_SUBSTR.iter().any(|b| payload.contains(b)) {
+        return false;
+    }
+    payload.starts_with("select ")
+        || payload.starts_with("pragma ")
+        || payload.starts_with("with ")
+}
+
 pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
     let chars: Vec<char> = cmd.chars().collect();
     let mut segments: Vec<String> = Vec::new();
@@ -155,6 +229,20 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
             return false;
         }
         let args = &toks[1..];
+
+        // sed -i / --in-place write files. Refused.
+        if first.as_str() == "sed" && !sed_is_safe(args) {
+            return false;
+        }
+
+        // sqlite3 requires either a safe read dot-command, or
+        // SELECT/PRAGMA/WITH gated by -readonly and free of write keywords.
+        if first.as_str() == "sqlite3"
+            && (cmd.contains('\n') || cmd.contains('\r') || !sqlite3_is_safe(args))
+        {
+            return false;
+        }
+
         match first.as_str() {
             "find" if args.iter().any(|t| BAD_FIND.contains(&t.as_str())) => return false,
             "sort"
@@ -586,5 +674,64 @@ mod probe_intent_tests {
         assert!(ro("Do not edit or delete anything."));
         assert!(!neg("Write the report with write_file. Do not modify or overwrite sources."));
         assert!(!neg("The dispatcher must not be slow."));
+    }
+}
+
+/// `sed` is allowed only as a pure line-range print: sed -n 'N p' or
+/// sed -n 'A,Bp' [files]. Anything else (w, e, r, s///e, -i, -ni, -f, -s)
+/// can write files or run commands.
+fn sed_is_safe(args: &[String]) -> bool {
+    if args.len() < 2 || args[0] != "-n" {
+        return false;
+    }
+    let Some(body) = args[1].strip_suffix('p') else {
+        return false;
+    };
+    let addr_ok = |s: &str| s == "$" || (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()));
+    let mut parts = body.split(',');
+    let first = parts.next().unwrap_or("");
+    let second = parts.next();
+    if parts.next().is_some() || !addr_ok(first) {
+        return false;
+    }
+    if let Some(sec) = second {
+        if !addr_ok(sec) {
+            return false;
+        }
+    }
+    args[2..].iter().all(|a| !a.starts_with('-'))
+}
+
+#[cfg(test)]
+mod sed_sqlite_hardening_tests {
+    use super::is_read_only_safe_command as safe;
+
+    #[test]
+    fn sed_line_range_prints_are_safe() {
+        assert!(safe("sed -n '635,670p' crates/a.rs"));
+        assert!(safe("sed -n '5p' f"));
+        assert!(safe("ps aux | sed -n '1,3p'"));
+    }
+
+    #[test]
+    fn sed_write_exec_and_inplace_are_refused() {
+        assert!(!safe("sed -ni 'p' f"));
+        assert!(!safe("sed -Ei 's/a/b/' f"));
+        assert!(!safe("sed -i s/a/b/ f"));
+        assert!(!safe("sed -n 'w /tmp/x' f"));
+        assert!(!safe("sed -n '1e id' f"));
+        assert!(!safe("sed 's/a/b/e' f"));
+        assert!(!safe("sed -n '1,3p;w x' f"));
+        assert!(!safe("sed -f script f"));
+    }
+
+    #[test]
+    fn sqlite_reads_ok_and_file_functions_refused() {
+        assert!(safe(r#"sqlite3 -readonly nexus_daemon.db "select id, updated_at, created_at from plan_runs""#));
+        assert!(safe("sqlite3 nexus_daemon.db .schema"));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select writefile('/tmp/x','y')""#));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select readfile('/etc/passwd')""#));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "update plan_runs set status='x'""#));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select 1; drop table plan_runs""#));
     }
 }
