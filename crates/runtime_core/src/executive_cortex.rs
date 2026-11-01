@@ -48,8 +48,19 @@ impl ExecutiveCortex {
 
         loop {
             tokio::select! {
-                Some(cmd) = self.command_rx.recv() => {
-                    self.handle_command(cmd).await;
+                cmd = self.command_rx.recv() => {
+                    match cmd {
+                        Some(cmd) => self.handle_command(cmd).await,
+                        None => {
+                            // Every sender is gone: send_task has returned and the
+                            // mission is over. Without this exit the actor kept its
+                            // 10s heartbeat (and plan_runs upserts) alive forever.
+                            tracing::info!(
+                                "[EXECUTIVE CORTEX] Command channel closed; actor exiting."
+                            );
+                            break;
+                        }
+                    }
                 }
                 _ = heartbeat.tick() => {
                     self.cognitive_tick().await;
