@@ -374,6 +374,124 @@ impl CorticalLoop {
             let key = crate::cortical::critic_filter::attempt_key(&*session, a);
             session.global_action_attempt_count(&key) >= 1
         });
+
+        // Never auto-halt if the objective still requires a read_file that has
+        // not yet produced any physical evidence (success or clear error).
+        // This prevents the strategist’s proposed read from being overwritten
+        // after a single command succeeds on multi-action read-only missions.
+        let still_needs_read = session.contract.objective.to_lowercase().contains("read_file")
+            && !session.local_evidence.contains("[READ_OK]")
+            && !session.local_evidence.contains("[READ_CHUNK_OK]")
+            && !session.local_evidence.contains("No such file or directory")
+            && !session.local_evidence.contains("READ_ERROR")
+            && !session.local_evidence.contains("[READ_");
+
+        if status == ContractStatus::Satisfied
+            && unwritten_targets.is_empty()
+            && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
+            && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
+            // Once the report gate has rejected a bare halt, re-injecting it is
+            // futile and would replace every later strategist action.
+            && !session.local_evidence.contains("[HALT_REJECTED_REPORT]")
+            // A semantic mission (analysis/audit/report) needs a real report in
+            // the halt; the bare auto-halt can never satisfy it and would
+            // override a valid recon action. Read-only keeps existing behavior.
+            // ...unless the strategist can only repeat an already-satisfied action
+            // (a pinned execute_command: strategy cannot emit `halt` itself), in
+            // which case the injected halt is the only route to completion.
+            && (session.contract.read_only
+                || !crate::completion_engine::requires_semantic_verification(
+                    &session.contract.objective,
+                )
+                || all_actions_repeat)
+            // Never auto-halt while the read ledger still has an unread range:
+            // a truncated first read satisfies ReadPathAcquired long before the
+            // file has actually been read.
+            && session
+                .coverage
+                .largest_interior_gap()
+                .or_else(|| session.coverage.largest_gap())
+                .is_none()
+            && !still_needs_read
+        {
+            self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
+            actions = vec![AgentAction::Halt {
+                _thought_process: None,
+                reasoning: auto_halt_report(&session.local_evidence),
+            }];
+        }
+
+        if actions.is_empty() {
+            if let Some(intercepted) =
+                crate::action_intercept::intercept_fallback_action(&raw_proposal)
+            {
+                let reject = matches!(
+                    &intercepted,
+                    AgentAction::SearchCode { _thought_process: None, query, .. } if query.trim().is_empty()
+                );
+                if !reject {
+                    actions.push(intercepted);
+                }
+            }
+        }
+
+        if actions.is_empty() {
+            // Synthesize a halt ONLY from prose-only output. A JSON proposal
+            // that failed schema validation must fall through to the
+            // parse-fault recovery path instead of manufacturing a halt.
+            if crate::cortical::util::should_synthesize_halt(&raw_proposal) {
+                actions.push(AgentAction::Halt {
+                    _thought_process: None,
+                    reasoning: "Model declared task complete".to_string(),
+                });
+            }
+        }
+
+        // RECOVER THE MODEL'S REAL INTENT: after a leaked chat-template token the model
+        // often continues in its native tool-call dialect
+        // (`assistant to=execute_command ... <rfl:parameter name="command">CMD`). That tail
+        // is its latest decision, while the JSON before it is frequently a placeholder
+        // (an already-read file, a directory read, a thin halt); dropping it makes the
+        // node repeat the placeholder forever. Honour it only for read-only missions,
+        // only for commands the read-only gate accepts, and only if that exact command
+        // has not been attempted yet.
+        if session.contract.read_only {
+            if let Some(cmd) = leaked_execute_command(&raw_proposal) {
+                if crate::cortical::read_only_gate::is_read_only_safe_command(&cmd) {
+                    let leaked = AgentAction::ExecuteCommand {
+                        _thought_process: None,
+                        command: cmd,
+                        reasoning: "Recovered from the strategist's leaked tool-call tail."
+                            .to_string(),
+                        confidence: 0.9,
+                    };
+                    let key = crate::cortical::critic_filter::attempt_key(&*session, &leaked);
+                    if session.global_action_attempt_count(&key) == 0 {
+                        self.log(
+                            "\x1b[1;36m>> [CORTEX] Recovered a leaked execute_command tool call from the proposal.\x1b[0m"
+                                .to_string(),
+                        );
+                        actions = vec![leaked];
+                    }
+                }
+            }
+        }
+
+        // Strip leaked chat-template control tokens (`<|end|><|start|>...`) from halt text.
+        for a in actions.iter_mut() {
+            if let AgentAction::Halt { reasoning, .. } = a {
+                if let Some(i) = reasoning.find("<|") {
+                    reasoning.truncate(i);
+                }
+            }
+        }
+
+        // True when every proposed action is a repeat of one that already ran in
+        // the current workspace state (nothing new is being attempted).
+        let all_actions_repeat = actions.iter().all(|a| {
+            let key = crate::cortical::critic_filter::attempt_key(&*session, a);
+            session.global_action_attempt_count(&key) >= 1
+        });
         if status == ContractStatus::Satisfied
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
@@ -587,12 +705,39 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                         | AgentAction::ReadFileChunk { .. }
                         | AgentAction::ReadFunction { .. }
                 );
+
+            // Allow pivoting to a different required action type once the
+            // current strategy has already produced definitive evidence.
+            let cross_action_pivot_ok = {
+                let evidence_done = session.local_evidence.contains("PATH_NOT_FOUND")
+                    || session.local_evidence.contains("[READ_OK]")
+                    || session.local_evidence.contains("[READ_CHUNK_OK]")
+                    || session.local_evidence.contains("[CMD_OK]")
+                    || session.local_evidence.contains("[PATH_DOES_NOT_EXIST]");
+                let obj = session.contract.objective.to_lowercase();
+                let proposes_command = matches!(first_action, AgentAction::ExecuteCommand { .. });
+                let proposes_read = matches!(
+                    first_action,
+                    AgentAction::ReadFile { .. }
+                        | AgentAction::ReadFileChunk { .. }
+                        | AgentAction::ReadFunction { .. }
+                );
+                evidence_done
+                    && ((active_strategy.contains("read_file")
+                            && proposes_command
+                            && (obj.contains("execute_command") || obj.contains("free -h")))
+                        || (active_strategy.contains("execute_command")
+                            && proposes_read
+                            && obj.contains("read_file")))
+            };
+
             if !strategy_ok
                 && !advances_unmet
                 && !veto_recon_ok
                 && !dir_child_read_ok
                 && !mandatory_pivot_ok
                 && !audit_read_pivot_ok
+                && !cross_action_pivot_ok
             {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
@@ -848,16 +993,34 @@ mod leaked_call_tests {
     }
 }
 
-/// Build the auto-injected halt report from the satisfied command evidence.
-/// Uses the last [CMD_OK] block that has a Status line, so a trailing
-/// header-only duplicate block cannot blank the report. No backticks and no
-/// line-range text, so the symbol and range checks have nothing to verify.
+/// Build the auto-injected halt report from the physical evidence already
+/// recorded for this node: the last [CMD_OK] block that has a Status line, plus
+/// any [ACTION FAILED] records. No backticks and no line-range text, so the
+/// symbol and range checks have nothing to verify.
 fn auto_halt_report(evidence: &str) -> String {
+    let lines: Vec<&str> = evidence.lines().collect();
     let mut blocks: Vec<(String, String, String)> = Vec::new();
     let mut cur: Option<(String, String, String)> = None;
     let mut in_stdout = false;
-    for line in evidence.lines() {
+    let mut failures: Vec<String> = Vec::new();
+    for (i, raw) in lines.iter().enumerate() {
+        let line: &str = raw;
         let t = line.trim_start();
+        if t.starts_with("[ACTION FAILED]") {
+            let mut f = t.to_string();
+            for next in lines.iter().skip(i + 1).take(4) {
+                let n = next.trim();
+                if n.is_empty() || n.starts_with('[') {
+                    break;
+                }
+                f.push_str(" | ");
+                f.push_str(n);
+            }
+            let f: String = f.replace('`', "").chars().take(400).collect();
+            if !failures.contains(&f) {
+                failures.push(f);
+            }
+        }
         if t.starts_with("[CMD_OK] Command:") {
             if let Some(b) = cur.take() {
                 blocks.push(b);
@@ -882,12 +1045,28 @@ fn auto_halt_report(evidence: &str) -> String {
     if let Some(b) = cur.take() {
         blocks.push(b);
     }
-    let (status, hash, stdout) =
-        blocks.into_iter().rev().find(|b| !b.0.is_empty()).unwrap_or_default();
-    let excerpt: String = stdout.replace('`', "").chars().take(2500).collect();
+    let mut parts: Vec<String> = Vec::new();
+    if let Some((status, hash, stdout)) = blocks.into_iter().rev().find(|b| !b.0.is_empty()) {
+        let excerpt: String = stdout.replace('`', "").chars().take(2500).collect();
+        parts.push(format!(
+            "Command evidence (status: {}; command hash {}). Captured stdout: {}.",
+            status,
+            hash,
+            excerpt.trim().trim_end_matches('|').trim()
+        ));
+    }
+    for f in failures.iter().take(3) {
+        parts.push(format!("Physical failure evidence: {}.", f));
+    }
+    if parts.is_empty() {
+        parts.push(
+            "The deterministic contract for this node is satisfied by the physical evidence markers recorded for it."
+                .to_string(),
+        );
+    }
     format!(
-        "Phase A baseline findings from the single required read-only command (status: {}; command hash {}). Captured stdout: {} Outstanding: this command covers repository identity, git status, top processes by RSS, listening sockets as seen by ss, and memory only. It does not cover daemon health, logs, tests, or dependency state, so Phase A is not complete.",
-        status, hash, excerpt
+        "{} This report covers only the physical evidence recorded for this node and does not establish any other criterion.",
+        parts.join(" ")
     )
 }
 
@@ -902,5 +1081,14 @@ mod auto_halt_report_tests {
         assert!(r.contains("ROOT=/x") && r.contains("abc123") && r.contains("exit status: 0"));
         assert!(r.ends_with('.'));
         assert!(!r.contains('`'));
+    }
+
+    #[test]
+    fn report_carries_failure_evidence_without_phase_text() {
+        let ev = "[ACTION FAILED] path=a.json OS rejected action: PATH_NOT_FOUND: a.json does not exist in the workspace (tried x)\n";
+        let r = auto_halt_report(ev);
+        assert!(r.contains("PATH_NOT_FOUND") && r.contains("does not exist"));
+        assert!(!r.contains("Phase A") && !r.contains("status: ;"));
+        assert!(r.ends_with('.') && !r.contains('`'));
     }
 }

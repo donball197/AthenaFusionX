@@ -85,6 +85,20 @@ impl CorticalLoop {
                         condition_satisfied_seen = true;
                     }
                     crate::anti_loop::FilterOutcome::AllowRetry => {
+                        // RETRY CAP: AllowRetry exists for transient failures. A
+                        // deterministic failure (e.g. permission denied) would be
+                        // retried until the turn budget is gone, so stop
+                        // re-admitting the same command after 3 attempts.
+                        if attempt_count >= 3
+                            && matches!(&action, AgentAction::ExecuteCommand { .. })
+                        {
+                            self.log(format!(
+                                "\x1b[1;31m>> [ANTI-LOOP] Command [{}] already attempted {} times without satisfying its contract; vetoing further retries.\x1b[0m",
+                                action_key, attempt_count
+                            ));
+                            vetoed_keys.push(action_key);
+                            continue;
+                        }
                         self.log(
                             "\x1b[1;33m>> [ANTI-LOOP] Duplicate required by contract with no marker; permitting retry.\x1b[0m"
                                 .to_string(),
