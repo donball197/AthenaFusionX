@@ -32,6 +32,38 @@ mod thermal_governor;
 mod vitals_handler;
 mod ws_bridge;
 
+
+/// Acquires exclusive process ownership before touching the startup token
+/// or the daemon database. Keep the returned File alive for the daemon's
+/// entire lifetime; the OS releases flock automatically when it closes.
+fn acquire_daemon_lock() -> anyhow::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(".nexus_daemon.lock")?;
+
+    let result = unsafe {
+        libc::flock(
+            file.as_raw_fd(),
+            libc::LOCK_EX | libc::LOCK_NB,
+        )
+    };
+
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        anyhow::bail!(
+            "Another AthenaFusionX daemon owns .nexus_daemon.lock: {}",
+            error
+        );
+    }
+
+    tracing::info!("[OWNERSHIP] Exclusive daemon lock acquired.");
+    Ok(file)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -41,6 +73,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(">> NEXUS SINGULARITY v4.0 — DAEMON ONLINE");
     tracing::info!("==================================================");
 
+    // Must precede token creation and database initialization.
+    // Keep this handle alive until main exits.
+    let _daemon_lock = acquire_daemon_lock()?;
+
     security::write_startup_token()?;
     let api_key_str = std::env::var("GEMINI_API_KEY").unwrap_or_default().trim().to_string();
     let api_key = SecretString::from(api_key_str.clone());
@@ -49,6 +85,33 @@ async fn main() -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<String>(256);
 
     let palace = Arc::new(MemoryPalace::new("nexus_daemon.db").await?);
+    match palace.recover_or_abort_orphaned_plans().await {
+        Ok(r) => {
+            if !r.recoverable.is_empty() {
+                tracing::warn!(
+                    "[BOOT] {} recoverable plan(s) from dead owner (not auto-resumed):",
+                    r.recoverable.len()
+                );
+                for rec in &r.recoverable {
+                    let excerpt: String = rec.root_directive.chars().take(80).collect();
+                    tracing::warn!(
+                        "[BOOT]   id={} graph_bytes={} directive={:?}",
+                        rec.id, rec.graph_bytes, excerpt
+                    );
+                }
+            }
+            if !r.aborted.is_empty() {
+                tracing::warn!("[BOOT] Aborted {} orphaned plan(s).", r.aborted.len());
+            }
+            if !r.skipped_live.is_empty() {
+                tracing::info!(
+                    "[BOOT] Preserved {} plan(s) owned by live process.",
+                    r.skipped_live.len()
+                );
+            }
+        }
+        Err(e) => tracing::error!("[BOOT] Recovery failed: {}", e),
+    }
 
     // 👇 The crucial fix: We clone the palace Arc so it can be shared!
     let memory = Arc::new(MemoryCortex::new(palace.clone()));

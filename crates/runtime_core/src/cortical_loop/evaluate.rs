@@ -6,7 +6,7 @@ impl CorticalLoop {
     pub(super) async fn handle_evaluate(
         &mut self,
         session: &mut EpistemicSession,
-        mission: &str,
+        _mission: &str,
         input: EvaluationInput,
     ) -> Result<CortexState> {
         let EvaluationInput { evidence, executed_action, belief, is_halt_action, mutation_path } =
@@ -281,7 +281,7 @@ impl CorticalLoop {
                 {
                     let strategy_for_verification = format!(
                         "MISSION OBJECTIVE:\n{}\n\nCURRENT STRATEGY:\n{}",
-                        mission, h_content
+                        session.contract.objective, h_content
                     );
 
                     self.log(

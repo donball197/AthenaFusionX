@@ -57,13 +57,34 @@ pub struct SutureRecoveryRecord {
     pub timestamp: i64,
 }
 
+/// Report produced by recover_or_abort_orphaned_plans at boot.
+#[derive(Debug, Default)]
+pub struct RecoveryReport {
+    /// Plans whose owner was dead and whose graph was valid. The row has
+    /// been marked Aborted (no auto-resume path); the caller should log
+    /// these so operators know what was in flight at crash time.
+    pub recoverable: Vec<RecoveryRecord>,
+    /// Plan IDs that were Active/Suspended and have now been marked Aborted.
+    pub aborted: Vec<String>,
+    /// Plan IDs whose owner_pid is still alive (a second daemon).
+    /// These are preserved untouched.
+    pub skipped_live: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct RecoveryRecord {
+    pub id: String,
+    pub root_directive: String,
+    pub graph_bytes: usize,
+}
+
 pub struct MemoryPalace {
     pub pool: SqlitePool,
     pub vault: Arc<Mutex<VectorVault>>,
 }
 
 impl MemoryPalace {
-    pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> {
+    pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> { let t0 = std::time::Instant::now();
         if !Path::new(db_path).exists() {
             std::fs::File::create(db_path).ok();
         }
@@ -75,13 +96,13 @@ impl MemoryPalace {
             .pragma("cache_size", "-16000");
 
         let pool =
-            SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?;
+            SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?; println!("[PALACE TIMING] Pool connected at +{:?}", t0.elapsed());
 
         let vault = Arc::new(Mutex::new(VectorVault::new(crate::vector_bridge::EMBEDDING_DIM, 4)));
 
         let palace = Self { pool, vault };
-        palace.init_full_schema().await?;
-        palace.hydrate_vault().await?;
+        palace.init_full_schema().await?; println!("[PALACE TIMING] Schema init at +{:?}", t0.elapsed());
+        palace.hydrate_vault().await?; println!("[PALACE TIMING] Vault hydrated at +{:?}", t0.elapsed());
 
         Ok(palace)
     }
@@ -256,6 +277,10 @@ impl MemoryPalace {
             "TEXT NOT NULL DEFAULT 'I:2,S:1,E:2'",
         )
         .await?;
+
+        ensure_column(&self.pool, "plan_runs", "owner_pid", "INTEGER").await?;
+        ensure_column(&self.pool, "plan_runs", "last_heartbeat", "INTEGER NOT NULL DEFAULT 0")
+            .await?;
 
         Ok(())
     }
@@ -693,13 +718,16 @@ impl MemoryPalace {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
+        let current_pid = std::process::id() as i64;
         sqlx::query(
-            "INSERT INTO plan_runs (id, root_directive, graph_json, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+            "INSERT INTO plan_runs (id, root_directive, graph_json, status, created_at, updated_at, owner_pid, last_heartbeat)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 graph_json=excluded.graph_json,
                 status=excluded.status,
-                updated_at=excluded.updated_at",
+                updated_at=excluded.updated_at,
+                owner_pid=excluded.owner_pid,
+                last_heartbeat=excluded.last_heartbeat",
         )
         .bind(id)
         .bind(root_directive)
@@ -707,12 +735,142 @@ impl MemoryPalace {
         .bind(status)
         .bind(created_at)
         .bind(updated_at)
+        .bind(current_pid)
+        .bind(updated_at)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    pub async fn recover_active_plans(&self) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    /// Update a plan checkpoint only while its current state is Active.
+    ///
+    /// Returns false when the plan is missing or has already transitioned
+    /// to a terminal/non-Active state.
+    pub async fn update_plan_run_checkpoint(
+        &self,
+        id: &str,
+        graph_json: &str,
+        status: &str,
+        updated_at: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE plan_runs
+             SET graph_json = ?, status = ?, updated_at = ?
+             WHERE id = ? AND status = 'Active'
+               AND ? IN ('Active', 'Completed', 'Aborted')",
+        )
+        .bind(graph_json)
+        .bind(status)
+        .bind(updated_at)
+        .bind(id)
+        .bind(status)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// Heartbeat-only update: touch last_heartbeat for a still-Active plan.
+    /// Never modifies graph_json or status, so a terminal write (Completed/
+    /// Aborted) cannot be clobbered by a heartbeat arriving afterward.
+    pub async fn heartbeat_plan_run(&self, id: &str) -> Result<(), sqlx::Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        sqlx::query(
+            "UPDATE plan_runs SET last_heartbeat = ?
+             WHERE id = ? AND status = 'Active'",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Boot-time recovery. Replaces the unconditional abort_orphaned_plans.
+    ///
+    /// For each Active/Suspended row:
+    ///   * owner_pid /proc entry exists AND last_heartbeat within 300s
+    ///       -> skip (a live process owns it; likely a second daemon)
+    ///   * otherwise -> owner is dead; if graph_json is a valid serialized
+    ///       TaskGraph, record it as recoverable and log it; then mark
+    ///       the row Aborted. No auto-resume path yet -- operators see
+    ///       the [BOOT] recovery log and can decide what to do.
+    pub async fn recover_or_abort_orphaned_plans(&self) -> Result<RecoveryReport, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let rows = sqlx::query(
+            "SELECT id, root_directive, graph_json, status, owner_pid, last_heartbeat
+             FROM plan_runs WHERE status IN ('Active', 'Suspended')
+             ORDER BY updated_at ASC",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        const LIVE_HEARTBEAT_WINDOW_SECS: i64 = 300;
+
+        let mut report = RecoveryReport::default();
+        for row in rows {
+            let id: String = row.get("id");
+            let root_directive: String = row.get("root_directive");
+            let graph_json: String = row.get("graph_json");
+            let owner_pid: Option<i64> = row.try_get("owner_pid").ok().flatten();
+            let last_heartbeat: i64 = row.try_get("last_heartbeat").unwrap_or(0);
+
+            let owner_alive = owner_pid
+                .map(|pid| {
+                    pid > 0
+                        && std::path::Path::new(&format!("/proc/{}", pid)).exists()
+                })
+                .unwrap_or(false);
+            let heartbeat_fresh = last_heartbeat > 0
+                && (now - last_heartbeat) < LIVE_HEARTBEAT_WINDOW_SECS;
+
+            if owner_alive && heartbeat_fresh {
+                report.skipped_live.push(id);
+                continue;
+            }
+
+            let graph_valid = !graph_json.is_empty()
+                && graph_json != "null"
+                && serde_json::from_str::<serde_json::Value>(&graph_json).is_ok();
+            if graph_valid {
+                report.recoverable.push(RecoveryRecord {
+                    id: id.clone(),
+                    root_directive: root_directive.clone(),
+                    graph_bytes: graph_json.len(),
+                });
+            }
+
+            let result = sqlx::query(
+                "UPDATE plan_runs
+                 SET status = 'Aborted', updated_at = ?
+                 WHERE id = ?
+                   AND status IN ('Active', 'Suspended')",
+            )
+            .bind(now)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+
+            // Only report an abort if this transaction actually changed
+            // an Active/Suspended row.
+            if result.rows_affected() == 1 {
+                report.aborted.push(id);
+            }
+        }
+
+        tx.commit().await?;
+        Ok(report)
+    }
+
+    pub async fn abort_orphaned_plans(&self) -> Result<u64, sqlx::Error> { let res = sqlx::query("UPDATE plan_runs SET status = 'Aborted' WHERE status IN ('Active', 'Suspended')").execute(&self.pool).await?; Ok(res.rows_affected()) } pub async fn recover_active_plans(&self) -> Result<Vec<(String, String, String)>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, root_directive, graph_json FROM plan_runs WHERE status IN ('Active', 'Suspended') ORDER BY updated_at ASC")
             .fetch_all(&self.pool).await?;
         Ok(rows

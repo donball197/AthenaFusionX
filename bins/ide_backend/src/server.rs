@@ -209,6 +209,7 @@ pub async fn start_server(state: Arc<AppState>) {
         Router::new().route("/auth/login", post(crate::auth::login_handler)).merge(guarded_api);
 
     let app = Router::new()
+        .route("/health", get(|| async { "OK" }))
         .nest("/api", api_routes)
         .route("/ws/telemetry", get(ws_bridge::ws_telemetry_handler))
         .fallback(static_handler) // ⚡ RustEmbed serves the Svelte build

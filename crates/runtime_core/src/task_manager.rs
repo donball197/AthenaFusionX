@@ -39,19 +39,9 @@ pub async fn send_task(
 ) -> String {
     METRICS.inc_task();
 
-    // ⚡ 1. EXECUTIVE CORTEX GOAL INJECTION
-    let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
-    let goal_id = uuid::Uuid::new_v4();
-    let _ = command_tx
-        .send(ExecutiveCommand::InjectGoal {
-            objective: raw_directive.to_string(),
-            parent_id: None,
-        })
-        .await;
-
-    tokio::spawn(executive_cortex.run_actor_loop());
-
-    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Registered goal {}. Decomposing DAG...", goal_id)}).to_string());
+    // Allocate the plan identity before persistence; the Executive Cortex
+    // is deliberately not started until the initial plan row is durable.
+    let plan_id = uuid::Uuid::new_v4().to_string();
 
     let mut graph =
         match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
@@ -82,8 +72,77 @@ pub async fn send_task(
         Err(e) => return format!("FRACTURE: Graph validation failed: {}", e),
     };
 
-    let plan_id = uuid::Uuid::new_v4().to_string();
-    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted.", plan_id)}).to_string());
+    // Initial persistence is a hard execution boundary: no DAG node may
+    // execute unless its plan record has been durably created.
+    let initial_graph_json = match serde_json::to_string(&graph) {
+        Ok(json) => json,
+        Err(error) => {
+            return format!(
+                "PERSISTENCE FAILURE: Could not serialize initial plan graph: {}",
+                error
+            );
+        }
+    };
+    let initial_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    if let Err(error) = ctx
+        .memory
+        .upsert_plan_run(
+            &plan_id,
+            raw_directive,
+            &initial_graph_json,
+            "Active",
+            initial_now,
+        )
+        .await
+    {
+        return format!(
+            "PERSISTENCE FAILURE: Plan {} was not stored; execution was not started: {}",
+            plan_id, error
+        );
+    }
+
+    let _ = ctx.tx.send(
+        serde_json::json!({
+            "type": "LOG_EVENT",
+            "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted.", plan_id)
+        })
+        .to_string(),
+    );
+
+    // Start the Executive Cortex only after the initial plan record exists.
+    let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
+    let goal_id = uuid::Uuid::new_v4();
+
+    if let Err(error) = command_tx
+        .send(ExecutiveCommand::InjectGoal {
+            plan_id: plan_id.clone(),
+            objective: raw_directive.to_string(),
+            parent_id: None,
+        })
+        .await
+    {
+        return format!(
+            "PERSISTENCE FAILURE: Plan {} was stored, but Executive Cortex goal registration failed: {}",
+            plan_id, error
+        );
+    }
+
+    tokio::spawn(executive_cortex.run_actor_loop());
+
+    let _ = ctx.tx.send(
+        serde_json::json!({
+            "type": "LOG_EVENT",
+            "payload": format!(
+                "[EXECUTIVE CORTEX] Registered goal {}. Decomposing DAG...",
+                goal_id
+            )
+        })
+        .to_string(),
+    );
 
     let planned_node_count = order.len();
     let mut completed_node_count = 0usize;
@@ -459,6 +518,47 @@ pub async fn send_task(
             }
         }
 
+        // Persist the verified node outcome before another node can be
+        // dispatched. A failed checkpoint halts the DAG immediately.
+        let checkpoint_graph_json = match serde_json::to_string(&graph) {
+            Ok(json) => json,
+            Err(error) => {
+                return format!(
+                    "PERSISTENCE FAILURE: Could not serialize checkpoint for plan {}: {}",
+                    plan_id, error
+                );
+            }
+        };
+        let checkpoint_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        match ctx
+            .memory
+            .update_plan_run_checkpoint(
+                &plan_id,
+                &checkpoint_graph_json,
+                "Active",
+                checkpoint_now,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return format!(
+                    "PERSISTENCE FAILURE: Plan {} was no longer Active; downstream execution halted.",
+                    plan_id
+                );
+            }
+            Err(error) => {
+                return format!(
+                    "PERSISTENCE FAILURE: Checkpoint for plan {} failed; downstream execution halted: {}",
+                    plan_id, error
+                );
+            }
+        }
+
         // Completion requires BOTH authorization stages:
         //   Cortex CompletionProposed + deterministic contract verification.
         //
@@ -481,6 +581,53 @@ pub async fn send_task(
     // WHOLE-DAG COMPLETION GATE:
     // A successful Cortex node is only a subgoal completion.
     // The overall DAG is complete only when every planned node completed.
+    let final_graph_json = match serde_json::to_string(&graph) {
+        Ok(json) => json,
+        Err(error) => {
+            return format!(
+                "PERSISTENCE FAILURE: Could not serialize final graph for plan {}: {}",
+                plan_id, error
+            );
+        }
+    };
+    let final_status = if mission_had_failures
+        || planned_node_count == 0
+        || completed_node_count != planned_node_count
+    {
+        "Aborted"
+    } else {
+        "Completed"
+    };
+    let final_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    match ctx
+        .memory
+        .update_plan_run_checkpoint(
+            &plan_id,
+            &final_graph_json,
+            final_status,
+            final_now,
+        )
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return format!(
+                "PERSISTENCE FAILURE: Plan {} could not transition from Active to {}.",
+                plan_id, final_status
+            );
+        }
+        Err(error) => {
+            return format!(
+                "PERSISTENCE FAILURE: Final {} transition for plan {} failed: {}",
+                final_status, plan_id, error
+            );
+        }
+    }
+
     if mission_had_failures || planned_node_count == 0 || completed_node_count != planned_node_count
     {
         let _ = ctx.tx.send(

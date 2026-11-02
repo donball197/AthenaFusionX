@@ -81,7 +81,7 @@ pub fn is_confirmed_absence(failure_tail: &str) -> bool {
     {
         return false;
     }
-    err.contains("enoent") || err.contains("no such file") || err.contains("entity not found")
+    err.contains("enoent") || err.contains("no such file") || err.contains("entity not found") || err.contains("does not exist") || err.contains("path_not_found")
 }
 
 /// True for an actual uppercase evidence marker such as `[READ_OK]`,

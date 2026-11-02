@@ -65,6 +65,12 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
     if args.is_empty() {
         return false;
     }
+    // Metadata-only invocations never touch a database file.
+    if args.iter().all(|a| {
+        matches!(a.as_str(), "--version" | "-version" | "--help" | "-help")
+    }) {
+        return true;
+    }
     let mut db_idx: Option<usize> = None;
     let mut has_readonly = false;
     for (i, a) in args.iter().enumerate() {
@@ -87,7 +93,13 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
         return false;
     }
     let payload = payload_parts.join(" ").to_lowercase();
-    let payload = payload.trim();
+    // Strip surrounding quotes. The shell parser preserves them in `args`,
+    // so ".schema plan_runs" arrives with literal quotes and would fail
+    // starts_with('.') unless we trim here.
+    let payload = payload
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'')
+        .trim();
     if payload.starts_with('.') {
         let cmd = payload
             .trim_start_matches('.')
