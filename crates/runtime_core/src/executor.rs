@@ -273,6 +273,22 @@ fn try_one_shot_fault_injection(
     }
 }
 
+/// Rejects queries that cannot be searched safely or unambiguously.
+/// Extracted so executor tests can exercise the guard without
+/// constructing a full RoboticExecutor (which needs episode state,
+/// broadcast channel, and action cache).
+pub(crate) fn validate_search_query(query: &str) -> anyhow::Result<()> {
+    if query.trim().is_empty()
+        || query.contains('\n')
+        || query.contains('\r')
+    {
+        return Err(anyhow::anyhow!(
+            "SEARCH_FAILED: query must be non-empty and contain no line breaks"
+        ));
+    }
+    Ok(())
+}
+
 impl RoboticExecutor {
     pub fn new(api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
         Self {
@@ -336,8 +352,8 @@ impl RoboticExecutor {
 
                 let mut stdout_trunc = stdout;
                 let mut stderr_trunc = stderr;
-                if stdout_trunc.chars().count() > 2500 {
-                    let safe_head: String = stdout_trunc.chars().take(2500).collect();
+                if stdout_trunc.chars().count() > 12000 {
+                    let safe_head: String = stdout_trunc.chars().take(12000).collect();
                     stdout_trunc =
                         format!("{}\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]", safe_head);
                 }
@@ -353,7 +369,9 @@ impl RoboticExecutor {
                     command.trim(),
                     out.status,
                     if format!("{}", out.status).contains("exit status: 0") {
-                        crate::cmd_match::cmd_hash_marker(command.trim())
+                        crate::cmd_match::cmd_hash_marker(
+                            crate::cmd_match::strip_workspace_cd_prefix(command.trim()),
+                        )
                     } else {
                         String::new()
                     }
@@ -599,54 +617,114 @@ impl RoboticExecutor {
                 ))
             }
             MotorAction::SearchCode { path, query } => {
-                if query.trim().is_empty() {
-                    return Ok("[SEARCH_FAILED] Empty search query is not permitted. Provide a specific search symbol or pattern.".to_string());
-                }
+                validate_search_query(&query)?;
 
                 let safe_path =
-                    if path.trim().is_empty() { PathBuf::from("crates") } else { sanitize(&path)? };
-                let p_str = safe_path.to_str().unwrap_or(&path);
+                    if path.trim().is_empty() {
+                        PathBuf::from("crates")
+                    } else {
+                        sanitize(&path)?
+                    };
 
-                let cmd = format!(
-                    "(rg --type rust -n -C 2 -i '{}' {} || grep -rn -C 2 --include='*.rs' --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' {}) 2>/dev/null || true",
-                    query, p_str, query, p_str
-                );
-                let out = crate::podman::PodmanShield::execute(&cmd)?;
-                let mut stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let p_str = safe_path.to_str().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "SEARCH_FAILED: search path is not valid UTF-8"
+                    )
+                })?;
 
-                if stdout.trim().is_empty()
-                    && (p_str.contains("executive_cortex") || query.contains("router"))
-                {
-                    let fallback_cmd = format!(
-                        "(rg -n -C 2 -i '{}' crates/runtime_core/src/ || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' crates/runtime_core/src/) 2>/dev/null || true",
-                        query, query
-                    );
-                    if let Ok(fb_out) = crate::podman::PodmanShield::execute(&fallback_cmd) {
-                        let fb_stdout = String::from_utf8_lossy(&fb_out.stdout);
-                        if !fb_stdout.trim().is_empty() {
-                            stdout = format!(
-                                "[FALLBACK MATCHES FROM crates/runtime_core/src/]:\n{}",
-                                fb_stdout
-                            );
+                // Shell-free search. rg is a fast path; grep is the
+                // authoritative fallback (present on every Unix host).
+                //
+                // --include=*.rs / --type rust are WORKSPACE-ONLY filters:
+                // documented non-Rust targets (e.g.
+                // SEARCH_CODE_OK:vendor/external_repo:Cargo.toml) exist but
+                // are not .rs files. Applying the filter to those roots
+                // makes the criterion unsatisfiable by construction.
+                let is_workspace_root = p_str == "crates"
+                    || p_str == "bins"
+                    || p_str.starts_with("crates/")
+                    || p_str.starts_with("bins/");
+
+                let run_argv = |program: &str, args: &[&str]| -> Result<String> {
+                    match crate::podman::PodmanShield::execute_argv(program, args) {
+                        Ok(o) => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+                        Err(e) => {
+                            let s = e.to_string();
+                            if s.contains("Command failed with status: exit status: 1\n") {
+                                return Ok(String::new());
+                            }
+                            Err(anyhow::anyhow!("{}", s))
                         }
                     }
-                }
+                };
 
-                let trunc = if stdout.chars().count() > 2500 {
-                    let prefix: String = stdout.chars().take(2500).collect();
-                    format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", prefix)
+                let rg_args: Vec<&str> = if is_workspace_root {
+                    vec!["--type","rust","-n","-C","2","-i","-e",query.as_str(),p_str]
+                } else {
+                    vec!["-n","-C","2","-i","-e",query.as_str(),p_str]
+                };
+
+                let mut grep_args: Vec<&str> = vec!["-rn","-C","2"];
+                if is_workspace_root {
+                    grep_args.push("--include=*.rs");
+                }
+                grep_args.extend_from_slice(&[
+                    "--exclude-dir=.git",
+                    "--exclude-dir=target",
+                    "--exclude-dir=.surgical_backup",
+                    "--exclude-dir=.nexus",
+                    "--exclude-dir=.lazarus",
+                    "--exclude-dir=node_modules",
+                    "-iE",
+                    "-e",
+                    query.as_str(),
+                    p_str,
+                ]);
+
+                // rg first. Any rg failure (binary missing, exit>=2) or
+                // empty output falls through to grep. grep's failure is
+                // authoritative: if rg was unavailable and grep also
+                // failed, the search genuinely failed.
+                let rg_out = run_argv("rg", &rg_args).unwrap_or_default();
+                let stdout = if !rg_out.is_empty() {
+                    rg_out
+                } else {
+                    // Err propagates; Ok("") from grep exit-1 is the
+                    // confirmed no-match outcome.
+                    match run_argv("grep", &grep_args) {
+                        Ok(s) if s.is_empty() => {
+                            return Ok(format!(
+                                "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.",
+                                p_str, query
+                            ));
+                        }
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "SEARCH_FAILED path={} query={:?}: {}",
+                                p_str, query, e
+                            ));
+                        }
+                    }
+                };
+
+                let trunc = if stdout.chars().count() > 8000 {
+                    let prefix: String =
+                        stdout.chars().take(8000).collect();
+                    format!(
+                        "{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]",
+                        prefix
+                    )
                 } else {
                     stdout
                 };
 
-                if trunc.trim().is_empty() {
-                    Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.", path, query))
-                } else {
-                    Ok(format!(
-                        "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}",
-                        path, query, trunc
-                    ))
-                }
+                Ok(format!(
+                    "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}",
+                    p_str,
+                    query,
+                    trunc
+                ))
             }
             MotorAction::ReplaceLines { path, start_line, end_line, replacement } => {
                 let safe_path = sanitize(&path)?;
@@ -1129,5 +1207,36 @@ impl RoboticExecutor {
                 Err(anyhow!("PolyglotAstPatch is defined but not yet implemented in the executor"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod search_query_validator_tests {
+    use super::validate_search_query;
+
+    #[test]
+    fn empty_query_is_err() {
+        assert!(validate_search_query("").is_err());
+    }
+
+    #[test]
+    fn whitespace_only_query_is_err() {
+        assert!(validate_search_query("   \t  ").is_err());
+    }
+
+    #[test]
+    fn newline_in_query_is_err() {
+        assert!(validate_search_query("foo\nbar").is_err());
+    }
+
+    #[test]
+    fn carriage_return_in_query_is_err() {
+        assert!(validate_search_query("foo\rbar").is_err());
+    }
+
+    #[test]
+    fn normal_query_is_ok() {
+        assert!(validate_search_query("unimplemented!").is_ok());
+        assert!(validate_search_query("fn main").is_ok());
     }
 }

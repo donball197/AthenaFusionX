@@ -333,8 +333,9 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     // A halt whose text was cut is a parse fault: re-propose, do not accept.
     let clean_text = match serde_json::from_str::<serde_json::Value>(&clean_text) {
         Ok(orig) => {
+            let confined = crate::proposal_sanitize::leak_confined_to_reasoning(&orig);
             let s = crate::proposal_sanitize::sanitize(orig);
-            if s.stripped {
+            if s.stripped && !confined {
                 return Err(anyhow::anyhow!(
                     "PARSE_FAULT: control-token leak in proposal; re-propose"
                 ));

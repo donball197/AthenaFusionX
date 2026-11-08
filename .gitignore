@@ -97,3 +97,5 @@ vendor/
 wire_modes_and_governance.py
 zig-cache/
 zig-out/
+audit_out/
+*.prepatch

@@ -41,10 +41,17 @@ export CARGO_UNSTABLE_CARGO_LINTS=true
 # behind by an interactive shell.
 unset RUSTFLAGS
 
-# --- 3. Pre-Flight Cleanup ---
-rm -f target/.cargo-lock target/debug/.cargo-lock target/release/.cargo-lock 2>/dev/null || true
-pkill -f nexus-ide-backend 2>/dev/null || true
-sleep 0.3
+# --- 3. Exclusive Launcher Ownership ---
+# Prevent concurrent launcher invocations.
+# The lock file is intentionally persistent; never delete it.
+mkdir -p target
+LOCK_FILE="target/.nexus-launcher.lock"
+exec 9>"$LOCK_FILE"
+
+if ! flock -n 9; then
+    echo "[FATAL] Another AthenaFusionX launcher owns the launcher lock."
+    exit 1
+fi
 
 # --- 4. Smooth Spinner Function ---
 spinner() {
@@ -89,6 +96,7 @@ fi
 
 # --- 6. Start Background Daemon ---
 echo -e "\x1b[36m[2/3] Initializing Background Daemon (Port 3000)...\x1b[0m"
+if [ -f daemon.log ]; then mv daemon.log "daemon.$(date +%s).log"; fi
 "${TARGET_DIR}/nexus-ide-backend" > daemon.log 2>&1 &
 DAEMON_PID=$!
 

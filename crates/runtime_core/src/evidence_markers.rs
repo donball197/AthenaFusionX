@@ -47,48 +47,198 @@ pub fn write_path_satisfied(evidence: &str, path: &str) -> bool {
 /// not in the lines below `MATCHES:`. The executor records the query in the
 /// header and may truncate the result body. Matching is scoped to one marker
 /// block so an unrelated inherited search cannot satisfy this criterion.
-pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
+/// A criterion prefix is treated as a workspace-relative search root only
+/// when it resembles one (absolute path, contains a separator, or names a
+/// known top-level root). This keeps `path:term` parsing unambiguous for
+/// terms that themselves contain colons, such as Rust module paths.
+pub(crate) fn looks_like_workspace_path(s: &str) -> bool {
+    s.starts_with('/')
+        || s.contains('/')
+        || matches!(s, "crates" | "bins" | "src" | "vendor" | "apps" | "drones")
+}
+
+
+/// True when evidence records a successful, path/query-bound search.
+///
+/// Accepts either:
+///   [SEARCH_CODE_OK] Path: <path> | Query: '<query>'
+///   MATCHES:
+///
+/// or the executor's exact no-match result:
+///   [SEARCH_CODE_OK] Path: <path> | Query: '<query>'
+///   No code matches found in specified path.
+///
+/// The no-match phrase must be the exact standalone executor line inside
+/// the marker block, and the block must have no MATCHES: section. A phrase
+/// embedded in source output is not absence proof. Line-anchored scanning
+/// keeps a marker string inside another block's body from being treated
+/// as a real marker.
+pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
     let expected = expected.trim().to_lowercase();
+
     let (path_part, term_part) = match expected.split_once(':') {
-        Some((p, t)) => (p.trim().to_string(), t.trim().to_string()),
-        None => (String::new(), expected.clone()),
+        Some((p, t)) if looks_like_workspace_path(p.trim()) => {
+            (p.trim().to_string(), t.trim().to_string())
+        }
+        _ => (String::new(), expected.clone()),
     };
 
     if term_part.is_empty() {
         return false;
     }
 
-    evidence.split("[SEARCH_CODE_OK]").skip(1).any(|block| {
-        // A search that explicitly reports no matches is not a satisfied
-        // search criterion. Keep this decision local to this marker block.
-        if !block.contains("MATCHES:") {
-            return false;
-        }
+    let lines: Vec<&str> = evidence.lines().collect();
+    let mut i = 0usize;
 
-        let header = block.lines().next().unwrap_or("").trim();
-
-        let Some((path_field, query_field)) = header.split_once("| Query:") else {
-            return false;
+    while i < lines.len() {
+        let Some(header_body) =
+            lines[i].trim_start().strip_prefix("[SEARCH_CODE_OK]")
+        else {
+            i += 1;
+            continue;
         };
 
-        let Some(recorded_path) = path_field.strip_prefix("Path:") else {
-            return false;
-        };
+        let header = header_body.trim();
+        let mut has_matches = false;
+        let mut exact_no_match = false;
+        let mut j = i + 1;
 
-        let recorded_path = recorded_path.trim().to_lowercase();
-        let recorded_query =
-            query_field.trim().trim_matches(|c| c == '\'' || c == '"' || c == '`').to_lowercase();
+        while j < lines.len() {
+            let next = lines[j].trim_start();
 
-        if recorded_query.is_empty() {
-            return false;
+            if next.starts_with('[')
+                && !next.starts_with("[MATCHES")
+                && !next.starts_with("[FALLBACK")
+            {
+                break;
+            }
+
+            if next.starts_with("MATCHES:") {
+                has_matches = true;
+            }
+
+            if next.trim() == "No code matches found in specified path." {
+                exact_no_match = true;
+            }
+
+            j += 1;
         }
 
-        let path_ok = path_part.is_empty()
-            || recorded_path == path_part
-            || recorded_path.ends_with(&format!("/{}", path_part));
+        let successful_outcome = has_matches || exact_no_match;
 
-        path_ok && recorded_query.contains(&term_part)
-    })
+        if successful_outcome {
+            if let Some((path_field, query_field)) =
+                header.split_once("| Query:")
+            {
+                if let Some(recorded_path) =
+                    path_field.trim().strip_prefix("Path:")
+                {
+                    let recorded_path = recorded_path.trim().to_lowercase();
+                    let recorded_query = query_field
+                        .trim()
+                        .trim_matches(|c| {
+                            c == '\'' || c == '"' || c == '`'
+                        })
+                        .to_lowercase();
+
+                    if !recorded_query.is_empty() {
+                        let path_ok = path_part.is_empty()
+                            || recorded_path == path_part
+                            || recorded_path.ends_with(
+                                &format!("/{}", path_part)
+                            );
+
+                        if path_ok && recorded_query.contains(&term_part) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        i = j;
+    }
+
+    false
+}
+
+pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
+    let expected = expected.trim().to_lowercase();
+    // Split on the FIRST colon only when the prefix looks like a workspace
+    // path. Otherwise keep the whole expectation as a term: a term that
+    // contains a colon (e.g. "std::io") would otherwise be misparsed as
+    // path "std", term "io" and could never match. When path_part is empty,
+    // path binding is intentionally skipped below.
+    let (path_part, term_part) = match expected.split_once(':') {
+        Some((p, t)) if looks_like_workspace_path(p.trim()) => {
+            (p.trim().to_string(), t.trim().to_string())
+        }
+        _ => (String::new(), expected.clone()),
+    };
+
+    if term_part.is_empty() {
+        return false;
+    }
+
+    // Parse markers ONLY from lines that BEGIN with [SEARCH_CODE_OK]
+    // (after optional leading whitespace). A [SEARCH_CODE_OK] occurring
+    // inside a MATCHES: body -- e.g. as a string literal in a test that
+    // exercises this parser, or a doc comment documenting the marker
+    // format -- is DATA, not a marker. The previous split-on-substring
+    // implementation treated any occurrence as a marker start, so any
+    // file whose content contained the literal marker string could spoof
+    // a search result for a directory that was never searched. Confirmed
+    // live: a `crates` search that matched evidence_markers.rs's own
+    // unit tests "satisfied" a `bins:...` criterion because the test
+    // source contains a fabricated marker string.
+    let lines: Vec<&str> = evidence.lines().collect();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let Some(header_body) = lines[i].trim_start().strip_prefix("[SEARCH_CODE_OK]") else {
+            i += 1;
+            continue;
+        };
+        let header = header_body.trim();
+
+        // Scan forward for MATCHES:. A new marker line ends the block.
+        let mut has_matches = false;
+        let mut j = i + 1;
+        while j < lines.len() {
+            let next = lines[j].trim_start();
+            if next.starts_with('[')
+                && !next.starts_with("[MATCHES")
+                && !next.starts_with("[FALLBACK")
+            {
+                break;
+            }
+            if next.starts_with("MATCHES:") {
+                has_matches = true;
+            }
+            j += 1;
+        }
+
+        if has_matches {
+            if let Some((path_field, query_field)) = header.split_once("| Query:") {
+                if let Some(recorded_path) = path_field.trim().strip_prefix("Path:") {
+                    let recorded_path = recorded_path.trim().to_lowercase();
+                    let recorded_query = query_field
+                        .trim()
+                        .trim_matches(|c| c == '\'' || c == '"' || c == '`')
+                        .to_lowercase();
+                    if !recorded_query.is_empty() {
+                        let path_ok = path_part.is_empty()
+                            || recorded_path == path_part
+                            || recorded_path.ends_with(&format!("/{}", path_part));
+                        if path_ok && recorded_query.contains(&term_part) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        i = j;
+    }
+    false
 }
 
 /// Returns true only when one physical READ_FUNCTION_OK marker record
@@ -243,6 +393,46 @@ mod tests {
     }
 
     #[test]
+    fn marker_text_inside_matches_body_is_not_a_marker() {
+        // A crates search whose MATCHES body contains the literal
+        // marker string (as our own unit tests do) must NOT satisfy a
+        // bins criterion. This is the exact spoof that let task_3
+        // "pass" with only a crates search in the live run.
+        let ev = concat!(
+            "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\n",
+            "MATCHES:\n",
+            "evidence_markers.rs:264:  let bins_ok = \"[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\\nMATCHES:\\nmain.rs:1: unimplemented!()\\n\";\n",
+        );
+        assert!(
+            !search_term_satisfied(ev, "bins:unimplemented!"),
+            "a marker string inside a MATCHES body must not spoof a bins search"
+        );
+        // The real crates marker is still recognised.
+        assert!(search_term_satisfied(ev, "crates:unimplemented!"));
+    }
+
+    #[test]
+    fn bins_criterion_satisfied_only_by_bins_search() {
+        let bins_ok = "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nmain.rs:1: unimplemented!()\n";
+        let crates_only = "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nlib.rs:1: unimplemented!()\n";
+        assert!(search_term_satisfied(bins_ok, "bins:unimplemented!"));
+        assert!(!search_term_satisfied(crates_only, "bins:unimplemented!"));
+    }
+
+    #[test]
+    fn bare_term_criterion_accepts_any_path() {
+        let ev = "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nx\n";
+        assert!(search_term_satisfied(ev, "unimplemented!"));
+    }
+
+    #[test]
+    fn no_match_marker_never_satisfies_term_bound_criterion() {
+        let ev = "[SEARCH_CODE_OK] Path: bins | Query: 'x'\nNo code matches found in specified path.";
+        assert!(!search_term_satisfied(ev, "bins:x"));
+        assert!(!search_term_satisfied(ev, "x"));
+    }
+
+    #[test]
     fn search_term_rejects_documented_empty_result() {
         let ev =
             "[SEARCH_CODE_OK] Path: src | Query: 'target'\nNo code matches found in specified path.";
@@ -380,4 +570,91 @@ fn path_token_matches(token: &str, target: &str, target_basename: &str) -> bool 
         return token_basename == target_basename;
     }
     false
+}
+
+
+#[cfg(test)]
+mod search_checked_tests {
+    use super::{search_checked_satisfied, search_term_satisfied};
+
+    #[test]
+    fn accepts_exact_path_bound_no_match() {
+        let evidence = concat!(
+            "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\n",
+            "No code matches found in specified path.\n"
+        );
+
+        assert!(search_checked_satisfied(
+            evidence,
+            "bins:unimplemented!"
+        ));
+        assert!(!search_term_satisfied(
+            evidence,
+            "bins:unimplemented!"
+        ));
+    }
+
+    #[test]
+    fn accepts_path_bound_positive_matches() {
+        let evidence = concat!(
+            "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\n",
+            "MATCHES:\n",
+            "main.rs:10: unimplemented!()\n"
+        );
+
+        assert!(search_checked_satisfied(
+            evidence,
+            "bins:unimplemented!"
+        ));
+    }
+
+    #[test]
+    fn rejects_wrong_path_and_wrong_query() {
+        let evidence = concat!(
+            "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\n",
+            "No code matches found in specified path.\n"
+        );
+
+        assert!(!search_checked_satisfied(
+            evidence,
+            "bins:unimplemented!"
+        ));
+        assert!(!search_checked_satisfied(
+            evidence,
+            "crates:another_term"
+        ));
+    }
+
+    #[test]
+    fn rejects_unbound_or_inexact_no_match_text() {
+        assert!(!search_checked_satisfied(
+            "No code matches found in specified path.",
+            "bins:x"
+        ));
+
+        assert!(!search_checked_satisfied(
+            "[SEARCH_CODE_OK] Path: bins | Query: 'x'\n\
+             No code matches found.",
+            "bins:x"
+        ));
+    }
+
+    #[test]
+    fn rejects_bare_marker_with_no_outcome() {
+        let evidence = "[SEARCH_CODE_OK] Path: bins | Query: 'x'\n";
+        assert!(!search_checked_satisfied(evidence, "bins:x"));
+    }
+
+    #[test]
+    fn no_match_phrase_in_matches_body_is_not_absence_proof() {
+        let evidence = concat!(
+            "[SEARCH_CODE_OK] Path: bins | Query: 'x'\n",
+            "MATCHES:\n",
+            "main.rs:1: // No code matches found in specified path.\n"
+        );
+
+        // Accepted because MATCHES exists (a real hit was found),
+        // not because the trailing phrase proves absence.
+        assert!(search_checked_satisfied(evidence, "bins:x"));
+    }
 }

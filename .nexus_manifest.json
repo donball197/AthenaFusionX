@@ -223,6 +223,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-omni-1.2-flash",
+    "context": "131.1K in / 65.5K out",
+    "category": "FLASH"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-omni-flash-preview",
     "context": "131.1K in / 65.5K out",
     "category": "FLASH"
@@ -409,12 +415,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "meta/llama-3.2-11b-vision-instruct",
-    "context": "128K in / 4K out",
-    "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
     "name": "meta/llama-3.2-90b-vision-instruct",
     "context": "128K in / 4K out",
     "category": "VISION"
@@ -482,6 +482,12 @@
   {
     "provider": "Nvidia",
     "name": "mistralai/mistral-large-2-instruct",
+    "context": "128K in / 4K out",
+    "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "mistralai/mistral-large-4-1t-a52b",
     "context": "128K in / 4K out",
     "category": "MISTRAL"
   },
@@ -614,6 +620,12 @@
   {
     "provider": "Nvidia",
     "name": "nvidia/nemotron-3-ultra-550b-a55b",
+    "context": "4K in / 4K out",
+    "category": "NEMOTRON"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "nvidia/nemotron-3.5-bolt-e4b",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
   },
@@ -759,12 +771,6 @@
     "provider": "Nvidia",
     "name": "writer/palmyra-med-70b-32k",
     "context": "32K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "z-ai/glm-5.3",
-    "context": "128K in / 4K out",
     "category": "GENERAL"
   },
   {

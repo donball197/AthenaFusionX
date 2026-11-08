@@ -100,6 +100,12 @@ impl OutcomeVerifier {
                     // verifiers cannot diverge again.
                     crate::evidence_markers::search_term_satisfied(local_evidence, term)
                 }
+                CompletionCondition::SearchCheckedAcquired { target } => {
+                    crate::evidence_markers::search_checked_satisfied(
+                        local_evidence,
+                        target,
+                    )
+                }
                 CompletionCondition::SearchMemoryMarkerAcquired => {
                     local_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
                 }
@@ -134,7 +140,37 @@ impl OutcomeVerifier {
                     // Delegates to the shared binder in evidence_paths. The
                     // former 1-line-forward scan mishandled multi-line
                     // commands and bracketed output.
-                    crate::evidence_paths::cmd_ok_binds_command(local_evidence)
+                    //
+                    // Two corrections layered on top of that scan:
+                    //
+                    // 1. Strip inherited evidence: everything before the last
+                    //    [DAG LINEAGE COMPLETE sha256:...] marker belongs to
+                    //    an ancestor node. A node that follows a command node
+                    //    must not be trivially complete from inherited
+                    //    [CMD_OK] blocks; the node's own command must run.
+                    //
+                    // 2. Reset on halt rejection: if [HALT_REJECTED] appears
+                    //    after the last own [CMD_OK], the node has already
+                    //    attempted a halt and been rejected at mission level.
+                    //    The contract is no longer satisfied until the node
+                    //    produces new command evidence. This is what stops
+                    //    the auto-halt from overriding a freshly-recovered
+                    //    ExecuteCommand action.
+                    let own = local_evidence
+                        .rfind("[DAG LINEAGE COMPLETE sha256:")
+                        .and_then(|i| {
+                            local_evidence[i..]
+                                .find('\n')
+                                .map(|j| &local_evidence[i + j + 1..])
+                        })
+                        .unwrap_or(local_evidence);
+                    let reject_after_ok =
+                        match (own.rfind("[HALT_REJECTED"), own.rfind("[CMD_OK]")) {
+                            (Some(r), Some(o)) if r > o => true,
+                            (Some(_), None) => true,
+                            _ => false,
+                        };
+                    !reject_after_ok && crate::evidence_paths::cmd_ok_binds_command(own)
                 }
                 CompletionCondition::LineageEvidenceAcquired => {
                     verify_lineage_provenance(local_evidence)

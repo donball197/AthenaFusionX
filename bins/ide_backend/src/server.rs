@@ -215,8 +215,18 @@ pub async fn start_server(state: Arc<AppState>) {
         .fallback(static_handler) // ⚡ RustEmbed serves the Svelte build
         .with_state(state);
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let addr = std::env::var("NEXUS_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("[BOOT] bind {} failed: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+    tracing::info!("[BOOT] API listening on {}", addr);
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("[SERVER] serve failed: {}", e);
+    }
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {

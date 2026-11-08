@@ -19,6 +19,7 @@ impl CorticalLoop {
         session: &mut EpistemicSession,
         active_strategy: &mut String,
     ) {
+
         let patch_function_strategy = active_strategy.starts_with("patch_function:");
         // When PatchFunction fails because the symbol has no Tree-sitter body,
         // demote the dead patch_function hypothesis and pivot to read_file of
@@ -100,6 +101,25 @@ impl CorticalLoop {
         mission: &str,
         write_phase_ready: bool,
     ) {
+        // GUARD: Do not override a strategy whose target is the mission's
+        // required artifact. A mission that names an output file is a
+        // CREATE, not a mutation of the read files.
+        {
+            let names_required_artifact = active_strategy
+                .strip_prefix("write_file:")
+                .map(str::trim)
+                .is_some_and(|target| {
+                    session
+                        .contract
+                        .required_artifact_paths
+                        .iter()
+                        .any(|a| a.path == target)
+                });
+            if names_required_artifact {
+                return;
+            }
+        }
+
         // After READ_OK on a mutation mission, inject patch_function / replace_lines
         // so strict action_matches_strategy does not reject mutation proposals
         // while active_strategy is still read_file.
@@ -377,12 +397,51 @@ impl CorticalLoop {
         current_belief: f32,
         write_phase_ready: bool,
     ) {
+        // GUARD: Do not override a strategy whose target is the mission's
+        // required artifact. A mission that names an output file is a
+        // CREATE, not a mutation of the read files.
+        {
+            let names_required_artifact = active_strategy
+                .strip_prefix("write_file:")
+                .map(str::trim)
+                .is_some_and(|target| {
+                    session
+                        .contract
+                        .required_artifact_paths
+                        .iter()
+                        .any(|a| a.path == target)
+                });
+            if names_required_artifact {
+                return;
+            }
+        }
+
         //
         // The deterministic parsing of SEARCH_CODE MATCHES evidence is
         // delegated to the independent reconnaissance algorithm.
         // Cortex remains the executive coordinator: it evaluates the
         // contract, creates hypotheses, assigns belief, and selects the
         // active strategy.
+        // Do not let post-search expansion pivot to read_file while a
+        // path-bound SearchTermAcquired/SearchMarkerAcquired condition is
+        // still unmet. Otherwise a `crates` search injects a read_file
+        // strategy that then blocks the required `bins` search with a
+        // STRATEGY VIOLATION.
+        let has_unmet_search = session.contract.conditions.iter().any(|c| {
+            matches!(
+                c,
+                crate::completion_engine::CompletionCondition::SearchTermAcquired { .. }
+                    | crate::completion_engine::CompletionCondition::SearchCheckedAcquired { .. }
+                    | crate::completion_engine::CompletionCondition::SearchMarkerAcquired
+            ) && !crate::cortical::contract_advance::condition_is_met(
+                c,
+                &session.local_evidence,
+            )
+        });
+        if has_unmet_search {
+            return;
+        }
+
         if !write_phase_ready
             && session.local_evidence.contains("[SEARCH_CODE_OK]")
             && session.local_evidence.contains("MATCHES:")

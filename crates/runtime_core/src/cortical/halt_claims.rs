@@ -93,11 +93,29 @@ fn word_present(hay: &str, needle: &str) -> bool {
 /// rejection message) can never verify its own claims.
 pub fn verification_corpus(local_evidence: &str, current_turn_evidence: &str) -> String {
     local_evidence
-        .replace(current_turn_evidence, "")
-        .lines()
-        .filter(|l| !l.starts_with("[HALT"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    .replace(current_turn_evidence, "")
+    .lines()
+    .filter(|l| !l.starts_with("[HALT"))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+/// True when the backticked span sits in an absence claim ("no `x` exists",
+/// "`x` does not appear"), where citing a missing symbol is the finding.
+fn absence_context(report: &str, start: usize, end: usize) -> bool {
+    let before_all = report.get(..start).unwrap_or("");
+    let line_start = before_all.rfind('\n').map_or(0, |i| i + 1);
+    let tail: Vec<char> = before_all[line_start..].chars().collect();
+    let skip = tail.len().saturating_sub(60);
+    let before: String = tail[skip..].iter().collect::<String>().to_lowercase();
+    let before = before.trim_end().trim_end_matches('`').trim_end().to_string();
+    let after: String = report.get(end..).unwrap_or("").chars().take(70).collect::<String>().to_lowercase();
+    ["no", "not", "never", "without", "neither", "nor", "absent"]
+        .iter()
+        .any(|w| before.ends_with(w))
+        || ["does not", "not appear", "not found", "not present", "never ", "is absent", "doesn't", "no such", "not exist"]
+            .iter()
+            .any(|w| after.contains(w))
 }
 
 /// Backticked identifiers in `report` that do not appear in `corpus`.
@@ -106,23 +124,25 @@ pub fn verification_corpus(local_evidence: &str, current_turn_evidence: &str) ->
 /// Spans with spaces, paths, attributes, or punctuation are ignored.
 pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
     let mut bad: Vec<String> = Vec::new();
-    for span in report.split('`').skip(1).step_by(2) {
-        let span = span.trim().trim_end_matches("()");
+    let mut off = 0usize;
+    for (part_idx, part) in report.split('`').enumerate() {
+        let span_start = off;
+        off += part.len() + 1;
+        if part_idx % 2 == 0 {
+            continue;
+        }
+        let span_end = span_start + part.len();
+        let span = part.trim().trim_end_matches("()");
         let name = span.rsplit("::").next().unwrap_or("");
         if !is_ident(name) || SKIP.contains(&name) {
             continue;
         }
-        let found = if name.chars().next().is_some_and(|c| c.is_uppercase()) {
-            word_present(corpus, name)
-        } else {
-            word_present(corpus, &format!("fn {}", name))
-                || corpus.contains(&format!("{}(", name))
-                // Variables, fields and string literals (e.g. `mutation_paths`,
-                // `python3`) are legitimate backticked claims; they only need to
-                // appear in the evidence. Invented names still fail.
-                || word_present(corpus, name)
-        };
-        if !found && !bad.iter().any(|b| b == name) {
+        // General Markdown Formatting Fix:
+        // A backticked word is considered verified if it appears anywhere in the 
+        // physical evidence (e.g. cargo check output, variable names, internal functions).
+        // It does not need to be a formal `pub` definition.
+        let found = word_present(corpus, name);
+        if !found && !absence_context(report, span_start, span_end) && !bad.iter().any(|b| b == name) {
             bad.push(name.to_string());
         }
     }
@@ -409,6 +429,7 @@ fn words_at(hay: &str, needle: &str) -> Vec<usize> {
         .collect()
 }
 
+#[allow(dead_code)]
 fn range_after(window: &str) -> Option<(usize, usize)> {
     let i = window.find("ines ")? + "ines ".len();
     let rest = window[i..].trim_start_matches(|c: char| !c.is_ascii_digit());
@@ -428,6 +449,55 @@ fn range_after(window: &str) -> Option<(usize, usize)> {
         return None;
     }
     Some((a.parse().ok()?, b.parse().ok()?))
+}
+
+fn all_ranges(s: &str) -> Vec<(usize, usize)> {
+    let cs: Vec<char> = s.chars().collect();
+    let (mut out, mut i) = (Vec::new(), 0usize);
+    while i < cs.len() {
+        if cs[i].is_ascii_digit() {
+            let st = i;
+            while i < cs.len() && cs[i].is_ascii_digit() {
+                i += 1;
+            }
+            let a: String = cs[st..i].iter().collect();
+            if i + 1 < cs.len()
+                && matches!(cs[i], '-' | '\u{2013}' | '\u{2014}')
+                && cs[i + 1].is_ascii_digit()
+            {
+                let mut j = i + 1;
+                while j < cs.len() && cs[j].is_ascii_digit() {
+                    j += 1;
+                }
+                let b: String = cs[i + 1..j].iter().collect();
+                if let (Ok(a), Ok(b)) = (a.parse(), b.parse()) {
+                    out.push((a, b));
+                }
+                i = j;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// All ranges after the first "lines " in the window; prefers one that matches
+/// a ledger span of `name` (a line may cite two functions with two ranges).
+fn best_range_after(window: &str, spans: &[FnSpan], name: &str) -> Option<(usize, usize)> {
+    let i = window.find("ines ")? + "ines ".len();
+    let ranges = all_ranges(&window[i..]);
+    let first = *ranges.first()?;
+    Some(
+        ranges
+            .into_iter()
+            .find(|&(a, b)| {
+                spans.iter().filter(|x| x.name == name).any(|x| {
+                    x.end.is_some_and(|e| a.abs_diff(x.start) <= 25 && b.abs_diff(e) <= 40)
+                })
+            })
+            .unwrap_or(first),
+    )
 }
 
 /// Cited `name` + "Lines A-B" on the same report line must match the ledger.
@@ -450,7 +520,7 @@ pub fn range_defects(report: &str, spans: &[FnSpan], min_len: usize) -> Vec<Stri
             }
             let line: &str = report[pos..].lines().next().unwrap_or("");
             let window: String = line.chars().take(300).collect();
-            if let Some((a, b)) = range_after(&window) {
+            if let Some((a, b)) = best_range_after(&window, spans, &sp.name) {
                 let ok = spans.iter().filter(|x| x.name == sp.name).any(|x| {
                     x.end.is_some_and(|e| a.abs_diff(x.start) <= 25 && b.abs_diff(e) <= 40)
                 });
@@ -616,6 +686,41 @@ fn public_definitions(corpus: &str) -> std::collections::HashSet<String> {
 /// a `pub use ... NAME` re-export). Call sites, imports, `impl` headers and
 /// `pub(crate)`/private items do not count. Stricter than `unverified_symbols`;
 /// use it only when the mission asks for public items.
+/// Returns true for tokens that should NOT be treated as claimable
+/// public definitions. Audit reports legitimately name standard library
+/// types, standard methods, string-literal statuses, FFI/WASM conventions,
+/// and canonical entry points -- none of which are `pub fn` / `pub struct`
+/// items in the project source. Requiring a project-level `pub` definition
+/// for each of them makes the grounding gate unsatisfiable for a
+/// comprehensive audit report.
+fn is_grounding_skip_token(name: &str) -> bool {
+    matches!(
+        name,
+        // Std types and traits.
+        "String" | "Result" | "Option" | "Vec" | "HashMap" | "HashSet"
+            | "Arc" | "Mutex" | "RwLock" | "Handle" | "JoinHandle"
+            | "Drop" | "Iterator" | "Clone" | "Debug" | "Default"
+            | "Send" | "Sync" | "Any" | "Box" | "Duration" | "Instant"
+        // Std methods and combinators.
+            | "unwrap" | "expect" | "clone" | "to_string" | "from_str" | "parse"
+            | "spawn" | "spawn_blocking" | "try_current" | "exit" | "drop"
+            | "abort" | "panic" | "flush" | "read" | "write"
+        // Entry points, FFI, libc, WASM conventions.
+            | "main" | "_start" | "start_server" | "init"
+            | "flock" | "setuid" | "setgid" | "getuid" | "getgid"
+        // Status literal vocabulary and evidence markers.
+            | "Active" | "Aborted" | "Completed" | "Pending" | "Failed" | "Running"
+            | "FRACTURE" | "PERSISTENCE" | "INCOMPLETE" | "COMPLETE"
+            | "READ_OK" | "WRITE_OK" | "CMD_OK" | "CMD_FAILED"
+            | "SEARCH_CODE_OK" | "SEARCH_CHECKED_OK" | "SEARCH_MEMORY_OK"
+            | "READ_CHUNK_OK" | "READ_FUNCTION_OK" | "PATCH_FUNCTION_OK"
+            | "PATCH_IDEMPOTENT_OK" | "DIFF_PATCH_OK" | "REPLACE_LINES_OK"
+            | "HALT" | "DAG_LINEAGE_OK" | "ANALYSIS_OK" | "TIMEOUT"
+        // Report section labels.
+            | "Scope" | "Summary" | "Evidence" | "Conclusion"
+    ) || name.starts_with('_')
+}
+
 pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>) {
     let public = public_definitions(corpus);
     let (mut ok, mut bad): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
@@ -626,7 +731,7 @@ pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>
             None => continue,
         };
         let name = claimed.as_str();
-        if SKIP.contains(&name) {
+        if SKIP.contains(&name) || is_grounding_skip_token(name) {
             continue;
         }
         let bucket = if public.contains(name) { &mut ok } else { &mut bad };
@@ -732,9 +837,27 @@ pub fn is_report_artifact(path: &str) -> bool {
     p.ends_with(".txt") || p.ends_with(".md")
 }
 
+/// Strip lineage sections from a composite mission so that
+/// `wants_pub_items` only inspects the node's own objective and the
+/// root directive — not evidence inherited from sibling/parent nodes
+/// (which frequently contains `pub struct` propositions from upstream
+/// `[PROPOSITION] ... Defined symbols: pub struct X` lines).
+fn strip_lineage(text: &str) -> &str {
+    let cut = [
+        text.find("[DEPENDENCY LINEAGE FROM"),
+        text.find("[DAG LINEAGE"),
+        text.find("LINEAGE CONTEXT:"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(text.len());
+    &text[..cut]
+}
+
 /// True when the mission asks for public items (so the strict check applies).
 pub fn wants_pub_items(objective: &str) -> bool {
-    let o = objective.to_ascii_lowercase();
+    let o = strip_lineage(objective).to_ascii_lowercase();
     ["pub fn", "pub struct", "pub enum", "pub trait", "public item", "public api"]
         .iter()
         .any(|k| o.contains(k))
@@ -838,5 +961,103 @@ mod halt_claims_keyword_tests {
         let corpus = "pub fn add(a: u8) -> u8 { a }";
         let report = "No `unsafe`, `static`, `const` or `impl` blocks; `add` is the only fn.";
         assert!(unverified_symbols(report, corpus).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod two_range_tests {
+    use super::*;
+    #[test]
+    fn two_ranges_on_one_line_accept_the_matching_one() {
+        let mut m: std::collections::BTreeMap<usize, String> =
+            (1..=30).map(|n| (n, "    x;".to_string())).collect();
+        m.insert(1, "fn wrapper() {".to_string());
+        m.insert(3, "}".to_string());
+        m.insert(5, "fn big() {".to_string());
+        m.insert(30, "}".to_string());
+        let sp = function_spans(&m);
+        let r = "through `wrapper` / `big` (lines 1-3 and 5-30)";
+        assert!(range_defects(r, &sp, 1).is_empty(), "{:?}", range_defects(r, &sp, 1));
+        assert_eq!(range_defects("`big` (lines 100-180)", &sp, 1).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod absence_tests {
+    use super::*;
+    #[test]
+    fn absence_claims_pass_invented_claims_fail() {
+        let corpus = "fn real() {}";
+        assert!(unverified_symbols("(c) No `active_graph` symbol exists.", corpus).is_empty());
+        assert!(unverified_symbols("The `active_graph` identifier does not appear.", corpus).is_empty());
+        assert_eq!(unverified_symbols("`invented_fn` returns 3", corpus), vec!["invented_fn"]);
+    }
+}
+
+#[cfg(test)]
+mod wants_pub_items_dry_run {
+    use super::*;
+
+    const NODE4_OBJECTIVE: &str = "Write a comprehensive report named `full_system_audit.md` containing: - Orphaned files and dead code found via cargo warnings. - Exact locations of stubs, placeholders, and technical debt. - Identification of any duplicated logic across crates. - Concrete architectural advice for advancing the system to live, unmonitored production runs.";
+
+    const ROOT_DIRECTIVE: &str = "OBJECTIVE: Perform a full system analysis of the bins/ apps/ and crates/ directories. Audit for orphaned files, stubs, duplicate logic, and production readiness. Step 1: Execute exactly `cargo check --workspace`. Step 2: Search the codebase for \"todo!\" and \"unimplemented!\" macros. Step 3: Read bins/ide_backend/src/main.rs and crates/runtime_core/src/task_manager.rs. Step 4: Write a comprehensive report named `full_system_audit.md`.";
+
+    const NODE3_LINEAGE: &str = "---\n[DEPENDENCY LINEAGE FROM task_3]:\n[DAG NODE COMPLETE] Objective: Read bins/ide_backend/src/main.rs and crates/runtime_core/src/task_manager.rs\nBelief: 0.95\nEvidence:\n- [Supports] [READ_OK] crates/runtime_core/src/task_manager.rs\n[PROPOSITION] crates/runtime_core/src/task_manager.rs -> Defined symbols: pub struct TaskContext\n- [Supports] [HALT] READ_OK criteria are satisfied...\n---\n";
+
+    fn composite_mission() -> String {
+        format!(
+            "OBJECTIVE: {}\nASSIGNED ROLE: CodeAnalyzer\n\n\
+             MANDATORY NODE SUCCESS CRITERIA:\n- WritePathAcquired {{ path: \"full_system_audit.md\" }}\n\n\
+             NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete.\n\n\
+             ROOT DIRECTIVE CONTEXT:\n{}\n\n\
+             LINEAGE CONTEXT:\n{}",
+            NODE4_OBJECTIVE, ROOT_DIRECTIVE, NODE3_LINEAGE
+        )
+    }
+
+    #[test]
+    fn components_are_not_pub_item_requests() {
+        assert!(!wants_pub_items(NODE4_OBJECTIVE),
+            "node 4's own objective does NOT ask for public API items");
+        assert!(!wants_pub_items(ROOT_DIRECTIVE),
+            "the root directive does NOT ask for public API items");
+        assert!(NODE3_LINEAGE.contains("pub struct"),
+            "sanity: lineage DOES contain 'pub struct' from upstream evidence");
+    }
+
+    #[test]
+    fn composite_mission_no_longer_fires_the_gate() {
+        let composite = composite_mission();
+        assert!(!wants_pub_items(&composite),
+            "FIX CONFIRMED: composite mission no longer triggers wants_pub_items");
+    }
+
+    #[test]
+    fn genuine_pub_item_missions_still_fire() {
+        assert!(wants_pub_items("List the pub fn items in src/lib.rs"),
+            "REGRESSION: real pub-fn missions must still trigger the gate");
+        assert!(wants_pub_items("Enumerate the public API of nexus_runtime_core"),
+            "REGRESSION: 'public API' missions must still trigger");
+        assert!(wants_pub_items("Output every pub struct Name in the crate"),
+            "REGRESSION: 'pub struct' missions must still trigger");
+    }
+
+    #[test]
+    fn strip_lineage_is_what_makes_it_work() {
+        let composite = composite_mission();
+        let stripped_len = strip_lineage(&composite).len();
+        assert!(stripped_len < composite.len(),
+            "strip_lineage must shorten a lineage-bearing mission");
+        let stripped = &composite[..stripped_len];
+        assert!(!stripped.to_ascii_lowercase().contains("pub struct"),
+            "after stripping, the string no longer contains 'pub struct'");
+    }
+
+    #[test]
+    fn strip_lineage_picks_the_earliest_marker() {
+        let text = "OBJECTIVE: foo\n\nLINEAGE CONTEXT:\n[DEPENDENCY LINEAGE FROM t]:\npub struct Bar";
+        let cut = strip_lineage(text);
+        assert!(!cut.contains("pub struct"));
+        assert!(cut.contains("OBJECTIVE: foo"));
     }
 }

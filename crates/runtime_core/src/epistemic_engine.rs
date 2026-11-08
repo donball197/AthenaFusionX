@@ -527,16 +527,30 @@ impl EpistemicEngine {
         tail: usize,
         max_pinned_total: usize,
     ) -> String {
-        const MAX_PINNED_REGION: usize = 30_000;
+        Self::compress_preserving_reads_budget_cap(evidence, head, tail, max_pinned_total, 30_000)
+    }
+
+    /// Same as `compress_preserving_reads_budget` with an explicit per-read cap.
+    /// The final HALT verifier uses a larger cap so files of ~50-80 KB are
+    /// judged whole instead of being cut mid-function.
+    pub(crate) fn compress_preserving_reads_budget_cap(
+        evidence: &str,
+        head: usize,
+        tail: usize,
+        max_pinned_total: usize,
+        max_region: usize,
+    ) -> String {
         let n_read_regions = evidence
             .lines()
             .filter(|l| {
                 let t = l.trim_start();
                 t.starts_with("[READ_OK]") || t.starts_with("[READ_CHUNK_OK]")
             })
-            .count()
+            .map(|l| l.trim())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
             .max(1);
-        let per_region_cap = (max_pinned_total / n_read_regions).clamp(3_000, MAX_PINNED_REGION);
+        let per_region_cap = (max_pinned_total / n_read_regions).clamp(3_000, max_region);
 
         let starts_read_region = |line: &str| {
             let t = line.trim_start();
@@ -995,6 +1009,19 @@ PHYSICAL PROFILE & ABILITIES:
 - CONTEXT LIMIT: Large. Evidence history is provided in full. Never truncate your final report.
 - TOOL ABILITY: For large files use `read_file_chunk` (up to 250 lines per call) or `search_code`.
 
+CRITICAL RULE [NODE SCOPING]: Your deliverable is exactly what OBJECTIVE
+and MANDATORY NODE SUCCESS CRITERIA describe. Steps in ROOT DIRECTIVE
+CONTEXT belong to OTHER nodes, not to you. NEVER plan, propose, or
+reference an action to fulfill a root-directive step that is not in your
+own OBJECTIVE. If your objective is read/inspect/evaluate and the phase
+transition has forced you to `halt`, your ONLY job is to summarize what
+your own criteria have physically evidenced. Do NOT say "the next step
+is to write X" — that is another node's job. Do NOT mention or backtick-
+reference any deliverable that is not named in your own OBJECTIVE or
+MANDATORY NODE SUCCESS CRITERIA. If you are on `halt`, deliver the halt
+text for your own node now, with no reference to other nodes.
+
+
 CRITICAL MULTI-PASS RULES FOR LARGE FILES (MANDATORY):
 1. Never declare the analysis complete after reading only one chunk.
 2. Always track progress explicitly in your reasoning:
@@ -1124,6 +1151,10 @@ authoritative action representation."#,
         world_context: &str,
         evidence_history: &str,
     ) -> Result<CriticResponse> {
+        // Judge against THIS node's objective/criteria only. The root directive
+        // lists steps owned by other DAG nodes; showing it made the critic veto
+        // a correct node halt for "missing" steps that belong elsewhere.
+        let mission = Self::scope_to_node_instructions(mission);
         let m_armored = format!(
             r#"<MISSION_OBJECTIVE>
 
@@ -1170,7 +1201,7 @@ the XML tags above. Do NOT veto legitimate search/recon commands. When the missi
 
 You are the Adversarial Critic. ORIGINAL DIRECTIVE: {mission} STRATEGY:
 {strategy} PROPOSED ACTION: {proposed_action} WORLD CONTEXT: {world_context}
-EVIDENCE HISTORY: {grounded_evidence} Evaluate if this action is safe and
+CRITICAL RULE [NODE SCOPING]: Your deliverable is exactly what OBJECTIVE and MANDATORY NODE SUCCESS CRITERIA describe. Steps in ROOT DIRECTIVE CONTEXT belong to OTHER nodes. NEVER plan, propose, or reference an action to fulfill a root-directive step that is not in your own OBJECTIVE. If you are on a read/inspect/evaluate objective and the phase transition has forced you to `halt`, your ONLY job is to summarize what your own criteria have physically evidenced. Do not say 'the next step is to write X' — that is another node's job. Deliver the halt text now. EVIDENCE HISTORY: {grounded_evidence} Evaluate if this action is safe and
 logically sound. CRITICAL RULE 1 [AST-FIRST]: You must VETO any 'read_file' ONLY
 if the path is completely unrelated to the mission AND was not found by any
 previous tool call. Standard Rust filenames (e.g., executor.rs,
@@ -1408,7 +1439,7 @@ OUTPUT ONLY VALID JSON:
         evidence: &str,
     ) -> Result<crate::cognition_graph::VerificationReport> {
         let truncated_evidence: String =
-            Self::compress_preserving_reads_budget(evidence, 3000, 11000, 200_000);
+            Self::compress_preserving_reads_budget_cap(evidence, 3000, 11000, 300_000, 80_000);
         // The halt text IS the claim source for read-only analysis halts; the
         // claim-check below must see the full claims. The old 2000-char cap
         // silently truncated ROOT_CAUSE/TRACE/FIX answers mid-claim, leaving
@@ -1421,7 +1452,7 @@ ACTION TAKEN: {}
 EVIDENCE:
 {}
 Does this evidence mathematically prove the stated strategy's objective was achieved? A successful action (like [WRITE_OK] or [CMD_OK]) is NOT proof of success on its own UNLESS the ACTION TAKEN itself contains the actual content that was written or patched (write_file/diff_patch/patch_function actions above include the real file content directly in ACTION TAKEN) — in that case, check whether that content satisfies the objective, and treat a confirmed match as proof. Do not reject a successful write or patch merely because the bare EVIDENCE line (e.g. [WRITE_OK]) doesn't repeat the content; the content to check is in ACTION TAKEN.
-For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) read markers ([READ_OK] or [READ_CHUNK_OK]) for the files it discusses appear anywhere in EVIDENCE, including the historical section. Reject a halt that only claims the work is done. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
+For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
 Reply with a single JSON object and nothing else. The first character of your reply must be an opening curly brace.
 OUTPUT ONLY VALID JSON matching this schema:
 {{"rationale": "<reasoning and exact source quotes>", "goal_satisfied": true, "evidence_confidence": 0.9, "independent_check_passed": true}}"#,

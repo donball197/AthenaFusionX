@@ -291,14 +291,34 @@ impl CorticalLoop {
 
         if latest_evidence.contains("PATH_NOT_FOUND") && !starts_with_success_marker {
             if let Some(h_id) = session.best_hypothesis_id {
-                let obs_id = session.graph.add_node(
-                    NodeKind::Observation,
-                    "[PATH_DOES_NOT_EXIST] The requested path does not exist on disk. Do NOT attempt to read it again. Proceed directly to synthesis with the data you already have.",
-                    1.0,
-                    95,
-                );
-                session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.90);
-                session.graph.propagate_beliefs();
+                let obj_lower = session.contract.objective.to_lowercase();
+                let is_existence_check = obj_lower.contains("check for")
+                    || obj_lower.contains("check whether")
+                    || obj_lower.contains("legacy")
+                    || obj_lower.contains("exists")
+                    || obj_lower.contains("existence");
+
+                if is_existence_check {
+                    // Absence is the desired evidence for an existence-check objective.
+                    let obs_id = session.graph.add_node(
+                        NodeKind::Observation,
+                        "[PATH_DOES_NOT_EXIST] Confirmed absence — this satisfies an existence-check objective. Do not retry the path; proceed with remaining required actions.",
+                        1.0,
+                        95,
+                    );
+                    // Prefer Supports if available; otherwise the observation alone is enough.
+                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Supports, 0.60);
+                    session.graph.propagate_beliefs();
+                } else {
+                    let obs_id = session.graph.add_node(
+                        NodeKind::Observation,
+                        "[PATH_DOES_NOT_EXIST] The requested path does not exist on disk. Do NOT attempt to read it again. Proceed directly to synthesis with the data you already have.",
+                        1.0,
+                        95,
+                    );
+                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.90);
+                    session.graph.propagate_beliefs();
+                }
             }
         }
 

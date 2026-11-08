@@ -104,6 +104,33 @@ impl Verifier {
         Self::evaluate_contract_criteria(stdout, criteria)
     }
 
+    /// True when evidence holds a successful `[CMD_OK] Command:` record whose
+    /// command contains the required command's first line (workspace-cd prefix
+    /// stripped, whitespace-normalized), followed by `Status: exit status: 0`.
+    pub fn command_ok_for(evidence: &str, command: &str) -> bool {
+        let norm = |c: &str| {
+            crate::cmd_match::strip_workspace_cd_prefix(c.trim())
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let want = norm(command.lines().next().unwrap_or(""));
+        if want.is_empty() {
+            return true;
+        }
+        let lines: Vec<&str> = evidence.lines().collect();
+        lines.iter().enumerate().any(|(i, l)| {
+            let Some(rest) = l.trim_start().strip_prefix("[CMD_OK] Command:") else {
+                return false;
+            };
+            norm(rest).contains(&want)
+                && lines[i + 1..]
+                    .iter()
+                    .take_while(|l| !crate::evidence_paths::is_marker_line(l))
+                    .any(|l| l.trim() == "Status: exit status: 0")
+        })
+    }
+
     /// Deterministic contract verification based on explicit node criteria.
     ///
     /// Explicit success criteria are authoritative. Legacy node-id rules are
@@ -145,6 +172,8 @@ impl Verifier {
                 crate::evidence_markers::read_function_marker_satisfies(evidence, path, func)
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 crate::evidence_markers::search_term_satisfied(evidence, target)
+            } else if let Some(target) = criterion.strip_prefix("SEARCH_CHECKED_OK:") {
+                crate::evidence_markers::search_checked_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
                 evidence.contains("[HALT]")
             } else if criterion == "SEARCH_MEMORY_OK" {
@@ -261,6 +290,87 @@ mod tests {
         let unrelated =
             Verifier::verify_contract("task_1", "[SEARCH_CODE_OK] host observations", &criteria);
         assert!(matches!(unrelated, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn checked_criterion_accepts_no_match_but_strict_does_not() {
+        let no_match = concat!(
+            "[SEARCH_CODE_OK] Path: bins | Query: 'todo!'\n",
+            "No code matches found in specified path.\n"
+        );
+
+        let checked = vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()];
+        assert_eq!(
+            Verifier::verify_contract("t", no_match, &checked),
+            VerificationResult::Success,
+            "checked-search must accept a documented no-match"
+        );
+
+        let strict = vec!["SEARCH_CODE_OK:bins:todo!".to_string()];
+        assert!(
+            matches!(
+                Verifier::verify_contract("t", no_match, &strict),
+                VerificationResult::Retry(_)
+            ),
+            "strict search must reject a documented no-match"
+        );
+    }
+
+    #[test]
+    fn checked_criterion_rejects_bare_marker() {
+        let criteria = vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()];
+        let bare = "[SEARCH_CODE_OK] Path: bins | Query: 'todo!'\n";
+        assert!(matches!(
+            Verifier::verify_contract("t", bare, &criteria),
+            VerificationResult::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn bins_criterion_rejects_crates_only_search() {
+        let criteria = vec!["SEARCH_CODE_OK:bins:unimplemented!".to_string()];
+        let evidence = "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nfoo.rs:1: unimplemented!()\n";
+        let result = Verifier::verify_contract("t", evidence, &criteria);
+        assert!(
+            matches!(result, VerificationResult::Retry(_)),
+            "a crates-only search must not satisfy a bins-bound criterion; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn bins_criterion_accepts_bins_search() {
+        let criteria = vec!["SEARCH_CODE_OK:bins:unimplemented!".to_string()];
+        let evidence = "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nmain.rs:1: unimplemented!()\n";
+        assert_eq!(
+            Verifier::verify_contract("t", evidence, &criteria),
+            VerificationResult::Success
+        );
+    }
+
+    #[test]
+    fn crates_and_bins_criteria_require_both_searches() {
+        let criteria = vec![
+            "SEARCH_CODE_OK:crates:unimplemented!".to_string(),
+            "SEARCH_CODE_OK:bins:unimplemented!".to_string(),
+        ];
+        let only_crates = "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nlib.rs:1: unimplemented!()\n";
+        assert!(
+            matches!(
+                Verifier::verify_contract("t", only_crates, &criteria),
+                VerificationResult::Retry(_)
+            ),
+            "one crates search must not satisfy both crates and bins criteria"
+        );
+
+        let both = concat!(
+            "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nlib.rs:1: unimplemented!()\n",
+            "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nmain.rs:1: unimplemented!()\n",
+        );
+        assert_eq!(
+            Verifier::verify_contract("t", both, &criteria),
+            VerificationResult::Success
+        );
     }
 
     #[test]

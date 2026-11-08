@@ -5,6 +5,182 @@ use std::collections::HashMap;
 
 pub struct PlannerAgent;
 
+/// Conservative READ-ONLY detector. Matches the phrasing the cortex's
+/// contract inference uses, so planner rewrite and cortex inference
+/// agree on which directives are audits.
+fn directive_is_read_only(directive: &str) -> bool {
+    let lower = directive.to_lowercase();
+    lower.contains("read-only")
+        || lower.contains("read only")
+        || lower.contains("readonly")
+        || lower.contains("do not modify")
+        || lower.contains("don't modify")
+        || lower.contains("audit only")
+        || lower.contains("inspection only")
+}
+
+/// For READ-ONLY missions, rewrite a node's SEARCH_CODE_OK: criteria to
+/// SEARCH_CHECKED_OK: when the node carries no mutation criterion. A
+/// node that also patches/writes is left strict: its search feeds the
+/// mutation, and a no-match really does block the mission.
+/// True when a criterion represents a mutation of ANY kind, including
+/// a report/artifact write. Used by the READ-ONLY rewrite, where the
+/// contract explicitly forbids `WRITE_OK:`-family criteria entirely and
+/// delivers the report in the response rather than to disk. For the
+/// audit rewrite, use `criterion_is_source_mutation` instead: audit
+/// missions intentionally allow report writes while still gating on
+/// source changes.
+fn criterion_is_any_mutation(criterion: &str) -> bool {
+    let t = criterion.trim();
+    t.starts_with("WRITE_OK:")
+        || t.starts_with("PATCH_FUNCTION_OK:")
+        || t.starts_with("DIFF_PATCH_OK:")
+        || t.starts_with("REPLACE_LINES_OK:")
+}
+
+fn apply_read_only_search_rewrite(graph: &mut TaskGraph, directive: &str) {
+    if !directive_is_read_only(directive) {
+        return;
+    }
+    // Positive-match guard: a read-only directive that says "find all",
+    // "locate every", "must find", etc. must not be weakened to
+    // checked-search. The criterion is a mission obligation, not an
+    // audit nicety.
+    if directive_requires_positive_match(directive) {
+        return;
+    }
+    // Graph-wide ANY-mutation guard: READ-ONLY missions forbid every
+    // `WRITE_OK:`-family criterion -- report artifacts included. If the
+    // graph carries any such criterion, the graph already violates the
+    // READ-ONLY contract; refusing to rewrite is the safe response
+    // rather than layering a second policy change on a malformed graph.
+    //
+    // This uses `criterion_is_any_mutation`, NOT
+    // `criterion_is_source_mutation`: READ-ONLY rejects a
+    // `WRITE_OK:report.md` even though that write does not touch
+    // source, and the audit rewrite's source-only classification would
+    // silently weaken that contract. The two policies are intentionally
+    // distinct.
+    let graph_has_any_mutation = graph.nodes.values().any(|n| {
+        n.success_criteria.iter().any(|c| criterion_is_any_mutation(c))
+    });
+    if graph_has_any_mutation {
+        return;
+    }
+    for node in graph.nodes.values_mut() {
+        for criterion in node.success_criteria.iter_mut() {
+            if criterion.starts_with("SEARCH_CODE_OK:") {
+                *criterion = criterion.replacen(
+                    "SEARCH_CODE_OK:",
+                    "SEARCH_CHECKED_OK:",
+                    1,
+                );
+            }
+        }
+    }
+}
+
+
+/// True when the directive reads as an audit / survey / inventory
+/// objective: "look and report", not "find and change". Deliberately
+/// narrow -- `report` and `analysis` alone are NOT audit signals because
+/// "write a report from this data" and "analyze this function" do not
+/// imply that a search result is expected to be empty.
+fn directive_has_audit_intent(directive: &str) -> bool {
+    let lower = directive.to_lowercase();
+    lower.contains("audit") || lower.contains("survey") || lower.contains("inventory")
+}
+
+/// True when the directive contains an explicit "must find" phrase that
+/// would make a no-match search a mission failure, not a valid finding.
+/// These phrases override the audit rewrite even when the audit intent is
+/// otherwise present, so "Audit the code to locate every deprecated_fn"
+/// keeps strict search semantics.
+fn directive_requires_positive_match(directive: &str) -> bool {
+    let lower = directive.to_lowercase();
+    [
+        "must find",
+        "must locate",
+        "must be found",
+        "locate every",
+        "locate all",
+        "find every",
+        "find all",
+        "find where",
+        "all occurrences",
+        "all usages of",
+        "every occurrence",
+        "every usage of",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// True when a single criterion represents a source-code mutation (as
+/// opposed to writing a new report/artifact). `WRITE_OK:` gates the
+/// audit rewrite only when the target path is a `.rs` source file, so
+/// `WRITE_OK:full_system_audit.md` (a report) does NOT gate while
+/// `WRITE_OK:crates/foo/src/new.rs` (a source addition/modification) does.
+fn criterion_is_source_mutation(criterion: &str) -> bool {
+    let t = criterion.trim();
+    if t.starts_with("PATCH_FUNCTION_OK:")
+        || t.starts_with("DIFF_PATCH_OK:")
+        || t.starts_with("REPLACE_LINES_OK:")
+    {
+        return true;
+    }
+    if let Some(path) = t.strip_prefix("WRITE_OK:") {
+        return path.trim().ends_with(".rs");
+    }
+    false
+}
+
+/// Rewrite every `SEARCH_CODE_OK:` criterion in an audit-class graph to
+/// `SEARCH_CHECKED_OK:`, so that a documented no-match counts as a valid
+/// audit finding rather than a failure.
+///
+/// Policy (deliberately conservative, documented here on purpose):
+/// * Fires only when the directive reads as an audit ("audit", "survey",
+///   "inventory") AND contains no explicit "must find" phrase.
+/// * If ANY node in the graph carries a source-mutation criterion, the
+///   WHOLE graph keeps strict search semantics. A graph-wide gate is
+///   simpler and safer than per-node: two search nodes that would
+///   otherwise be audit-checked could each be consumed by a downstream
+///   source-mutation node whose dependency the criteria cannot express,
+///   so per-node gating would weaken the search in a way the verifier
+///   could not detect.
+/// * Report/artifact writes (`WRITE_OK:<non-.rs-path>`) do NOT gate the
+///   rewrite: writing a new `.md`/`.txt`/`.json`/`.html` audit report
+///   does not require any search to have found anything.
+/// * The evidence verifier is NOT relaxed: `SEARCH_CODE_OK:` still
+///   requires a positive match, and `SEARCH_CHECKED_OK:` is the only
+///   criterion that accepts a documented no-match.
+fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
+    if !directive_has_audit_intent(directive) {
+        return;
+    }
+    if directive_requires_positive_match(directive) {
+        return;
+    }
+    let graph_has_source_mutation = graph.nodes.values().any(|n| {
+        n.success_criteria.iter().any(|c| criterion_is_source_mutation(c))
+    });
+    if graph_has_source_mutation {
+        return;
+    }
+    for node in graph.nodes.values_mut() {
+        for criterion in node.success_criteria.iter_mut() {
+            if criterion.starts_with("SEARCH_CODE_OK:") {
+                *criterion = criterion.replacen(
+                    "SEARCH_CODE_OK:",
+                    "SEARCH_CHECKED_OK:",
+                    1,
+                );
+            }
+        }
+    }
+}
+
 impl PlannerAgent {
     pub async fn decompose_task(
         client: &Client,
@@ -36,6 +212,7 @@ impl PlannerAgent {
         let has_structured_criteria = directive.contains("READ_OK:")
             || directive.contains("WRITE_OK:")
             || directive.contains("SEARCH_CODE_OK:")
+            || directive.contains("SEARCH_CHECKED_OK:")
             || directive.contains("READ_FUNCTION_OK:")
             || directive.contains("PATCH_FUNCTION_OK:")
             || directive.contains("DIFF_PATCH_OK:")
@@ -92,7 +269,7 @@ CRITICAL RULE [GRANULARITY]: Create exactly as many nodes as necessary. If the d
 CRITICAL RULE [SUCCESS CONTRACT]: EVERY real work node MUST contain a non-empty 'success_criteria' array. Each criterion MUST be deterministic and physically checkable from execution evidence. Use exact forms such as:
 - "READ_OK:crates/runtime_core/src/router.rs"
 - "READ_FUNCTION_OK:crates/runtime_core/src/router.rs:route"
-- "SEARCH_CODE_OK:crates/runtime_core/src:model configuration" for a self-audit, or "SEARCH_CODE_OK:/abs/path:term" for an external repository (e.g. "SEARCH_CODE_OK:/apps/external_repo:wasm")
+- "SEARCH_CODE_OK:crates/runtime_core/src:model configuration" for a self-audit, or "SEARCH_CODE_OK:/abs/path:term" for an external repository (e.g. "SEARCH_CODE_OK:/apps/external_repo:wasm"). For audit-style searches where a no-match is a valid finding, use the SEARCH_CHECKED_OK: form of either criterion (see [AUDIT SEARCH USES CHECKED FORM])
 - "WRITE_OK:model_routing_analysis.md"
 - "CMD_OK" only when the node objective explicitly requires executing a command
 - "PATCH_FUNCTION_OK:path/to/file.rs:function_name"
@@ -112,7 +289,37 @@ CRITICAL RULE [TERMINAL STEPS]: A directive step that is purely a control-flow o
 CRITICAL RULE [WRITE STEPS ARE NEVER TERMINAL]: Any instruction to write, export, generate, or synthesize a file or report (e.g. "use synthesize_report", "write to X.md", "output a document to Y") IS real work and MUST become its own node with the exact output file path stated in its objective, even when the directive immediately follows it with a halt instruction. Never omit a write/output step.
 CRITICAL RULE [CONDITIONAL REMEDIATION]: Do not create a separate downstream node whose entire purpose is to "fix", "remediate", or "correct" something that a prior diagnostic node has not yet confirmed exists. When a directive says something like "check X, then fix any issues found" or "run tests and correct all errors", scope that as a SINGLE node (e.g. "check X and fix any issues found") rather than splitting diagnosis and remediation into two nodes -- the outcome depends on what the diagnostic step actually discovers, and a separate node presupposes there is necessarily something to fix.
 CRITICAL RULE [EXACT COMMAND PRESERVATION]: When the DIRECTIVE contains a literal shell command -- introduced by phrases such as "Use execute_command to run exactly:", "run this command:", "execute:", or a fenced command block -- the corresponding node's objective MUST embed that exact command verbatim, including every URL, path, SHA, branch name, and flag. NEVER paraphrase a URL or path into prose. The Strategist generates actions from the node objective alone and cannot recover a URL that was paraphrased into "clone the repository". Paraphrasing a factual URL into a description is a data-loss bug, not a style preference. Example: if the DIRECTIVE says `run exactly: git clone https://github.com/Org/Repo.git /apps/repo`, the node objective MUST contain the string `git clone https://github.com/Org/Repo.git /apps/repo` verbatim, not "clone the Org/Repo repository to /apps/repo".
-CRITICAL RULE [TARGET-PATH BINDING FOR CODE SEARCHES]: A bare SEARCH_CODE_OK:<term> criterion defaults the search root to crates/runtime_core/src inside the local workspace, which is only correct for self-audits. Whenever the mission's target code lives in a different directory, the criterion MUST use the form SEARCH_CODE_OK:<target-path>:<term>, where <target-path> is copied verbatim from the mission text. The target path may be absolute (for example an entry starting with a single forward slash) or workspace-relative (for example a path starting with vendor/, apps/, bins/, or drones/). Do not invent a path, and do not reuse any path that appears elsewhere in this instruction: use the exact path the mission names. If the mission says the clone lives at vendor/external_repo, the criterion is SEARCH_CODE_OK:vendor/external_repo:<term>. If the mission says the clone lives at an absolute path, use that absolute path verbatim.
+CRITICAL RULE [AUDIT SEARCH USES CHECKED FORM]: When the mission is an audit, analysis, survey, or report AND does not include a subsequent patch/fix/replace step on the searched code, emit every search criterion as SEARCH_CHECKED_OK:<path>:<term>, not SEARCH_CODE_OK:. A documented no-match is a VALID audit finding (e.g., 'no todo! macros in bins/'). Only use SEARCH_CODE_OK when a later node consumes the match to patch, replace, or rewrite existing code. When in doubt on an audit mission, prefer SEARCH_CHECKED_OK.\nCRITICAL RULE [CHECKED SEARCH EVIDENCE]: SEARCH_CHECKED_OK:<target-path>:<term> means the specified path/query must be searched successfully. A positive MATCHES result OR the executor's exact 'No code matches found in specified path.' outcome satisfies this criterion. Use SEARCH_CODE_OK when the term MUST be found. Never substitute SEARCH_CHECKED_OK for a positive-match requirement. Preserve the exact target path and query.
+CRITICAL RULE [AUDIT / REPORT NODES — GROUNDING]:
+When the current node’s objective is an analysis, survey, audit, review, or report
+AND the node does NOT contain a subsequent patch / replace / rewrite step:
+
+1. Any identifier, path, function name, struct name, or string that appears
+   verbatim inside previously acquired READ_OK, CMD_OK, SEARCH_CODE_OK, or
+   SEARCH_CHECKED_OK evidence is considered GROUNDED for descriptive use.
+
+2. You may freely name those identifiers in the report. You do NOT need a
+   `pub` definition, a public API claim, or an extra search to “prove” them.
+
+3. The only things still forbidden are:
+   - Inventing symbols that never appeared in the evidence
+   - Claiming behaviour that the evidence does not support
+   - Treating private / local items as if they were part of a public API
+     (you may still describe what the source does)
+
+4. Prefer the exact wording and line references that appear in the evidence
+   over paraphrasing.
+
+5. If the report must mention a symbol that is only present as a call site
+   or local binding, simply describe the observed behaviour. Do not claim
+   it is a public item.
+
+This rule takes precedence over any general “must prove public definition”
+grounding check for pure audit/report nodes.
+
+CRITICAL RULE [AUDIT / REPORT NODES]: When the node objective is to produce an analysis, survey, audit, or report (and contains no subsequent patch/replace step), identifiers that appear verbatim in previously acquired READ_OK, CMD_OK, or SEARCH_CODE_OK evidence MAY be referenced descriptively. They do NOT need to be proven as `pub` items. Only inventing new public APIs or claiming un-evidenced behaviour is forbidden.
+
+CRITICAL RULE [TARGET-PATH BINDING FOR CODE SEARCHES]: This rule governs the <target-path> field of BOTH `SEARCH_CODE_OK:` and `SEARCH_CHECKED_OK:` criteria; the [AUDIT SEARCH USES CHECKED FORM] rule above determines which form to use. A bare SEARCH_CODE_OK:<term> criterion defaults the search root to crates/runtime_core/src inside the local workspace, which is only correct for self-audits. Whenever the mission's target code lives in a different directory, the criterion MUST use the form SEARCH_CODE_OK:<target-path>:<term> OR SEARCH_CHECKED_OK:<target-path>:<term> (per the [AUDIT SEARCH USES CHECKED FORM] rule above), where <target-path> is copied verbatim from the mission text. The target path may be absolute (for example an entry starting with a single forward slash) or workspace-relative (for example a path starting with vendor/, apps/, bins/, or drones/). Do not invent a path, and do not reuse any path that appears elsewhere in this instruction: use the exact path the mission names. If the mission says the clone lives at vendor/external_repo, the criterion is SEARCH_CODE_OK:vendor/external_repo:<term>. If the mission says the clone lives at an absolute path, use that absolute path verbatim.
 DIRECTIVE: {}
 OUTPUT ONLY VALID JSON with this exact structure:
 {{
@@ -152,7 +359,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         )
         .await;
 
-        match text_res {
+        let result = match text_res {
             Ok(text) => match Self::parse_task_graph(&text, directive) {
                 Ok(graph) if !graph.nodes.is_empty() => Ok(graph),
                 Ok(_) => Err(anyhow::anyhow!(
@@ -173,7 +380,20 @@ OUTPUT ONLY VALID JSON with this exact structure:
                 );
                 Self::create_fallback_graph(directive)
             }
-        }
+        };
+
+        // Single normalization point for every successfully-generated
+        // graph, whether from the model or the fallback path. Both
+        // rewrite helpers are applied here so a future early-return
+        // branch that bypasses this match is the only way to skip
+        // normalization.
+        let result = result.map(|mut graph| {
+            apply_read_only_search_rewrite(&mut graph, directive);
+            apply_audit_search_rewrite(&mut graph, directive);
+            graph
+        });
+
+        result
     }
 
     fn parse_task_graph(text: &str, directive: &str) -> Result<TaskGraph> {
@@ -282,6 +502,14 @@ OUTPUT ONLY VALID JSON with this exact structure:
         Self::create_fallback_graph(directive)
     }
 
+    fn objective_requires_command(objective: &str) -> bool {
+        let lower = objective.to_lowercase();
+        lower.contains("command")
+            || lower.contains("execute ")
+            || lower.starts_with("run ")
+            || crate::completion_engine::any_word_unnegated(&lower, &["execute", "run"])
+    }
+
     fn validate_success_contracts(graph: &TaskGraph) -> Result<()> {
         for node in graph.nodes.values() {
             if node.success_criteria.is_empty() {
@@ -340,10 +568,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
                         crate::completion_engine::CompletionCondition::CommandMarkerAcquired
                             | crate::completion_engine::CompletionCondition::CommandExecutionVerified { .. }
                     )
-                }) || crate::completion_engine::any_word_unnegated(
-                    &node.objective.to_lowercase(),
-                    &["execute", "run"],
-                );
+                }) || Self::objective_requires_command(&node.objective);
 
                 if !command_required {
                     return Err(anyhow::anyhow!(
@@ -501,6 +726,25 @@ OUTPUT ONLY VALID JSON with this exact structure:
 
         // Explicit "write a script that verifies the algebra" is still math.
         // Only pure software / source-review directives are excluded.
+        // A focused Assessment algebra verification is allowed to inspect
+        // the supplied table, even when the directive says "reviewing".
+        // Preserve the exclusion for ordinary "review the Assessment" tasks.
+        let assessment_algebra_verification =
+            action
+                && mathematical_structure
+                && lower.contains("assessment")
+                && lower.contains("all")
+                && lower.contains("any")
+                && (lower.contains("commutative")
+                    || lower.contains("idempotent")
+                    || lower.contains("duality"))
+                && !lower.contains("review the assessment")
+                && !software_artifact;
+
+        if assessment_algebra_verification {
+            return true;
+        }
+
         action
             && mathematical_structure
             && !software_artifact
@@ -511,29 +755,230 @@ OUTPUT ONLY VALID JSON with this exact structure:
     fn create_mathematical_verification_graph(directive: &str) -> TaskGraph {
         use nexus_evidence_requirements::Assessment;
 
-        // Tables generated from the canonical lattice (algorithms/evidence_requirements).
-        let mut all_table = String::from("ALL TABLE\n    SC SP RC RP NP NN\n");
-        let mut any_table = String::from("ANY TABLE\n    SC SP RC RP NP NN\n");
-        for a in Assessment::STATES {
-            all_table.push_str(&format!("{a:?}"));
-            any_table.push_str(&format!("{a:?}"));
-            for b in Assessment::STATES {
-                all_table.push_str(&format!(" {:?}", a.all(b)));
-                any_table.push_str(&format!(" {:?}", a.any(b)));
-            }
-            all_table.push('\n');
-            any_table.push('\n');
-        }
+        // Capture the actual canonical implementation as independent input.
+        let canonical_all: Vec<Vec<String>> = Assessment::STATES
+            .iter()
+            .map(|a| {
+                Assessment::STATES
+                    .iter()
+                    .map(|b| format!("{:?}", a.all(*b)))
+                    .collect()
+            })
+            .collect();
 
-        // Tiny deterministic printer – algebra lives in the Rust crate, not in Python.
+        let dual_states: Vec<String> = Assessment::STATES
+            .iter()
+            .map(|state| format!("{:?}", state.dual()))
+            .collect();
+
+        let directive_json =
+            serde_json::to_string(directive).expect("directive JSON serialization");
+        let canonical_json =
+            serde_json::to_string(&canonical_all).expect("canonical table JSON serialization");
+        let dual_json =
+            serde_json::to_string(&dual_states).expect("dual map JSON serialization");
+
+        // The Python program parses the ALL table from the original directive.
+        // It does not silently replace that table with the Rust implementation.
+        let mut python = r###"
+import sys
+
+states = ["SC", "SP", "RC", "RP", "NP", "NN"]
+index = {state: i for i, state in enumerate(states)}
+
+directive = __DIRECTIVE_JSON__
+canonical_all = __CANONICAL_JSON__
+dual_values = __DUAL_JSON__
+dual = dict(zip(states, dual_values))
+
+def parse_supplied_all(text):
+    lines = text.splitlines()
+    marker = next(
+        (i for i, line in enumerate(lines)
+         if "ALL table" in line.lower()),
+        None,
+    )
+    if marker is None:
+        raise ValueError("Could not find the supplied ALL table.")
+
+    header = None
+    for i in range(marker + 1, len(lines)):
+        if lines[i].strip().split() == states:
+            header = i
+            break
+
+    if header is None:
+        raise ValueError("Could not find the six-state ALL table header.")
+
+    rows = []
+    cursor = header + 1
+    while cursor < len(lines) and len(rows) < len(states):
+        tokens = lines[cursor].strip().split()
+        cursor += 1
+        if not tokens:
+            continue
+        if len(tokens) != 7:
+            raise ValueError(
+                "Malformed ALL row; expected a row label and six values: "
+                + " ".join(tokens)
+            )
+        if tokens[0] != states[len(rows)]:
+            raise ValueError(
+                "Unexpected ALL row label: " + tokens[0]
+            )
+        if any(value not in states for value in tokens[1:]):
+            raise ValueError("Unknown state in supplied ALL table.")
+        rows.append(tokens[1:])
+
+    if len(rows) != 6:
+        raise ValueError("Supplied ALL table does not contain six rows.")
+    return rows
+
+def derive_any(all_table):
+    return [
+        [
+            dual[
+                all_table[index[dual[a]]][index[dual[b]]]
+            ]
+            for b in states
+        ]
+        for a in states
+    ]
+
+def properties(all_table):
+    any_table = derive_any(all_table)
+
+    all_commutative = all(
+        all_table[i][j] == all_table[j][i]
+        for i in range(6) for j in range(6)
+    )
+    all_idempotent = all(
+        all_table[i][i] == states[i] for i in range(6)
+    )
+    rc_absorbing = all(
+        all_table[index["RC"]][i] == "RC"
+        and all_table[i][index["RC"]] == "RC"
+        for i in range(6)
+    )
+
+    rank = {"SC": 0, "SP": 1, "NP": 2, "NN": 3}
+    non_rejection = ["SC", "SP", "NP", "NN"]
+    ordering = all(
+        all_table[index[a]][index[b]]
+        == min((a, b), key=lambda state: rank[state])
+        for a in non_rejection for b in non_rejection
+    )
+
+    any_commutative = all(
+        any_table[i][j] == any_table[j][i]
+        for i in range(6) for j in range(6)
+    )
+    any_idempotent = all(
+        any_table[i][i] == states[i] for i in range(6)
+    )
+    sc_absorbing = all(
+        any_table[index["SC"]][i] == "SC"
+        and any_table[i][index["SC"]] == "SC"
+        for i in range(6)
+    )
+
+    duality_failures = []
+    for a in states:
+        for b in states:
+            lhs = dual[any_table[index[a]][index[b]]]
+            rhs = all_table[index[dual[a]]][index[dual[b]]]
+            if lhs != rhs:
+                duality_failures.append((a, b, lhs, rhs))
+
+    dual_involution = all(dual[dual[state]] == state for state in states)
+
+    return any_table, {
+        "ALL_COMMUTATIVE": all_commutative,
+        "ALL_IDEMPOTENT": all_idempotent,
+        "RC_ABSORBING_ALL": rc_absorbing,
+        "ORDER_SC_GT_SP_GT_NP_GT_NN": ordering,
+        "ANY_COMMUTATIVE": any_commutative,
+        "ANY_IDEMPOTENT": any_idempotent,
+        "SC_ABSORBING_ANY": sc_absorbing,
+        "DUALITY_ALL_36": len(duality_failures) == 0,
+        "DUAL_INVOLUTION": dual_involution,
+        "DUALITY_FAILURES": duality_failures,
+    }
+
+def print_table(label, table):
+    print(label)
+    print("    " + " ".join(states))
+    for state, row in zip(states, table):
+        print(state + "  " + " ".join(row))
+
+def print_properties(label, values):
+    print(label)
+    for key, value in values.items():
+        if key != "DUALITY_FAILURES":
+            print(key + " " + str(value))
+    if values["DUALITY_FAILURES"]:
+        print("DUALITY_FAILURE_DETAILS", values["DUALITY_FAILURES"])
+
+try:
+    supplied_all = parse_supplied_all(directive)
+except Exception as exc:
+    print("VERIFICATION_INPUT_ERROR", str(exc))
+    sys.exit(2)
+
+if len(canonical_all) != 6 or any(len(row) != 6 for row in canonical_all):
+    print("VERIFICATION_INPUT_ERROR Invalid canonical Rust table dimensions.")
+    sys.exit(2)
+
+if set(dual) != set(states) or any(value not in states for value in dual.values()):
+    print("VERIFICATION_INPUT_ERROR Invalid canonical dual map.")
+    sys.exit(2)
+
+supplied_any, supplied_properties = properties(supplied_all)
+canonical_any, canonical_properties = properties(canonical_all)
+
+mismatches = []
+for i, a in enumerate(states):
+    for j, b in enumerate(states):
+        supplied = supplied_all[i][j]
+        canonical = canonical_all[i][j]
+        if supplied != canonical:
+            mismatches.append((a, b, supplied, canonical))
+
+print_table("ALL TABLE", supplied_all)
+print_table("ANY TABLE", supplied_any)
+print_properties("SUPPLIED TABLE PROPERTIES", supplied_properties)
+
+print_table("CANONICAL RUST ALL TABLE", canonical_all)
+print_table("CANONICAL RUST ANY TABLE", canonical_any)
+print_properties("CANONICAL RUST PROPERTIES", canonical_properties)
+
+print("SUPPLIED_RUST_ALL_MISMATCHES", len(mismatches))
+for row, column, supplied, canonical in mismatches:
+    print(
+        "TABLE_MISMATCH",
+        "row=" + row,
+        "column=" + column,
+        "supplied=" + supplied,
+        "rust=" + canonical,
+    )
+
+# A contradiction is a verification result, not an execution failure.
+# Exit successfully after all input and algebra checks have completed.
+print("VERIFICATION_EXECUTED True")
+print("VERIFICATION_COMPLETE True")
+"###.to_string();
+
+        python = python.replace("__DIRECTIVE_JSON__", &directive_json);
+        python = python.replace("__CANONICAL_JSON__", &canonical_json);
+        python = python.replace("__DUAL_JSON__", &dual_json);
+
         let command = format!(
-            r#"python3 -c 'print("""{}"""); print("""{}"""); print("ALL_COMMUTATIVE True"); print("ALL_IDEMPOTENT True"); print("RC_ABSORBING_ALL True"); print("ORDER_SC_GT_SP_GT_NP_GT_NN True"); print("ANY_COMMUTATIVE True"); print("ANY_IDEMPOTENT True"); print("SC_ABSORBING_ANY True"); print("DUALITY_ALL_36 True"); print("DUAL_INVOLUTION True")'"#,
-            all_table.trim_end(),
-            any_table.trim_end()
+            "python3 - <<'ATHENAFUSIONX_MATH_VERIFY_EOF'\n{}\nATHENAFUSIONX_MATH_VERIFY_EOF",
+            python
         );
 
         let objective = format!(
-            "MATHEMATICAL_EXECUTION_VERIFIED: Execute `{}` to deterministically calculate and verify every mathematical result required by the following directive. The command must print the complete calculated results, including the full ALL and ANY tables, commutativity, idempotence, absorption, ordering, all 36 duality checks, and edge-case checks. Use the command execution output as the physical evidence for this node. DIRECTIVE: {}",
+            "MATHEMATICAL_EXECUTION_VERIFIED: Execute `{}`. Parse and preserve the ALL table supplied in the directive, independently compare all 36 cells against the canonical Rust Assessment::all() table, derive ANY through duality, and calculate every requested algebraic property for both tables. Print complete tables, property results, and every mismatch. A mathematical contradiction is a valid verification finding; do not conceal it or convert it into an execution failure. DIRECTIVE: {}",
             command,
             directive
         );
@@ -567,7 +1012,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
             return Ok(vec!["CMD_OK".to_string()]);
         }
 
-        if lower.contains("command") || lower.contains("execute ") || lower.starts_with("run ") {
+        if Self::objective_requires_command(directive) {
             return Ok(vec!["CMD_OK".to_string()]);
         }
 
@@ -675,6 +1120,42 @@ mod tests {
     }
 
     #[test]
+    fn assessment_algebra_review_with_supplied_table_uses_verification_fast_path() {
+        let directive = r#"You are reviewing the Assessment enum from nexus_evidence_requirements.
+
+States: SC, SP, RC, RP, NP, NN
+
+ALL table (rows = left, cols = right):
+        SC  SP  RC  RP  NP  NN
+SC      SC  SP  RC  RP  NP  NN
+SP      SP  SP  RC  RP  RP  RP
+RC      RC  RC  RC  RC  RC  RC
+RP      RP  RP  RC  RP  RP  RP
+NP      NP  NP  RC  RP  NP  NN
+NN      NN  NN  RC  RP  NN  NN
+
+Tasks:
+1. Verify ALL is commutative and idempotent.
+2. Verify RC is absorbing for ALL.
+3. Verify SC > SP > NP > NN ordering for non-rejection states.
+4. Compute the full 6x6 ANY table using duality.
+5. Check ANY is commutative and idempotent.
+6. Verify SC is absorbing for ANY.
+7. Check duality for all 36 pairs.
+8. Report contradictions or edge cases."#;
+
+        assert!(PlannerAgent::is_mathematical_derivation_directive(directive));
+
+        let graph = PlannerAgent::create_mathematical_verification_graph(directive);
+        let node = graph.nodes.get("task_1").expect("math verification node");
+
+        assert_eq!(node.success_criteria, vec!["CMD_OK".to_string()]);
+        assert!(node.objective.contains("SUPPLIED_RUST_ALL_MISMATCHES"));
+        assert!(node.objective.contains("VERIFICATION_EXECUTED"));
+        assert!(!node.objective.contains("WRITE_OK:"));
+    }
+
+    #[test]
     fn source_review_of_enum_is_not_treated_as_mathematical_derivation() {
         let directive =
             "Review the Assessment enum and verify the six-state ALL/ANY algebra and duality.";
@@ -727,15 +1208,19 @@ mod tests {
         let node = &graph.nodes["task_1"];
 
         assert!(
-            node.objective.starts_with("MATHEMATICAL_EXECUTION_VERIFIED: Execute `python3 -c '"),
-            "mathematical nodes must contain an explicit mathematical execution contract and exact executable Python command"
+            node.objective.starts_with(
+                "MATHEMATICAL_EXECUTION_VERIFIED: Execute `python3 - <<'ATHENAFUSIONX_MATH_VERIFY_EOF'"
+            ),
+            "mathematical nodes must contain an explicit mathematical execution contract and executable Python heredoc"
         );
         assert_eq!(node.success_criteria, vec!["CMD_OK".to_string()]);
 
         let command = crate::completion_engine::extract_required_command(&node.objective)
             .expect("mathematical node must expose an exact executable command");
 
-        assert!(command.starts_with("python3 -c '"));
+        assert!(command.starts_with(
+            "python3 - <<'ATHENAFUSIONX_MATH_VERIFY_EOF'"
+        ));
         assert!(command.contains("ALL TABLE"));
         assert!(command.contains("ANY TABLE"));
         assert!(command.contains("DUALITY_ALL_36"));
@@ -1026,3 +1511,317 @@ mod short_directive_tests {
     }
 }
 
+
+
+#[cfg(test)]
+mod audit_rewrite_tests {
+    use super::*;
+    use crate::orchestrator_v2::task_graph::{
+        TaskExecutionState, TaskGraph, TaskNode, TaskStatus,
+    };
+    use std::collections::HashMap;
+
+    fn node_with(criteria: &[&str]) -> TaskNode {
+        TaskNode {
+            id: "t".to_string(),
+            deps: vec![],
+            required_agent: "CodeAnalyzer".to_string(),
+            status: TaskStatus::Pending,
+            objective: "test".to_string(),
+            success_criteria: criteria.iter().map(|s| s.to_string()).collect(),
+            execution_state: TaskExecutionState::default(),
+            output_evidence: None,
+            priority: 1,
+        }
+    }
+
+    fn graph_with(criteria: &[&str]) -> TaskGraph {
+        let mut g = TaskGraph { nodes: HashMap::new() };
+        g.nodes.insert("t".to_string(), node_with(criteria));
+        g
+    }
+
+    // ---- intent detection ---------------------------------------------
+
+    #[test]
+    fn audit_word_triggers_rewrite() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:bins:todo!"]);
+        apply_audit_search_rewrite(&mut g, "Audit the codebase for stubs.");
+        assert_eq!(
+            g.nodes["t"].success_criteria,
+            vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()]
+        );
+    }
+
+    #[test]
+    fn survey_and_inventory_also_trigger() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:bins:todo!"]);
+        apply_audit_search_rewrite(&mut g, "Survey the crates for unused code.");
+        assert!(g.nodes["t"].success_criteria[0].starts_with("SEARCH_CHECKED_OK:"));
+    }
+
+    #[test]
+    fn report_alone_does_not_trigger_rewrite() {
+        // "Write a report about X" is NOT an audit if the search is
+        // expected to produce the report's content.
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:foo"]);
+        apply_audit_search_rewrite(&mut g, "Write a report about the foo module.");
+        assert_eq!(g.nodes["t"].success_criteria, vec!["SEARCH_CODE_OK:crates:foo".to_string()]);
+    }
+
+    #[test]
+    fn analysis_alone_does_not_trigger_rewrite() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:foo"]);
+        apply_audit_search_rewrite(&mut g, "Analyze the foo module and produce a summary.");
+        assert_eq!(g.nodes["t"].success_criteria, vec!["SEARCH_CODE_OK:crates:foo".to_string()]);
+    }
+
+    #[test]
+    fn non_audit_find_keeps_strict() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:foo"]);
+        apply_audit_search_rewrite(&mut g, "Find all callers of foo.");
+        assert_eq!(g.nodes["t"].success_criteria, vec!["SEARCH_CODE_OK:crates:foo".to_string()]);
+    }
+
+    // ---- must-find override --------------------------------------------
+
+    #[test]
+    fn must_find_overrides_audit_intent() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:deprecated_fn"]);
+        apply_audit_search_rewrite(
+            &mut g,
+            "Audit the code to locate every deprecated_fn usage.",
+        );
+        assert_eq!(
+            g.nodes["t"].success_criteria,
+            vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()]
+        );
+    }
+
+    #[test]
+    fn find_all_overrides_audit_intent() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:foo"]);
+        apply_audit_search_rewrite(&mut g, "Audit for foo, then find all usages of bar.");
+        assert_eq!(g.nodes["t"].success_criteria, vec!["SEARCH_CODE_OK:crates:foo".to_string()]);
+    }
+
+    // ---- mutation gate -------------------------------------------------
+
+    #[test]
+    fn patch_like_criteria_gate_the_rewrite() {
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:crates:todo!",
+            "PATCH_FUNCTION_OK:crates/foo.rs:bar",
+        ]);
+        apply_audit_search_rewrite(&mut g, "Audit and fix all stubs.");
+        assert!(
+            g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
+            "PATCH_FUNCTION_OK must gate the rewrite"
+        );
+    }
+
+    #[test]
+    fn diff_patch_gates_the_rewrite() {
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:crates:todo!",
+            "DIFF_PATCH_OK:crates/foo.rs",
+        ]);
+        apply_audit_search_rewrite(&mut g, "Audit and fix stubs.");
+        assert!(g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")));
+    }
+
+    #[test]
+    fn replace_lines_gates_the_rewrite() {
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:crates:todo!",
+            "REPLACE_LINES_OK:crates/foo.rs",
+        ]);
+        apply_audit_search_rewrite(&mut g, "Audit and fix stubs.");
+        assert!(g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")));
+    }
+
+    #[test]
+    fn write_rs_path_gates_the_rewrite() {
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:crates:todo!",
+            "WRITE_OK:crates/runtime_core/src/new_file.rs",
+        ]);
+        apply_audit_search_rewrite(&mut g, "Audit and create the new source file.");
+        assert!(g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")));
+    }
+
+    #[test]
+    fn write_report_does_not_gate_the_rewrite() {
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:bins:todo!",
+            "WRITE_OK:full_system_audit.md",
+        ]);
+        apply_audit_search_rewrite(
+            &mut g,
+            "Audit the codebase and write a report.",
+        );
+        assert!(
+            g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CHECKED_OK:")),
+            "report write must NOT gate the audit rewrite"
+        );
+        assert!(
+            g.nodes["t"].success_criteria.iter().any(|c| c == "WRITE_OK:full_system_audit.md"),
+            "the report write criterion itself must be preserved"
+        );
+    }
+
+    #[test]
+    fn no_search_criteria_is_noop() {
+        let mut g = graph_with(&["READ_OK:foo.rs"]);
+        apply_audit_search_rewrite(&mut g, "Audit the codebase.");
+        assert_eq!(g.nodes["t"].success_criteria, vec!["READ_OK:foo.rs".to_string()]);
+    }
+
+    // ---- structural guard (call-site presence only, NOT routing) -------
+
+    /// Guards against accidental removal of the call site. This is a
+    /// source-presence check, not a routing proof -- the behavioral
+    /// coverage of `apply_audit_search_rewrite` is provided by the tests
+    /// above; the integration of the wrapper into `generate_plan` is
+    /// covered by the `.map(...)` presence check just below.
+    #[test]
+    fn both_rewrites_have_call_sites() {
+        let source = include_str!("planner.rs");
+        assert!(
+            source.contains("apply_read_only_search_rewrite(&mut graph, directive);"),
+            "apply_read_only_search_rewrite must have a call site"
+        );
+        assert!(
+            source.contains("apply_audit_search_rewrite(&mut graph, directive);"),
+            "apply_audit_search_rewrite must have a call site"
+        );
+    }
+
+    /// Guards the plumbing: the outer `match text_res { ... }` in
+    /// `generate_plan` must wrap into `.map(|mut graph| { ... })`. This
+    /// is a source-shape check; it does not prove execution order, but a
+    /// refactor that removes the wrapper will break this test.
+    #[test]
+    fn generate_plan_wraps_result_through_rewrite_map() {
+        let source = include_str!("planner.rs");
+        assert!(
+            source.contains("let result = result.map(|mut graph| {"),
+            "generate_plan must wrap its result through .map(|mut graph| {{ ... }})"
+        );
+    }
+
+    // ---- read-only rewrite regression coverage -------------------------
+
+    fn two_node_graph_with_source_mutation() -> TaskGraph {
+        let mut g = TaskGraph { nodes: HashMap::new() };
+        g.nodes.insert("a".to_string(), TaskNode {
+            id: "a".to_string(),
+            deps: vec![],
+            required_agent: "CodeAnalyzer".to_string(),
+            status: TaskStatus::Pending,
+            objective: "search".to_string(),
+            success_criteria: vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()],
+            execution_state: TaskExecutionState::default(),
+            output_evidence: None,
+            priority: 1,
+        });
+        g.nodes.insert("b".to_string(), TaskNode {
+            id: "b".to_string(),
+            deps: vec![],
+            required_agent: "CodeAnalyzer".to_string(),
+            status: TaskStatus::Pending,
+            objective: "patch".to_string(),
+            success_criteria: vec!["PATCH_FUNCTION_OK:crates/foo.rs:fix".to_string()],
+            execution_state: TaskExecutionState::default(),
+            output_evidence: None,
+            priority: 2,
+        });
+        g
+    }
+
+    #[test]
+    fn read_only_plus_must_find_keeps_strict() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:deprecated_fn"]);
+        apply_read_only_search_rewrite(
+            &mut g,
+            "READ-ONLY. Find all usages of deprecated_fn.",
+        );
+        assert_eq!(
+            g.nodes["t"].success_criteria,
+            vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()],
+            "read-only + must-find must keep strict"
+        );
+    }
+
+    #[test]
+    fn read_only_plus_source_mutation_elsewhere_keeps_strict() {
+        let mut g = two_node_graph_with_source_mutation();
+        apply_read_only_search_rewrite(&mut g, "READ-ONLY. Do not modify any files.");
+        assert!(
+            g.nodes["a"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
+            "graph-wide mutation guard must leave node A strict"
+        );
+    }
+
+    #[test]
+    fn read_only_plus_report_artifact_keeps_strict() {
+        // READ-ONLY contract: any WRITE_OK: criterion -- including a
+        // report artifact -- is a prompt violation. The read-only rewrite
+        // must not weaken a search in a malformed graph; the audit
+        // helper (which does allow report writes) is the one that
+        // distinguishes .md from .rs.
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:bins:todo!",
+            "WRITE_OK:audit_report.md",
+        ]);
+        apply_read_only_search_rewrite(
+            &mut g,
+            "READ-ONLY. Do not modify any files.",
+        );
+        assert!(
+            g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
+            "READ-ONLY must keep strict when any WRITE_OK: is present"
+        );
+    }
+
+    #[test]
+    fn read_only_ordinary_inspection_rewrites_to_checked() {
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:todo!"]);
+        apply_read_only_search_rewrite(&mut g, "READ-ONLY. Do not modify any files.");
+        assert!(
+            g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CHECKED_OK:")),
+            "read-only ordinary inspection must rewrite to checked"
+        );
+    }
+
+    #[test]
+    fn audit_mission_plus_report_artifact_rewrites_to_checked() {
+        // Audit policy: report writes do NOT gate the audit rewrite.
+        // This is the mirror of read_only_plus_report_artifact_keeps_strict
+        // and demonstrates that the two policies are intentionally distinct.
+        let mut g = graph_with(&[
+            "SEARCH_CODE_OK:bins:todo!",
+            "WRITE_OK:full_system_audit.md",
+        ]);
+        apply_audit_search_rewrite(
+            &mut g,
+            "Audit the codebase and write a report.",
+        );
+        assert!(
+            g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CHECKED_OK:")),
+            "audit + report write must rewrite to checked"
+        );
+    }
+
+    #[test]
+    fn combined_wrapper_preserves_strict_for_source_mutation_graph() {
+        let mut g = two_node_graph_with_source_mutation();
+        let directive = "READ-ONLY. Audit the crates.";
+        apply_read_only_search_rewrite(&mut g, directive);
+        apply_audit_search_rewrite(&mut g, directive);
+        assert!(
+            g.nodes["a"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
+            "combined wrapper must preserve strict when graph has source mutation"
+        );
+    }
+}

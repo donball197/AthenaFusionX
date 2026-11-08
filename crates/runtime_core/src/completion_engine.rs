@@ -29,6 +29,12 @@ pub enum CompletionCondition {
     SearchTermAcquired {
         term: String,
     },
+    /// Path/query-bound successful search. Unlike SearchTermAcquired,
+    /// this accepts the executor's exact no-match outcome as proof that
+    /// the requested location was successfully checked.
+    SearchCheckedAcquired {
+        target: String,
+    },
     SearchMemoryMarkerAcquired,
     WriteMarkerAcquired,
     /// Path-bound write requirement: evidence must contain a [WRITE_OK]
@@ -466,6 +472,43 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
         }
     }
 
+    // Raw shell objective: bind the contract to that exact command instead of
+    // degrading to a bare CommandMarkerAcquired any successful command satisfies.
+    {
+        const RAW_LEADERS: &[&str] = &[
+            "cd", "sqlite3", "cargo", "git", "python3", "python", "ls", "grep", "rg", "cat",
+            "echo", "sleep", "diff", "pgrep", "ps", "stat", "wc", "which", "uptime", "df", "du",
+            "free", "uname", "pwd", "tail", "date", "sed", "ss",
+        ];
+        let body = objective.trim_start();
+        let body = body
+            .strip_prefix("OBJECTIVE:")
+            .or_else(|| body.strip_prefix("Objective:"))
+            .unwrap_or(body)
+            .trim_start();
+        let mut body = body;
+        for p in [
+            "run exactly:", "execute exactly:", "run exactly", "execute exactly", "run:",
+            "execute:",
+        ] {
+            if body.len() >= p.len()
+                && body.is_char_boundary(p.len())
+                && body[..p.len()].eq_ignore_ascii_case(p)
+            {
+                body = body[p.len()..].trim_start();
+                break;
+            }
+        }
+        let first = body.split_whitespace().next().unwrap_or("");
+        if RAW_LEADERS.iter().any(|b| first == *b) {
+            let line = take_balanced_lines(body);
+            let line = line.trim();
+            if !line.is_empty() {
+                return Some(line.to_string());
+            }
+        }
+    }
+
     None
 }
 
@@ -663,8 +706,18 @@ fn declared_criteria_contract(
         conditions.push(CompletionCondition::PatchMarkerAcquired);
     }
 
-    for term in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
-        conditions.push(CompletionCondition::SearchTermAcquired { term });
+    for target in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
+        // Preserve the full "<path>:<term>" form. Stripping the path collapsed
+        // `crates:unimplemented!` and `bins:unimplemented!` into one bare
+        // term, so a single `crates` search satisfied both criteria and the
+        // cortex declared terminal before the `bins` search ran. The DAG
+        // verifier must see the same path binding. search_term_satisfied
+        // already enforces the path:term contract.
+        conditions.push(CompletionCondition::SearchTermAcquired { term: target });
+    }
+
+    for target in extract_all_named_targets(text, "SEARCH_CHECKED_OK:") {
+        conditions.push(CompletionCondition::SearchCheckedAcquired { target });
     }
 
     if text.contains("SEARCH_MEMORY_OK") {
@@ -704,6 +757,7 @@ fn declared_criteria_contract(
         matches!(
             c,
             CompletionCondition::SearchTermAcquired { .. }
+                | CompletionCondition::SearchCheckedAcquired { .. }
                 | CompletionCondition::SearchMarkerAcquired
                 | CompletionCondition::SearchMemoryMarkerAcquired
         )
@@ -723,6 +777,7 @@ fn declared_criteria_contract(
                 | CompletionCondition::ReadMarkerAcquired
                 | CompletionCondition::ReadFunctionMarkerAcquired { .. }
                 | CompletionCondition::SearchTermAcquired { .. }
+                | CompletionCondition::SearchCheckedAcquired { .. }
                 | CompletionCondition::SearchMarkerAcquired
                 | CompletionCondition::SearchMemoryMarkerAcquired
                 | CompletionCondition::SourceCodeEvidenceRequired
@@ -867,6 +922,7 @@ impl SubgoalCompletionEngine {
         if objective.contains("ANALYSIS_OK")
             && !objective.contains("READ_OK:")
             && !objective.contains("SEARCH_CODE_OK:")
+            && !objective.contains("SEARCH_CHECKED_OK:")
         {
             return SubgoalContract {
                 node_id: node_id.to_string(),
@@ -1001,6 +1057,7 @@ impl SubgoalCompletionEngine {
         let has_explicit_path_bound = objective.contains("READ_OK:")
             || objective.contains("WRITE_OK:")
             || objective.contains("SEARCH_CODE_OK:")
+            || objective.contains("SEARCH_CHECKED_OK:")
             || objective.contains("SEARCH_MEMORY_OK:")
             || objective.contains("PATCH_FUNCTION_OK:")
             || objective.contains("READ_FUNCTION_OK:");
@@ -1022,10 +1079,13 @@ impl SubgoalCompletionEngine {
         let read_targets = extract_all_named_targets(objective, "READ_OK:");
         let write_targets = extract_all_named_targets(objective, "WRITE_OK:");
         let search_code_terms = extract_all_named_targets(objective, "SEARCH_CODE_OK:");
+        let search_checked_targets =
+            extract_all_named_targets(objective, "SEARCH_CHECKED_OK:");
         let search_memory_terms = extract_all_named_targets(objective, "SEARCH_MEMORY_OK:");
         let has_path_bound_reads = !read_targets.is_empty();
         let has_path_bound_writes = !write_targets.is_empty();
         let has_search_code_marker = !search_code_terms.is_empty();
+        let has_search_checked_marker = !search_checked_targets.is_empty();
         let has_search_memory_marker = !search_memory_terms.is_empty();
 
         if has_patch && !read_only {
@@ -1048,6 +1108,7 @@ impl SubgoalCompletionEngine {
         let structural_search_contract = structural_target.is_some()
             && !has_path_bound_reads
             && !has_search_code_marker
+            && !has_search_checked_marker
             && !has_patch
             && !has_write
             && !objective.contains("READ_FUNCTION_OK:");
@@ -1073,6 +1134,12 @@ impl SubgoalCompletionEngine {
             conditions.push(CompletionCondition::SearchMarkerAcquired);
         }
 
+        for target in &search_checked_targets {
+            conditions.push(CompletionCondition::SearchCheckedAcquired {
+                target: target.clone(),
+            });
+        }
+
         if has_search_memory_intent || has_search_memory_marker {
             conditions.push(CompletionCondition::SearchMemoryMarkerAcquired);
         }
@@ -1085,6 +1152,7 @@ impl SubgoalCompletionEngine {
         if (has_analysis_intent || (has_read_intent && has_search_intent))
             && !has_path_bound_reads
             && !has_search_code_marker
+            && !has_search_checked_marker
             && !structural_search_contract
         {
             conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
@@ -1097,6 +1165,7 @@ impl SubgoalCompletionEngine {
             || has_search_intent
             || has_analysis_intent
             || has_path_bound_reads
+            || has_search_checked_marker
             || has_search_memory_marker;
 
         // A contract whose substantive conditions are exclusively search
@@ -1119,6 +1188,7 @@ impl SubgoalCompletionEngine {
                 matches!(
                     c,
                     CompletionCondition::SearchTermAcquired { .. }
+                        | CompletionCondition::SearchCheckedAcquired { .. }
                         | CompletionCondition::SearchMarkerAcquired
                         | CompletionCondition::SearchMemoryMarkerAcquired
                 )
@@ -2116,5 +2186,127 @@ mod newline_contract_tests {
         let obj = "Execute the bounded baseline command exactly as specified: cd /r && printf '%s\n' 'A' && printf '%s\n' 'B' && pwd";
         let cmd = extract_required_command(obj).expect("command extracted");
         assert!(cmd.ends_with("&& pwd"), "truncated: {cmd:?}");
+    }
+}
+
+#[cfg(test)]
+mod raw_command_objective_tests {
+    use super::*;
+
+    #[test]
+    fn raw_shell_objective_binds_exact_command() {
+        let m = "OBJECTIVE: cd ~/X && sqlite3 -readonly a.db \"SELECT 1;\" > /tmp/b.txt && ./nexus.sh\nASSIGNED ROLE: CodeAnalyzer\n\nMANDATORY NODE SUCCESS CRITERIA:\n- CMD_OK\n\nNODE COMPLETION RULE: x\n\nROOT DIRECTIVE CONTEXT:\nr\n\nLINEAGE CONTEXT:\n";
+        let c = SubgoalCompletionEngine::infer_contract("t", m);
+        assert!(
+            c.conditions.iter().any(|x| matches!(
+                x,
+                CompletionCondition::CommandExecutionVerified { command }
+                    if command.starts_with("cd ~/X && sqlite3")
+            )),
+            "{:?}",
+            c.conditions
+        );
+        assert!(!c.conditions.contains(&CompletionCondition::CommandMarkerAcquired));
+    }
+
+    #[test]
+    fn prose_objective_starting_with_find_is_not_a_command() {
+        assert!(extract_required_command("Find all usages of foo in src/").is_none());
+    }
+}
+
+#[cfg(test)]
+mod run_exactly_tests {
+    use super::*;
+
+    #[test]
+    fn run_exactly_binds_sqlite_command() {
+        let m = "Run exactly: sqlite3 -readonly nexus_daemon.db \"SELECT status, COUNT(*) FROM plan_runs GROUP BY status;\"";
+        assert_eq!(
+            extract_required_command(m).as_deref(),
+            Some("sqlite3 -readonly nexus_daemon.db \"SELECT status, COUNT(*) FROM plan_runs GROUP BY status;\"")
+        );
+    }
+
+    #[test]
+    fn schema_and_count_commands_do_not_collide() {
+        let a = extract_required_command("Run exactly: sqlite3 -readonly x.db \".schema plan_runs\"");
+        let b = extract_required_command("Run exactly: sqlite3 -readonly x.db \"SELECT 1;\"");
+        assert_ne!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod pgrep_binding_tests {
+    use super::*;
+    #[test]
+    fn run_exactly_pgrep_binds() {
+        assert_eq!(
+            extract_required_command("Run exactly: pgrep -af nexus-ide-backend").as_deref(),
+            Some("pgrep -af nexus-ide-backend")
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod search_checked_contract_tests {
+    use super::{CompletionCondition, SubgoalCompletionEngine};
+
+    #[test]
+    fn checked_search_criterion_is_preserved() {
+        let contract = SubgoalCompletionEngine::infer_contract(
+            "checked_search",
+            "SEARCH_CHECKED_OK:bins:unimplemented!",
+        );
+
+        assert!(contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchCheckedAcquired { target }
+                    if target == "bins:unimplemented!"
+            )
+        }));
+
+        assert!(!contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchTermAcquired { .. }
+            )
+        }));
+
+        assert!(!contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::MinBeliefScore(_)
+            )
+        }));
+    }
+
+    #[test]
+    fn checked_and_positive_search_criteria_remain_distinct() {
+        let contract = SubgoalCompletionEngine::infer_contract(
+            "mixed_search",
+            concat!(
+                "SEARCH_CODE_OK:crates:needle\n",
+                "SEARCH_CHECKED_OK:bins:needle"
+            ),
+        );
+
+        assert!(contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchTermAcquired { term }
+                    if term == "crates:needle"
+            )
+        }));
+
+        assert!(contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchCheckedAcquired { target }
+                    if target == "bins:needle"
+            )
+        }));
     }
 }
