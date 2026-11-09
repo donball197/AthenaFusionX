@@ -1,4 +1,28 @@
 
+/// Supervise background workers with exponential backoff and jitter
+pub async fn supervise_worker<F, Fut>(name: &'static str, mut worker_fn: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), anyhow::Error>>,
+{
+    let mut backoff = std::time::Duration::from_secs(1);
+    loop {
+        tracing::info!(subsystem = name, "Starting background subsystem worker");
+        match worker_fn().await {
+            Ok(()) => {
+                tracing::info!(subsystem = name, "Worker exited cleanly; restarting...");
+                backoff = std::time::Duration::from_secs(1);
+            }
+            Err(err) => {
+                tracing::error!(subsystem = name, error = %err, "Worker failed; backing off before restart...");
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(60));
+            }
+        }
+    }
+}
+
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -210,18 +234,25 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let (shutdown_tx, _shutdown_rx) = broadcast::channel::<()>(1);
+
     {
         let palace = palace.clone();
+        let shutdown_tx = shutdown_tx.clone();
         let sig_handle = tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             let (Ok(mut term), Ok(mut int)) =
                 (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) else { return };
-            tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+            tokio::select! {
+                _ = term.recv() => tracing::info!("[SHUTDOWN] Received SIGTERM"),
+                _ = int.recv() => tracing::info!("[SHUTDOWN] Received SIGINT"),
+            }
+            let _ = shutdown_tx.send(());
             match palace.abort_plans_owned_by(std::process::id() as i64).await {
                 Ok(n) => tracing::warn!("[SHUTDOWN] Aborted {} in-flight plan(s).", n),
                 Err(e) => tracing::error!("[SHUTDOWN] Abort failed: {}", e),
             }
-            std::process::exit(0);
+            tracing::info!("[SHUTDOWN] AthenaFusionX daemon shut down cleanly.");
         });
 
         tokio::spawn(async move {
