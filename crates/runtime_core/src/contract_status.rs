@@ -104,8 +104,43 @@ fn action_would_satisfy(
         | (A::ReadFunction { path, .. }, C::ReadPathAcquired { path: want }) => {
             path == want || path.ends_with(want.as_str())
         }
-        // ExecuteCommand is handled earlier by is_required_verification_command
-        // in the existing bypass; do not duplicate here.
+        // BUG-19 gap exposed by the task_1 diagnostic: write-producing
+        // actions satisfy write contracts, but the previous match had no
+        // arms for them. A `write_file { audit/cargo_check.txt }` proposal
+        // that would resolve `WritePathAcquired{audit/cargo_check.txt}`
+        // fell through to `_ => false`, was vetoed by the LLM critic on
+        // subjective judgment, and the node spun out on repeat-vetoes
+        // until belief exhausted at 0.02.
+
+        // Any write action satisfies a bare write marker.
+        (A::WriteFile { .. }, C::WriteMarkerAcquired)
+        | (A::DiffPatch { .. }, C::WriteMarkerAcquired)
+        | (A::PatchFunction { .. }, C::WriteMarkerAcquired)
+        | (A::PatchFile { .. }, C::WriteMarkerAcquired)
+        | (A::ReplaceLines { .. }, C::WriteMarkerAcquired)
+        | (A::AtomicPatch { .. }, C::WriteMarkerAcquired)
+        | (A::SynthesizeReport { .. }, C::WriteMarkerAcquired) => true,
+
+        // Path-bound writes: match path or a suffix of it (allows the
+        // contract's relative form and the executor's absolute form to
+        // reconcile, same tolerance as ReadPathAcquired above).
+        (A::WriteFile { path, .. }, C::WritePathAcquired { path: want })
+        | (A::DiffPatch { path, .. }, C::WritePathAcquired { path: want })
+        | (A::PatchFunction { path, .. }, C::WritePathAcquired { path: want })
+        | (A::PatchFile { path, .. }, C::WritePathAcquired { path: want })
+        | (A::ReplaceLines { path, .. }, C::WritePathAcquired { path: want }) => {
+            path == want || path.ends_with(want.as_str())
+        }
+        (A::SynthesizeReport { output_path, .. }, C::WritePathAcquired { path: want }) => {
+            output_path == want || output_path.ends_with(want.as_str())
+        }
+
+        // Any ExecuteCommand satisfies a bare command marker. The
+        // stricter exact-command bypass at critic.rs:154 fires earlier
+        // when the contract is `CommandExecutionVerified` — do not
+        // duplicate that logic here.
+        (A::ExecuteCommand { .. }, C::CommandMarkerAcquired) => true,
+
         _ => false,
     }
 }
