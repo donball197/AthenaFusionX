@@ -87,7 +87,7 @@ pub enum AgentAction {
         path: String,
         start_line: usize,
         end_line: usize,
-        #[serde(alias = "content", alias = "new_body")]
+        #[serde(alias = "content", alias = "new_body", alias = "new_content", default)]
         replacement: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         _thought_process: Option<String>,

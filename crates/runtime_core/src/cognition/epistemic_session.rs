@@ -180,6 +180,10 @@ pub struct EpistemicSession {
     pub graph: CognitiveGraph,
     pub local_evidence: String,
     pub executed_actions: HashMap<String, u32>,
+    /// Log of actions executed this session. `executed_actions` keys are
+    /// opaque hashes; the code-shift listener needs the original action
+    /// to answer "did we touch path P?" (BUG-17).
+    pub executed_action_log: Vec<crate::agent_protocol::AgentAction>,
     #[serde(skip)]
     pub global_action_attempts: HashMap<String, u32>,
     #[serde(skip)]
@@ -210,6 +214,7 @@ impl EpistemicSession {
             local_evidence: String::new(),
             coverage: crate::coverage::CoverageLedger::default(),
             executed_actions: HashMap::new(),
+            executed_action_log: Vec::new(),
             global_action_attempts: HashMap::new(),
             compile_remediation: crate::compile_remediation::CompileRemediationState::default(),
             active_mutation_paths: Vec::new(),
@@ -269,8 +274,12 @@ impl EpistemicSession {
         }
     }
 
-    pub fn record_action_attempt(&mut self, action_key: &str) {
-        let count = self.executed_actions.entry(action_key.to_string()).or_insert(0);
+    pub fn record_action_attempt(&mut self, action: &crate::agent_protocol::AgentAction) {
+        // BUG-17: keep the action itself so the code-shift listener can
+        // answer "did we touch path P?" without parsing a hash.
+        self.executed_action_log.push(action.clone());
+        let action_key = crate::cortical::action_identity::action_key(action);
+        let count = self.executed_actions.entry(action_key).or_insert(0);
         *count += 1;
     }
 

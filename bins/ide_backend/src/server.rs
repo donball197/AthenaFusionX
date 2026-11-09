@@ -27,12 +27,10 @@ struct Assets;
 pub struct AppState {
     pub client: reqwest::Client,
     pub monitor: Arc<tokio::sync::Mutex<nexus_ide_backend::system_monitor::SystemMonitor>>,
-    pub agent: Arc<nexus_model_hub::neural_agent::MicroAgent>,
     pub orchestrator: Arc<nexus_runtime_core::orchestrator::Orchestrator>,
     pub memory: Arc<MemoryCortex>,
     pub api_key: SecretString,
     pub tx: tokio::sync::broadcast::Sender<String>,
-    pub arbiter: Arc<nexus_runtime_core::arbiter_agent::ArbiterAgent>,
     pub workspace_root: PathBuf,
     pub vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
     pub cluster: Arc<nexus_runtime_core::cluster::ClusterMesh>,
@@ -215,8 +213,18 @@ pub async fn start_server(state: Arc<AppState>) {
         .fallback(static_handler) // ⚡ RustEmbed serves the Svelte build
         .with_state(state);
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let addr = std::env::var("NEXUS_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("[BOOT] bind {} failed: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+    tracing::info!("[BOOT] API listening on {}", addr);
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("[SERVER] serve failed: {}", e);
+    }
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {

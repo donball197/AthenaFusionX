@@ -3,9 +3,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 
-pub fn init() {
-    tracing::info!(">> [DREAM_CYCLE] Subconscious synthesis engine initialised");
-}
+
 
 pub fn spawn(
     palace: Arc<MemoryPalace>,

@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate openblas_src;
+
 // ⚡ BLAS LINKER FIX: Force LLD to link the math libraries directly
 #[link(name = "openblas")]
 #[link(name = "cblas")]
@@ -38,6 +41,18 @@ impl VectorVault {
         self.index.add(embedding);
         self.id_map.insert(self.current_idx, sqlite_id);
         self.current_idx += 1;
+        Ok(())
+    }
+
+    /// Add many vectors in ONE index.add call (amortizes per-call setup).
+    pub fn commit_batch(&mut self, items: &[(u64, Vec<f32>)]) -> Result<(), String> {
+        let mut flat: Vec<f32> = Vec::with_capacity(items.len() * self.dimension);
+        for (_, v) in items {
+            if v.len() != self.dimension { return Err("Dimension mismatch in batch".into()); }
+            flat.extend_from_slice(v);
+        }
+        self.index.add(&flat);
+        for (id, _) in items { self.id_map.insert(self.current_idx, *id); self.current_idx += 1; }
         Ok(())
     }
 

@@ -4,10 +4,6 @@ use serde_json::json;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 
-pub fn init() {
-    tracing::info!(">> [HEARTBEAT] Pulse initialised");
-}
-
 pub fn spawn(tx: broadcast::Sender<String>) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(5));

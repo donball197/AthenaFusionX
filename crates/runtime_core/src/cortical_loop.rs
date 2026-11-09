@@ -338,7 +338,16 @@ impl CorticalLoop {
                 let digest = format!("{:x}", Sha256::digest(trimmed.as_bytes()));
                 session.local_evidence.push_str(&format!(
                     "\n[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]\n",
-                    digest, trimmed, digest
+                    digest,
+                    // FIX BUG-06: inherit only physical evidence lines; drop
+                    // [RECON_REQUESTED], [CRITIC_*], [HALT_REJECTED_*] chatter.
+                    trimmed.lines().filter(|l| {
+                        let l = l.trim_start();
+                        l.starts_with("[READ_OK]") || l.starts_with("[READ_CHUNK_OK]")
+                            || l.starts_with("[CMD_OK]") || l.starts_with("[WRITE_OK]")
+                            || l.starts_with("[PATCH_OK]") || l.starts_with("[REPLACE_LINES_OK]")
+                    }).collect::<Vec<_>>().join("\n"),
+                    digest
                 ));
             }
         }
@@ -407,8 +416,14 @@ impl CorticalLoop {
             // Active code-shift listener
             while let Ok(event) = shift_rx.try_recv() {
                 // Ignore code shifts caused by actions performed within this session
-                if session.local_evidence.contains(&event.path)
-                    || session.executed_actions.keys().any(|k| k.contains(&event.path))
+                // BUG-17: keys are opaque hashes, so substring-matching
+                // them never matched hash-keyed variants (ReadFile/
+                // WriteFile/DiffPatch/...). Use the canonical predicate
+                // against the stored actions instead.
+                if session
+                    .executed_action_log
+                    .iter()
+                    .any(|a| crate::cortical::action_identity::action_touches_path(a, &event.path))
                 {
                     continue;
                 }

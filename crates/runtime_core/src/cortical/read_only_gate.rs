@@ -20,7 +20,7 @@ const SAFE_COMMANDS: &[&str] = &[
     // sysinspect: read-only host inspection for runtime/baseline audits.
     "ps", "free", "ss", "netstat", "uptime", "nproc", "df", "du", "uname", "whoami", "id",
     "date", "lscpu", "vmstat", "pgrep", "which", "ulimit", "true", "false",
-    "sed", "sqlite3",
+    "sed", "sqlite3", "cargo",
 ];
 const SAFE_GIT: &[&str] = &[
     "log",
@@ -76,6 +76,12 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
     for (i, a) in args.iter().enumerate() {
         if a == "-readonly" || a == "--readonly" {
             has_readonly = true;
+        } else if matches!(
+            a.as_str(),
+            "-header" | "-noheader" | "-column" | "-line" | "-list" | "-csv" | "-json"
+                | "-table" | "-box" | "-markdown"
+        ) {
+            // Output-format flags only; they cannot write or run commands.
         } else if a.starts_with('-') {
             return false;
         } else if db_idx.is_none() {
@@ -130,6 +136,23 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
     payload.starts_with("select ")
         || payload.starts_with("pragma ")
         || payload.starts_with("with ")
+}
+
+fn cargo_is_safe(args: &[String]) -> bool {
+    let mut it = args.iter().filter(|a| !a.starts_with('+'));
+    let Some(sub) = it.next() else { return false };
+    if !matches!(sub.as_str(), "check" | "metadata" | "tree") {
+        return false;
+    }
+    !args.iter().any(|a| {
+        a == "--config"
+            || a.starts_with("--config=")
+            || a == "-Z"
+            || a.starts_with("-Z")
+            || a == "--target-dir"
+            || a.starts_with("--target-dir=")
+            || a == "--release-dir"
+    })
 }
 
 pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
@@ -244,6 +267,11 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
 
         // sed -i / --in-place write files. Refused.
         if first.as_str() == "sed" && !sed_is_safe(args) {
+            return false;
+        }
+
+        // cargo: only check / metadata / tree, no config or target-dir overrides.
+        if first.as_str() == "cargo" && !cargo_is_safe(args) {
             return false;
         }
 
@@ -745,5 +773,21 @@ mod sed_sqlite_hardening_tests {
         assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select readfile('/etc/passwd')""#));
         assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "update plan_runs set status='x'""#));
         assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select 1; drop table plan_runs""#));
+    }
+}
+
+#[cfg(test)]
+mod cargo_gate_tests {
+    use super::is_read_only_safe_command as ok;
+
+    #[test]
+    fn cargo_check_allowed_run_and_build_refused() {
+        assert!(ok("cargo check --workspace"));
+        assert!(ok("cd /root/AthenaFusionX && cargo +nightly check -p foo"));
+        assert!(!ok("cargo run"));
+        assert!(!ok("cargo build"));
+        assert!(!ok("cargo install foo"));
+        assert!(!ok("cargo check --config build.rustc-wrapper=\"x\""));
+        assert!(!ok("cargo check --target-dir /tmp/x"));
     }
 }

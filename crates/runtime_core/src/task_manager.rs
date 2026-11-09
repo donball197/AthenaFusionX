@@ -20,6 +20,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
+#[derive(Debug)]
+pub enum TaskError {
+    Planner(String),
+    Persistence(String),
+    Verification(String),
+    Cortex(String),
+}
+
+impl std::fmt::Display for TaskError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Planner(msg) => write!(f, "FRACTURE: Planner error - {}", msg),
+            Self::Persistence(msg) => write!(f, "PERSISTENCE FAILURE: {}", msg),
+            Self::Verification(msg) => write!(f, "FRACTURE: Verification failed - {}", msg),
+            Self::Cortex(msg) => write!(f, "CORTEX FAILURE: {}", msg),
+        }
+    }
+}
+impl std::error::Error for TaskError {}
+
 pub struct TaskContext {
     pub client: Client,
     pub api_key: String,
@@ -32,11 +52,38 @@ pub struct TaskContext {
     pub reflection_engine: Arc<ReflectionEngine>,
 }
 
+/// Guarantees a terminal status on every exit path (early return, panic,
+/// future cancellation). No-op if the plan already reached Completed/Aborted.
+struct PlanGuard { memory: Arc<MemoryCortex>, plan_id: String }
+impl Drop for PlanGuard {
+    fn drop(&mut self) {
+        let (m, id) = (self.memory.clone(), self.plan_id.clone());
+        if let Ok(h) = tokio::runtime::Handle::try_current() {
+            h.spawn(async move {
+                if let Err(e) = m.abort_plan_if_active(&id).await {
+                    tracing::warn!("[PLAN GUARD] abort of {} failed: {}", id, e);
+                }
+            });
+        }
+    }
+}
+
 pub async fn send_task(
     _orchestrator: Arc<Orchestrator>,
     ctx: TaskContext,
     raw_directive: &str,
 ) -> String {
+    match send_task_inner(_orchestrator, ctx, raw_directive).await {
+        Ok(s) => s,
+        Err(e) => e.to_string(),
+    }
+}
+
+async fn send_task_inner(
+    _orchestrator: Arc<Orchestrator>,
+    ctx: TaskContext,
+    raw_directive: &str,
+) -> Result<String, TaskError> {
     METRICS.inc_task();
 
     // Allocate the plan identity before persistence; the Executive Cortex
@@ -46,7 +93,7 @@ pub async fn send_task(
     let mut graph =
         match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
             Ok(g) => g,
-            Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
+            Err(e) => return Err(TaskError::Planner(format!("Planner failed to decompose objective: {}", e))),
         };
 
     let expected_paths: Vec<String> =
@@ -59,17 +106,14 @@ pub async fn send_task(
         let has_write_node =
             graph.nodes.values().any(|n| n.objective.contains(expected_path.as_str()));
         if !has_write_node {
-            return format!(
-                "FRACTURE: Directive requires writing '{}' but Planner produced no node for it. Refusing to run an incomplete DAG.",
-                expected_path
-            );
+            return Err(TaskError::Planner(format!("Directive requires writing '{}' but Planner produced no node for it. Refusing to run an incomplete DAG.", expected_path)));
         }
     }
 
     graph.compute_critical_path_priorities();
     let order = match graph.resolve_execution_order() {
         Ok(o) => o,
-        Err(e) => return format!("FRACTURE: Graph validation failed: {}", e),
+        Err(e) => return Err(TaskError::Planner(format!("Graph validation failed: {}", e))),
     };
 
     // Initial persistence is a hard execution boundary: no DAG node may
@@ -77,10 +121,7 @@ pub async fn send_task(
     let initial_graph_json = match serde_json::to_string(&graph) {
         Ok(json) => json,
         Err(error) => {
-            return format!(
-                "PERSISTENCE FAILURE: Could not serialize initial plan graph: {}",
-                error
-            );
+            return Err(TaskError::Persistence(format!("Could not serialize initial plan graph: {}", error)));
         }
     };
     let initial_now = std::time::SystemTime::now()
@@ -99,12 +140,10 @@ pub async fn send_task(
         )
         .await
     {
-        return format!(
-            "PERSISTENCE FAILURE: Plan {} was not stored; execution was not started: {}",
-            plan_id, error
-        );
+        return Err(TaskError::Persistence(format!("Plan {} was not stored; execution was not started: {}", plan_id, error)));
     }
 
+    let _plan_guard = PlanGuard { memory: ctx.memory.clone(), plan_id: plan_id.clone() };
     let _ = ctx.tx.send(
         serde_json::json!({
             "type": "LOG_EVENT",
@@ -115,7 +154,7 @@ pub async fn send_task(
 
     // Start the Executive Cortex only after the initial plan record exists.
     let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
-    let goal_id = uuid::Uuid::new_v4();
+    let goal_id = plan_id.clone(); // one identity: log what the DB stores
 
     if let Err(error) = command_tx
         .send(ExecutiveCommand::InjectGoal {
@@ -125,13 +164,10 @@ pub async fn send_task(
         })
         .await
     {
-        return format!(
-            "PERSISTENCE FAILURE: Plan {} was stored, but Executive Cortex goal registration failed: {}",
-            plan_id, error
-        );
+        return Err(TaskError::Persistence(format!("Plan {} was stored, but Executive Cortex goal registration failed: {}", plan_id, error)));
     }
 
-    tokio::spawn(executive_cortex.run_actor_loop());
+    let cortex_handle = tokio::spawn(executive_cortex.run_actor_loop());
 
     let _ = ctx.tx.send(
         serde_json::json!({
@@ -146,12 +182,35 @@ pub async fn send_task(
 
     let planned_node_count = order.len();
     let mut completed_node_count = 0usize;
+    let mut failed_nodes: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut task_outputs: HashMap<String, String> = HashMap::new();
     let mut mission_had_failures = false;
     let world_model = Arc::new(WorldModel::new());
 
     for task_id in order {
-        let node = graph.nodes.get(&task_id).unwrap().clone();
+        if cortex_handle.is_finished() {
+            return Err(TaskError::Cortex("Executive Cortex actor terminated unexpectedly (panicked) during DAG execution.".into()));
+        }
+        let node = match graph.nodes.get(&task_id) {
+            Some(n) => n.clone(),
+            None => return Err(TaskError::Planner(format!("Node {} missing from graph structure", task_id))),
+        };
+
+        // A node is blocked only by a failed DEPENDENCY, not by loop
+        // position. Independent siblings (e.g. a second search when the
+        // first failed) must still run so the mission report is complete.
+        if let Some(dep) = node.deps.iter().find(|d| failed_nodes.contains(*d)) {
+            if let Some(gn) = graph.nodes.get_mut(&task_id) {
+                gn.status = crate::orchestrator_v2::task_graph::TaskStatus::Failed;
+            }
+            mission_had_failures = true;
+            let _ = ctx.tx.send(serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!("[DAG SKIP] {} blocked by failed dependency '{}'", node.objective, dep)
+            }).to_string());
+            continue;
+        }
+
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[SCHEDULER] Dispatching DAG Node: {}\nvia Subagent: {}", node.objective, node.required_agent)}).to_string());
 
         // Structured DAG telemetry: this is the actual production execution boundary.
@@ -173,7 +232,7 @@ pub async fn send_task(
             for dep in &node.deps {
                 if let Some(out) = task_outputs.get(dep) {
                     let bounded_out = if out.len() > 1500 {
-                        format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", &out[..1500])
+                        format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", out.chars().take(1500).collect::<String>())
                     } else {
                         out.clone()
                     };
@@ -435,11 +494,28 @@ pub async fn send_task(
                     .to_string(),
             )
         } else {
-            crate::orchestrator_v2::verifier::Verifier::verify_contract(
+            let mut result = crate::orchestrator_v2::verifier::Verifier::verify_contract(
                 &task_id,
                 &execution_evidence,
                 &verification_criteria,
-            )
+            );
+            // Bare CMD_OK proves only that SOME command succeeded. If the node
+            // objective names a command, require evidence for that command.
+            if matches!(result, crate::orchestrator_v2::verifier::VerificationResult::Success) {
+                if let Some(cmd) =
+                    crate::completion_engine::extract_required_command(&node.objective)
+                {
+                    if !crate::orchestrator_v2::verifier::Verifier::command_ok_for(
+                        &execution_evidence,
+                        &cmd,
+                    ) {
+                        result = crate::orchestrator_v2::verifier::VerificationResult::Failure(
+                            format!("Required command was never executed successfully: {}", cmd),
+                        );
+                    }
+                }
+            }
+            result
         };
 
         let node_verification_succeeded = matches!(
@@ -523,10 +599,7 @@ pub async fn send_task(
         let checkpoint_graph_json = match serde_json::to_string(&graph) {
             Ok(json) => json,
             Err(error) => {
-                return format!(
-                    "PERSISTENCE FAILURE: Could not serialize checkpoint for plan {}: {}",
-                    plan_id, error
-                );
+                return Err(TaskError::Persistence(format!("Could not serialize checkpoint for plan {}: {}", plan_id, error)));
             }
         };
         let checkpoint_now = std::time::SystemTime::now()
@@ -546,16 +619,10 @@ pub async fn send_task(
         {
             Ok(true) => {}
             Ok(false) => {
-                return format!(
-                    "PERSISTENCE FAILURE: Plan {} was no longer Active; downstream execution halted.",
-                    plan_id
-                );
+                return Err(TaskError::Persistence(format!("Plan {} was no longer Active; downstream execution halted.", plan_id)));
             }
             Err(error) => {
-                return format!(
-                    "PERSISTENCE FAILURE: Checkpoint for plan {} failed; downstream execution halted: {}",
-                    plan_id, error
-                );
+                return Err(TaskError::Persistence(format!("Checkpoint for plan {} failed; downstream execution halted: {}", plan_id, error)));
             }
         }
 
@@ -564,17 +631,18 @@ pub async fn send_task(
         //
         // Any Cortex exhaustion/failure therefore reaches this halt path.
         if !node_verification_succeeded {
+            failed_nodes.insert(task_id.clone());
             let _ = ctx.tx.send(
                 serde_json::json!({
                     "type": "LOG_EVENT",
                     "payload": format!(
-                        "[DAG HALT] Aborting downstream execution. Dependency '{}' failed deterministic verification.",
+                        "[DAG NODE FAILED] '{}' failed deterministic verification; dependent nodes will be skipped, independent nodes continue.",
                         task_id
                     )
                 })
                 .to_string()
             );
-            break;
+            continue;
         }
     }
 
@@ -584,10 +652,7 @@ pub async fn send_task(
     let final_graph_json = match serde_json::to_string(&graph) {
         Ok(json) => json,
         Err(error) => {
-            return format!(
-                "PERSISTENCE FAILURE: Could not serialize final graph for plan {}: {}",
-                plan_id, error
-            );
+            return Err(TaskError::Persistence(format!("Could not serialize final graph for plan {}: {}", plan_id, error)));
         }
     };
     let final_status = if mission_had_failures
@@ -615,16 +680,10 @@ pub async fn send_task(
     {
         Ok(true) => {}
         Ok(false) => {
-            return format!(
-                "PERSISTENCE FAILURE: Plan {} could not transition from Active to {}.",
-                plan_id, final_status
-            );
+            return Err(TaskError::Persistence(format!("Plan {} could not transition from Active to {}.", plan_id, final_status)));
         }
         Err(error) => {
-            return format!(
-                "PERSISTENCE FAILURE: Final {} transition for plan {} failed: {}",
-                final_status, plan_id, error
-            );
+            return Err(TaskError::Persistence(format!("Final {} transition for plan {} failed: {}", final_status, plan_id, error)));
         }
     }
 
@@ -643,12 +702,11 @@ pub async fn send_task(
             .to_string()
         );
 
-        format!(
-            "DAG/GoT Execution FINISHED WITH INCOMPLETE NODES.              Completed {}/{} nodes. Plan ID: {}",
+        Ok(format!("DAG/GoT Execution FINISHED WITH INCOMPLETE NODES.              Completed {}/{} nodes. Plan ID: {}",
             completed_node_count,
             planned_node_count,
             plan_id
-        )
+        ))
     } else {
         let _ = ctx.tx.send(
             serde_json::json!({
@@ -663,11 +721,10 @@ pub async fn send_task(
             .to_string()
         );
 
-        format!(
-            "DAG/GoT Hybrid Execution Complete.              All {}/{} nodes completed. Plan ID: {}",
+        Ok(format!("DAG/GoT Hybrid Execution Complete.              All {}/{} nodes completed. Plan ID: {}",
             completed_node_count,
             planned_node_count,
             plan_id
-        )
+        ))
     }
 }

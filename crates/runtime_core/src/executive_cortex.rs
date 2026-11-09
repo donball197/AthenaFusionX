@@ -1,5 +1,4 @@
 use crate::memory_cortex::MemoryCortex;
-use crate::orchestrator_v2::task_graph::TaskGraph;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -16,6 +15,7 @@ pub enum ExecutiveGoalStatus {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GoalNode {
     pub id: Uuid,
+    pub plan_id: String,
     pub objective: String,
     pub belief_score: f32,
     pub status: ExecutiveGoalStatus,
@@ -24,14 +24,13 @@ pub struct GoalNode {
 
 #[derive(Debug, Clone)]
 pub enum ExecutiveCommand {
-    InjectGoal { objective: String, parent_id: Option<Uuid> },
+    InjectGoal { plan_id: String, objective: String, parent_id: Option<Uuid> },
     EvaluateEnvironment,
     EmergencyHalt { reason: String },
 }
 
 pub struct ExecutiveCortex {
     goals: HashMap<Uuid, GoalNode>,
-    active_graph: Option<TaskGraph>,
     memory: Arc<MemoryCortex>,
     command_rx: mpsc::Receiver<ExecutiveCommand>,
 }
@@ -39,7 +38,7 @@ pub struct ExecutiveCortex {
 impl ExecutiveCortex {
     pub fn new(memory: Arc<MemoryCortex>) -> (Self, mpsc::Sender<ExecutiveCommand>) {
         let (tx, rx) = mpsc::channel(100);
-        (Self { goals: HashMap::new(), active_graph: None, memory, command_rx: rx }, tx)
+        (Self { goals: HashMap::new(), memory, command_rx: rx }, tx)
     }
 
     pub async fn run_actor_loop(mut self) {
@@ -82,25 +81,20 @@ impl ExecutiveCortex {
             active_goals.len()
         );
 
+        // Persistence is driven by task_manager (initial write in E2,
+        // completion write in E3, both keyed by plan_id). The Cortex no longer
+        // writes to plan_runs, so a heartbeat tick can never clobber the
+        // terminal Completed/Aborted status written by task_manager.
         for goal in active_goals {
-            let graph_json = serde_json::to_string(&self.active_graph).unwrap_or_default();
-            let status_str = format!("{:?}", goal.status);
-            let created_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-
-            // Persist the active intention to SQLite, allowing it to survive reboots
-            let _ = self
-                .memory
-                .upsert_plan_run(
-                    &goal.id.to_string(),
-                    &goal.objective,
-                    &graph_json,
-                    &status_str,
-                    created_at,
-                )
-                .await;
+            if let Err(e) = self.memory.heartbeat_plan_run(&goal.plan_id).await {
+                tracing::warn!("[EXECUTIVE CORTEX] Heartbeat failed for plan {}: {}", goal.plan_id, e);
+            }
+            tracing::debug!(
+                "[EXECUTIVE CORTEX] Heartbeat: goal {} (plan {}) status {:?}.",
+                goal.id,
+                goal.plan_id,
+                goal.status,
+            );
         }
     }
 
@@ -149,7 +143,7 @@ impl ExecutiveCortex {
 
     async fn handle_command(&mut self, cmd: ExecutiveCommand) {
         match cmd {
-            ExecutiveCommand::InjectGoal { objective, parent_id } => {
+            ExecutiveCommand::InjectGoal { plan_id, objective, parent_id } => {
                 let id = Uuid::new_v4();
                 tracing::info!(
                     "\x1b[35m[EXECUTIVE CORTEX] Injecting new background goal: {}\x1b[0m",
@@ -158,6 +152,7 @@ impl ExecutiveCortex {
 
                 let goal = GoalNode {
                     id,
+                    plan_id: plan_id.clone(),
                     objective,
                     belief_score: 0.5, // Seed with standard prior
                     status: ExecutiveGoalStatus::Active,

@@ -25,6 +25,7 @@ reqwest = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
 parking_lot = { workspace = true }
+libc = "0.2"
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 once_cell = { workspace = true }

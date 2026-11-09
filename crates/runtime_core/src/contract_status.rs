@@ -63,3 +63,49 @@ impl ContractEvaluator {
         }
     }
 }
+
+/// BUG-19: deterministic contract-progress predicate used by the
+/// critic gate. True iff at least one proposed action would satisfy
+/// a currently-UNMET completion condition. No LLM involvement — the
+/// question "does this proposal advance the contract?" has a
+/// deterministic answer, and the LLM critic answered it
+/// non-deterministically (task 2: identical 1-of-6 proposals were
+/// approved on turns 13/24/28 and vetoed on 19/45/56).
+pub(crate) fn proposal_advances_contract(
+    proposal: &[crate::agent_protocol::AgentAction],
+    contract: &crate::completion_engine::SubgoalContract,
+    local_evidence: &str,
+) -> bool {
+    proposal.iter().any(|action| {
+        contract.conditions.iter().any(|cond| {
+            !crate::cortical::contract_advance::condition_is_met(cond, local_evidence)
+                && action_would_satisfy(action, cond)
+        })
+    })
+}
+
+fn action_would_satisfy(
+    action: &crate::agent_protocol::AgentAction,
+    cond: &crate::completion_engine::CompletionCondition,
+) -> bool {
+    use crate::agent_protocol::AgentAction as A;
+    use crate::completion_engine::CompletionCondition as C;
+    match (action, cond) {
+        // A SearchCode emits `[SEARCH_CODE_OK] Path: <p> | Query: '<q>'`,
+        // which search_checked_satisfied() accepts as proof that
+        // SearchCheckedAcquired{target:"<leaf>:<term>"} was checked.
+        (A::SearchCode { path, query, .. }, C::SearchCheckedAcquired { target }) => {
+            let leaf = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path);
+            target == &format!("{}:{}", leaf, query)
+        }
+        // Path-bound reads emit [READ_OK] / [READ_FUNCTION_OK] which
+        // satisfies ReadPathAcquired{path}.
+        (A::ReadFile { path, .. }, C::ReadPathAcquired { path: want })
+        | (A::ReadFunction { path, .. }, C::ReadPathAcquired { path: want }) => {
+            path == want || path.ends_with(want.as_str())
+        }
+        // ExecuteCommand is handled earlier by is_required_verification_command
+        // in the existing bypass; do not duplicate here.
+        _ => false,
+    }
+}

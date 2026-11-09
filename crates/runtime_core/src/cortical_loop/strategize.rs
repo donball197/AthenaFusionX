@@ -160,6 +160,35 @@ impl CorticalLoop {
         // This is intentionally upstream of EpistemicEngine::propose_action().
         // That function already force-selects the native tool for explicit
         // strategies, so the Cortex must supply the correct strategy here.
+        // AUTO-VERIFY: after a report artifact is written, read it back once so the
+        // verifier has a READ_OK to pair claims against, before any halt is forced.
+        let auto_verify_path: Option<String> = session
+            .contract
+            .required_artifact_paths
+            .iter()
+            .map(|a| a.path.to_string())
+            .find(|p| {
+                if !(p.ends_with(".md") || p.ends_with(".txt")) {
+                    return false;
+                }
+                // Look only at evidence AFTER the most recent write of
+                // this path, so a rewrite triggers a fresh verification
+                // read (the earlier READ_OK is now stale).
+                let direct = format!("[WRITE_OK] {}", p);
+                let synth =
+                    format!("Successfully synthesized and wrote report to {}", p);
+                let since_write_start = session
+                    .local_evidence
+                    .rfind(&direct)
+                    .into_iter()
+                    .chain(session.local_evidence.rfind(&synth))
+                    .max()
+                    .unwrap_or(0);
+                let since_write = &session.local_evidence[since_write_start..];
+                !since_write.contains(&format!("[READ_OK] {}", p))
+                    && !since_write.contains(&format!("[AUTO_VERIFY_READ] {}", p))
+            });
+
         let mut active_strategy = if write_phase_ready {
             let target = &unwritten_targets[0];
             let strategy = format!("write_file:{}", target);
@@ -170,8 +199,103 @@ impl CorticalLoop {
             ));
 
             strategy
+        } else if auto_verify_path.is_some()
+            && session.contract.is_mutation_task
+            && unwritten_targets.is_empty()
+            && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
+        {
+            let p = auto_verify_path.clone().unwrap_or_default();
+            self.log(format!(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Artifact written; forcing verification read `read_file:{}` before halt.",
+                p
+            ));
+            session.local_evidence.push_str(&format!(
+                "\n[AUTO_VERIFY_READ] {}\n[NODE PHASE] The artifact was written. Read it back now so its claims can be paired with READ_OK evidence; halt only after that.\n",
+                p
+            ));
+            format!("read_file:{}", p)
+        } else if session.contract.is_mutation_task
+            && unwritten_targets.is_empty()
+            && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
+            && !session.contract.required_artifact_paths.is_empty()
+            && artifact_vetoed_after_last_write(&session.local_evidence)
+            && {
+                let target = session
+                    .contract
+                    .required_artifact_paths
+                    .first()
+                    .map(|a| a.path.as_str())
+                    .unwrap_or("");
+                artifact_rewrite_available(&session.local_evidence, target)
+            }
+        {
+            // CRITIC ARTIFACT-VETO RECOVERY -- when the Adversarial Critic
+            // rejected a just-written artifact, the halt phase is otherwise
+            // unescapable: the phase transition keeps re-forcing `halt`
+            // (because `[CRITIC_VETO]` is not `[HALT_REJECTED_REPORT]`),
+            // the strategist keeps proposing halt, and the critic keeps
+            // rejecting it. This branch forces a correction write instead.
+            let target = session
+                .contract
+                .required_artifact_paths
+                .first()
+                .map(|a| a.path.to_string())
+                .unwrap_or_default();
+            self.log(format!(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Critic rejected artifact; forcing correction `write_file:{}`.",
+                target
+            ));
+            session.local_evidence.push_str(&format!(
+                "\n[NODE PHASE] The artifact `{}` was rejected by the Adversarial Critic. Rewrite it to address the veto, then re-read it back before halting. Do NOT propose halt until the artifact is accepted.\n",
+                target
+            ));
+            format!("write_file:{}", target)
+        } else if session.contract.is_mutation_task
+            && unwritten_targets.is_empty()
+            && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
+            && !halt_rejected_since_last_write(&session.local_evidence)
+            && {
+                // If the contract carries ONLY write conditions (no reads,
+                // searches, or belief thresholds), skip the recon check --
+                // `reconnaissance_complete` returns false for a write-only
+                // contract because there are no recon conditions to satisfy.
+                // Otherwise, require the same recon_complete guard the
+                // read-halt branch below uses.
+                let only_write_conditions = session.contract.conditions.iter().all(|c| {
+                    matches!(
+                        c,
+                        crate::completion_engine::CompletionCondition::WritePathAcquired { .. }
+                            | crate::completion_engine::CompletionCondition::WriteMarkerAcquired
+                    )
+                });
+                only_write_conditions
+                    || crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
+                        &session.contract,
+                        &session.local_evidence,
+                        1.0,
+                    )
+            }
+        {
+            // MUTATION COMPLETE -- mutation-phase analog of the read-halt
+            // branch below. A write-only contract (e.g. `WritePathAcquired`
+            // with no reads or searches) has no recon conditions, so
+            // `reconnaissance_complete` cannot fire the read-halt branch.
+            // Without this branch, the loop rewrites the same artifact every
+            // turn until the cognitive-turn budget exhausts.
+            let strategy = "halt".to_string();
+            self.log(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Mutation complete; forcing `halt` strategy for synthesis."
+                    .to_string(),
+            );
+            session.local_evidence.push_str(
+                "\n[NODE PHASE] Your node's mutation criteria are satisfied. The required next action is `halt`, and the halt text must summarize THIS node's findings only. Do NOT reference any other node's deliverable.\n"
+            );
+            strategy
         } else if session.coverage.coverage_pct() >= 99.9
-            && session.contract.read_only
+            && (session.contract.read_only
+                || (unwritten_targets.is_empty()
+                    && (!session.contract.is_mutation_task
+                        || !session.contract.required_artifact_paths.is_empty())))
             // Full coverage of ONE file does not mean the mission's reconnaissance is
             // done: outstanding path-bound reads/searches must be satisfied first, or
             // the strategist is forced to halt with nothing to report (and the report
@@ -195,6 +319,9 @@ impl CorticalLoop {
             self.log(
                 "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Reconnaissance complete; forcing `halt` strategy for synthesis."
                     .to_string(),
+            );
+            session.local_evidence.push_str(
+                "\n[NODE PHASE] Your node's read/inspect criteria are satisfied. The required next action is `halt`, and the halt text must summarize THIS node's findings only. Do NOT reference any other node's deliverable; do not say 'the next step is to write X'.\n"
             );
             strategy
         } else {
@@ -289,6 +416,21 @@ impl CorticalLoop {
         self.log(format!("\x1b[35m>> [STRATEGIST PROPOSAL]:\x1b[0m {}", raw_proposal));
 
         // 3. Immediately Extract Typed Actions from Proposal
+        // Strip chat-template control tokens (e.g. `<|end|>`,
+        // `<|start|>`, `<|channel|>`, `<|constrain|>`) and repair
+        // common JSON escape issues BEFORE handing the proposal to the
+        // parser. These tokens leak into the strategist's raw output
+        // periodically and cause extract_actions to fail JSON parsing;
+        // the whole turn is lost and belief decays. The
+        // proposal_sanitize module already handles this shape for
+        // parsed JSON values; we strip at the string level here so the
+        // JSON parser can even see the structure.
+        let raw_proposal = {
+            let stripped: String = crate::proposal_sanitize::strip_control_tokens(
+                &raw_proposal,
+            );
+            crate::json_parser::sanitize_json_escapes(&stripped)
+        };
         let mut actions = match crate::json_parser::extract_actions(&raw_proposal) {
             Ok(parsed) => parsed,
             Err(parse_err) => {
@@ -390,9 +532,23 @@ impl CorticalLoop {
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
-            // Once the report gate has rejected a bare halt, re-injecting it is
-            // futile and would replace every later strategist action.
-            && !session.local_evidence.contains("[HALT_REJECTED_REPORT]")
+            // Auto-halt only when either no rejection has occurred, or
+            // fresh [CMD_OK] evidence has accumulated since the last
+            // rejection. Mission-level rejection sets [HALT_REJECTED]
+            // (not _REPORT), so the previous _REPORT-only check never
+            // matched, and the same halt was re-injected every turn --
+            // replacing the strategist's proposed commands with a
+            // duplicate that anti-loop then vetoed. Each cycle now runs
+            // one more command before re-attempting the halt, so
+            // successive reports carry progressively more evidence.
+            && match (
+                session.local_evidence.rfind("[HALT_REJECTED"),
+                session.local_evidence.rfind("[CMD_OK]"),
+            ) {
+                (Some(r), Some(o)) => o > r,
+                (Some(_), None) => false,
+                _ => true,
+            }
             // A semantic mission (analysis/audit/report) needs a real report in
             // the halt; the bare auto-halt can never satisfy it and would
             // override a valid recon action. Read-only keeps existing behavior.
@@ -404,6 +560,12 @@ impl CorticalLoop {
                     &session.contract.objective,
                 )
                 || all_actions_repeat)
+            && !(crate::completion_engine::requires_semantic_verification(
+                &session.contract.objective,
+            ) && !all_actions_repeat
+                && session
+                    .local_evidence
+                    .contains("[HALT_REJECTED] Mission verification failed"))
             // Never auto-halt while the read ledger still has an unread range:
             // a truncated first read satisfies ReadPathAcquired long before the
             // file has actually been read.
@@ -417,7 +579,7 @@ impl CorticalLoop {
             self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
             actions = vec![AgentAction::Halt {
                 _thought_process: None,
-                reasoning: auto_halt_report(&session.local_evidence),
+                reasoning: auto_halt_report_aggregated(&session.local_evidence),
             }];
         }
 
@@ -496,9 +658,23 @@ impl CorticalLoop {
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
-            // Once the report gate has rejected a bare halt, re-injecting it is
-            // futile and would replace every later strategist action.
-            && !session.local_evidence.contains("[HALT_REJECTED_REPORT]")
+            // Auto-halt only when either no rejection has occurred, or
+            // fresh [CMD_OK] evidence has accumulated since the last
+            // rejection. Mission-level rejection sets [HALT_REJECTED]
+            // (not _REPORT), so the previous _REPORT-only check never
+            // matched, and the same halt was re-injected every turn --
+            // replacing the strategist's proposed commands with a
+            // duplicate that anti-loop then vetoed. Each cycle now runs
+            // one more command before re-attempting the halt, so
+            // successive reports carry progressively more evidence.
+            && match (
+                session.local_evidence.rfind("[HALT_REJECTED"),
+                session.local_evidence.rfind("[CMD_OK]"),
+            ) {
+                (Some(r), Some(o)) => o > r,
+                (Some(_), None) => false,
+                _ => true,
+            }
             // A semantic mission (analysis/audit/report) needs a real report in
             // the halt; the bare auto-halt can never satisfy it and would
             // override a valid recon action. Read-only keeps existing behavior.
@@ -510,6 +686,12 @@ impl CorticalLoop {
                     &session.contract.objective,
                 )
                 || all_actions_repeat)
+            && !(crate::completion_engine::requires_semantic_verification(
+                &session.contract.objective,
+            ) && !all_actions_repeat
+                && session
+                    .local_evidence
+                    .contains("[HALT_REJECTED] Mission verification failed"))
             // Never auto-halt while the read ledger still has an unread range:
             // a truncated first read satisfies ReadPathAcquired long before the
             // file has actually been read.
@@ -522,7 +704,7 @@ impl CorticalLoop {
             self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
             actions = vec![AgentAction::Halt {
                 _thought_process: None,
-                reasoning: auto_halt_report(&session.local_evidence),
+                reasoning: auto_halt_report_aggregated(&session.local_evidence),
             }];
         }
 
@@ -667,7 +849,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             // is outside the pinned strategy and the (possibly under-specified)
             // contract.
             let veto_recon_ok = (session.local_evidence.contains("[CRITIC_VETO]")
-                || session.local_evidence.contains("[HALT_REJECTED_REPORT]"))
+                || (session.local_evidence.contains("[HALT_REJECTED_REPORT]") || session.local_evidence.contains("[HALT_REJECTED]")))
                 && match first_action {
                     AgentAction::ReadFile { _thought_process: None, .. }
                     | AgentAction::ReadFileChunk { _thought_process: None, .. }
@@ -731,6 +913,25 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             && obj.contains("read_file")))
             };
 
+            // FIX BUG-03: a proposal to mutate a path whose read is already
+            // evidenced must not be classified as a strategy violation. The
+            // post-read mutation pivot hints this to the strategist; exempting
+            // the resulting action here prevents the hint being contradicted.
+            let post_read_mutation_pivot_ok = {
+                let proposed_path: Option<&str> = match first_action {
+                    AgentAction::PatchFunction { path, .. }
+                    | AgentAction::PatchFile { path, .. }
+                    | AgentAction::WriteFile { path, .. }
+                    | AgentAction::ReplaceLines { path, .. }
+                    | AgentAction::DiffPatch { path, .. } => Some(path.as_str()),
+                    _ => None,
+                };
+                proposed_path.map(|p| {
+                    session.local_evidence.contains(&format!("[READ_OK] {}", p))
+                        || session.local_evidence.contains(&format!("[READ_CHUNK_OK] File: {}", p))
+                }).unwrap_or(false)
+            };
+
             if !strategy_ok
                 && !advances_unmet
                 && !veto_recon_ok
@@ -738,6 +939,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 && !mandatory_pivot_ok
                 && !audit_read_pivot_ok
                 && !cross_action_pivot_ok
+                && !post_read_mutation_pivot_ok
             {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
@@ -858,6 +1060,46 @@ mod dir_child_tests {
 /// True when the most recent halt-report rejection is newer than the most recent
 /// successful physical evidence (a `[..._OK]` marker). The strategist has been told
 /// its report lacks findings and has gathered nothing since.
+/// True when any rejection marker appears after the most recent
+/// `[WRITE_OK]`. Covers both rejection stages:
+///   * `[CRITIC_VETO]` -- the Adversarial Critic rejected the artifact
+///     content (before dispatch).
+///   * `[HALT_REJECTED]` -- the mission verifier rejected the halt
+///     (after dispatch). This is the marker that actually appeared in
+///     the run where the loop relied on LLM variance to break out.
+/// Distinct from `halt_rejected_since_last_evidence`, which only tracks
+/// `[HALT_REJECTED_REPORT]` (report-shape rejections) and is used by the
+/// mutation-halt branch to defer to the strategist after a thin report.
+fn artifact_vetoed_after_last_write(evidence: &str) -> bool {
+    let last_write = evidence.rfind("[WRITE_OK]");
+    let last_reject = match (
+        evidence.rfind("[CRITIC_VETO]"),
+        evidence.rfind("[HALT_REJECTED]"),
+    ) {
+        (Some(v), Some(h)) => Some(v.max(h)),
+        (Some(v), None) => Some(v),
+        (None, Some(h)) => Some(h),
+        (None, None) => None,
+    };
+    match (last_write, last_reject) {
+        (Some(w), Some(r)) => r > w,
+        _ => false,
+    }
+}
+
+/// True while the artifact has been written fewer than 3 times, bounding
+/// the critic-driven rewrite loop.
+fn artifact_rewrite_available(evidence: &str, target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    evidence
+        .lines()
+        .filter(|l| l.trim_start().starts_with("[WRITE_OK]") && l.contains(target))
+        .count()
+        < 3
+}
+
 fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
     let mut last_reject: Option<usize> = None;
     let mut last_ok: Option<usize> = None;
@@ -876,6 +1118,32 @@ fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
     }
     match (last_reject, last_ok) {
         (Some(r), Some(o)) => r > o,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+
+/// True when a halt rejection or critic veto is newer than the last mutation
+/// marker. Used only by the mutation-complete branch: the cortex must rewrite
+/// the artifact (and may run recon first) before halt is forced again.
+fn halt_rejected_since_last_write(evidence: &str) -> bool {
+    let mut last_reject: Option<usize> = None;
+    let mut last_write: Option<usize> = None;
+    for (i, l) in evidence.lines().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("[HALT_REJECTED") || t.starts_with("[CRITIC_VETO") {
+            last_reject = Some(i);
+        } else if t.starts_with("[WRITE_OK]")
+            || t.starts_with("[PATCH_FUNCTION_OK]")
+            || t.starts_with("[DIFF_PATCH_OK]")
+            || t.starts_with("[REPLACE_LINES_OK]")
+        {
+            last_write = Some(i);
+        }
+    }
+    match (last_reject, last_write) {
+        (Some(r), Some(w)) => r > w,
         (Some(_), None) => true,
         _ => false,
     }
@@ -995,6 +1263,7 @@ mod leaked_call_tests {
 
 /// Drop evidence inherited from earlier DAG nodes so a halt report only
 /// describes what this node itself observed.
+#[cfg(test)]
 fn strip_lineage_blocks(evidence: &str) -> String {
     let mut out = String::new();
     let mut skipping = false;
@@ -1020,6 +1289,105 @@ fn strip_lineage_blocks(evidence: &str) -> String {
 /// recorded for this node: the last [CMD_OK] block that has a Status line, plus
 /// any [ACTION FAILED] records. No backticks and no line-range text, so the
 /// symbol and range checks have nothing to verify.
+/// Aggregate every `[CMD_OK] Command:` block into a single report.
+///
+/// The original `auto_halt_report` surfaced only the last block. On a
+/// multi-command audit, that produced a halt the mission verifier could
+/// not accept: it demanded findings about daemon startup, recovery, goal
+/// identity, actor lifecycle, TaskGraph persistence, shutdown/restart,
+/// and DB state -- but the halt showed only one of those. This variant
+/// emits one section per successful command so the accumulated evidence
+/// reaches the verifier.
+fn auto_halt_report_aggregated(evidence: &str) -> String {
+    let mut blocks: Vec<(String, String, String)> = Vec::new();
+    let mut cur: Option<(String, String, String)> = None;
+    let mut in_stdout = false;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("[CMD_OK] Command: ") {
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
+            cur = Some((rest.to_string(), String::new(), String::new()));
+            in_stdout = false;
+        } else if let Some(b) = cur.as_mut() {
+            if let Some(s) = t.strip_prefix("Status:") {
+                b.1 = s.trim().to_string();
+            } else if t == "STDOUT:" || t == "STDERR:" { /* STDERR-IN-REPORT */
+                in_stdout = true;
+            } else if in_stdout && t.starts_with('[') && t.contains(']') && !t.starts_with("[...") {
+                in_stdout = false;
+            } else if in_stdout {
+                b.2.push_str(line);
+                b.2.push('\n');
+            }
+        }
+    }
+    if let Some(b) = cur.take() {
+        blocks.push(b);
+    }
+    let ok: Vec<_> = blocks
+        .into_iter()
+        .filter(|b| b.1.contains("exit status: 0") || b.1.trim() == "Status: 0")
+        .collect();
+    // Mutation contracts have no [CMD_OK] blocks, but they DO produce
+    // [WRITE_OK] markers. Without surfacing those markers here, the auto-halt
+    // for a write node looks "read-only" and the LLM mission verifier rejects
+    // it for failing to prove the artifact landed.
+    let write_markers: Vec<String> = evidence
+        .lines()
+        .filter(|l| l.trim_start().starts_with("[WRITE_OK]"))
+        .map(|l| l.trim().to_string())
+        .collect();
+    let has_write = !write_markers.is_empty();
+
+    if ok.is_empty() && !has_write {
+        return "No physical command evidence was recorded for this node.".to_string();
+    }
+    let mut report = String::new();
+    if has_write {
+        for w in write_markers.iter().take(5) {
+            report.push_str(w);
+            report.push('\n');
+        }
+        report.push('\n');
+    }
+    if !ok.is_empty() {
+        let header = if has_write { "Node findings" } else { "Read-only audit findings" };
+        report.push_str(&format!(
+            "{}: {} command(s) executed successfully during this node.\n\n",
+            header,
+            ok.len()
+        ));
+    }
+    if has_write && ok.is_empty() {
+        report.push_str("Deliverable artifact written. No additional commands were required.\n\n");
+    }
+    for (i, (cmd, _, stdout)) in ok.iter().enumerate() {
+        let cmd_excerpt: String = cmd.chars().take(400).collect();
+        report.push_str(&format!("### Command {}\n", i + 1));
+        report.push_str(&cmd_excerpt);
+        report.push('\n');
+        if !stdout.trim().is_empty() {
+            let out: String = stdout.chars().take(4000).collect();
+            report.push_str(&out);
+            if !report.ends_with('\n') {
+                report.push('\n');
+            }
+        } else {
+            report.push_str("(no output)\n");
+        }
+        report.push('\n');
+    }
+    if ok.is_empty() {
+        report.push_str("Every action above is physically evidenced in this session's [*_OK] markers.");
+    } else {
+        report.push_str("Each command above was recorded with a clean exit status in [CMD_OK] evidence.");
+    }
+    report
+}
+
+#[cfg(test)]
 fn auto_halt_report(evidence: &str) -> String {
     let own_evidence = strip_lineage_blocks(evidence);
     let evidence = own_evidence.as_str();
@@ -1057,9 +1425,9 @@ fn auto_halt_report(evidence: &str) -> String {
                 b.0 = s.trim().to_string();
             } else if let Some(h) = t.strip_prefix("[CMD_HASH]") {
                 b.1 = h.trim().to_string();
-            } else if t == "STDOUT:" {
+            } else if t == "STDOUT:" || t == "STDERR:" { /* STDERR-IN-REPORT */
                 in_stdout = true;
-            } else if in_stdout && t.starts_with('[') && t.contains(']') {
+            } else if in_stdout && t.starts_with('[') && t.contains(']') && !t.starts_with("[...") {
                 in_stdout = false;
             } else if in_stdout {
                 b.2.push_str(line);
@@ -1128,5 +1496,74 @@ mod lineage_halt_tests {
         let r = auto_halt_report(ev);
         assert!(r.contains("inherited") && !r.contains("abc"));
         assert!(r.ends_with('.'));
+    }
+}
+
+#[cfg(test)]
+mod artifact_vetoed_predicate_tests {
+    use super::*;
+
+    /// True when any rejection marker appears AFTER the last write.
+    /// Covers all 8 orderings the real evidence stream can produce.
+    #[test]
+    fn no_write_at_all_is_not_vetoed() {
+        // Only a rejection, no [WRITE_OK]. The branch must not fire.
+        assert!(!artifact_vetoed_after_last_write("[CRITIC_VETO] x"));
+        assert!(!artifact_vetoed_after_last_write("[HALT_REJECTED] x"));
+    }
+
+    #[test]
+    fn write_then_critic_veto_is_vetoed() {
+        assert!(artifact_vetoed_after_last_write(
+            "[WRITE_OK] a.md\n[CRITIC_VETO] content wrong"
+        ));
+    }
+
+    #[test]
+    fn write_then_halt_rejected_is_vetoed() {
+        // This is the exact case that motivated the fix.
+        assert!(artifact_vetoed_after_last_write(
+            "[WRITE_OK] a.md\n[HALT_REJECTED] absence claims not paired"
+        ));
+    }
+
+    #[test]
+    fn write_then_both_rejections_is_vetoed() {
+        assert!(artifact_vetoed_after_last_write(
+            "[WRITE_OK] a.md\n[CRITIC_VETO] x\n[HALT_REJECTED] y"
+        ));
+    }
+
+    #[test]
+    fn rejection_before_write_is_stale() {
+        // Rejection predates the write. Nothing to correct; do not fire.
+        assert!(!artifact_vetoed_after_last_write(
+            "[CRITIC_VETO] x\n[WRITE_OK] a.md"
+        ));
+        assert!(!artifact_vetoed_after_last_write(
+            "[HALT_REJECTED] x\n[WRITE_OK] a.md"
+        ));
+    }
+
+    #[test]
+    fn write_without_rejection_is_not_vetoed() {
+        assert!(!artifact_vetoed_after_last_write("[WRITE_OK] a.md"));
+    }
+
+    #[test]
+    fn empty_evidence_is_not_vetoed() {
+        assert!(!artifact_vetoed_after_last_write(""));
+    }
+
+    #[test]
+    fn latest_of_either_marker_wins() {
+        // Two writes, a rejection between them, and a final rejection after
+        // the second write. The final rejection must be the one compared.
+        let ev = "[WRITE_OK] a.md\n[HALT_REJECTED] first try\n[WRITE_OK] a.md\n[CRITIC_VETO] second try";
+        assert!(artifact_vetoed_after_last_write(ev));
+
+        // Two writes, rejection between them, nothing after the second write.
+        let ev2 = "[WRITE_OK] a.md\n[CRITIC_VETO] first try\n[WRITE_OK] a.md";
+        assert!(!artifact_vetoed_after_last_write(ev2));
     }
 }

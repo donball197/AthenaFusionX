@@ -1,0 +1,3596 @@
+=========================================
+FILE: apps/benchmark_runner/src/main.rs
+=========================================
+10: pub struct BenchmarkReport {
+23: fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
+36: fn main() -> Result<()> {
+
+=========================================
+FILE: apps/benchmark_runner/src/wasm_bridge_host.rs
+=========================================
+11: pub struct HostState {
+15: fn main() -> Result<()> {
+
+=========================================
+FILE: apps/code_auditor/src/agent.rs
+=========================================
+23: pub struct ReportedIssue {
+33: pub struct CodeAnalysisAgent {
+44: impl CodeAnalysisAgent {
+45:     pub fn new(
+57:     fn compile_system_prompt(&self) -> String {
+188:     fn extract_json(&self, raw: &str) -> String {
+
+=========================================
+FILE: apps/code_auditor/src/main.rs
+=========================================
+8: mod agent;
+13: struct Args {
+
+=========================================
+FILE: apps/execution_auditor/src/main.rs
+=========================================
+10: pub enum ExecutionHealth {
+19: pub struct ExecutionAuditReport {
+29: impl ExecutionAuditReport {
+30:     pub fn compute(
+68: fn looks_like_execution_trace(content: &str) -> bool {
+82: fn analyze_log_content(content: &str) -> ExecutionAuditReport {
+148: fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
+161: fn main() -> Result<()> {
+
+=========================================
+FILE: apps/hello_sidecar/src/lib.rs
+=========================================
+
+=========================================
+FILE: apps/hello_world/main.rs
+=========================================
+1: fn main() { println!("NEXUS: Graph of Thoughts Engine Online"); }
+
+=========================================
+FILE: apps/hello_world/src/math.rs
+=========================================
+1: pub fn fibonacci(n: u32) -> u32 {
+10: mod tests {
+14:     fn test_fibonacci() {
+
+=========================================
+FILE: apps/impact_analyzer/src/main.rs
+=========================================
+10: pub enum RiskClassification {
+19: pub struct ImpactReport {
+34: fn is_low_impact_node(node: &str) -> bool {
+44: fn is_moderate_impact_node(node: &str) -> bool {
+49: fn compute_impact(target: &str, total_nodes: usize, edges: &[(String, String)]) -> ImpactReport {
+158: fn extract_crate_name(symbol_path: &str, crates: &mut HashSet<String>) {
+180: fn is_critical_core_symbol(target: &str) -> bool {
+189: fn parse_arg(args: &[String], flag: &str) -> Option<String> {
+193: fn scan_json_value(
+294: fn inspect_raw_text_for_target_and_edges(
+312: fn parse_positional(args: &[String]) -> Option<String> {
+331: fn main() -> Result<()> {
+
+=========================================
+FILE: apps/impact_analyzer/tests/impact_harness.rs
+=========================================
+10: struct TestFixture {
+18: struct Inputs {
+24: struct ExpectedOutputs {
+33: fn validate_cognitive_impact_scenarios() {
+48: fn run_scenario(fixture_path: &PathBuf) {
+
+=========================================
+FILE: apps/logic_cell/src/lib.rs
+=========================================
+11: mod tests {
+15:     fn test_evaluate_signal() {
+
+=========================================
+FILE: apps/math_utils/src/lib.rs
+=========================================
+1: pub fn add(a: i32, b: i32) -> i32 {
+5: pub fn multiply(a: i32, b: i32) -> i32 {
+10: mod tests {
+14:     fn test_add_positive() {
+19:     fn test_add_negative_and_positive() {
+24:     fn test_add_zeros() {
+29:     fn test_multiply_positive() {
+34:     fn test_multiply_negative_and_positive() {
+39:     fn test_multiply_by_zero() {
+
+=========================================
+FILE: apps/mutation_planner/src/gatekeeper.rs
+=========================================
+3: pub enum ActionPlan {
+9: pub fn evaluate_risk(report: &ImpactReport, prompt: &str) -> ActionPlan {
+
+=========================================
+FILE: apps/mutation_planner/src/main.rs
+=========================================
+1: mod gatekeeper;
+2: mod nexus_api;
+3: mod telemetry;
+
+=========================================
+FILE: apps/mutation_planner/src/nexus_api.rs
+=========================================
+
+=========================================
+FILE: apps/mutation_planner/src/telemetry.rs
+=========================================
+8: pub struct ImpactReport {
+15: pub fn load_impact<P: AsRef<Path>>(path: P) -> Result<ImpactReport, Box<dyn Error>> {
+
+=========================================
+FILE: apps/mutation_ranker/src/main.rs
+=========================================
+9: pub enum ApprovalDecision {
+16: pub struct CandidateMutation {
+24: pub struct RankedMutation {
+36: pub struct ImpactInput {
+42: pub struct ExecutionHealthInput {
+48: fn rank_mutation(
+135: fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
+148: fn parse_positional(args: &[String]) -> Option<String> {
+179: fn main() -> Result<()> {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/agent.rs
+=========================================
+8: pub struct RefactorAgent;
+10: impl RefactorAgent {
+11:     pub fn new() -> Self {
+24:     pub fn read_function_source(file_path: &Path, symbol: &str) -> Result<String> {
+72:     pub fn extract_symbol_snippet(file_path: &Path, symbol: &str) -> Result<String> {
+115:     pub fn apply_refactoring(
+160:     pub fn execute_instruction(
+235:     fn validate_generated_payload(
+262:     fn classify_instruction(instruction: &str) -> Result<String> {
+308: impl Default for RefactorAgent {
+309:     fn default() -> Self {
+315: mod tests {
+321:     struct TempSource {
+325:     impl TempSource {
+326:         fn new(extension: &str, source: &str) -> Self {
+344:         fn path(&self) -> &Path {
+349:     impl Drop for TempSource {
+350:         fn drop(&mut self) {
+356:     fn apply_refactoring_uses_polyglot_tree_sitter_mutation_path() {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/client.rs
+=========================================
+7: pub struct ApiClient;
+9: struct LlmEndpoint {
+15: impl Default for ApiClient {
+16:     fn default() -> Self {
+21: impl ApiClient {
+22:     pub fn new() -> Self {
+26:     fn resolve_endpoint() -> Result<LlmEndpoint> {
+81:     fn call(prompt: &str, temperature: f32) -> Result<String> {
+98:     fn with_retry_transient<T, F: FnMut() -> Result<T>>(mut f: F, max_attempts: u32) -> Result<T> {
+125:     fn sanitize_json(raw: &str) -> String {
+143:     fn strip_code_fences(raw: &str) -> String {
+159:     fn extract_payload(text: &str) -> Result<String> {
+181:     pub fn triage_vulnerability(
+191:     fn triage_vulnerability_attempt(
+239:     pub fn generate_security_patch(
+250:     fn generate_security_patch_attempt(
+315:     pub fn generate_optimization(symbol: &str, code_snippet: &str) -> Result<String> {
+365:     pub fn query_model(
+374:     pub fn query_model_retry(
+391:     fn query_model_internal(
+404:     fn query_model_attempt(
+442:     fn resolve_model() -> Result<String> {
+449:     fn extract_text(response: ureq::Response) -> Result<String> {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/evidence.rs
+=========================================
+9: pub struct EvidencePacket<T> {
+16: pub struct EvidencePacketSet {
+28: pub struct OverviewPacket {
+38: pub struct ArchitecturePacket {
+44: pub struct HotspotsPacket {
+50: pub struct DependenciesPacket {
+58: pub struct DependencyManifest {
+67: pub struct DependencyRecord {
+78: pub struct ParseHealthPacket {
+87: pub struct ParseDiagnostic {
+93: pub struct SymbolsPacket {
+101: pub struct SymbolRecord {
+111: pub struct FileMetrics {
+118: pub struct FileCount {
+123: pub fn build_evidence_packets(report: &StudyReport) -> EvidencePacketSet {
+287: fn sorted_file_counts(counts: BTreeMap<&str, usize>) -> Vec<FileCount> {
+300: mod tests {
+305:     fn evidence_packets_are_deterministic() {
+332:     fn evidence_packets_preserve_core_counts() {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/evolution.rs
+=========================================
+18: pub struct OptimizationCandidate {
+32: pub struct OptimizationReport {
+40: impl OptimizationReport {
+41:     pub fn new(
+60:     pub fn recompute_identity(&self) -> String {
+70:     pub fn find_candidate(&self, candidate_id: &str) -> Option<&OptimizationCandidate> {
+80: pub struct DryRunReport {
+98: impl DryRunReport {
+100:     pub fn new(
+139: pub fn stable_fingerprint(bytes: &[u8]) -> u64 {
+151: pub fn source_fingerprint(source: &str) -> String {
+161: pub struct HumanApproval {
+170: impl HumanApproval {
+175:     pub fn authorize(
+213:     pub fn authorizes(&self, candidate_id: &str, report_identity: &str) -> bool {
+223: pub struct StudyEvidenceSnapshot {
+236: impl StudyEvidenceSnapshot {
+239:     pub fn from_evidence(evidence: &crate::evidence::EvidencePacketSet) -> Self {
+258: pub struct StudyComparison {
+264: impl StudyComparison {
+265:     pub fn between(baseline: StudyEvidenceSnapshot, candidate: StudyEvidenceSnapshot) -> Self {
+283: pub fn study_snapshot(report: &crate::study::StudyReport) -> StudyEvidenceSnapshot {
+300: pub fn compare_security_findings(
+332: pub struct BuildIdentity {
+339: pub struct Hypothesis {
+349: pub struct CandidateIdentity {
+355: pub struct FunctionalEvidence {
+362: pub enum SecurityStatus {
+369: pub struct SecurityEvidence {
+378: pub struct StructuralDelta {
+387: pub struct CapabilityEvidence {
+397: pub struct Comparison {
+403: pub enum EvolutionDecision {
+410: pub struct EvolutionRecord {
+421: impl EvolutionRecord {
+422:     pub fn new(
+452: pub fn evaluate_v1(
+506: mod tests {
+509:     fn functional_ok() -> FunctionalEvidence {
+517:     fn security_ok() -> SecurityEvidence {
+527:     fn comparison_ok() -> Comparison {
+540:     fn human_approval_requires_explicit_confirmation() {
+548:     fn human_approval_binds_candidate_and_report() {
+565:     fn security_regression_always_rejects() {
+575:     fn unknown_security_abstains() {
+585:     fn failed_build_rejects() {
+595:     fn failed_tests_reject() {
+605:     fn no_capability_gain_rejects() {
+615:     fn capability_without_evidence_identity_abstains() {
+625:     fn capability_without_source_abstains() {
+635:     fn capability_without_provenance_cannot_be_accepted() {
+652:     fn capability_evidence_must_match_functional_test_identity() {
+662:     fn valid_candidate_is_accepted() {
+669:     fn study_comparison_calculates_structural_deltas() {
+706:     fn study_comparison_detects_no_parse_health_improvement() {
+730:     fn evolution_record_uses_schema_version_one() {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/lib.rs
+=========================================
+1: pub mod agent;
+2: pub mod client;
+3: pub mod evidence;
+4: pub mod mutation;
+5: pub mod polyglot;
+6: pub mod polyglot_diff;
+7: pub mod sanitizer;
+8: pub mod study;
+9: pub mod supervisor;
+11: pub mod evolution;
+
+=========================================
+FILE: apps/nexus_ast_tool/src/main.rs
+=========================================
+14: struct Cli {
+20: enum Commands {
+109: fn external_lint(lang_str: &str, source: &str, orig_path: &Path) -> Option<bool> {
+134: fn run_project_test_suite(repo_path: &Path) -> Option<bool> {
+182: fn resolve_anchor(source: &str, finding: &SecurityFinding) -> Option<(usize, usize)> {
+214: fn extract_query_var(sink_text: &str) -> Option<String> {
+245: fn format_with_indentation(patch_text: &str, target_line: &str) -> String {
+264: fn main() -> Result<()> {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/mutation.rs
+=========================================
+16: pub enum MutationError {
+33: pub fn payload_introduces_unknown_crate(original: &str, payload: &str) -> Option<String> {
+87: pub trait MutationStrategy: Send + Sync {
+88:     fn name(&self) -> &'static str;
+89:     fn validate_payload(&self, payload: &str) -> MutationResult<()>;
+90:     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String>;
+112: fn find_function_block_span(file: &syn::File, symbol: &str) -> MutationResult<proc_macro2::Span> {
+131: fn replace_block_body(
+170: pub struct ReplaceFunctionBody;
+172: fn find_rust_function_body(source: &str, symbol: &str) -> MutationResult<(usize, usize)> {
+256: fn extract_python_payload_body(payload: &str) -> String {
+294: fn extract_tree_sitter_payload_body(payload: &str) -> MutationResult<String> {
+367: fn replace_rust_function_body(
+415: impl ReplaceFunctionBody {
+419:     pub fn validate_for_path(
+448:     pub fn apply_for_path(
+490: fn normalize_polyglot_payload(
+599: impl MutationStrategy for ReplaceFunctionBody {
+600:     fn name(&self) -> &'static str {
+604:     fn validate_payload(&self, payload: &str) -> MutationResult<()> {
+608:     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
+616: pub struct RenameSymbol;
+617: impl MutationStrategy for RenameSymbol {
+618:     fn name(&self) -> &'static str {
+621:     fn validate_payload(&self, _p: &str) -> MutationResult<()> {
+624:     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
+638: pub struct MakePublic;
+639: impl MutationStrategy for MakePublic {
+640:     fn name(&self) -> &'static str {
+644:     fn validate_payload(&self, _p: &str) -> MutationResult<()> {
+648:     fn apply(&self, source: &str, symbol: &str, _p: &str) -> MutationResult<String> {
+707: pub struct InsertEarlyReturn;
+708: impl MutationStrategy for InsertEarlyReturn {
+709:     fn name(&self) -> &'static str {
+712:     fn validate_payload(&self, payload: &str) -> MutationResult<()> {
+720:     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
+743: pub struct InsertComment;
+744: impl MutationStrategy for InsertComment {
+745:     fn name(&self) -> &'static str {
+749:     fn validate_payload(&self, payload: &str) -> MutationResult<()> {
+761:     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
+778: pub struct TreeSitterParse;
+779: impl MutationStrategy for TreeSitterParse {
+780:     fn name(&self) -> &'static str {
+783:     fn validate_payload(&self, _p: &str) -> MutationResult<()> {
+786:     fn apply(&self, source: &str, _s: &str, _p: &str) -> MutationResult<String> {
+791: pub fn all_strategies() -> Vec<Box<dyn MutationStrategy>> {
+801: pub fn get_strategy(name: &str) -> Option<Box<dyn MutationStrategy>> {
+805: pub struct ApplySuggestedReplacement;
+806: impl MutationStrategy for ApplySuggestedReplacement {
+807:     fn name(&self) -> &'static str {
+810:     fn validate_payload(&self, _p: &str) -> MutationResult<()> {
+813:     fn apply(&self, source: &str, _symbol: &str, _payload: &str) -> MutationResult<String> {
+819: pub struct PolyglotSplicer;
+821: impl PolyglotSplicer {
+822:     pub fn splice(
+861: pub enum PolyglotLanguage {
+867: impl PolyglotLanguage {
+868:     pub fn from_extension(ext: &str) -> Option<Self> {
+877:     pub fn get_language(&self) -> Language {
+886: pub struct ReplacePolyglotFunction {
+890: impl MutationStrategy for ReplacePolyglotFunction {
+891:     fn name(&self) -> &'static str {
+895:     fn validate_payload(&self, payload: &str) -> MutationResult<()> {
+902:     fn apply(&self, source: &str, symbol: &str, payload: &str) -> MutationResult<String> {
+911: mod mutation_tests {
+915:     fn replace_function_body_uses_tree_sitter_byte_range() {
+917: fn target(value: i32) -> i32 {
+925: fn unrelated() -> &'static str {
+961:     fn replace_impl_method_body() {
+963: struct Calculator;
+965: impl Calculator {
+966:     fn calculate(&self, value: i32) -> i32 {
+970:     fn unrelated(&self) -> &'static str {
+994:     fn unicode_before_target_does_not_corrupt_byte_range() {
+998: fn target() -> &'static str {
+1002: fn unrelated() -> &'static str {
+1029:     fn complete_function_payload_is_supported() {
+1031: fn target(value: i32) -> i32 {
+1043: fn target(value: i32) -> i32 {
+1056:     fn apply_and_apply_for_path_agree_on_flush_left_payload() {
+1060: fn target(value: i32) -> i32 {
+1081:     fn apply_for_path_normalizes_pre_indented_payload() {
+1085: fn target(value: i32) -> i32 {
+1099: fn target(value: i32) -> i32 {
+1109:     fn apply_for_path_extracts_full_function_payload() {
+1131:     fn apply_for_path_extracts_documented_function_payload() {
+1153:     fn apply_for_path_reapplying_same_body_is_idempotent() {
+1157: fn target(value: i32) -> i32 {
+1182:     fn apply_for_path_handles_impl_method_indent() {
+1186: struct Calculator;
+1188: impl Calculator {
+1189:     fn calculate(&self, value: i32) -> i32 {
+1202: struct Calculator;
+1204: impl Calculator {
+1205:     fn calculate(&self, value: i32) -> i32 {
+1218:     fn invalid_payload_is_rejected_by_tree_sitter() {
+1227:     fn missing_symbol_is_rejected() {
+1229: fn existing() {
+1246:     fn duplicate_function_names_are_rejected_as_ambiguous() {
+1248: fn duplicate() {
+1252: mod nested {
+1253:     fn duplicate() {
+1271:     fn braces_inside_strings_and_comments_are_safe() {
+1273: fn target() {
+1282: fn unrelated() {
+1312: mod python_patch_regression {
+1317:     fn python_full_def_payload_preserves_nested_indent() {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/polyglot.rs
+=========================================
+12: pub enum SupportedLanguage {
+25: pub enum TreeSitterParseStatus {
+32: impl TreeSitterParseStatus {
+33:     pub fn is_clean(self) -> bool {
+38: impl SupportedLanguage {
+39:     pub fn from_path(path: &Path) -> Option<Self> {
+55:     pub fn from_string(lang: &str) -> Option<Self> {
+70:     pub fn tree_sitter_language(&self) -> Language {
+84:     pub fn symbol_query(&self) -> &'static str {
+136:     pub fn tree_sitter_parse_status(&self, source: &str) -> TreeSitterParseStatus {
+147:                 fn find_err(node: tree_sitter::Node, src: &str) {
+171:     pub fn parses_cleanly(&self, source: &str) -> bool {
+177: pub struct SecurityRule {
+186: pub struct PolyglotSymbol {
+195: pub struct SecurityFinding {
+209: pub fn find_concat_assignment(
+254: pub fn extract_query_var(sink_text: &str) -> Option<String> {
+285: fn is_ignored(path: &Path) -> bool {
+302: pub struct PolyglotScanner;
+304: impl PolyglotScanner {
+305:     pub fn load_rules<P: AsRef<Path>>(rules_dir: P) -> Vec<SecurityRule> {
+355:     pub fn scan_path<P: AsRef<Path>>(root: P) -> Vec<PolyglotSymbol> {
+374:     fn parse_symbols(
+409:     pub fn scan_security_vulnerabilities<P: AsRef<Path>>(
+465:     pub fn scan_source(path: &Path, source: &str, rules: &[SecurityRule]) -> Vec<SecurityFinding> {
+485:     fn parse_security(
+567:     pub fn verify_semantic_integrity(
+582:     fn verify_sqli_patch(lang: SupportedLanguage, source: &str, patch: &str) -> Result<(), String> {
+666:     fn verify_cmdi_patch(
+
+=========================================
+FILE: apps/nexus_ast_tool/src/polyglot_diff.rs
+=========================================
+15: pub struct DiffContext {
+24: pub struct DiffResult {
+31: pub struct PolyglotDiffEngine;
+33: impl PolyglotDiffEngine {
+36:     pub fn analyze_file(path: &Path, symbol: &str) -> Result<DiffContext> {
+42:     pub fn analyze_source(path: &Path, source: &str, symbol: &str) -> Result<DiffContext> {
+50:     pub fn analyze_source_with_language(
+189:     pub fn apply(
+239:     pub fn unified_diff(original: &str, mutated: &str, symbol: &str) -> String {
+309: mod tests {
+313:     fn rust_function_body_is_located_by_tree_sitter() {
+315: fn first() -> i32 {
+319: fn target() -> i32 {
+333:     fn rust_mutation_is_reparsed_before_acceptance() {
+335: fn target() -> i32 {
+351:     fn invalid_result_is_rejected() {
+353: fn target() -> i32 {
+367:     fn nine_language_target_boundary_and_mutation_smoke_test() {
+372: fn target() -> i32 {
+376: fn unrelated() -> &'static str {
+476: fn target() i32 {
+480: fn unrelated() []const u8 {
+523:     fn javascript_typescript_harder_constructs_preserve_exact_body_boundary() {
+524:         struct Fixture {
+692:     fn duplicate_symbol_is_rejected() {
+694: fn target() -> i32 {
+698: fn target() -> i32 {
+711:     fn stale_diff_context_is_rejected() {
+713: fn target() -> i32 {
+730:     fn inverted_diff_context_range_is_rejected() {
+732: fn target() -> i32 {
+749:     fn malformed_replacement_is_rejected() {
+751: fn target() -> i32 {
+767:     fn nearby_function_is_not_modified() {
+769: fn before() -> i32 {
+773: fn target() -> i32 {
+777: fn after() -> i32 {
+806:     fn nested_block_braces_do_not_expand_target_boundary() {
+808: fn target() -> i32 {
+818: fn after() -> i32 {
+839:     fn unicode_before_target_preserves_exact_body_and_diff() {
+842: fn before() -> i32 {
+846: fn target() -> i32 {
+850: fn after() -> i32 {
+874:     fn unified_diff_is_empty_for_identical_sources() {
+881:     fn unified_diff_is_deterministic_for_replacement() {
+886: fn after() -> i32 {
+895: fn after() -> i32 {
+903:  fn target() -> i32 {
+908:  fn after() -> i32 {
+919:     fn adversarial_boundary_matrix_preserves_neighboring_functions() {
+920:         struct Fixture {
+934: fn before() -> i32 {
+938: fn target() -> i32 {
+948: fn after() -> i32 {
+1133: fn before() i32 {
+1137: fn target() i32 {
+1146: fn after() i32 {
+1214:     fn adversarial_unicode_prefix_matrix_preserves_target_boundary() {
+1220: fn target() -> i32 {
+1224: fn after() -> i32 {
+1338: fn target() i32 {
+1342: fn after() i32 {
+1369:     fn unicode_before_symbol_preserves_byte_range() {
+1373: fn target() -> &'static str {
+1377: fn unrelated() -> &'static str {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/sanitizer.rs
+=========================================
+2: pub fn sanitize_model_patch(raw_response: &str, is_php: bool) -> String {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/study.rs
+=========================================
+11: pub struct StudyReport {
+25: pub struct StudyManifest {
+34: pub struct StudyDependency {
+50: pub struct WorkspaceDependency {
+63: pub struct StudyFile {
+72: pub struct StudyFunction {
+81: pub struct StudyEntity {
+91: pub enum ParseStatus {
+99: pub struct TreeSitterDiagnostic {
+105: pub struct ReadFailure {
+110: pub fn run_study_report(root: &Path) -> Result<StudyReport> {
+122: fn build_study_report(root: &Path) -> Result<StudyReport> {
+243: pub fn run_study(root: &Path, output: &Path) -> Result<()> {
+368: fn discover_functions(
+412: fn discover_entities(
+434: fn collect_entities(
+501: fn entity_name(
+526: fn relative_path(root: &Path, path: &Path) -> String {
+530: fn is_ignored(path: &Path) -> bool {
+549: fn is_manifest(path: &Path) -> bool {
+565: fn parse_cargo_manifest(source: &str, relative: &str) -> Option<StudyManifest> {
+683: fn load_workspace_dependencies(root: &Path) -> BTreeMap<String, toml::Value> {
+714: fn workspace_dependency(value: &toml::Value) -> Option<WorkspaceDependency> {
+748: fn render_markdown(report: &StudyReport) -> String {
+
+=========================================
+FILE: apps/nexus_ast_tool/src/supervisor.rs
+=========================================
+21: pub struct BuildProfile {
+26: impl BuildProfile {
+31:     pub fn discover<P: AsRef<Path>>(target: P) -> anyhow::Result<Self> {
+51:     pub fn check(&self) -> anyhow::Result<BuildValidation> {
+75:     pub fn test(&self) -> anyhow::Result<BuildValidation> {
+100: pub struct BuildValidation {
+107: impl BuildValidation {
+114:     pub fn identity(&self, manifest_path: &Path, command: &str) -> String {
+125: fn find_nearest_manifest(start: &Path) -> Option<PathBuf> {
+147: fn find_workspace_root(manifest_path: &Path) -> PathBuf {
+172: pub struct Supervisor;
+174: impl Supervisor {
+184:     pub fn self_optimize<P: AsRef<Path>, O: AsRef<Path>>(
+390:     pub fn isolated_dry_run<R: AsRef<Path>, A: AsRef<Path>, O: AsRef<Path>>(
+608: fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
+
+=========================================
+FILE: apps/nexus_scrape/src/main.rs
+=========================================
+6: struct Args {
+
+=========================================
+FILE: apps/repository_planner/src/main.rs
+=========================================
+11: struct AstNode {
+21: struct FileAst {
+26: struct CallGraphVisitor {
+30: impl<'ast> Visit<'ast> for CallGraphVisitor {
+31:     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+40:     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+46: fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+71: fn main() {
+
+=========================================
+FILE: apps/symbol_graph/src/exporter.rs
+=========================================
+7: pub fn write_graph(path: &Path, graph: &SerializableGraph) -> Result<(), Box<dyn Error>> {
+
+=========================================
+FILE: apps/symbol_graph/src/graph.rs
+=========================================
+9: pub struct AstNode {
+17: pub struct AstFile {
+23: pub struct SymbolNode {
+30: pub struct SymbolEdge {
+40: pub struct SerializableGraph {
+45: pub fn compute_edges(files: Vec<AstFile>) -> SerializableGraph {
+
+=========================================
+FILE: apps/symbol_graph/src/loader.rs
+=========================================
+7: pub fn read_map(path: &Path) -> Result<Vec<AstFile>, Box<dyn Error>> {
+
+=========================================
+FILE: apps/symbol_graph/src/main.rs
+=========================================
+1: mod exporter;
+2: mod graph;
+3: mod loader;
+8: fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
+21: fn find_map_file() -> PathBuf {
+36: fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+=========================================
+FILE: apps/telemetry_node/src/config.rs
+=========================================
+4: pub struct TelemetryConfig {
+10: impl Default for TelemetryConfig {
+11:     fn default() -> Self {
+
+=========================================
+FILE: apps/telemetry_node/src/main.rs
+=========================================
+
+=========================================
+FILE: apps/verification_runner/src/main.rs
+=========================================
+4: fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+=========================================
+FILE: apps/wasm_tester/src/main.rs
+=========================================
+
+=========================================
+FILE: bins/cli/src/main.rs
+=========================================
+
+=========================================
+FILE: bins/ide_backend/benches/system_monitor_bench.rs
+=========================================
+4: fn bench_system_monitor(c: &mut Criterion) {
+
+=========================================
+FILE: bins/ide_backend/build.rs
+=========================================
+1: fn main() {}
+
+=========================================
+FILE: bins/ide_backend/src/auth.rs
+=========================================
+11: pub struct Claims {
+18: pub struct LoginRequest {
+41: pub fn load_key_at_startup() -> anyhow::Result<Zeroizing<String>> {
+56: fn load_key() -> Result<String> {
+69: fn token_ttl() -> u64 {
+79: pub fn issue_sovereign_token() -> Result<String> {
+92: pub enum TokenVerdict {
+98: pub fn verify_token_detailed(token: &str) -> Result<TokenVerdict> {
+
+=========================================
+FILE: bins/ide_backend/src/bench_vitals.rs
+=========================================
+4: fn main() {
+
+=========================================
+FILE: bins/ide_backend/src/broker.rs
+=========================================
+
+=========================================
+FILE: bins/ide_backend/src/cluster_api.rs
+=========================================
+
+=========================================
+FILE: bins/ide_backend/src/dream_cycle.rs
+=========================================
+8: pub fn spawn(
+
+=========================================
+FILE: bins/ide_backend/src/ffi_telemetry.rs
+=========================================
+4: pub struct FfiTelemetryWrapper;
+6: impl FfiTelemetryWrapper {
+7:     pub fn intercept_cognitive_task<F, R>(task_name: &str, f: F) -> R
+
+=========================================
+FILE: bins/ide_backend/src/heartbeat.rs
+=========================================
+7: pub fn spawn(tx: broadcast::Sender<String>) {
+18: fn chrono_now() -> u64 {
+
+=========================================
+FILE: bins/ide_backend/src/lib.rs
+=========================================
+1: pub mod system_monitor;
+
+=========================================
+FILE: bins/ide_backend/src/logger.rs
+=========================================
+4: pub fn init() {
+
+=========================================
+FILE: bins/ide_backend/src/main.rs
+=========================================
+15: mod auth;
+16: mod broker;
+17: mod cluster_api;
+18: mod dream_cycle;
+19: mod edge_worker;
+20: mod fs_watcher;
+21: mod gateway_trait;
+22: mod heartbeat;
+23: mod logger;
+24: mod scheduler;
+25: mod security;
+26: mod self_healing_engine;
+27: mod server;
+28: mod server_terminal;
+29: mod telemetry_bridge;
+30: mod thermal_governor;
+31: mod vitals_handler;
+32: mod ws_bridge;
+38: fn acquire_daemon_lock() -> anyhow::Result<std::fs::File> {
+
+=========================================
+FILE: bins/ide_backend/src/scheduler.rs
+=========================================
+5: pub enum TaskState {
+15: pub struct ResourceBudget {
+24: pub struct RuntimeCounters {
+33: pub struct CognitiveTask {
+48: pub enum ExecutionClass {
+54: pub struct DeterministicScheduler {
+58: impl DeterministicScheduler {
+60:     pub fn dispatch(&mut self) -> Option<CognitiveTask> {
+
+=========================================
+FILE: bins/ide_backend/src/security.rs
+=========================================
+3: pub fn write_startup_token() -> anyhow::Result<()> {
+
+=========================================
+FILE: bins/ide_backend/src/self_healing_engine.rs
+=========================================
+9: pub fn spawn(
+
+=========================================
+FILE: bins/ide_backend/src/server.rs
+=========================================
+25: struct Assets;
+27: pub struct AppState {
+42: pub struct Intent {
+91: pub struct FsQuery {
+95: fn safe_path(
+
+=========================================
+FILE: bins/ide_backend/src/system_monitor.rs
+=========================================
+3: pub struct Vitals {
+10: pub struct SystemMonitor {
+14: impl SystemMonitor {
+15:     pub fn new() -> Self {
+25:     fn read_thermal_zone(&self) -> f32 {
+34:     pub fn get_vitals(&mut self) -> Vitals {
+47: impl Default for SystemMonitor {
+48:     fn default() -> Self {
+
+=========================================
+FILE: bins/ide_backend/src/telemetry_bridge.rs
+=========================================
+7: pub fn spawn(
+
+=========================================
+FILE: bins/ide_backend/src/thermal_governor.rs
+=========================================
+8: pub fn spawn() {
+
+=========================================
+FILE: bins/ide_backend/src/vitals_handler.rs
+=========================================
+
+=========================================
+FILE: bins/ide_backend/src/ws_bridge.rs
+=========================================
+
+=========================================
+FILE: bins/node/src/main.rs
+=========================================
+21: struct NodeState {
+26: struct VmoCreateReq {
+30: struct VmoCreateRes {
+34: struct VmoWriteReq {
+40: struct VmoReadReq {
+46: struct ForgeReq {
+50: struct ForgeRes {
+56: struct ExecuteReq {
+62: struct ExecuteRes {
+68: struct VmoEntropyReq {
+72: struct VmoEntropyRes {
+
+=========================================
+FILE: bins/reflex_test/src/main.rs
+=========================================
+3: fn main() -> Result<()> {
+
+=========================================
+FILE: crates/evolution_engine/src/compiler.rs
+=========================================
+5: pub struct PromptCompiler;
+7: impl PromptCompiler {
+9:     fn get_live_toolchain_whitelist() -> String {
+32:     pub fn compile_planner_prompt(genome: &Genome) -> String {
+54:     pub fn compile_critic_prompt(genome: &Genome) -> String {
+
+=========================================
+FILE: crates/evolution_engine/src/director.rs
+=========================================
+10: pub struct EvolutionDirector {
+14: impl EvolutionDirector {
+15:     pub fn new() -> Self {
+20:     pub fn boot_genesis_genome(&mut self) -> &Genome {
+55:     pub fn analyze_evidence(&self, _evidence: &str) -> Option<Genome> {
+
+=========================================
+FILE: crates/evolution_engine/src/fitness_evaluator.rs
+=========================================
+5: pub struct FitnessScore {
+11: pub struct FitnessEvaluator;
+13: impl FitnessEvaluator {
+
+=========================================
+FILE: crates/evolution_engine/src/genome.rs
+=========================================
+4: pub struct CognitiveWeights {
+11: pub struct SystemGenome {
+21: impl SystemGenome {
+22:     pub fn baseline() -> Self {
+
+=========================================
+FILE: crates/evolution_engine/src/lib.rs
+=========================================
+1: pub mod fitness_evaluator;
+2: pub mod genome;
+3: pub mod mutator;
+
+=========================================
+FILE: crates/evolution_engine/src/mutator.rs
+=========================================
+4: pub struct Mutator;
+6: impl Mutator {
+7:     pub fn mutate(parent: &SystemGenome) -> SystemGenome {
+
+=========================================
+FILE: crates/evolution_engine/src/repository.rs
+=========================================
+7: pub struct GenomeEvaluation {
+14: pub struct GenomeRepository {
+20: impl GenomeRepository {
+21:     pub fn new() -> Self {
+25:     pub fn save_genome(&mut self, genome: Genome) {
+29:     pub fn get_active_genome(&self) -> Option<&Genome> {
+
+=========================================
+FILE: crates/executive_cortex/src/lib.rs
+=========================================
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/bin/nexus_orchestrator.rs
+=========================================
+9: fn main() {
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/executor.rs
+=========================================
+6: pub struct DagExecutor {
+10: impl DagExecutor {
+11:     pub fn new(manager: DagManager) -> Self {
+15:     fn get_minion_binary_path() -> PathBuf {
+28:     fn execute_grounded_task(description: &str, evidence_context: &str) -> Option<String> {
+101:     pub fn run_step(&mut self) -> Result<usize, String> {
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/graph.rs
+=========================================
+4: pub enum TaskStatus {
+12: pub struct TaskNode {
+21: pub struct DagManager {
+25: impl DagManager {
+26:     pub fn new() -> Self {
+31:     pub fn add_task(&mut self, node: TaskNode) {
+36:     pub fn get_ready_tasks(&self) -> Vec<String> {
+61:     pub fn complete_task(&mut self, id: &str, output: String) {
+69: impl Default for DagManager {
+70:     fn default() -> Self {
+76: mod tests {
+80:     fn test_dag_dependency_resolution() {
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/lib.rs
+=========================================
+4: pub mod executor;
+5: pub mod graph;
+6: pub mod planner;
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/main.rs
+=========================================
+5: fn main() -> anyhow::Result<()> {
+
+=========================================
+FILE: crates/nexus_dag_orchestrator/src/planner.rs
+=========================================
+7: pub struct PlannedTask {
+14: pub struct DagPlanner;
+16: impl DagPlanner {
+17:     fn resolve_provider() -> (String, String, String) {
+52:     pub fn generate_dag(objective: &str) -> Result<Vec<PlannedTask>, Box<dyn Error>> {
+
+=========================================
+FILE: crates/nexus_edge_minion/build.rs
+=========================================
+3: fn main() {
+
+=========================================
+FILE: crates/nexus_edge_minion/examples/generate.rs
+=========================================
+12: fn find_file(names: &[&str]) -> Option<PathBuf> {
+26: fn main() {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/api_gateway.rs
+=========================================
+12: pub struct AgentRequest {
+19: pub struct AgentResponse {
+25: pub struct ApiGateway;
+27: impl ApiGateway {
+28:     pub fn new() -> Self {
+35:     pub fn dispatch_cascade(
+47:     pub fn dispatch_with_tools(
+56:     fn dispatch_inner(
+179: impl Default for ApiGateway {
+180:     fn default() -> Self {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/attention.rs
+=========================================
+14: pub fn rms_norm_in_place(x: &mut [f32], weight: &[f32]) {
+24: pub struct AttentionBlock {
+33: impl AttentionBlock {
+34:     pub fn new(layer_idx: usize, is_global: bool) -> Self {
+47:     pub fn project_and_cache(
+98:     pub fn project_q_only(
+126:     pub fn compute_attention_output(
+
+=========================================
+FILE: crates/nexus_edge_minion/src/bin/nexus_minion.rs
+=========================================
+
+=========================================
+FILE: crates/nexus_edge_minion/src/decoder_layer.rs
+=========================================
+21: pub struct DecoderLayerWeights<'a> {
+48: pub struct DecoderLayer {
+52: impl DecoderLayer {
+53:     pub fn new(layer_idx: usize, is_global: bool) -> Self {
+66:     pub fn forward(
+171: fn gelu_tanh(x: f32) -> f32 {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/dispatcher.rs
+=========================================
+5: pub struct HybridDispatcher {
+10: impl HybridDispatcher {
+11:     pub fn new(cascade: Vec<String>) -> Self {
+15:     pub fn process_task(
+
+=========================================
+FILE: crates/nexus_edge_minion/src/forward_pass.rs
+=========================================
+30: pub fn layer_types() -> [AttentionMode; NUM_LAYERS] {
+45: pub fn compute_kv_source_layers(types: &[AttentionMode; NUM_LAYERS]) -> [usize; NUM_LAYERS] {
+62: pub struct ForwardOrchestrator {
+69: impl ForwardOrchestrator {
+70:     pub fn new() -> Self {
+101:     pub fn kv_cache_len(&self, cache_idx: usize) -> Option<usize> {
+106:     pub fn kv_cache_count(&self) -> usize {
+110:     pub fn execute_token_step<'a>(
+139: impl Default for ForwardOrchestrator {
+140:     fn default() -> Self {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/inference_engine.rs
+=========================================
+10: struct CachedNormWeights {
+20: pub struct InferenceEngine {
+26: impl InferenceEngine {
+27:     pub fn new<P: AsRef<Path>>(weights_path: P) -> Result<Self, &'static str> {
+73:     pub fn step(
+258:     pub fn kv_cache_len0(&self) -> Option<usize> {
+267:     pub fn compute_logits(&self, hidden_state: &[f32]) -> Result<Vec<f32>, &'static str> {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/kv_cache.rs
+=========================================
+5: pub struct StaticKVCache {
+14: impl StaticKVCache {
+15:     pub fn new(max_seq_len: usize, head_dim: usize) -> Self {
+28:     pub fn push(&mut self, k: &[bf16], v: &[bf16]) {
+43:     pub fn k_at(&self, pos: usize) -> &[bf16] {
+49:     pub fn v_at(&self, pos: usize) -> &[bf16] {
+54:     pub fn len(&self) -> usize {
+58:     pub fn is_empty(&self) -> bool {
+62:     pub fn capacity(&self) -> usize {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/lib.rs
+=========================================
+1: pub mod api_gateway;
+2: pub mod attention;
+3: pub mod decoder_layer;
+4: pub mod dispatcher;
+5: pub mod forward_pass;
+6: pub mod inference_engine;
+7: pub mod kv_cache;
+8: pub mod neon_math;
+9: pub mod ple;
+10: pub mod rope;
+11: pub mod safetensors;
+12: pub mod sandbox;
+13: pub mod tokenizer;
+14: pub mod tools;
+
+=========================================
+FILE: crates/nexus_edge_minion/src/neon_math.rs
+=========================================
+7: pub fn matvec_bf16_to_f32(w: &[bf16], x: &[bf16], y: &mut [f32], m: usize, n: usize) {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/ple.rs
+=========================================
+5: pub struct Stage1PLE {
+10: impl Stage1PLE {
+11:     pub fn new(num_layers: usize, layer_dim: usize) -> Self {
+17:     pub fn compute_raw_ple(
+37:     pub fn blend_stage1(&self, raw_ple: &[f32], proj: &[f32], out_blended: &mut [f32]) {
+50: pub struct Stage2PLE;
+52: impl Stage2PLE {
+54:     pub fn forward_layer(hidden_states: &mut [f32], residual: &[f32], conditioning_scale: f32) {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/rope.rs
+=========================================
+10: pub enum AttentionMode {
+16: pub struct RoPEConfig {
+22: impl RoPEConfig {
+23:     pub fn new(mode: AttentionMode) -> Self {
+37:     pub fn validate(&self) {
+56: pub fn apply_rope_scalar(vec: &mut [f32], position: usize, config: &RoPEConfig) {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/safetensors.rs
+=========================================
+7: struct CTensorView {
+17:     fn nexus_st_init(file_path: *const c_char) -> *mut c_void;
+18:     fn nexus_st_get(handle: *mut c_void, name: *const c_char, out_view: *mut CTensorView) -> bool;
+19:     fn nexus_st_free_view(handle: *mut c_void, view: *mut CTensorView);
+20:     fn nexus_st_deinit(handle: *mut c_void);
+23: pub struct EdgeLoader {
+27: impl EdgeLoader {
+28:     pub fn new(path: &str) -> Result<Self, &'static str> {
+37:     pub fn get_tensor<'a>(&'a self, name: &str) -> Result<TensorSlice<'a>, &'static str> {
+68: impl Drop for EdgeLoader {
+69:     fn drop(&mut self) {
+76: pub struct TensorSlice<'a> {
+84: impl<'a> Drop for TensorSlice<'a> {
+85:     fn drop(&mut self) {
+90: impl<'a> TensorSlice<'a> {
+91:     pub fn as_bf16(&self) -> Result<TypedTensor<'a, half::bf16>, &'static str> {
+105: pub struct TypedTensor<'a, T> {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/sandbox.rs
+=========================================
+3: pub struct LocalSandbox;
+5: impl LocalSandbox {
+6:     pub fn execute(command: &str) -> String {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/tokenizer.rs
+=========================================
+8: pub struct NexusTokenizer {
+12: impl NexusTokenizer {
+13:     pub fn from_file(path: &str) -> Result<Self, String> {
+20:     pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>, String> {
+27:     pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> Result<String, String> {
+
+=========================================
+FILE: crates/nexus_edge_minion/src/tools.rs
+=========================================
+11: fn safe_path(workspace_root: &Path, user_path: &str) -> Result<PathBuf, String> {
+25: pub fn tool_schema() -> Value {
+61: pub fn execute_tool(workspace_root: &Path, name: &str, arguments: &Value) -> String {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/api_gateway_tests.rs
+=========================================
+4: fn test_api_gateway_error_cascade() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/dispatcher_integration.rs
+=========================================
+4: fn test_hybrid_dispatcher_flow_error_handling() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/forward_pass_validation.rs
+=========================================
+4: fn test_orchestrator_initialization() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/inference_integration.rs
+=========================================
+4: fn test_inference_engine_invalid_path_handling() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/local_engine_smoke.rs
+=========================================
+5: fn test_local_engine_safetensors_smoke() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/ple_validation.rs
+=========================================
+4: fn test_35_layer_pipeline_validation() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/rope_golden_tests.rs
+=========================================
+4: fn test_rope_position_zero_invariant() {
+24: fn test_rope_global_partial_rotary_bounds() {
+62: fn test_rope_sliding_full_rotary() {
+91: fn test_rope_invalid_config_panic() {
+
+=========================================
+FILE: crates/nexus_edge_minion/tests/tokenizer_smoke.rs
+=========================================
+4: fn find_tokenizer_json() -> Option<PathBuf> {
+15: fn test_tokenizer_roundtrip() {
+
+=========================================
+FILE: crates/nexus_model_hub/examples/agent_smoke.rs
+=========================================
+
+=========================================
+FILE: crates/nexus_model_hub/src/factory.rs
+=========================================
+5: fn get_pinned_model() -> Option<String> {
+16: fn get_config_var(key: &str) -> Option<String> {
+37: fn get_global_model() -> String {
+44: fn parse_cascade(env_var: &str) -> Vec<String> {
+55: pub fn get_flash_lite_model() -> String {
+64: pub fn get_heavy_model() -> String {
+73: pub struct AgentFactory;
+75: impl AgentFactory {
+76:     pub fn new() -> Self {
+81:     pub fn get_model_for_turn(turn: usize, error_count: usize) -> String {
+113:     pub fn failover_model(current_model: &str) -> String {
+139: impl Default for AgentFactory {
+140:     fn default() -> Self {
+
+=========================================
+FILE: crates/nexus_model_hub/src/lib.rs
+=========================================
+1: pub mod factory;
+2: pub mod neural_agent;
+7: pub trait ModelProvider: Send + Sync {
+9:     fn get_model_name(&self) -> &str;
+11: pub mod universal_provider;
+
+=========================================
+FILE: crates/nexus_model_hub/src/neural_agent.rs
+=========================================
+17: pub struct ContextPacket {
+27: pub enum BuilderError {
+33: pub struct MicroAgentBuilder {
+38: impl MicroAgentBuilder {
+39:     pub fn new() -> Self {
+43:     pub fn system_prompt(mut self, prompt: &str) -> Self {
+48:     pub fn model(mut self, model: &str) -> Self {
+53:     pub fn build(self, tx: broadcast::Sender<String>) -> Result<MicroAgent, BuilderError> {
+65: pub struct MicroAgent {
+70: impl MicroAgent {
+71:     pub fn builder() -> MicroAgentBuilder {
+75:     pub fn init(tx: broadcast::Sender<String>) -> Result<Self> {
+288: fn rough_token_count(text: &str) -> usize {
+296: fn estimate_message_tokens(msg: &Value) -> usize {
+312: fn trim_history_token_aware(history: &mut Vec<Value>, current_user_msg: &str) {
+
+=========================================
+FILE: crates/nexus_model_hub/src/universal_provider.rs
+=========================================
+7: pub enum ProviderKind {
+13: impl ProviderKind {
+14:     pub fn detect(model_or_provider: &str) -> Self {
+54: pub struct UniversalProvider;
+56: impl UniversalProvider {
+
+=========================================
+FILE: crates/nexus_search/build.rs
+=========================================
+1: fn main() {
+
+=========================================
+FILE: crates/nexus_search/src/lib.rs
+=========================================
+13: pub struct VectorVault {
+22: impl VectorVault {
+23:     pub fn new(dimension: usize, bit_width: usize) -> Self {
+33:     pub fn commit_state(&mut self, sqlite_id: u64, embedding: &[f32]) -> Result<(), String> {
+48:     pub fn commit_batch(&mut self, items: &[(u64, Vec<f32>)]) -> Result<(), String> {
+59:     pub fn recall_context(
+84:     pub fn persist_vault<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+92: mod tests {
+95:     fn vector(value: f32) -> Vec<f32> {
+102:     fn rejects_wrong_embedding_dimension_on_commit() {
+111:     fn rejects_wrong_query_dimension() {
+119:     fn resolves_committed_sqlite_id() {
+130:     fn missing_id_mapping_does_not_leave_orphaned_score() {
+
+=========================================
+FILE: crates/nexus_substrate/examples/diagnose_memory.rs
+=========================================
+7: struct EmbeddingResponse {
+12: struct EmbeddingItem {
+
+=========================================
+FILE: crates/nexus_substrate/src/code_graph.rs
+=========================================
+12: pub struct CodeNode {
+23: pub struct SemanticSearchResult {
+35: pub struct CodeGraph;
+37: impl CodeGraph {
+
+=========================================
+FILE: crates/nexus_substrate/src/db/async_bridge.rs
+=========================================
+8: pub enum DbError {
+48: mod tests {
+
+=========================================
+FILE: crates/nexus_substrate/src/episode.rs
+=========================================
+17: pub struct EpisodeContext {
+24: impl EpisodeContext {
+25:     pub fn is_known(&self) -> bool {
+33:     pub fn same_session(&self, other: &Self) -> bool {
+42:     pub fn same_mission(&self, other: &Self) -> bool {
+55:     pub fn describe_short(&self) -> String {
+75: pub enum RecallScope {
+85: mod tests {
+89:     fn legacy_never_matches() {
+103:     fn same_session_requires_both_sides() {
+110:     fn same_mission_prefers_plan() {
+
+=========================================
+FILE: crates/nexus_substrate/src/genome_vault.rs
+=========================================
+7: pub struct GenomeRecord {
+17: pub struct GenomeVault {
+22: impl GenomeVault {
+23:     pub fn new(max_retain: usize) -> Self {
+55: impl Default for GenomeVault {
+56:     fn default() -> Self {
+
+=========================================
+FILE: crates/nexus_substrate/src/kernel/error.rs
+=========================================
+2: pub enum KernelError {
+9: impl std::fmt::Display for KernelError {
+10:     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+14: impl std::error::Error for KernelError {}
+
+=========================================
+FILE: crates/nexus_substrate/src/kernel/mod.rs
+=========================================
+1: pub mod error;
+2: pub mod safe_buffer;
+3: pub mod safe_kernel;
+4: pub mod safe_vmo;
+5: pub mod temp_vmo;
+15: pub fn get_active_vmos() -> u32 {
+19: pub fn calculate_entropy(handle: u32) -> f32 {
+
+=========================================
+FILE: crates/nexus_substrate/src/kernel/safe_buffer.rs
+=========================================
+4: pub enum BufferError {
+8: pub struct SafeBuffer {
+13: impl SafeBuffer {
+14:     pub fn new(max_capacity: usize) -> Self {
+18:     pub fn write_safe(&mut self, data: &[u8]) -> Result<(), BufferError> {
+
+=========================================
+FILE: crates/nexus_substrate/src/kernel/safe_kernel.rs
+=========================================
+5: pub struct SafeKernel;
+7: impl SafeKernel {
+8:     pub fn create_vmo(size: usize) -> Result<u32, KernelError> {
+17:     pub fn close_handle(handle: u32) {
+
+=========================================
+FILE: crates/nexus_substrate/src/kernel/safe_vmo.rs
+=========================================
+5: pub struct SafeVmo {
+10: impl SafeVmo {
+11:     pub fn new(size: usize) -> Result<Self, KernelError> {
+16:     pub fn write(&self, offset: usize, data: &[u8]) -> Result<(), KernelError> {
+33:     pub fn read_into(&self, offset: usize, buffer: &mut [u8]) -> Result<(), KernelError> {
+47:     pub fn handle(&self) -> u32 {
+52: impl Drop for SafeVmo {
+53:     fn drop(&mut self) {
+
+=========================================
+FILE: crates/nexus_substrate/src/kernel/temp_vmo.rs
+=========================================
+6: pub struct TempVmoFs;
+8: impl TempVmoFs {
+9:     pub fn new() -> Self {
+13:     pub fn read_file(&self, _path: &str) -> io::Result<Vec<u8>> {
+
+=========================================
+FILE: crates/nexus_substrate/src/lib.rs
+=========================================
+1: pub mod episode;
+2: pub mod taint;
+7: pub mod kernel;
+8: pub mod memory;
+9: pub mod token_ledger;
+10: pub mod vector_bridge;
+11: pub mod vmo_handler;
+13: pub mod sqlite_store;
+
+=========================================
+FILE: crates/nexus_substrate/src/memory.rs
+=========================================
+35: pub fn parse_taint(s: &str) -> TaintLabel {
+43: pub struct AgentMemory {
+54: pub struct SutureRecoveryRecord {
+62: pub struct RecoveryReport {
+78: pub struct RecoveryRecord {
+84: pub struct MemoryPalace {
+89: impl MemoryPalace {
+912: mod parse_taint_tests {
+917:     fn unparseable_label_fails_closed_on_secrecy() {
+924:     fn legacy_and_packed_labels_still_parse() {
+931: mod scoped_recall_tests {
+935:     fn untrusted_rejected_by_internal_sink() {
+946: mod scoped_recall_e2e_tests {
+951:     fn temp_db_path() -> std::path::PathBuf {
+957:     fn cleanup(path: &std::path::Path) {
+1040: mod recovery_ownership_tests {
+
+=========================================
+FILE: crates/nexus_substrate/src/sqlite_store.rs
+=========================================
+7: pub struct SqliteStore {
+11: impl SqliteStore {
+
+=========================================
+FILE: crates/nexus_substrate/src/taint.rs
+=========================================
+18: pub enum Integrity {
+27: pub enum Secrecy {
+34: pub enum Effect {
+42: pub struct TaintLabel {
+48: impl TaintLabel {
+84:     pub fn join(self, other: Self) -> Self {
+96:     pub fn with_effect(mut self, effect: Effect) -> Self {
+100:     pub fn with_integrity(mut self, i: Integrity) -> Self {
+104:     pub fn with_secrecy(mut self, s: Secrecy) -> Self {
+109:     pub fn to_storage(self) -> String {
+113:     pub fn from_storage(s: &str) -> Option<Self> {
+129:     pub fn from_legacy(s: &str) -> Option<Self> {
+139:     pub fn flow_to(self, policy: FlowPolicy) -> Result<(), TaintError> {
+153:     pub fn declassify(self, new_integrity: Integrity, new_secrecy: Secrecy) -> Self {
+158: impl Integrity {
+159:     pub fn from_i32(v: i32) -> Option<Self> {
+170: impl Secrecy {
+171:     pub fn from_i32(v: i32) -> Option<Self> {
+181: impl Effect {
+182:     pub fn from_i32(v: i32) -> Option<Self> {
+193: pub struct FlowPolicy {
+198: impl FlowPolicy {
+210: pub enum TaintError {
+215: impl fmt::Display for TaintError {
+216:     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+228: impl std::error::Error for TaintError {}
+230: impl fmt::Display for TaintLabel {
+231:     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+237: mod tests {
+244:     fn join_takes_the_low_water_mark_for_integrity() {
+252:     fn join_is_commutative() {
+259:     fn join_is_idempotent() {
+265:     fn secrecy_high_water_mark() {
+272:     fn untrusted_cannot_flow_to_verified_sink() {
+277:     fn storage_roundtrip() {
+283:     fn legacy_roundtrip() {
+
+=========================================
+FILE: crates/nexus_substrate/src/token_ledger.rs
+=========================================
+7: pub struct ModelQuota {
+12: impl ModelQuota {
+13:     fn for_model(model: &str) -> Self {
+26: struct WindowEntry {
+32: struct ModelWindow {
+36: impl ModelWindow {
+37:     fn purge_stale(&mut self) {
+41:     fn token_sum(&self) -> u32 {
+44:     fn ms_until_slot_free(&self) -> u64 {
+53: pub struct TokenLedger {
+57: impl TokenLedger {
+58:     pub fn new() -> Self {
+62:     pub fn check_and_reserve(&self, model: &str, estimated_tokens: u32) -> Result<(), u64> {
+103: fn parse_rpm(raw: Option<&str>) -> u32 {
+108: fn http_rpm_limit() -> u32 {
+115: pub fn http_check(ip: &str) -> Result<(), u64> {
+131: fn generate_seed() -> u64 {
+140: impl Default for TokenLedger {
+141:     fn default() -> Self {
+147: mod http_rpm_tests {
+151:     fn zero_is_clamped_to_one() {
+156:     fn default_and_garbage_use_sixty() {
+163:     fn valid_values_pass_through() {
+
+=========================================
+FILE: crates/nexus_substrate/src/vector_bridge.rs
+=========================================
+62: pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+
+=========================================
+FILE: crates/nexus_substrate/src/vmo_handler.rs
+=========================================
+21: pub struct SafeVmo {
+27: pub struct VmoHandler {
+34: impl VmoHandler {
+35:     pub fn new() -> Self {
+39:     pub fn allocate_cognitive_window(&self, raw_data: &[u8]) -> Result<VmoHandle, String> {
+54:     pub fn read_cognitive_window(&self, handle: VmoHandle) -> Result<Vec<u8>, String> {
+61:     pub fn export_provenance_checkpoint(
+71:     pub fn release_cognitive_window(&self, handle: VmoHandle) -> Result<(), String> {
+79:     pub fn active_count(&self) -> usize {
+84: impl Default for VmoHandler {
+85:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/action_gate.rs
+=========================================
+5: pub struct ActionGate {
+9: impl ActionGate {
+10:     pub fn new() -> Self {
+14:     pub fn with_capabilities(caps: Vec<crate::policy::Capability>) -> Self {
+18:     pub fn approve(&self, command: &MotorCommand) -> Result<()> {
+181: impl Default for ActionGate {
+182:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/action_intercept.rs
+=========================================
+3: pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
+68: fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
+176: fn has_action_label(text: &str, markers: &[&str]) -> bool {
+185: fn lower_action_label(text: &str) -> String {
+198: fn labeled_value(text: &str, markers: &[&str]) -> Option<String> {
+217: mod tests {
+222:     fn rejects_natural_language_mentions_of_actions() {
+240:     fn accepts_explicit_labeled_halt() {
+248:     fn accepts_explicit_labeled_execute_command() {
+258:     fn rejects_labeled_search_code_without_path() {
+265:     fn rejects_labeled_search_code_without_query() {
+272:     fn accepts_labeled_search_code_with_path_and_query() {
+283:     fn rejects_free_form_search_code_without_path() {
+288:     fn rejects_free_form_search_code_without_query() {
+293:     fn accepts_valid_free_form_search_code() {
+
+=========================================
+FILE: crates/runtime_core/src/agent_protocol.rs
+=========================================
+4: pub struct FilePatch {
+10: fn default_confidence() -> f32 {
+16: pub enum AgentAction {
+235: pub struct SubagentReturn {
+
+=========================================
+FILE: crates/runtime_core/src/anti_loop.rs
+=========================================
+3: pub fn score_search_relevance(_query: &str, _evidence: &str) -> f32 {
+9: pub fn should_raise_belief(score: f32, threshold: f32) -> bool {
+23: pub enum FilterOutcome {
+34: pub fn classify_duplicate(
+76: pub fn halt_reasoning_fingerprint(reasoning: &str) -> u64 {
+87: pub fn halt_action_key(reasoning: &str) -> String {
+
+=========================================
+FILE: crates/runtime_core/src/arbiter_agent.rs
+=========================================
+4: pub struct ArbiterAgent {
+8: impl ArbiterAgent {
+9:     pub fn new(agent: Arc<MicroAgent>) -> Self {
+13:     pub fn validate_action(action_type: &str, command: &str) -> Result<(), String> {
+97:     pub fn evaluate_entropy_delta(base_entropy: f32, new_entropy: f32) -> Result<(), String> {
+105:     pub fn resolve_consensus(alpha_vector: &[f32], beta_vector: &[f32]) -> bool {
+114:     pub fn bft_consensus(vectors: &[Vec<f32>], epsilon: f32) -> Option<Vec<f32>> {
+166: mod tests {
+169:     fn validate(cmd: &str) -> Result<(), String> {
+174:     fn isolated_tmp_cleanup_is_allowed() {
+180:     fn scoped_tmp_exemption_rejects_compound_commands() {
+193:     fn root_rm_is_still_blocked() {
+199:     fn tmp_traversal_still_blocked() {
+204:     fn path_traversal_is_blocked_regardless_of_patterns() {
+
+=========================================
+FILE: crates/runtime_core/src/ast_editor.rs
+=========================================
+5: pub struct AstEditor;
+7: impl AstEditor {
+11:     pub fn update_function(path: &str, function_name: &str, new_body: &str) -> Result<String> {
+30: mod tests {
+36:     fn patches_free_function_body() {
+41: fn calculate(x: i32) -> i32 {{
+59:     fn patches_impl_method_body() {
+64: impl Math {{
+65:     pub fn evaluate(&self) -> bool {{
+83:     fn accepts_full_fn_declaration_payload_gracefully() {
+
+=========================================
+FILE: crates/runtime_core/src/bayesian_calibration.rs
+=========================================
+9: fn logit(p: f32) -> f32 {
+15: fn sigmoid(x: f32) -> f32 {
+20: pub enum EvidenceClass {
+34: impl EvidenceClass {
+35:     pub fn classify(blob: &str) -> Self {
+91: pub struct LikelihoodTable {
+96: impl Default for LikelihoodTable {
+97:     fn default() -> Self {
+122: impl LikelihoodTable {
+123:     fn lr(&self, class: EvidenceClass) -> f32 {
+132: pub struct ModifierConfig {
+137: impl Default for ModifierConfig {
+138:     fn default() -> Self {
+144: pub struct CalibrationReport {
+153: impl CalibrationReport {
+154:     pub fn edge_strength(&self) -> f32 {
+159:     pub fn supports(&self) -> bool {
+165: pub struct BayesianCalibrator {
+171: impl Default for BayesianCalibrator {
+172:     fn default() -> Self {
+181: impl BayesianCalibrator {
+182:     pub fn calibrate(
+218:     pub fn update_belief(
+229: mod tests {
+233:     fn mutation_success_raises_belief() {
+242:     fn compile_fail_lowers_belief() {
+250:     fn recon_is_weak() {
+257:     fn successive_patches_converge() {
+
+=========================================
+FILE: crates/runtime_core/src/belief_causality.rs
+=========================================
+5: pub struct BeliefCause {
+
+=========================================
+FILE: crates/runtime_core/src/belief_feedback.rs
+=========================================
+5: pub struct BeliefUpdateEvent {
+
+=========================================
+FILE: crates/runtime_core/src/belief_policy.rs
+=========================================
+5: pub enum BeliefAction {
+13: pub struct BeliefDecision {
+20: pub struct BeliefDecisionPolicy;
+22: impl BeliefDecisionPolicy {
+24:     pub fn evaluate(belief_id: Uuid, confidence: f32) -> BeliefDecision {
+
+=========================================
+FILE: crates/runtime_core/src/belief_transition.rs
+=========================================
+5: pub struct BeliefTransitionEvent {
+
+=========================================
+FILE: crates/runtime_core/src/belief_update.rs
+=========================================
+4: pub struct BeliefUpdate {
+10: impl BeliefUpdate {
+11:     pub fn new(belief_id: &str, evidence: &str, confidence_delta: f32) -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/belief_validation.rs
+=========================================
+4: pub struct BeliefValidationEvent {
+
+=========================================
+FILE: crates/runtime_core/src/causal_recall.rs
+=========================================
+4: pub struct CausalRecall {
+11: impl CausalRecall {
+12:     pub fn matches(&self, observation: &str) -> bool {
+16:     pub fn recommendation(&self) -> String {
+
+=========================================
+FILE: crates/runtime_core/src/cli_utils.rs
+=========================================
+
+=========================================
+FILE: crates/runtime_core/src/client.rs
+=========================================
+3: pub struct ApiClient {
+7: impl ApiClient {
+8:     pub fn new() -> Self {
+48: impl Default for ApiClient {
+49:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/cluster.rs
+=========================================
+9: pub struct ClusterNode {
+20: pub struct ClusterMesh {
+24: fn now_secs() -> u64 {
+28: impl ClusterMesh {
+29:     pub fn new() -> Self {
+33:     pub fn register(&self, mut node: ClusterNode) {
+43:     pub fn get_all_nodes(&self) -> Vec<ClusterNode> {
+47:     pub fn best_node(&self) -> Option<ClusterNode> {
+57: impl Default for ClusterMesh {
+58:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/cmd_match.rs
+=========================================
+20: pub fn normalize_cmd(raw: &str) -> String {
+28: fn strip_directive_suffix(s: &str) -> &str {
+50: pub fn cmd_hash(raw: &str) -> String {
+55: pub fn cmd_hash_marker(raw: &str) -> String {
+71: pub fn strip_workspace_cd_prefix(cmd: &str) -> &str {
+89: pub fn command_condition_met(cmd: &str, evidence: &str) -> bool {
+122: fn command_segment_met(want_cmd: &str, evidence: &str) -> bool {
+164: fn segment_match_line(line: &str, want_norm: &str) -> bool {
+177: fn hash_marker_present(want: &str, evidence: &str) -> bool {
+184: fn cmd_ok_block_matches(want: &str, evidence: &str) -> bool {
+216: fn status_line_ok(status: &str) -> bool {
+222: mod tests {
+226:     fn whitespace_renderings_are_one_identity() {
+233:     fn hash_marker_roundtrip() {
+243:     fn legacy_cmd_ok_block_satisfies_condition() {
+252:     fn different_command_does_not_match() {
+258:     fn failed_status_block_does_not_satisfy() {
+265:     fn unterminated_block_is_not_credited() {
+271:     mod strip_directive_suffix_tests {
+275:         fn strips_and_report_stdout() {
+283:         fn strips_and_report_command_and_full_stdout() {
+291:         fn leaves_bare_command_alone() {
+297:         fn normalize_makes_suffixed_and_bare_identical() {
+307: mod literal_newline_tests {
+311:     fn literal_backslash_n_equals_real_newline() {
+
+=========================================
+FILE: crates/runtime_core/src/cognition/belief_engine.rs
+=========================================
+7: pub struct WeightedFact {
+15: pub struct BeliefEngine {
+19: impl BeliefEngine {
+20:     pub fn new() -> Self {
+26:     pub fn update_belief(&self, key: &str, delta: f32) -> f32 {
+42:     pub fn get_belief(&self, key: &str) -> f32 {
+
+=========================================
+FILE: crates/runtime_core/src/cognition/checkpointer.rs
+=========================================
+27: pub struct StateCheckpoint {
+38: pub struct SqliteCheckpointer {
+42: impl SqliteCheckpointer {
+43:     pub fn new(pool: SqlitePool) -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/cognition/epistemic_session.rs
+=========================================
+4: fn read_line_summary(lines: &[&str]) -> String {
+43: fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
+175: pub struct EpistemicSession {
+206: impl EpistemicSession {
+207:     pub fn new(mission: &str) -> Self {
+229:     pub fn apply_event(&mut self, event: &CognitiveEvent) {
+277:     pub fn record_action_attempt(&mut self, action: &crate::agent_protocol::AgentAction) {
+286:     pub fn action_attempt_count(&self, action_key: &str) -> Option<u32> {
+290:     pub fn is_action_attempted(&self, action_key: &str) -> bool {
+294:     pub fn record_evidence(&mut self, evidence: &str, eval: &CriticResponse, h_id: Uuid) {
+304:     pub fn is_subgoal_satisfied(&self, current_belief: f32) -> bool {
+320:     pub fn terminal_evidence(&self, reason: &str) -> String {
+330:     pub fn collect_evidence(&self, h_id: Uuid) -> String {
+361:     pub fn record_global_action_attempt(&mut self, action_key: &str) {
+365:     pub fn global_action_attempt_count(&self, action_key: &str) -> u32 {
+371: mod read_line_summary_tests {
+374:     fn split(s: &str) -> Vec<&str> {
+379:     fn whole_file_counts_body_not_headers() {
+385:     fn chunk_counts_body_not_headers() {
+391:     fn truncated_read_reports_shown_of_total() {
+397:     fn directory_listing_is_not_described_as_a_file() {
+404:     fn empty_body_is_zero_lines() {
+
+=========================================
+FILE: crates/runtime_core/src/cognition/mod.rs
+=========================================
+1: pub mod belief_engine;
+2: pub mod checkpointer;
+3: pub mod epistemic_session;
+4: pub mod prediction_engine;
+5: pub mod reflection_engine;
+6: pub mod traits;
+
+=========================================
+FILE: crates/runtime_core/src/cognition/prediction_engine.rs
+=========================================
+9: pub struct ActionHistory {
+18: pub struct PredictionEngine {
+23: impl PredictionEngine {
+24:     pub fn new() -> Self {
+32:     fn get_signature(action_str: &str) -> String {
+39:     pub fn generate_prediction(&self, action_id: Uuid, action_str: &str) -> Prediction {
+64:     pub fn evaluate_prediction(
+
+=========================================
+FILE: crates/runtime_core/src/cognition/reflection_engine.rs
+=========================================
+7: pub struct ReflectionEngine {}
+9: impl ReflectionEngine {
+10:     pub fn new() -> Self {
+16: impl Reflector for ReflectionEngine {
+
+=========================================
+FILE: crates/runtime_core/src/cognition/traits.rs
+=========================================
+9: pub struct DecisionReason {
+18: pub enum ExecutiveDecisionKind {
+30: pub struct ExecutiveDecision {
+36: pub enum MissionStatus {
+45: pub struct MissionState {
+55: pub struct Goal {
+65: pub struct Objective {
+73: pub struct TaskRef {
+80: pub enum GoalStatus {
+89: pub enum ObjectiveStatus {
+97: pub enum TaskStatus {
+107: pub struct MissionOutcome {
+119: pub struct BeliefUpdate {
+126: pub struct MemoryUpdate {
+133: pub struct ReflectionReport {
+145: pub struct StrategyContext {
+155: pub struct Prediction {
+165: pub struct PredictionEvaluation {
+172: pub trait Executive: Send + Sync {
+178: pub trait GoalLifecycle: Send + Sync {
+186: pub trait Reflector: Send + Sync {
+192: pub trait Strategist: Send + Sync {
+
+=========================================
+FILE: crates/runtime_core/src/cognition_graph.rs
+=========================================
+10: pub enum NodeKind {
+20: pub struct VerificationReport {
+28: pub struct CognitiveNode {
+38: pub enum EdgeRelation {
+46: pub struct GraphEdge {
+54: pub struct CognitiveGraph {
+60: impl CognitiveGraph {
+61:     pub fn new() -> Self {
+65:     pub fn add_node(
+86:     pub fn add_edge(&mut self, source: Uuid, target: Uuid, relation: EdgeRelation, weight: f32) {
+90:     pub fn propagate_beliefs(&mut self) {
+150:     pub fn select_best_hypothesis(&self) -> Option<&CognitiveNode> {
+165:     pub fn find_by_content(&self, content: &str) -> Option<Uuid> {
+170:     pub fn content_of(&self, id: Uuid) -> String {
+175:     pub fn belief_of(&self, id: Uuid) -> Option<f32> {
+184:     pub fn demote_hypothesis(&mut self, id: Uuid, score: f32) -> bool {
+194:     pub fn promote_hypothesis(&mut self, id: Uuid, minimum: f32) -> bool {
+208:     pub fn cap_matching(&mut self, pred: impl Fn(&str) -> bool, cap: f32) {
+222:     pub fn decay(&mut self, id: Uuid, delta: f32) -> Option<f32> {
+231:     pub fn restore_floor(&mut self, id: Uuid, pre_eval_belief: f32, floor: f32) {
+243:     pub fn best_hypothesis_belief(&self) -> f32 {
+254:     pub fn observe_contradiction(
+272: mod tests {
+276:     fn repeated_contradiction_propagation_converges_without_compounding_edge_weight() {
+
+=========================================
+FILE: crates/runtime_core/src/cognitive_events.rs
+=========================================
+5: pub struct TelemetryArtifact {
+12: pub enum CognitiveEvent {
+
+=========================================
+FILE: crates/runtime_core/src/compile_remediation.rs
+=========================================
+60: pub struct CompileRemediationState {
+71: impl Default for CompileRemediationState {
+72:     fn default() -> Self {
+83: pub enum CompileDecision {
+100: impl CompileRemediationState {
+113:     pub fn classify(&mut self, exit_success: bool) -> CompileDecision {
+139:     pub fn reset(&mut self) {
+148:     pub fn set_episode_label(&mut self, label: impl Into<String>) {
+153:     pub fn episode_label(&self) -> Option<&str> {
+159:     pub fn is_active(&self) -> bool {
+165:     pub fn iterations(&self) -> u32 {
+170: impl CompileDecision {
+172:     pub fn is_success(&self) -> bool {
+178:     pub fn is_budget_exhausted(&self) -> bool {
+197: pub fn format_compile_failure_evidence(
+229: mod tests {
+232:     fn one_package() -> Vec<String> {
+241:     fn default_state_is_inactive() {
+249:     fn fresh_success_keeps_state_clean() {
+259:     fn fresh_failure_starts_episode_at_iteration_one() {
+268:     fn retry_chain_hits_budget_exactly_at_fourth_failure() {
+281:     fn success_mid_chain_resets_episode() {
+294:     fn explicit_reset_clears_state() {
+310:     fn budget_exhausted_does_not_auto_reset() {
+326:     fn success_overrides_broken_state_regardless_of_history() {
+336:     fn iteration_counter_is_saturating() {
+352:     fn episode_label_survives_retries_and_exhaustion() {
+369:     fn episode_label_cleared_on_success() {
+377:     fn episode_label_cleared_on_reset() {
+390:     fn success_produces_no_failure_evidence() {
+400:     fn retry_evidence_carries_iteration_marker_and_error() {
+421:     fn budget_exhausted_evidence_carries_total_and_packages() {
+
+=========================================
+FILE: crates/runtime_core/src/completion_engine.rs
+=========================================
+4: pub struct ArtifactSpec {
+10: pub enum CompletionCondition {
+80: pub struct SubgoalContract {
+98: pub struct CognitiveBudget {
+104: impl CognitiveBudget {
+105:     pub fn default_for_node() -> Self {
+109:     pub fn record_call(&mut self) {
+113:     pub fn is_exhausted(&self, current_turn: u32) -> bool {
+131: pub struct SubgoalCompletionEngine;
+133: fn has_word_unnegated(text: &str, word: &str) -> bool {
+213:     fn strip_file_name_tokens(text: &str) -> String {
+529: fn take_balanced_lines(text: &str) -> String {
+558: fn truncate_at_unquoted_stopper(line: &str, stoppers: &[&str]) -> String {
+617: impl<'a> MissionScopes<'a> {
+618:     pub fn parse(raw: &'a str) -> Self {
+656:     pub fn inference_text(&self) -> String {
+664: fn detect_read_only(text: &str) -> bool {
+692: fn declared_criteria_contract(
+852: impl SubgoalCompletionEngine {
+853:     pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
+1303:     pub fn evaluate(contract: &SubgoalContract, local_evidence: &str, belief_score: f32) -> bool {
+1316:     pub fn reconnaissance_complete(
+1344: fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
+1412: mod tests {
+1416:     fn semantic_verification_classifier_requires_analysis_ok_semantic_gate() {
+1424:     fn semantic_verification_classifier_covers_analysis_objectives() {
+1446:     fn semantic_verification_classifier_covers_host_investigation_and_reporting() {
+1462:     fn semantic_verification_classifier_rejects_physical_only_objectives() {
+1479:     fn semantic_verification_classifier_coverage_table() {
+1578:     fn read_only_mission_sets_flag() {
+1589:     fn read_only_audit_only_phrase_sets_flag() {
+1596:     fn read_only_suppresses_write_even_with_synthesize_language() {
+1622:     fn declared_patch_criterion_overrides_objective_scope_restriction() {
+1640:     fn read_only_patch_mission_does_not_produce_mutation_condition() {
+1656:     fn non_read_only_mission_preserves_write_contract() {
+1663:     fn host_observation_directive_preserves_command_contract_but_requires_semantic_verification() {
+1680:     fn explicit_search_memory_directive_creates_marker_only_contract() {
+1697:     fn mk(conditions: Vec<CompletionCondition>) -> crate::completion_engine::SubgoalContract {
+1708:     fn composed_audit_mission(root_context: &str) -> String {
+1728:     fn root_context_output_labels_do_not_mint_mutation_conditions() {
+1757:     fn failed_audit_run_contract_is_actually_satisfiable() {
+1776:     fn fix_label_in_objective_alongside_declared_criteria_is_inert() {
+1793:     fn do_not_modify_any_files_sets_read_only() {
+1803:     fn lineage_output_cannot_impose_read_only_on_child_node() {
+1832:     fn wrapped_command_node_preserves_original_criteria() {
+1869:     fn mission_scopes_exclude_root_and_lineage() {
+1879:     fn write_only_declared_contract_carries_no_belief_threshold() {
+1894:     fn declared_write_criterion_wins_over_root_read_only_restriction() {
+1914:     fn belief_shortfall_reads_satisfied_at_the_gate() {
+1928:     fn case_1_twelve_reads_produce_twelve_conditions() {
+1945:     fn case_2_reads_plus_search_code_preserve_both() {
+1963:     fn case_3_reads_plus_search_memory_preserve_both() {
+1976:     fn case_8_search_code_plus_search_memory_without_reads_preserves_both() {
+2003:     fn case_4_reads_plus_all_criteria_preserve_everything() {
+2025:     fn case_5_path_bound_reads_exclude_source_code_evidence_required() {
+2038:     fn case_6_path_bound_reads_keep_belief_threshold() {
+2048:     fn search_contract_with_analysis_mission_skips_belief_threshold() {
+2083:     fn case_7_search_only_contract_requires_search_marker_only() {
+2116:     fn path_bound_reads_do_not_discard_patch_marker() {
+2126:     fn leading_command_directive_with_patch_noun_gets_command_contract() {
+2141:     fn unquoted_cargo_command_extraction() {
+2151:     fn search_memory_evidence_satisfies_native_contract() {
+2168: mod quote_aware_stopper_tests {
+2172:     fn commas_inside_a_quoted_argument_do_not_truncate_the_command() {
+2181:     fn unquoted_stoppers_still_apply() {
+2188: mod colon_introducer_tests {
+2192:     fn run_colon_introducer_with_quoted_commas_extracts_the_command() {
+2203: fn is_negative_evidence_probe(lowered: &str) -> bool {
+2212: mod negative_probe_tests {
+2216:     fn d4_objective_gets_a_halt_only_contract() {
+2227:     fn ordinary_missions_are_not_probes() {
+2234: mod newline_contract_tests {
+2238:     fn required_command_survives_printf_newline_split() {
+2246: mod raw_command_objective_tests {
+2250:     fn raw_shell_objective_binds_exact_command() {
+2266:     fn prose_objective_starting_with_find_is_not_a_command() {
+2272: mod run_exactly_tests {
+2276:     fn run_exactly_binds_sqlite_command() {
+2285:     fn schema_and_count_commands_do_not_collide() {
+2293: mod pgrep_binding_tests {
+2296:     fn run_exactly_pgrep_binds() {
+2306: mod patch_path_integration_tests {
+2310:     fn typed_patch(
+2321:     fn agent(json: serde_json::Value) -> AgentAction {
+2326:     fn diff_patch_criterion_parses_to_typed_variant() {
+2336:     fn patch_function_criterion_parses_path_and_fn() {
+2346:     fn wrong_kind_evidence_does_not_satisfy_diff_patch_criterion() {
+2361:     fn advancement_is_kind_exclusive() {
+2395: mod search_checked_contract_tests {
+2399:     fn checked_search_criterion_is_preserved() {
+2429:     fn checked_and_positive_search_criteria_remain_distinct() {
+
+=========================================
+FILE: crates/runtime_core/src/conductor.rs
+=========================================
+14: pub struct Conductor;
+16: pub struct TurnContext<'a> {
+23: impl Conductor {
+
+=========================================
+FILE: crates/runtime_core/src/config.rs
+=========================================
+4: pub struct NexusConfig {
+11: impl NexusConfig {
+12:     pub fn from_env() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/contract_status.rs
+=========================================
+4: pub enum ContractStatus {
+11: pub struct ContractEvaluator;
+13: impl ContractEvaluator {
+14:     pub fn evaluate(
+87: fn action_would_satisfy(
+
+=========================================
+FILE: crates/runtime_core/src/cortex/compiler_gate.rs
+=========================================
+5: pub enum RustVerificationTarget {
+11: pub enum CompilerGateResult {
+17: pub struct CompilerGate;
+19: impl CompilerGate {
+175:     fn find_owner(packages: &[serde_json::Value], abs_path: &Path) -> Option<String> {
+197:     fn nearest_cargo_toml(abs_path: &Path, parent_manifest: &Path) -> Option<PathBuf> {
+
+=========================================
+FILE: crates/runtime_core/src/cortex/mod.rs
+=========================================
+1: pub mod compiler_gate;
+
+=========================================
+FILE: crates/runtime_core/src/cortical/action_identity.rs
+=========================================
+
+=========================================
+FILE: crates/runtime_core/src/cortical/capability.rs
+=========================================
+
+=========================================
+FILE: crates/runtime_core/src/cortical/compiler_reconciler.rs
+=========================================
+17: impl CorticalLoop {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/contract_advance.rs
+=========================================
+253: fn search_action_matches_target(action: &AgentAction, target: &str) -> bool {
+317: fn same_workspace_path(a: &str, b: &str) -> bool {
+337: mod same_workspace_path_tests {
+341:     fn identical_and_dot_slash_paths_match() {
+347:     fn absolute_under_cwd_matches_relative() {
+353:     fn different_files_and_outside_paths_do_not_match() {
+361: mod search_action_matches_target_tests {
+365:     fn sc(path: &str, query: &str) -> AgentAction {
+375:     fn crates_target_matched_by_crates_action() {
+383:     fn crates_target_rejected_by_bins_action() {
+391:     fn empty_path_defaults_to_crates() {
+399:     fn empty_query_never_matches() {
+407:     fn bare_target_matches_any_path() {
+415:     fn empty_target_never_matches() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/critic_filter.rs
+=========================================
+13: impl CorticalLoop {
+223: fn is_state_sensitive(action: &AgentAction) -> bool {
+272: fn is_retryable_absent_write(action: &AgentAction, attempt_count: u32) -> bool {
+284: fn consecutive_loop_vetoes(evidence: &str) -> usize {
+303: mod tests {
+310:     fn empty_evidence_is_zero() {
+315:     fn counts_trailing_vetoes() {
+321:     fn success_marker_resets_the_budget() {
+327:     fn six_vetoes_interleaved_with_progress_do_not_trip_the_budget() {
+338:     fn six_consecutive_vetoes_do_trip_the_budget() {
+348:     fn non_success_markers_do_not_reset() {
+354:     fn write_action(path: &str) -> AgentAction {
+362:     fn absent_write_target_is_retryable_up_to_the_cap() {
+370:     fn existing_write_target_is_a_real_duplicate() {
+379:     fn non_write_actions_never_bypass() {
+389: mod attempt_key_tests {
+392:     fn cmd(c: &str) -> AgentAction {
+398:     fn same_command_gets_a_new_key_after_a_mutation() {
+407:     fn write_actions_ignore_the_epoch() {
+416:     fn epoch_counts_only_mutation_markers() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/halt_claims.rs
+=========================================
+75: fn is_word_char(c: char) -> bool {
+79: fn is_ident(s: &str) -> bool {
+84: fn word_present(hay: &str, needle: &str) -> bool {
+94: pub fn verification_corpus(local_evidence: &str, current_turn_evidence: &str) -> String {
+105: fn absence_context(report: &str, start: usize, end: usize) -> bool {
+125: pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
+153: mod tests {
+159:     fn flags_invented_symbols() {
+165:     fn accepts_real_symbols() {
+171:     fn accepts_variables_and_string_literals_present_in_source() {
+182:     fn report_cannot_self_verify() {
+190: fn find_reasoning(v: &serde_json::Value) -> Option<String> {
+203: pub fn report_text(executed_action: &str) -> String {
+222: pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
+250: mod substance_tests {
+255:     fn rejects_intent_statement() {
+261:     fn accepts_substantive_report() {
+268:     fn extracts_reasoning() {
+276: fn parse_lines_header(s: &str) -> Option<(usize, usize)> {
+286: pub fn read_lines(evidence: &str) -> BTreeMap<usize, String> {
+288:     enum St {
+335: pub struct FnSpan {
+341: fn fn_name_on(text: &str) -> Option<String> {
+364: fn indent_of(s: &str) -> usize {
+368: pub fn function_spans(lines: &BTreeMap<usize, String>) -> Vec<FnSpan> {
+395: pub fn function_outline(evidence: &str, min_lines: usize) -> String {
+421: fn words_at(hay: &str, needle: &str) -> Vec<usize> {
+433: fn range_after(window: &str) -> Option<(usize, usize)> {
+454: fn all_ranges(s: &str) -> Vec<(usize, usize)> {
+487: fn best_range_after(window: &str, spans: &[FnSpan], name: &str) -> Option<(usize, usize)> {
+504: pub fn range_defects(report: &str, spans: &[FnSpan], min_len: usize) -> Vec<String> {
+541: pub fn halt_defects(report: &str, local_evidence: &str) -> Vec<String> {
+564: mod outline_tests {
+569:     fn numbers_lines_from_chunk_headers() {
+576:     fn computes_function_spans() {
+585:     fn flags_wrong_ranges_and_accepts_right_ones() {
+593:     fn outline_lists_functions() {
+602: fn definition_on(t: &str) -> Option<(String, bool)> {
+647: fn definition_name(_kw: &str, rest: &str) -> Option<String> {
+656: fn public_definitions(corpus: &str) -> std::collections::HashSet<String> {
+696: fn is_grounding_skip_token(name: &str) -> bool {
+724: pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>) {
+747: fn unverified_pub_claims(report: &str, corpus: &str) -> Vec<String> {
+752: fn strip_line_number_prefix(line: &str) -> &str {
+765: fn claimed_name(span: &str) -> Option<String> {
+790: mod claim_form_tests {
+807:     fn keyword_led_spans_are_checked_against_single_file_search_hits() {
+815:     fn restricted_use_and_path_spans_claim_nothing() {
+824:     fn line_number_prefix_stripping() {
+835: pub fn is_report_artifact(path: &str) -> bool {
+845: fn strip_lineage(text: &str) -> &str {
+859: pub fn wants_pub_items(objective: &str) -> bool {
+867: mod pub_claim_tests {
+873: pub struct CriticResponse {
+877: pub struct EpistemicEngine;
+878: impl EpistemicEngine {
+887: fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
+888: pub fn sanitize(path: &str) -> Result<PathBuf> {
+889: pub enum FsmState {
+892: impl CorticalLoop {
+896: pub mod agent_protocol;
+901:     fn flags_every_bad_name_from_the_live_report() {
+921:     fn accepts_real_public_items_fields_reexports_and_modules() {
+927:     fn restricted_modules_do_not_count_as_public() {
+932:     fn spans_with_spaces_paths_or_fences_are_ignored() {
+938:     fn artifact_and_mission_detection() {
+946:     fn placeholder_report_has_no_grounded_items() {
+956: mod halt_claims_keyword_tests {
+960:     fn absence_claims_citing_keywords_are_not_unverified() {
+968: mod two_range_tests {
+971:     fn two_ranges_on_one_line_accept_the_matching_one() {
+986: mod absence_tests {
+989:     fn absence_claims_pass_invented_claims_fail() {
+998: mod wants_pub_items_dry_run {
+1007:     fn composite_mission() -> String {
+1019:     fn components_are_not_pub_item_requests() {
+1029:     fn composite_mission_no_longer_fires_the_gate() {
+1036:     fn genuine_pub_item_missions_still_fire() {
+1046:     fn strip_lineage_is_what_makes_it_work() {
+1057:     fn strip_lineage_picks_the_earliest_marker() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/loop_tests.rs
+=========================================
+9: fn patch_function_key_is_body_sensitive() {
+108: fn search_memory_strategy_requires_matching_search_memory_action() {
+130: fn parse_failure_never_manufactures_a_typed_halt() {
+140: fn extract_named_target_read_ok() {
+150: fn read_only_contract_never_enters_write_phase() {
+164: fn floor_hypothesis_belief_after_failure_restores_threshold() {
+180: fn floor_hypothesis_belief_after_failure_leaves_dead_hypotheses_alone() {
+195: fn decay_hypothesis_belief_crosses_selection_floor() {
+205: fn decay_hypothesis_belief_leaves_dead_hypotheses_alone() {
+215: fn extract_named_target_returns_none_when_absent() {
+221: fn extract_named_target_strips_backticks_and_quotes() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/mod.rs
+=========================================
+2: pub mod capability;
+3: pub mod contract_advance;
+4: pub mod halt_claims;
+7: pub mod read_only_gate;
+10: pub mod util;
+18: pub mod protected_path;
+
+=========================================
+FILE: crates/runtime_core/src/cortical/patch_classification.rs
+=========================================
+
+=========================================
+FILE: crates/runtime_core/src/cortical/prompt_builder.rs
+=========================================
+9: pub fn build_enhanced_mission(
+
+=========================================
+FILE: crates/runtime_core/src/cortical/protected_path.rs
+=========================================
+18: fn normalize_path(p: &str) -> String {
+27: pub fn is_protected_path(path: &str) -> bool {
+34: fn violation_in_json(
+73: pub fn protected_violation(action: &AgentAction, allowed: &[String]) -> Option<String> {
+79: mod protected_path_tests {
+83:     fn no_shell(_: &str) -> Option<String> {
+86:     fn redirect_shell(c: &str) -> Option<String> {
+89:     fn check(v: serde_json::Value, allowed: &[&str]) -> Option<String> {
+95:     fn blocks_the_openfang_patch_shape() {
+101:     fn blocks_relative_and_dot_slash_spellings() {
+114:     fn reads_and_searches_are_never_refused() {
+128:     fn ordinary_edits_and_lookalike_directories_pass() {
+143:     fn named_contract_artifact_is_allowed() {
+151:     fn externally_tagged_shape_is_understood() {
+156:     fn shell_redirection_into_vendor_is_refused() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/python_conformance.rs
+=========================================
+249: mod conformance_tests {
+255:     fn rejects_import_only_stub() {
+263:     fn accepts_conforming_script() {
+270:     fn rejects_forbidden_import_and_long_file() {
+279: mod conformance_regression_tests {
+283:     fn tool_names_in_the_objective_are_not_required_identifiers() {
+291:     fn real_snake_case_identifiers_are_still_required() {
+298:     fn attribute_calls_in_objective_are_not_required_definitions() {
+306:     fn stub_is_still_rejected_for_the_exact_code_objective() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/read_only_gate.rs
+=========================================
+45: fn norm(tok: &str) -> String {
+64: fn sqlite3_is_safe(args: &[String]) -> bool {
+141: fn cargo_is_safe(args: &[String]) -> bool {
+373: mod tests {
+377:     fn read_only_command_screening() {
+420:     fn run_tests_is_rejected_under_read_only() {
+432: mod read_only_gate_constants_tests {
+437:     fn git_readonly_subcommands_are_safe() {
+448:     fn chained_readonly_commands_are_safe() {
+459:     fn git_mutations_are_rejected() {
+470:     fn shell_mutations_are_rejected() {
+482: mod semicolon_chain_tests {
+486:     fn a0_baseline_command_is_safe() {
+493:     fn unsafe_segment_after_semicolon_is_refused() {
+502:     fn redirects_and_subshells_still_refused_with_semicolons() {
+510:     fn trailing_and_quoted_semicolons() {
+517:     fn escaped_semicolon_find_exec_still_refused() {
+593: mod mission_read_only_tests {
+597:     fn a4_prompt_is_read_only() {
+602:     fn a2_a3_style_negations() {
+612:     fn scoped_carve_outs_and_mutation_missions_are_not_read_only() {
+622:     fn word_start_does_not_match_dispatch() {
+632: mod sysinspect_tests {
+636:     fn live_audit_phase_a_command_is_safe() {
+643:     fn common_inspection_commands_are_safe() {
+653:     fn dangerous_flags_and_groups_are_refused() {
+695: mod probe_intent_tests {
+701:     fn d4_prompt_is_read_only() {
+707:     fn single_negated_verb_is_a_carve_out() {
+713:     fn multi_verb_negation_variants() {
+723: fn sed_is_safe(args: &[String]) -> bool {
+746: mod sed_sqlite_hardening_tests {
+750:     fn sed_line_range_prints_are_safe() {
+757:     fn sed_write_exec_and_inplace_are_refused() {
+769:     fn sqlite_reads_ok_and_file_functions_refused() {
+780: mod cargo_gate_tests {
+784:     fn cargo_check_allowed_run_and_build_refused() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/recovery.rs
+=========================================
+10: impl CorticalLoop {
+89: impl CorticalLoop {
+412: impl CorticalLoop {
+476: impl CorticalLoop {
+589: impl CorticalLoop {
+658: fn marker_token(line: &str) -> Option<&str> {
+662: fn relativize_to_cwd(p: &str) -> String {
+725: impl crate::cortical_loop::CorticalLoop {
+831: mod patch_command_phase_tests {
+836:     fn divide_target() -> Option<(String, Option<String>)> {
+841:     fn innermost_workspace_frame_is_the_target() {
+846:     fn stdlib_frames_are_skipped() {
+855:     fn module_level_frame_has_no_function() {
+861:     fn path_under_cwd_is_relativized() {
+871:     fn no_traceback_means_no_target() {
+876:     fn phases_follow_patch_and_failure_order() {
+917: impl crate::cortical_loop::CorticalLoop {
+1004: mod contract_first_recon_tests {
+1008:     fn reads() -> Vec<CC> {
+1021:     fn first_unmet_read_is_returned_in_contract_order() {
+1026:     fn satisfied_reads_are_skipped() {
+1034:     fn nothing_is_returned_once_every_read_is_evidenced() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/strategy_match.rs
+=========================================
+14: fn same_path(actual: &str, expected: &str) -> bool {
+54: pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
+230: pub fn is_mandatory_unread_path(action_path: &str, mandatory_unread: &[String]) -> bool {
+240: pub fn allow_mandatory_pivot(
+252: mod same_path_tests {
+255:     fn cwd() -> String {
+260:     fn identical_and_dot_slash_paths_match() {
+267:     fn absolute_path_under_cwd_matches_relative() {
+274:     fn absolute_path_elsewhere_does_not_match() {
+280:     fn dotdot_components_are_never_normalized() {
+287:     fn different_files_do_not_match() {
+293: mod action_matches_strategy_tests {
+298:     fn act(json: &str) -> AgentAction {
+309:     fn patch_function_against_replace_lines_strategy_is_rejected() {
+320:     fn replace_lines_against_replace_lines_strategy_is_accepted() {
+331:     fn replace_lines_against_wrong_path_is_rejected() {
+342:     fn patch_function_against_patch_function_strategy_is_accepted() {
+353:     fn write_file_against_write_file_strategy_is_accepted() {
+360:     fn execute_command_with_report_suffix_matches_bare_action() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/terminal_gate.rs
+=========================================
+7: pub struct TerminalGate {
+14: impl TerminalGate {
+15:     pub fn evaluate(session: &EpistemicSession, belief: f32) -> Self {
+40:     pub fn is_autonomous_completion_satisfied(&self) -> bool {
+47:     pub fn is_pure_command_satisfied(&self) -> bool {
+
+=========================================
+FILE: crates/runtime_core/src/cortical/util.rs
+=========================================
+98: mod compress_tests {
+102:     fn test_target_validation() {
+122:     fn ascii_behavior_unchanged() {
+131:     fn short_input_passthrough() {
+136:     fn multibyte_at_cut_does_not_panic() {
+148: mod synth_halt_tests {
+152:     fn json_shaped_proposals_never_synthesize() {
+160:     fn prose_halt_still_synthesizes() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical_loop.rs
+=========================================
+31: mod strategize;
+32: mod critic;
+33: mod execute;
+34: mod evaluate;
+37: pub enum CortexOutcome {
+42: struct CriticInput {
+48: struct EvaluationInput {
+56: enum CortexState {
+90: pub struct CorticalLoop {
+106: impl CorticalLoop {
+110:     fn rollback_active_mutations(session: &mut EpistemicSession) -> bool {
+132:     pub fn new(
+164:     pub fn set_episode(&mut self, episode: EpisodeContext) {
+175:     fn dump_debug(&self, turn: u32, phase: &str, payload: &str) {
+635:     fn evidence_satisfies_contract(session: &EpistemicSession) -> bool {
+641:     fn log_turns_exhausted(&self, session: &EpistemicSession, belief: f32) {
+660:     fn write_phase_ready(
+684: mod tests;
+
+=========================================
+FILE: crates/runtime_core/src/cortical_loop/critic.rs
+=========================================
+5: impl CorticalLoop {
+591: fn patch_signature_needle(path: &str, name: &str) -> String {
+608: mod patch_needle_tests {
+612:     fn rust_and_zig_require_fn_item() {
+618:     fn python_requires_def_item() {
+625:     fn go_and_php_have_their_own_keywords() {
+631:     fn unknown_extensions_require_the_function_name() {
+638:     fn path_is_trimmed_and_case_insensitive() {
+651: fn is_required_verification_command(
+685: fn contract_facts(
+709: mod contract_fact_tests {
+718:     fn run(c: &str) -> AgentAction {
+723:     fn compound() -> Vec<CC> {
+728:     fn required_command_is_bypassed_only_after_the_patch_landed() {
+734:     fn whitespace_differences_do_not_matter() {
+740:     fn a_different_command_is_never_bypassed() {
+745:     fn command_only_contract_bypasses_its_exact_command() {
+751:     fn non_command_actions_are_never_bypassed() {
+759:     fn contract_facts_list_met_and_unmet_and_skip_the_belief_threshold() {
+769: mod critic_normalize_tests {
+775:     fn normalize_strips_report_suffix_like_cmd_match() {
+783:     fn suffixed_contract_command_bypasses_critic_for_bare_action() {
+
+=========================================
+FILE: crates/runtime_core/src/cortical_loop/evaluate.rs
+=========================================
+5: impl CorticalLoop {
+
+=========================================
+FILE: crates/runtime_core/src/cortical_loop/execute.rs
+=========================================
+5: impl CorticalLoop {
+
+=========================================
+FILE: crates/runtime_core/src/cortical_loop/strategize.rs
+=========================================
+5: impl CorticalLoop {
+982: fn is_dir_child_read(strategy: &str, action: &AgentAction) -> bool {
+1000: mod dir_child_tests {
+1004:     fn act(v: serde_json::Value) -> AgentAction {
+1008:     fn temp_dir(name: &str) -> std::path::PathBuf {
+1015:     fn child_of_pinned_directory_is_allowed() {
+1025:     fn dir_itself_sibling_and_parent_escape_are_rejected() {
+1045:     fn non_directory_or_non_read_strategies_never_match() {
+1073: fn artifact_vetoed_after_last_write(evidence: &str) -> bool {
+1092: fn artifact_rewrite_available(evidence: &str, target: &str) -> bool {
+1103: fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
+1130: fn halt_rejected_since_last_write(evidence: &str) -> bool {
+1153: mod halt_release_tests {
+1160:     fn no_rejection_means_no_release() {
+1166:     fn rejection_after_the_last_evidence_releases_the_forced_halt() {
+1172:     fn new_evidence_after_a_rejection_re_arms_the_forced_halt() {
+1178:     fn rejection_with_no_evidence_at_all_releases() {
+1187: fn leaked_execute_command(raw: &str) -> Option<String> {
+1229: mod leaked_call_tests {
+1233:     fn recovers_the_command_from_a_leaked_tool_call_tail() {
+1242:     fn a_leading_cd_into_the_workspace_is_dropped() {
+1252:     fn decoded_text_with_a_closing_tag_is_handled() {
+1258:     fn no_leaked_call_means_none() {
+1267: fn strip_lineage_blocks(evidence: &str) -> String {
+1301: fn auto_halt_report_aggregated(evidence: &str) -> String {
+1391: fn auto_halt_report(evidence: &str) -> String {
+1467: mod auto_halt_report_tests {
+1471:     fn report_survives_trailing_header_only_block() {
+1480:     fn report_carries_failure_evidence_without_phase_text() {
+1490: mod lineage_halt_tests {
+1494:     fn inherited_only_evidence_is_not_reported_as_own() {
+1503: mod artifact_vetoed_predicate_tests {
+1509:     fn no_write_at_all_is_not_vetoed() {
+1516:     fn write_then_critic_veto_is_vetoed() {
+1523:     fn write_then_halt_rejected_is_vetoed() {
+1531:     fn write_then_both_rejections_is_vetoed() {
+1538:     fn rejection_before_write_is_stale() {
+1549:     fn write_without_rejection_is_not_vetoed() {
+1554:     fn empty_evidence_is_not_vetoed() {
+1559:     fn latest_of_either_marker_wins() {
+
+=========================================
+FILE: crates/runtime_core/src/coverage.rs
+=========================================
+15: pub struct CoverageLedger {
+24: impl CoverageLedger {
+26:     pub fn ingest(&mut self, evidence: &str) {
+78:     fn ingest_read_ok_blocks(&mut self, evidence: &str) {
+136:     pub fn coverage_pct(&self) -> f32 {
+143:     pub fn total_lines(&self) -> Option<u32> {
+150:     fn widen(best: &mut Option<(u32, u32)>, s: u32, e: u32) {
+161:     pub fn largest_gap(&self) -> Option<(u32, u32)> {
+182:     pub fn largest_interior_gap(&self) -> Option<(u32, u32)> {
+202:     pub fn covers(&self, start: u32, end: u32) -> bool {
+208: pub fn parse_chunk_line(line: &str) -> Option<(u32, u32, u32)> {
+223: fn parse_u32(s: &str) -> Option<(u32, &str)> {
+231: fn parse_total_lines(truncation_line: &str) -> Option<u32> {
+237: mod tests {
+245:     fn parses_real_log_marker() {
+250:     fn model_claims_are_ignored() {
+258:     fn detects_the_52_99_gap() {
+282:     fn replay_is_idempotent() {
+290:     fn rejects_malformed_marker() {
+296: impl CoverageLedger {
+298:     fn switch_to(&mut self, path: &str) {
+312: fn normalize_workspace_path(p: &str) -> String {
+326: fn chunk_line_path(line: &str) -> Option<String> {
+337: mod per_file_tests {
+340:     fn read_ok(path: &str, lines: usize) -> String {
+349:     fn reading_a_second_file_does_not_inherit_the_first_files_lines() {
+358:     fn a_truncated_read_after_a_longer_file_reports_its_own_gap() {
+369:     fn absolute_and_relative_spellings_are_the_same_file() {
+
+=========================================
+FILE: crates/runtime_core/src/critic.rs
+=========================================
+4: pub struct CriticVerdict {
+11: pub struct Critic;
+13: impl Critic {
+
+=========================================
+FILE: crates/runtime_core/src/diff.rs
+=========================================
+4: pub struct DiffEngine;
+6: impl DiffEngine {
+7:     pub fn apply(source: &str, search: &str, replace: &str) -> Result<String> {
+
+=========================================
+FILE: crates/runtime_core/src/distributed_scheduler.rs
+=========================================
+11: pub struct FileShiftEvent {
+18: pub struct DistributedScheduler {
+23: impl DistributedScheduler {
+24:     pub fn new(mesh: Arc<ClusterMesh>) -> Self {
+29:     pub fn broadcast_file_shift(&self, path: &str, modifier: &str) {
+60:         struct Req<'a> {
+64:         struct Reply {
+112:         struct Req<'a> {
+118:         struct Reply {
+
+=========================================
+FILE: crates/runtime_core/src/epistemic_engine.rs
+=========================================
+13: pub struct CriticResponse {
+18: pub struct EpistemicEngine;
+20: fn extract_json_block<'a>(raw: &'a str) -> &'a str {
+48: impl EpistemicEngine {
+446:     fn scope_to_node_instructions(mission: &str) -> &str {
+471:     fn overload_state(
+584:         enum Seg {
+890:     fn extract_patch_target(problem: &str, problem_lower: &str) -> Option<(String, String)> {
+1555: mod tests {
+1672:     fn verifier_claim_check_needs_full_claims_and_grounded_quotes() {
+1689:     fn critic_prompt_carries_grounded_claim_check() {
+1698:     fn safe_api_call_logs_every_attempt() {
+1707:     fn compress_preserving_reads_keeps_whole_file_content() {
+1725:     fn compress_preserving_reads_keeps_short_evidence_verbatim() {
+1732:     fn compress_preserving_reads_caps_oversized_reads_visibly() {
+1745:     fn bracketed_source_lines_do_not_end_a_pinned_read() {
+1755:     fn critic_visible_history_drops_echo_chunks_and_keeps_reads() {
+1797: mod batched_read_window_tests {
+1801:     fn back_to_back_read_chunks_are_windowed_separately() {
+1820: mod judge_budget_tests {
+1824:     fn larger_budget_keeps_chunk_tails() {
+1846: fn strip_empty_tools(payload: &Value) -> Option<Value> {
+1864: mod empty_tools_tests {
+1869:     fn empty_declarations_are_stripped_before_any_provider_branch() {
+1877:     fn empty_top_level_tools_array_is_stripped_too() {
+1883:     fn real_and_absent_tools_are_untouched() {
+
+=========================================
+FILE: crates/runtime_core/src/epistemic_tuple.rs
+=========================================
+9: pub struct EpistemicTuple {
+18: impl EpistemicTuple {
+19:     pub fn new(
+42: pub struct EpistemicBlackboard {
+46: impl EpistemicBlackboard {
+47:     pub fn new() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/event_bus.rs
+=========================================
+5: pub enum EventKind {
+14: pub struct EventRef {
+21: pub struct EventBus {
+25: impl EventBus {
+26:     pub fn new(size: usize) -> Self {
+31:     pub fn emit(&self, evt: EventRef) {
+35:     pub fn subscribe(&self) -> broadcast::Receiver<EventRef> {
+
+=========================================
+FILE: crates/runtime_core/src/evidence/belief.rs
+=========================================
+6: pub struct BeliefVector {
+19: impl BeliefVector {
+30:     pub fn new(
+48:     pub fn penalize_security(mut self) -> Self {
+57:     pub fn scalar_score(&self) -> f32 {
+65:     pub fn update(&self, other: &Self, weight: f32) -> Self {
+80:     pub fn bayesian_update(&self, likelihood: f32, damping: f32) -> Self {
+84:         fn bayes(prior: f32, like: f32) -> f32 {
+112:     pub fn may_prove(&self, required_artifacts: u8, threshold: f32) -> bool {
+119:     pub fn mark_success(&mut self, artifact_bit: u8) {
+125:     pub fn scheduling_priority(&self, impact: f32, mission_priority: f32) -> f32 {
+130: impl Default for BeliefVector {
+131:     fn default() -> Self {
+136: impl Add for BeliefVector {
+138:     fn add(self, rhs: Self) -> Self {
+148: impl AddAssign for BeliefVector {
+149:     fn add_assign(&mut self, rhs: Self) {
+154: impl Mul<f32> for BeliefVector {
+156:     fn mul(self, rhs: f32) -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/evidence/graph.rs
+=========================================
+8: pub struct EvidenceGraph {
+16: impl EvidenceGraph {
+17:     pub fn new() -> Self {
+22:     pub fn insert(&mut self, evidence: Evidence) {
+30:     pub fn aggregate_belief(&self, strategy_id: Uuid, baseline: BeliefVector) -> BeliefVector {
+49:     pub fn evidence_count(&self, strategy_id: Uuid) -> usize {
+53:     pub fn evidence_for(&self, strategy_id: Uuid) -> &[Evidence] {
+57:     pub fn chronology(&self) -> &[Uuid] {
+
+=========================================
+FILE: crates/runtime_core/src/evidence/manager.rs
+=========================================
+11: pub struct EvidenceManager;
+13: impl EvidenceManager {
+14:     pub fn new() -> Self {
+19:     pub fn process_observation(&self, obs: Observation, strategy_id: Option<Uuid>) -> Evidence {
+85:     fn should_escalate(obs: &Observation, kind: EvidenceKind) -> bool {
+99:     fn compute_belief_delta(&self, obs: &Observation, kind: EvidenceKind) -> BeliefVector {
+
+=========================================
+FILE: crates/runtime_core/src/evidence/mod.rs
+=========================================
+1: pub mod belief;
+2: pub mod graph;
+3: pub mod manager;
+4: pub mod types;
+
+=========================================
+FILE: crates/runtime_core/src/evidence/types.rs
+=========================================
+8: pub enum ExecutionFailureKind {
+25: pub enum ProvenanceLevel {
+36: impl Default for ProvenanceLevel {
+37:     fn default() -> Self {
+44: pub struct Observation {
+54: pub enum EvidenceKind {
+68: pub struct Evidence {
+78: impl Evidence {
+79:     pub fn from_observation(
+105:     pub fn classify(raw: &str, success: bool) -> (EvidenceKind, Option<ExecutionFailureKind>) {
+
+=========================================
+FILE: crates/runtime_core/src/evidence_markers.rs
+=========================================
+6: pub fn has_mutation_marker(evidence: &str) -> bool {
+22: pub fn write_path_satisfied(evidence: &str, path: &str) -> bool {
+78: pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
+180: pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
+278: pub fn read_function_marker_satisfies(
+305: pub fn has_recon_marker(evidence: &str) -> bool {
+319: pub fn has_patch_satisfied_marker(evidence: &str) -> bool {
+343: pub fn patch_path_satisfied(
+349:     fn norm_path(p: &str) -> String {
+411: mod tests {
+415:     fn mutation_detects_write_and_patch() {
+422:     fn read_function_marker_requires_same_record() {
+442:     fn read_function_marker_uses_path_equivalence() {
+457:     fn recon_detects_read_search_cmd() {
+465:     fn patch_satisfied_detects_mutation_and_idempotent_markers() {
+474:     fn idempotent_marker_is_not_generic_mutation() {
+479:     fn patch_path_satisfied_is_kind_specific() {
+489:     fn patch_path_satisfied_rejects_superset_path() {
+497:     fn patch_path_satisfied_replace_lines_format() {
+504:     fn search_term_matches_recorded_query_not_body() {
+510:     fn search_term_matches_quoted_query_with_path_scope() {
+517:     fn search_term_survives_truncated_match_body() {
+524:     fn search_term_rejects_inherited_unrelated_marker() {
+531:     fn marker_text_inside_matches_body_is_not_a_marker() {
+550:     fn bins_criterion_satisfied_only_by_bins_search() {
+558:     fn bare_term_criterion_accepts_any_path() {
+564:     fn no_match_marker_never_satisfies_term_bound_criterion() {
+571:     fn search_term_rejects_documented_empty_result() {
+578:     fn artifact_write_matches_by_full_path_and_basename() {
+587:     fn artifact_write_rejects_same_basename_wrong_path() {
+596:     fn artifact_write_rejects_substring_only_matches() {
+603:     fn artifact_write_matches_synthesized_report_marker() {
+611:     fn artifact_write_tolerates_trailing_punctuation() {
+617:     fn artifact_write_rejects_non_write_markers() {
+636: pub fn has_artifact_write(evidence: &str, target_path_substr: &str) -> bool {
+669: fn path_component_match(line_lower: &str, target: &str, target_basename: &str) -> bool {
+687: fn path_token_matches(token: &str, target: &str, target_basename: &str) -> bool {
+712: mod search_checked_tests {
+716:     fn accepts_exact_path_bound_no_match() {
+733:     fn accepts_path_bound_positive_matches() {
+747:     fn rejects_wrong_path_and_wrong_query() {
+764:     fn rejects_unbound_or_inexact_no_match_text() {
+778:     fn rejects_bare_marker_with_no_outcome() {
+784:     fn no_match_phrase_in_matches_body_is_not_absence_proof() {
+799: mod trailing_slash_regression_tests {
+803:     fn all_slash_forms_satisfy() {
+818:     fn positive_matches_also_normalize() {
+830:     fn wrong_path_still_rejected() {
+
+=========================================
+FILE: crates/runtime_core/src/evidence_paths.rs
+=========================================
+12: pub fn normalize_path(p: &str) -> String {
+53: pub fn paths_equivalent(a: &str, b: &str) -> bool {
+71: pub fn is_confirmed_absence(failure_tail: &str) -> bool {
+91: pub fn is_marker_line(line: &str) -> bool {
+107: pub fn cmd_ok_binds_command(evidence: &str) -> bool {
+136: pub fn read_path_satisfied(evidence: &str, expected: &str) -> bool {
+164: mod tests {
+168:     fn absence_filter_rejects_sandbox_denials() {
+179:     fn marker_lines_exclude_bracketed_code() {
+188:     fn equivalence_bridges_only_abs_vs_relative() {
+201:     fn read_matcher_accepts_confirmed_absence_only() {
+209:     fn cmd_ok_binder_handles_long_short_spoof_and_leak() {
+222: mod tilde_tests {
+226:     fn tilde_expands_to_home() {
+232:     fn tilde_prefix_expands_to_home_prefix() {
+241:     fn tilde_contract_matches_absolute_evidence() {
+250:     fn tilde_user_is_not_expanded() {
+255:     fn mid_path_tilde_is_not_expanded() {
+
+=========================================
+FILE: crates/runtime_core/src/evolution_engine.rs
+=========================================
+11: pub struct EvolutionEngine;
+13: impl EvolutionEngine {
+
+=========================================
+FILE: crates/runtime_core/src/executive_cortex.rs
+=========================================
+8: pub enum ExecutiveGoalStatus {
+16: pub struct GoalNode {
+26: pub enum ExecutiveCommand {
+32: pub struct ExecutiveCortex {
+38: impl ExecutiveCortex {
+39:     pub fn new(memory: Arc<MemoryCortex>) -> (Self, mpsc::Sender<ExecutiveCommand>) {
+183: pub fn evaluate_causal_memory(memories: Vec<crate::causal_recall::CausalRecall>) -> Vec<String> {
+
+=========================================
+FILE: crates/runtime_core/src/executor.rs
+=========================================
+13: pub enum FsmState {
+20: pub struct RoboticExecutor {
+33: fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
+57: pub fn sanitize(path: &str) -> Result<PathBuf> {
+144: pub fn detect_shell_write_target(command: &str) -> Option<String> {
+183: fn maybe_injected_source(
+197: fn try_one_shot_fault_injection(
+292: impl RoboticExecutor {
+293:     pub fn new(api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
+1214: mod search_query_validator_tests {
+1218:     fn empty_query_is_err() {
+1223:     fn whitespace_only_query_is_err() {
+1228:     fn newline_in_query_is_err() {
+1233:     fn carriage_return_in_query_is_err() {
+1238:     fn normal_query_is_ok() {
+
+=========================================
+FILE: crates/runtime_core/src/extract_command_tests.rs
+=========================================
+4: fn tool_name_is_not_the_introducer_and_payload_quotes_are_not_the_command() {
+13: fn json_payload_quotes_are_not_the_command() {
+22: fn backtick_form_still_works_with_tool_name_present() {
+28: fn quoted_command_immediately_after_the_word() {
+37: fn direct_binary_form_is_unchanged() {
+43: fn non_ascii_objective_does_not_panic() {
+48: fn distant_directive_colon_is_not_a_command() {
+
+=========================================
+FILE: crates/runtime_core/src/fitness_evaluator.rs
+=========================================
+7: pub struct FitnessReport {
+14: pub struct FitnessEvaluator;
+16: impl FitnessEvaluator {
+17:     pub fn evaluate_wasm_cell(
+
+=========================================
+FILE: crates/runtime_core/src/goal_adaptation.rs
+=========================================
+5: pub enum GoalAdaptationAction {
+16: pub struct GoalAdaptationDecision {
+28: pub struct GoalAdaptationEngine;
+30: impl GoalAdaptationEngine {
+31:     pub fn from_belief_action(
+
+=========================================
+FILE: crates/runtime_core/src/governance/mod.rs
+=========================================
+4: pub mod protocol;
+
+=========================================
+FILE: crates/runtime_core/src/governance/protocol.rs
+=========================================
+12: pub struct MerkleLeaf {
+19: impl MerkleLeaf {
+20:     pub fn new(action: AgentAction, actor_id: &str) -> Self {
+43:     pub fn hash(&self) -> &str {
+49: pub struct GovernanceLog {
+55: impl Default for GovernanceLog {
+56:     fn default() -> Self {
+65: impl GovernanceLog {
+66:     pub fn init() -> Self {
+70:     pub fn init_shared() -> Arc<Mutex<Self>> {
+76:     pub fn record(&mut self, action: AgentAction, actor_id: &str) {
+99:     pub fn root(&self) -> &str {
+103:     pub fn len(&self) -> usize {
+107:     pub fn is_empty(&self) -> bool {
+
+=========================================
+FILE: crates/runtime_core/src/halt_gate.rs
+=========================================
+14: pub fn cited_ranges(evidence: &str) -> Vec<(u32, u32)> {
+36: fn ranges_in(text: &str) -> Vec<(u32, u32)> {
+77: pub fn halt_range_gate(evidence: &str) -> Option<String> {
+103: fn bare_backticked_names(halt_body: &str) -> Vec<String> {
+127: mod tests {
+130:     fn read_all(total: u32) -> String {
+135:     fn halt_without_ranges_passes() {
+141:     fn halt_citing_read_range_passes() {
+147:     fn halt_citing_unread_range_is_rejected() {
+155:     fn range_past_end_of_file_is_rejected() {
+161:     fn ranges_in_read_content_are_not_halt_claims() {
+168:     fn multiline_halt_body_is_scanned() {
+175:     fn earlier_bad_halt_does_not_block_a_corrected_one() {
+184:     fn rejection_text_is_not_a_claim() {
+192:     fn identifiers_with_digits_are_not_ranges() {
+
+=========================================
+FILE: crates/runtime_core/src/halt_support.rs
+=========================================
+34: mod tests {
+38:     fn picks_success_markers_and_ignores_everything_else() {
+45:     fn keeps_only_the_most_recent_lines_oldest_first() {
+51:     fn duplicate_lines_are_collapsed() {
+57:     fn empty_when_there_are_no_markers() {
+63:     fn long_lines_are_truncated() {
+
+=========================================
+FILE: crates/runtime_core/src/health_check.rs
+=========================================
+1: pub fn is_healthy() -> bool {
+
+=========================================
+FILE: crates/runtime_core/src/hypothesis.rs
+=========================================
+5: pub struct Hypothesis {
+11: pub struct HypothesisGenerator;
+13: impl HypothesisGenerator {
+
+=========================================
+FILE: crates/runtime_core/src/hypothesis_engine.rs
+=========================================
+6: pub struct Hypothesis {
+13: pub struct GoTResolution {
+19: pub struct HypothesisEngine;
+21: impl HypothesisEngine {
+
+=========================================
+FILE: crates/runtime_core/src/intent_contract.rs
+=========================================
+5: pub struct IntentContract {
+11: impl IntentContract {
+12:     pub fn new(rationale: &str, belief_score: f32) -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/json_parser.rs
+=========================================
+4: pub fn sanitize_json_escapes(json_str: &str) -> String {
+28: pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
+375: mod tests {
+379:     fn extract_single(json: &str) -> AgentAction {
+386:     fn read_file_chunk_accepts_native_max_lines() {
+407:     fn read_file_chunk_normalizes_end_line_alias() {
+430:     fn read_file_chunk_normalizes_filepath_alias() {
+455:     fn read_file_chunk_single_line_range() {
+472:     fn read_file_chunk_rejects_reversed_range() {
+484:     fn replace_lines_end_line_is_untouched() {
+500:     fn bare_outer_array_with_inner_fence_parses() {
+513:     fn bare_outer_object_with_nested_object_envelope_unwraps() {
+526:     fn read_file_chunk_accepts_offset_and_limit() {
+547:     fn replace_lines_accepts_new_content_alias() {
+576:     fn replace_lines_still_accepts_native_replacement() {
+596:     fn replace_lines_accepts_content_alias() {
+617: mod react_shape_tests {
+622:     fn action_input_nesting_is_hoisted() {
+630:     fn halt_object_shapes_are_normalized() {
+642: mod conversational_recovery_tests {
+647:     fn recovers_json_array_prefixed_with_conversational_text() {
+
+=========================================
+FILE: crates/runtime_core/src/lazarus_vault.rs
+=========================================
+7: pub struct Snapshot {
+49: fn fnv_hex(data: &[u8]) -> String {
+58: fn epoch_secs() -> u64 {
+62: fn uuid_v4() -> String {
+
+=========================================
+FILE: crates/runtime_core/src/lib.rs
+=========================================
+1: pub mod agent_protocol;
+2: pub mod arbiter_agent;
+3: pub mod cli_utils;
+4: pub mod cluster;
+5: pub mod cmd_match;
+6: pub mod cognition;
+7: pub mod cognition_graph;
+8: pub mod conductor;
+9: pub mod cortex;
+11: pub mod cortical_loop;
+12: pub mod coverage;
+13: pub mod critic;
+14: pub mod diff;
+15: pub mod distributed_scheduler;
+16: pub mod epistemic_engine;
+17: pub mod event_bus;
+18: pub mod evidence_markers;
+19: pub mod evolution_engine;
+20: pub mod executor;
+21: pub mod fitness_evaluator;
+22: pub mod governance;
+23: pub mod halt_gate;
+24: pub mod health_check;
+25: pub mod hypothesis;
+26: pub mod hypothesis_engine;
+27: pub mod json_parser;
+28: pub mod lazarus_vault;
+29: pub mod light_verifier;
+30: pub mod logger;
+31: pub mod logic_engine;
+32: pub mod memory_actor;
+33: pub mod metrics;
+34: pub mod model_config;
+35: pub mod orchestrator;
+36: pub mod orchestrator_v2;
+37: pub mod podman;
+38: pub mod policy;
+39: pub mod proposal_sanitize;
+40: pub mod provider;
+41: pub mod router;
+42: pub mod runtime_metrics;
+43: pub mod shared_state;
+44: pub mod sidecar_host;
+45: pub mod task_manager;
+46: pub mod truncation;
+47: pub mod wasm_forge;
+48: pub mod wasm_runtime;
+49: pub mod world_model;
+51: pub mod action_gate;
+52: pub mod action_intercept;
+53: pub mod ast_editor;
+54: pub mod bayesian_calibration;
+55: pub mod belief_causality;
+56: pub mod belief_feedback;
+57: pub mod belief_policy;
+58: pub mod belief_transition;
+59: pub mod belief_update;
+60: pub mod belief_validation;
+61: pub mod causal_recall;
+62: pub mod client;
+63: pub mod cognitive_events;
+64: pub mod compile_remediation;
+65: pub mod completion_engine;
+66: pub mod config;
+67: pub mod evidence;
+68: pub mod evidence_paths;
+69: pub mod executive_cortex;
+70: pub mod goal_adaptation;
+71: pub mod intent_contract;
+72: pub mod memory_consolidation;
+73: pub mod memory_cortex;
+74: pub mod memory_recall;
+75: pub mod memory_semantic;
+76: pub mod memory_types;
+77: pub mod motor_cortex;
+78: pub mod outcome_verifier;
+79: pub mod reflection_engine;
+80: pub mod tools;
+83: pub mod anti_loop;
+84: pub mod contract_status;
+85: pub mod epistemic_tuple;
+86: pub mod probabilistic_memory;
+87: pub mod sovereign_core;
+90: pub mod mcp;
+91: pub mod sum_tree_buffer;
+92: pub mod virtual_fs;
+95: mod extract_command_tests;
+100: mod semantic_gate_tests;
+103: mod write_noop_tests;
+
+=========================================
+FILE: crates/runtime_core/src/light_verifier.rs
+=========================================
+3: pub struct LightVerifier;
+5: impl LightVerifier {
+
+=========================================
+FILE: crates/runtime_core/src/logger.rs
+=========================================
+1: pub trait Logger {
+2:     fn log(&self, message: &str);
+5: pub struct FileLogger {
+9: impl Logger for FileLogger {
+10:     fn log(&self, message: &str) {
+16: mod tests {
+20:     fn test_file_logger() {
+
+=========================================
+FILE: crates/runtime_core/src/logic_engine.rs
+=========================================
+4: pub struct LogicEngine;
+6: impl LogicEngine {
+7:     pub fn linearize_handoff(
+17:     pub fn is_action_safe(directive: &str) -> bool {
+24:     pub fn detect_deadlock(observations: &[String]) -> bool {
+
+=========================================
+FILE: crates/runtime_core/src/mcp.rs
+=========================================
+10: pub struct JsonRpcRequest {
+18: pub struct JsonRpcResponse {
+28: pub struct McpToolInfo {
+34: pub struct McpServer {
+40: impl Default for McpServer {
+41:     fn default() -> Self {
+46: impl McpServer {
+47:     pub fn new() -> Self {
+57:     fn register_default_tools(&mut self) {
+97:     pub fn register_tool(&mut self, name: &str, description: &str, input_schema: Value) {
+108:     pub fn handle_request(&self, req_str: &str) -> String {
+192: mod tests {
+196:     fn test_mcp_initialize_and_tools_list() {
+
+=========================================
+FILE: crates/runtime_core/src/memory_actor.rs
+=========================================
+4: pub enum MemoryCommand {
+9: pub struct MemoryActor {
+13: impl MemoryActor {
+14:     pub fn new(rx: mpsc::Receiver<MemoryCommand>) -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/memory_consolidation.rs
+=========================================
+4: pub struct MemoryConsolidator;
+6: impl MemoryConsolidator {
+7:     pub fn new() -> Self {
+11:     pub fn calculate_retention(memory: &CognitiveMemory) -> f32 {
+23:     pub fn should_consolidate(memory: &CognitiveMemory) -> bool {
+32: impl Default for MemoryConsolidator {
+33:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/memory_cortex.rs
+=========================================
+10: pub struct MemoryCortex {
+14: impl MemoryCortex {
+15:     pub fn new(palace: Arc<MemoryPalace>) -> Self {
+283: impl MemoryCortex {
+336: impl MemoryCortex {
+357: impl MemoryCortex {
+383: impl MemoryCortex {
+401: impl MemoryCortex {
+434: pub struct WorkingMemory {
+440: impl WorkingMemory {
+441:     pub fn new(active_node: uuid::Uuid, objectives: Vec<String>) -> Self {
+445:     pub fn mark_completed(&mut self, objective: &str) {
+452:     pub fn get_prompt_context(&self) -> String {
+459:     pub fn is_mission_accomplished(&self) -> bool {
+465: pub struct CachedAction {
+472: pub struct ActionCache {
+476: impl ActionCache {
+477:     pub fn clear(&mut self) {
+480:     pub fn new() -> Self {
+484:     pub fn generate_key(command: &str, ast_hash: &str) -> String {
+491:     pub fn get(&self, key: &str) -> Option<&CachedAction> {
+495:     pub fn insert(&mut self, key: String, output: String, exit_status: i32) {
+
+=========================================
+FILE: crates/runtime_core/src/memory_recall.rs
+=========================================
+6: pub struct RecallRequest {
+12: pub struct RecallResult {
+17: pub struct MemoryRecallEngine;
+19: impl MemoryRecallEngine {
+20:     pub fn new() -> Self {
+32:     pub fn rank(&self, memories: Vec<CognitiveMemory>, context: &str) -> RecallResult {
+78:     fn terms(text: &str) -> std::collections::HashSet<String> {
+87: impl Default for MemoryRecallEngine {
+88:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/memory_semantic.rs
+=========================================
+4: pub enum SemanticCategory {
+14: pub struct SemanticMemory {
+22: impl SemanticMemory {
+23:     pub fn new(category: SemanticCategory, lesson: impl Into<String>, confidence: f32) -> Self {
+33:     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/memory_types.rs
+=========================================
+5: pub enum MemoryKind {
+15: pub struct CognitiveMemory {
+
+=========================================
+FILE: crates/runtime_core/src/metrics.rs
+=========================================
+5: pub struct NexusMetrics {
+16: impl Default for NexusMetrics {
+17:     fn default() -> Self {
+22: impl NexusMetrics {
+36:     pub fn inc_task(&self) {
+41:     pub fn inc_failure(&self) {
+45:     pub fn inc_arbiter_block(&self) {
+49:     pub fn inc_heal_success(&self) {
+53:     pub fn inc_heal_failure(&self) {
+57:     pub fn inc_circuit_open(&self) {
+61:     pub fn record_api_call(&self, latency_ms: u128) {
+66:     pub fn avg_latency_ms(&self) -> u64 {
+74: pub fn get_metrics_text() -> String {
+
+=========================================
+FILE: crates/runtime_core/src/model_config.rs
+=========================================
+10: pub fn mark_rate_limited(model_name: &str) {
+15: pub fn report_rate_limit(model_name: &str) {
+
+=========================================
+FILE: crates/runtime_core/src/motor_cortex.rs
+=========================================
+7: pub enum MotorAction {
+28: pub struct MotorCommand {
+36: pub struct MotorCortex;
+38: impl MotorCortex {
+39:     pub fn translate(
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator.rs
+=========================================
+9: pub struct Orchestrator;
+11: impl Default for Orchestrator {
+12:     fn default() -> Self {
+17: impl Orchestrator {
+18:     pub fn new() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator_v2/got_engine.rs
+=========================================
+4: pub struct GraphOfThoughts;
+6: impl GraphOfThoughts {
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator_v2/mod.rs
+=========================================
+1: pub mod got_engine;
+2: pub mod planner;
+3: pub mod scheduler;
+4: pub mod task_graph;
+5: pub mod verifier;
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator_v2/planner.rs
+=========================================
+6: pub struct PlannerAgent;
+11: fn directive_is_read_only(directive: &str) -> bool {
+33: fn criterion_is_any_mutation(criterion: &str) -> bool {
+41: fn apply_read_only_search_rewrite(graph: &mut TaskGraph, directive: &str) {
+89: fn directive_has_audit_intent(directive: &str) -> bool {
+99: fn directive_requires_positive_match(directive: &str) -> bool {
+124: fn criterion_is_source_mutation(criterion: &str) -> bool {
+158: fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
+184: impl PlannerAgent {
+399:     fn parse_task_graph(text: &str, directive: &str) -> Result<TaskGraph> {
+505:     fn objective_requires_command(objective: &str) -> bool {
+513:     fn validate_success_contracts(graph: &TaskGraph) -> Result<()> {
+585:     fn strip_terminal_nodes(graph: &mut TaskGraph) {
+611:     fn create_search_memory_graph(directive: &str) -> TaskGraph {
+640:     fn is_mathematical_derivation_directive(directive: &str) -> bool {
+755:     fn create_mathematical_verification_graph(directive: &str) -> TaskGraph {
+1005:     fn fallback_success_criteria(directive: &str) -> Result<Vec<String>> {
+1056:     fn create_fallback_graph(directive: &str) -> Result<TaskGraph> {
+1090: mod tests {
+1094:     fn host_observation_fallback_requires_cmd_ok() {
+1103:     fn parse(json: &str) -> Result<TaskGraph> {
+1108:     fn mathematical_derivation_directive_is_detected() {
+1116:     fn ordinary_verify_directive_is_not_treated_as_mathematical_derivation() {
+1123:     fn assessment_algebra_review_with_supplied_table_uses_verification_fast_path() {
+1159:     fn source_review_of_enum_is_not_treated_as_mathematical_derivation() {
+1167:     fn supplied_mathematical_table_is_not_replaced_by_synthetic_verification_command() {
+1175:     fn pure_mathematical_derivation_without_supplied_results_is_detected() {
+1183:     fn bare_all_or_any_words_do_not_trigger_the_math_fast_path() {
+1190:     fn software_lookup_table_is_not_a_mathematical_table() {
+1197:     fn requested_truth_table_still_takes_the_math_fast_path() {
+1204:     fn mathematical_derivation_creates_exact_deterministic_cmd_strategy() {
+1255:     fn fallback_rejects_directives_without_deterministic_success_contract() {
+1275:     fn explicit_search_memory_directive_creates_native_memory_node() {
+1292:     fn explicit_search_memory_directive_is_detected_before_model_planning() {
+1308:     fn explicit_success_criteria_are_preserved() {
+1331:     fn missing_success_criteria_are_rejected_for_real_nodes() {
+1349:     fn empty_success_criteria_are_rejected_for_real_nodes() {
+1368:     fn planner_rejects_cmd_ok_for_read_only_audit_node() {
+1387:     fn planner_accepts_cmd_ok_for_explicit_command_node() {
+1407:     fn fallback_command_gets_cmd_contract() {
+1416:     fn fallback_read_only_mission_never_gets_write_contract() {
+1431:     fn fallback_write_gets_write_contract() {
+1439:     fn fallback_read_gets_read_contract() {
+1448:     fn fallback_rejects_ambiguous_directive() {
+1457:     fn terminal_nodes_are_removed_before_contract_validation() {
+1490: fn is_short_plain_directive(d: &str) -> bool {
+1496: mod short_directive_tests {
+1500:     fn short_requests_still_qualify() {
+1506:     fn long_structured_missions_do_not() {
+1517: mod audit_rewrite_tests {
+1524:     fn node_with(criteria: &[&str]) -> TaskNode {
+1538:     fn graph_with(criteria: &[&str]) -> TaskGraph {
+1547:     fn audit_word_triggers_rewrite() {
+1557:     fn survey_and_inventory_also_trigger() {
+1564:     fn report_alone_does_not_trigger_rewrite() {
+1573:     fn analysis_alone_does_not_trigger_rewrite() {
+1580:     fn non_audit_find_keeps_strict() {
+1589:     fn must_find_overrides_audit_intent() {
+1602:     fn find_all_overrides_audit_intent() {
+1611:     fn patch_like_criteria_gate_the_rewrite() {
+1624:     fn diff_patch_gates_the_rewrite() {
+1634:     fn replace_lines_gates_the_rewrite() {
+1644:     fn write_rs_path_gates_the_rewrite() {
+1654:     fn write_report_does_not_gate_the_rewrite() {
+1674:     fn no_search_criteria_is_noop() {
+1688:     fn both_rewrites_have_call_sites() {
+1705:     fn generate_plan_wraps_result_through_rewrite_map() {
+1715:     fn two_node_graph_with_source_mutation() -> TaskGraph {
+1743:     fn read_only_plus_must_find_keeps_strict() {
+1757:     fn read_only_plus_source_mutation_elsewhere_keeps_strict() {
+1767:     fn read_only_plus_report_artifact_keeps_strict() {
+1788:     fn read_only_ordinary_inspection_rewrites_to_checked() {
+1798:     fn audit_mission_plus_report_artifact_rewrites_to_checked() {
+1817:     fn combined_wrapper_preserves_strict_for_source_mutation_graph() {
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator_v2/scheduler.rs
+=========================================
+4: pub struct Scheduler;
+8: pub fn residual_priority(
+17: impl Scheduler {
+22:     pub fn prepare_ready_tasks(graph: &mut TaskGraph) -> Vec<String> {
+58:     pub fn mark_running(graph: &mut TaskGraph, task_id: &str) {
+66:     pub fn process_verification(graph: &mut TaskGraph, task_id: &str, result: VerificationResult) {
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator_v2/task_graph.rs
+=========================================
+8: pub enum TaskStatus {
+20: pub struct TaskExecutionState {
+26: pub struct TaskNode {
+55: fn default_status() -> TaskStatus {
+60: pub struct TaskGraph {
+64: impl TaskGraph {
+65:     pub fn new() -> Self {
+69:     pub fn add_task(&mut self, id: &str, deps: Vec<String>, required_agent: &str) {
+86:     pub fn compute_critical_path_priorities(&mut self) {
+89:         fn b_level(node_id: &str, graph: &TaskGraph, memo: &mut HashMap<String, usize>) -> usize {
+114:     pub fn resolve_execution_order(&self) -> Result<Vec<String>> {
+168: impl Default for TaskGraph {
+169:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/orchestrator_v2/verifier.rs
+=========================================
+4: pub enum VerificationResult {
+11: pub struct Verifier;
+13: fn read_evidence_matches_path(evidence: &str, expected_path: &str) -> bool {
+59: impl Verifier {
+61:     pub fn diagnose_output(stderr: &str, stdout: &str) -> VerificationResult {
+110:     pub fn command_ok_for(evidence: &str, command: &str) -> bool {
+138:     pub fn verify_contract(
+154:     fn evaluate_contract_criteria(evidence: &str, criteria: &[String]) -> VerificationResult {
+269: mod tests {
+273:     fn search_memory_ok_requires_physical_evidence() {
+296:     fn checked_criterion_accepts_no_match_but_strict_does_not() {
+320:     fn checked_criterion_rejects_bare_marker() {
+330:     fn bins_criterion_rejects_crates_only_search() {
+342:     fn bins_criterion_accepts_bins_search() {
+352:     fn crates_and_bins_criteria_require_both_searches() {
+377:     fn idempotent_patch_satisfies_node_verifier() {
+386:     fn read_function_rejects_marker_and_target_from_different_records() {
+404:     fn read_function_accepts_exact_marker_record() {
+420:     fn patch_function_ok_verifies_successfully() {
+433:     fn diff_patch_ok_verifies_successfully() {
+446:     fn dag_lineage_ok_verifies_with_content_hash() {
+470: mod read_chunk_verifier_tests {
+473:     fn criterion() -> Vec<String> {
+478:     fn read_ok_accepts_exact_whole_file_marker() {
+488:     fn read_ok_accepts_exact_chunk_marker() {
+499:     fn read_ok_rejects_chunk_for_different_file() {
+510:     fn read_ok_rejects_whole_file_marker_for_different_file() {
+520:     fn read_ok_rejects_marker_and_path_from_different_records() {
+
+=========================================
+FILE: crates/runtime_core/src/outcome_verifier.rs
+=========================================
+5: pub struct OutcomeAssessment {
+12: pub struct OutcomeVerifier;
+14: impl OutcomeVerifier {
+15:     pub fn evaluate(expected: &str, observed: &str) -> OutcomeAssessment {
+27:     fn evaluate_contract(
+271:     pub fn mission_completion_authorized(
+281:     pub fn unmet_conditions(
+304: pub fn verify_lineage_provenance(evidence: &str) -> bool {
+344: mod tests {
+348:     fn verify(command: &str, evidence: &str) -> bool {
+356:     fn case_8_read_path_acquired_rejects_wrong_path() {
+371:     fn write_path_acquired_accepts_synthesize_report_form() {
+394:     fn read_function_rejects_marker_and_target_from_different_records() {
+413:     fn read_function_accepts_exact_marker_record() {
+430:     fn read_path_acquired_accepts_chunk_marker() {
+440:     fn exact_command_is_required_for_command_completion() {
+461:     fn successful_command_requires_zero_exit_status() {
+476:     fn patch_idempotent_marker_satisfies_patch_contract() {
+487:     fn unrelated_evidence_does_not_satisfy_patch_contract() {
+498:     fn generic_cmd_ok_requires_zero_exit_status_record() {
+536:     fn generic_cmd_ok_remains_legacy_compatible() {
+547:     fn valid_hashed_lineage_passes_verification() {
+562:     fn tampered_lineage_payload_fails_verification() {
+580:     fn mismatched_end_hash_fails_verification() {
+593: mod extraction_guards {
+597:     fn unmet_conditions_names_each_unsatisfied_condition() {
+610:     fn mission_completion_authorized_mirrors_approved_contract() {
+618:     fn mission_completion_authorized_is_false_on_unmet_condition() {
+626:     fn belief_threshold_is_gated_exactly_at_boundary() {
+635:     fn empty_contract_fails_closed() {
+642:     fn math_evidence_does_not_satisfy_ordinary_command_contract() {
+665:     fn mathematical_execution_contract_accepts_math_compatibility_evidence() {
+689:     fn mathematical_execution_contract_rejects_failed_exit() {
+713:     fn command_contract_still_requires_zero_exit_status() {
+727:     fn path_scoped_search_satisfies_not_yet_created_path() {
+
+=========================================
+FILE: crates/runtime_core/src/podman.rs
+=========================================
+19: pub struct PodmanShield;
+29: impl PodmanShield {
+30:     pub fn execute(command: &str) -> Result<Output> {
+40:     pub fn execute_argv(program: &str, args: &[&str]) -> Result<Output> {
+44:     pub fn execute_argv_with_timeout(
+66:     pub fn execute_with_timeout(command: &str, timeout: Duration) -> Result<Output> {
+81:     fn run_with_timeout(
+
+=========================================
+FILE: crates/runtime_core/src/policy.rs
+=========================================
+4: pub enum Capability {
+11: pub struct ExecutionSandbox {
+15: impl ExecutionSandbox {
+16:     pub fn strict_lockdown() -> Self {
+20:     pub fn validate_intent(&self, action_type: &str) -> Result<(), String> {
+43: pub struct ToolContract {
+
+=========================================
+FILE: crates/runtime_core/src/probabilistic_memory.rs
+=========================================
+12: pub struct MemoryPrior {
+19: pub struct ProbabilisticMemory;
+21: impl ProbabilisticMemory {
+128: fn has_marker(m: &nexus_substrate::memory::AgentMemory, marker: &str) -> bool {
+136: mod has_marker_tests {
+140:     fn mem(origin: &str, result: &str) -> AgentMemory {
+153:     fn file_read_rows_never_carry_markers() {
+158:     fn line_start_marker_from_a_real_source_counts() {
+163:     fn marker_mentioned_mid_line_does_not_count() {
+
+=========================================
+FILE: crates/runtime_core/src/proposal_sanitize.rs
+=========================================
+16: pub struct Sanitized {
+23: fn cut_at_leak(s: &str) -> Option<&str> {
+27: fn walk(v: &mut Value, stripped: &mut bool) {
+46: pub fn strip_control_tokens(raw: &str) -> String {
+75: pub fn sanitize(mut value: Value) -> Sanitized {
+84: pub fn leak_confined_to_reasoning(original: &Value) -> bool {
+101: pub fn stripped_halt(s: &Sanitized, original: &Value) -> bool {
+109: mod tests {
+114:     fn strips_harmony_leak() {
+123:     fn production_pipeline_cuts_harmony_residue() {
+151:     fn preserves_multibyte_utf8() {
+165:     fn preserves_multibyte_utf8_across_stripped_tokens() {
+180:     fn clean_input_untouched() {
+188:     fn nested_strings_cleaned() {
+195: mod confined_tests {
+200:     fn reasoning_only_leak_is_confined() {
+205:     fn content_or_halt_leak_is_not_confined() {
+
+=========================================
+FILE: crates/runtime_core/src/provider.rs
+=========================================
+4: pub enum AuthStyle {
+10: pub struct ProviderResolved {
+17: pub fn trip_circuit(_model_name: &str) {}
+19: pub fn resolve_provider(model_name: &str) -> ProviderResolved {
+115: pub fn get_light_models() -> Vec<String> {
+125: fn collect_cascade(primary_var: &str, cascade_var: &str) -> Vec<String> {
+148: pub fn get_heavy_models() -> Vec<String> {
+152: pub fn get_planner_models() -> Vec<String> {
+
+=========================================
+FILE: crates/runtime_core/src/reflection_engine.rs
+=========================================
+5: pub struct ReflectionEngine;
+7: impl ReflectionEngine {
+8:     pub fn new() -> Self {
+12:     pub fn reflect(&self, memories: &[CognitiveMemory]) -> Option<CognitiveMemory> {
+45: impl Default for ReflectionEngine {
+46:     fn default() -> Self {
+51: pub fn classify_lesson(lesson: &str) -> crate::memory_semantic::SemanticMemory {
+
+=========================================
+FILE: crates/runtime_core/src/revert.rs
+=========================================
+8: fn git(dir: &Path) -> Command {
+14: fn repo_root(dir: &Path) -> Result<PathBuf, String> {
+24: fn governing_repo(outer_root: &Path, target: &Path) -> PathBuf {
+36: fn is_tracked(dir: &Path, spec: &str) -> Result<bool, String> {
+64: fn revert_in(
+117: mod tests {
+121:     struct Sandbox {
+126:     impl Sandbox {
+127:         fn new(name: &str, init_git: bool) -> Self {
+142:         fn commit_file(&self, name: &str, content: &str) {
+149:     impl Drop for Sandbox {
+150:         fn drop(&mut self) {
+155:     fn run(dir: &Path, args: &[&str]) {
+164:     fn checkout_in(_bound: &Path) -> impl Fn(&Path, &str) -> bool {
+176:     fn tracked_file_is_restored() {
+185:     fn untracked_file_is_deleted() {
+195:     fn missing_file_in_existing_dir_is_ok() {
+202:     fn missing_parent_dir_is_ok() {
+209:     fn relative_escape_is_refused_and_file_untouched() {
+220:     fn absolute_path_outside_repo_is_refused() {
+232:     fn not_a_git_repo_never_deletes() {
+240:     fn git_metadata_is_protected() {
+251:     fn works_from_a_subdirectory() {
+263:     fn dangling_untracked_symlink_is_removed() {
+272:     fn nested_repo_file_is_restored_not_deleted() {
+
+=========================================
+FILE: crates/runtime_core/src/router.rs
+=========================================
+2: pub enum DirectiveClass {
+14: pub struct ContextBudget {
+21: impl ContextBudget {
+22:     pub fn minimal() -> Self {
+30:     pub fn standard() -> Self {
+38:     pub fn doctor() -> Self {
+46:     pub fn security() -> Self {
+56: pub struct AgentProfile {
+64: pub struct IntelligentRouter;
+65: impl IntelligentRouter {
+67:     fn resolve_max_turns() -> u8 {
+75:     pub fn classify(d: &str) -> DirectiveClass {
+157:     pub fn route(directive: &str) -> AgentProfile {
+201: mod tests {
+205:     fn test_router_classification_precedence() {
+
+=========================================
+FILE: crates/runtime_core/src/runtime_metrics.rs
+=========================================
+3: pub struct RuntimeMetrics {
+9: impl RuntimeMetrics {
+10:     pub fn new() -> Self {
+18:     pub fn inc_tasks(&self) {
+23: impl Default for RuntimeMetrics {
+24:     fn default() -> Self {
+
+=========================================
+FILE: crates/runtime_core/src/semantic_gate_tests.rs
+=========================================
+4: fn plain_write_directive_naming_report_py_is_not_semantic() {
+11: fn bare_report_word_is_still_semantic() {
+16: fn semantic_verb_next_to_a_file_name_still_counts() {
+21: fn backticked_file_token_with_trailing_punctuation_is_stripped() {
+
+=========================================
+FILE: crates/runtime_core/src/shared_state.rs
+=========================================
+2: pub struct VmoState {
+
+=========================================
+FILE: crates/runtime_core/src/sidecar_host.rs
+=========================================
+8: pub struct HostState {
+14: pub struct SidecarHost {
+18: impl SidecarHost {
+19:     pub fn new(_dummy: bool) -> Result<Self> {
+26:     pub fn load_and_run(&self, wasm_path: &Path) -> Result<()> {
+
+=========================================
+FILE: crates/runtime_core/src/sovereign_core.rs
+=========================================
+22: pub struct SovereignOutcome {
+30: pub struct AthenaSovereignCore {
+41: impl AthenaSovereignCore {
+42:     pub fn new(
+67:     fn log(&self, msg: &str) {
+
+=========================================
+FILE: crates/runtime_core/src/sum_tree_buffer.rs
+=========================================
+9: pub struct TextChunk {
+15: impl TextChunk {
+16:     pub fn new(text: impl Into<String>) -> Self {
+25: pub struct SumTreeBuffer {
+31: impl FromStr for SumTreeBuffer {
+34:     fn from_str(src: &str) -> Result<Self, Self::Err> {
+47: impl SumTreeBuffer {
+48:     pub fn from_text(src: &str) -> Self {
+52:     pub fn push_chunk(&mut self, chunk: TextChunk) {
+58:     pub fn total_lines(&self) -> usize {
+62:     pub fn total_bytes(&self) -> usize {
+67:     pub fn splice_lines(&mut self, start_line: usize, end_line: usize, replacement: &str) {
+101: impl fmt::Display for SumTreeBuffer {
+102:     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+111: mod tests {
+115:     fn test_sum_tree_splice() {
+
+=========================================
+FILE: crates/runtime_core/src/task_manager.rs
+=========================================
+24: pub enum TaskError {
+31: impl std::fmt::Display for TaskError {
+32:     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+41: impl std::error::Error for TaskError {}
+43: pub struct TaskContext {
+57: struct PlanGuard { memory: Arc<MemoryCortex>, plan_id: String }
+58: impl Drop for PlanGuard {
+59:     fn drop(&mut self) {
+
+=========================================
+FILE: crates/runtime_core/src/tools/mod.rs
+=========================================
+1: pub mod schema;
+
+=========================================
+FILE: crates/runtime_core/src/tools/schema.rs
+=========================================
+9: pub enum CognitivePhase {
+17: pub struct FunctionDeclaration {
+23: impl FunctionDeclaration {
+24:     pub fn for_action(
+42: pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
+189: pub fn native_tool_name_for_strategy(strategy: &str) -> Option<&'static str> {
+230: pub fn tool_declarations_for_strategy(
+244: pub fn tool_declarations_for_phase(phase: CognitivePhase) -> Vec<FunctionDeclaration> {
+297: pub fn parse_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<AgentAction, String> {
+423: pub fn extract_tool_call_from_response(
+
+=========================================
+FILE: crates/runtime_core/src/truncation.rs
+=========================================
+20: pub struct Truncation {
+27: pub fn detect(output: &str) -> Option<Truncation> {
+51: pub fn plan_chunks(t: &Truncation) -> Vec<(u32, u32)> {
+63: fn strip_marker(output: &str) -> &str {
+75: pub fn complete_read<F>(first: &str, mut read_chunk: F) -> Result<String>
+92: mod tests {
+95:     fn sample(partial: bool) -> String {
+103:     fn detects_partial_last_line() {
+108:     fn detects_clean_cut() {
+113:     fn untruncated_is_none() {
+118:     fn chunks_cover_to_end_without_gap() {
+129:     fn complete_read_strips_marker_and_appends() {
+140:     fn passthrough_when_not_truncated() {
+
+=========================================
+FILE: crates/runtime_core/src/virtual_fs.rs
+=========================================
+11: pub enum FileState {
+19: pub struct VirtualFS {
+24: impl VirtualFS {
+25:     pub fn new(base_dir: impl AsRef<Path>) -> Self {
+29:     fn normalize_path(&self, path: impl AsRef<Path>) -> PathBuf {
+42:     pub fn read_to_string(&mut self, path: impl AsRef<Path>) -> Result<String> {
+47:     pub fn read(&mut self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
+70:     pub fn write(&mut self, path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> Result<()> {
+87:     pub fn delete(&mut self, path: impl AsRef<Path>) -> Result<()> {
+93:     pub fn has_mutations(&self) -> bool {
+97:     pub fn dirty_files(&self) -> Vec<PathBuf> {
+107:     pub fn commit_to_disk(&mut self) -> Result<usize> {
+132:     pub fn discard(&mut self) {
+138: mod tests {
+143:     fn test_vfs_cow_lifecycle() -> Result<()> {
+
+=========================================
+FILE: crates/runtime_core/src/wasm_forge.rs
+=========================================
+6: pub struct WasmForge;
+9: fn maybe_wasm_opt(wasm_bytes: &[u8]) -> Vec<u8> {
+43: impl WasmForge {
+
+=========================================
+FILE: crates/runtime_core/src/wasm_runtime.rs
+=========================================
+4: pub struct WasmRuntime;
+6: impl WasmRuntime {
+7:     fn make_engine() -> Result<Engine> {
+21:     pub fn run_bytes(bytes: &[u8], func_name: &str, input: f32) -> Result<f32> {
+31:     pub fn run_with_buffer(bytes: &[u8], func_name: &str, data: &[u8]) -> Result<f32> {
+
+=========================================
+FILE: crates/runtime_core/src/world_model.rs
+=========================================
+7: pub struct WorkspaceNode {
+13: pub struct MemorySideagent;
+15: impl MemorySideagent {
+17:     pub fn distill(entry: &str) -> String {
+37: pub struct WorldModel {
+43: impl WorldModel {
+44:     pub fn new() -> Self {
+48:     pub fn record_node_evidence(&self, node_id: &str, objective: &str, evidence: &str) {
+65:     pub fn get_summary(&self) -> String {
+
+=========================================
+FILE: crates/runtime_core/src/write_noop_tests.rs
+=========================================
+7: fn noop_for_the_matching_path_satisfies_the_write() {
+12: fn noop_for_another_path_does_not() {
+17: fn noop_for_a_longer_file_name_does_not_match() {
+23: fn existing_write_ok_forms_still_satisfy() {
+34: fn a_noop_is_not_a_mutation_marker() {
+39: fn outcome_verifier_accepts_a_noop_for_write_path_acquired() {
+
+=========================================
+FILE: crates/runtime_core/tests/bayesian_calibrator_test.rs
+=========================================
+7: fn test_mutation_success_causes_massive_jump() {
+23: fn test_compile_fail_tanks_belief() {
+37: fn test_recon_cannot_accidentally_complete() {
+53: fn test_llm_modifier_is_capped() {
+72: fn test_successive_patches_converge_to_high_belief() {
+
+=========================================
+FILE: crates/runtime_core/tests/checkpointer_integration.rs
+=========================================
+
+=========================================
+FILE: crates/runtime_core/tests/cognition_tests.rs
+=========================================
+8: fn test_v5_belief_engine_decay() {
+17: fn test_v5_prediction_engine_nearest_neighbor() {
+
+=========================================
+FILE: crates/runtime_core/tests/compile_remediation_integration_test.rs
+=========================================
+6: fn test_compile_remediation_lifecycle() {
+56: fn test_diagnostic_preview_bounds() {
+
+=========================================
+FILE: crates/runtime_core/tests/e2e_auto_heal.rs
+=========================================
+8: fn run_ast_tool(args: &[&str]) -> bool {
+19: fn test_php_sqli_auto_heal() {
+46: fn test_python_cmdi_auto_heal() {
+
+=========================================
+FILE: crates/runtime_core/tests/mcp_integration_test.rs
+=========================================
+5: fn test_mcp_e2e_lifecycle() {
+
+=========================================
+FILE: crates/runtime_core/tests/provider_routing.rs
+=========================================
+7: fn gemini_hits_google() {
+18: fn nemotron_hits_nvidia() {
+30: fn deepseek_hits_nvidia() {
+40: fn beam_model_hits_reflection() {
+48: fn beam_routing_is_case_insensitive() {
+54: fn plain_gemma_does_not_guess_google_or_nvidia() {
+63: fn plain_llama_does_not_guess() {
+
+=========================================
+FILE: crates/terminal_core/src/lib.rs
+=========================================
+1: pub fn add(left: u64, right: u64) -> u64 {
+6: mod tests {
+10:     fn it_works() {

@@ -29,6 +29,12 @@ pub enum CompletionCondition {
     SearchTermAcquired {
         term: String,
     },
+    /// Path/query-bound successful search. Unlike SearchTermAcquired,
+    /// this accepts the executor's exact no-match outcome as proof that
+    /// the requested location was successfully checked.
+    SearchCheckedAcquired {
+        target: String,
+    },
     SearchMemoryMarkerAcquired,
     WriteMarkerAcquired,
     /// Path-bound write requirement: evidence must contain a [WRITE_OK]
@@ -37,6 +43,17 @@ pub enum CompletionCondition {
         path: String,
     },
     PatchMarkerAcquired,
+    /// Kind- and path-bound patch requirement. Mirrors the verifier's
+    /// `PATCH_FUNCTION_OK:<path>:<fn>`, `DIFF_PATCH_OK:<path>`, and
+    /// `REPLACE_LINES_OK:<path>` criteria exactly. Prevents the cortex
+    /// from terminating on `[PATCH_FUNCTION_OK]` when the contract requires
+    /// `[DIFF_PATCH_OK]` (or vice versa). `PatchMarkerAcquired` remains
+    /// for inference paths that cannot determine a specific kind/path.
+    PatchPathAcquired {
+        kind: String,
+        path: String,
+        function_name: Option<String>,
+    },
     CommandMarkerAcquired,
     CommandExecutionVerified {
         command: String,
@@ -466,6 +483,43 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
         }
     }
 
+    // Raw shell objective: bind the contract to that exact command instead of
+    // degrading to a bare CommandMarkerAcquired any successful command satisfies.
+    {
+        const RAW_LEADERS: &[&str] = &[
+            "cd", "sqlite3", "cargo", "git", "python3", "python", "ls", "grep", "rg", "cat",
+            "echo", "sleep", "diff", "pgrep", "ps", "stat", "wc", "which", "uptime", "df", "du",
+            "free", "uname", "pwd", "tail", "date", "sed", "ss",
+        ];
+        let body = objective.trim_start();
+        let body = body
+            .strip_prefix("OBJECTIVE:")
+            .or_else(|| body.strip_prefix("Objective:"))
+            .unwrap_or(body)
+            .trim_start();
+        let mut body = body;
+        for p in [
+            "run exactly:", "execute exactly:", "run exactly", "execute exactly", "run:",
+            "execute:",
+        ] {
+            if body.len() >= p.len()
+                && body.is_char_boundary(p.len())
+                && body[..p.len()].eq_ignore_ascii_case(p)
+            {
+                body = body[p.len()..].trim_start();
+                break;
+            }
+        }
+        let first = body.split_whitespace().next().unwrap_or("");
+        if RAW_LEADERS.iter().any(|b| first == *b) {
+            let line = take_balanced_lines(body);
+            let line = line.trim();
+            if !line.is_empty() {
+                return Some(line.to_string());
+            }
+        }
+    }
+
     None
 }
 
@@ -655,16 +709,64 @@ fn declared_criteria_contract(
         required_artifact_paths.push(ArtifactSpec { path, reason: "output_deliverable".into() });
     }
 
-    if (text.contains("PATCH_FUNCTION_OK:")
-        || text.contains("DIFF_PATCH_OK:")
-        || text.contains("REPLACE_LINES_OK:"))
-        && !read_only
-    {
-        conditions.push(CompletionCondition::PatchMarkerAcquired);
+    if !read_only {
+        let mut pushed_typed_patch = false;
+        for target in extract_all_named_targets(text, "DIFF_PATCH_OK:") {
+            let path = target.trim().to_string();
+            if !path.is_empty() {
+                conditions.push(CompletionCondition::PatchPathAcquired {
+                    kind: "DIFF_PATCH_OK".to_string(),
+                    path,
+                    function_name: None,
+                });
+                pushed_typed_patch = true;
+            }
+        }
+        for target in extract_all_named_targets(text, "REPLACE_LINES_OK:") {
+            let path = target.trim().to_string();
+            if !path.is_empty() {
+                conditions.push(CompletionCondition::PatchPathAcquired {
+                    kind: "REPLACE_LINES_OK".to_string(),
+                    path,
+                    function_name: None,
+                });
+                pushed_typed_patch = true;
+            }
+        }
+        for target in extract_all_named_targets(text, "PATCH_FUNCTION_OK:") {
+            let mut parts = target.splitn(2, ':');
+            let p = parts.next().unwrap_or("").trim().to_string();
+            let f = parts.next().unwrap_or("").trim().to_string();
+            if !p.is_empty() {
+                conditions.push(CompletionCondition::PatchPathAcquired {
+                    kind: "PATCH_FUNCTION_OK".to_string(),
+                    path: p,
+                    function_name: if f.is_empty() { None } else { Some(f) },
+                });
+                pushed_typed_patch = true;
+            }
+        }
+        if !pushed_typed_patch
+            && (text.contains("PATCH_FUNCTION_OK:")
+                || text.contains("DIFF_PATCH_OK:")
+                || text.contains("REPLACE_LINES_OK:"))
+        {
+            conditions.push(CompletionCondition::PatchMarkerAcquired);
+        }
     }
 
-    for term in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
-        conditions.push(CompletionCondition::SearchTermAcquired { term });
+    for target in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
+        // Preserve the full "<path>:<term>" form. Stripping the path collapsed
+        // `crates:unimplemented!` and `bins:unimplemented!` into one bare
+        // term, so a single `crates` search satisfied both criteria and the
+        // cortex declared terminal before the `bins` search ran. The DAG
+        // verifier must see the same path binding. search_term_satisfied
+        // already enforces the path:term contract.
+        conditions.push(CompletionCondition::SearchTermAcquired { term: target });
+    }
+
+    for target in extract_all_named_targets(text, "SEARCH_CHECKED_OK:") {
+        conditions.push(CompletionCondition::SearchCheckedAcquired { target });
     }
 
     if text.contains("SEARCH_MEMORY_OK") {
@@ -704,6 +806,7 @@ fn declared_criteria_contract(
         matches!(
             c,
             CompletionCondition::SearchTermAcquired { .. }
+                | CompletionCondition::SearchCheckedAcquired { .. }
                 | CompletionCondition::SearchMarkerAcquired
                 | CompletionCondition::SearchMemoryMarkerAcquired
         )
@@ -714,6 +817,7 @@ fn declared_criteria_contract(
             CompletionCondition::WritePathAcquired { .. }
                 | CompletionCondition::WriteMarkerAcquired
                 | CompletionCondition::PatchMarkerAcquired
+                | CompletionCondition::PatchPathAcquired { .. }
         )
     });
     let has_recon = conditions.iter().any(|c| {
@@ -723,6 +827,7 @@ fn declared_criteria_contract(
                 | CompletionCondition::ReadMarkerAcquired
                 | CompletionCondition::ReadFunctionMarkerAcquired { .. }
                 | CompletionCondition::SearchTermAcquired { .. }
+                | CompletionCondition::SearchCheckedAcquired { .. }
                 | CompletionCondition::SearchMarkerAcquired
                 | CompletionCondition::SearchMemoryMarkerAcquired
                 | CompletionCondition::SourceCodeEvidenceRequired
@@ -867,6 +972,7 @@ impl SubgoalCompletionEngine {
         if objective.contains("ANALYSIS_OK")
             && !objective.contains("READ_OK:")
             && !objective.contains("SEARCH_CODE_OK:")
+            && !objective.contains("SEARCH_CHECKED_OK:")
         {
             return SubgoalContract {
                 node_id: node_id.to_string(),
@@ -1001,6 +1107,7 @@ impl SubgoalCompletionEngine {
         let has_explicit_path_bound = objective.contains("READ_OK:")
             || objective.contains("WRITE_OK:")
             || objective.contains("SEARCH_CODE_OK:")
+            || objective.contains("SEARCH_CHECKED_OK:")
             || objective.contains("SEARCH_MEMORY_OK:")
             || objective.contains("PATCH_FUNCTION_OK:")
             || objective.contains("READ_FUNCTION_OK:");
@@ -1022,10 +1129,13 @@ impl SubgoalCompletionEngine {
         let read_targets = extract_all_named_targets(objective, "READ_OK:");
         let write_targets = extract_all_named_targets(objective, "WRITE_OK:");
         let search_code_terms = extract_all_named_targets(objective, "SEARCH_CODE_OK:");
+        let search_checked_targets =
+            extract_all_named_targets(objective, "SEARCH_CHECKED_OK:");
         let search_memory_terms = extract_all_named_targets(objective, "SEARCH_MEMORY_OK:");
         let has_path_bound_reads = !read_targets.is_empty();
         let has_path_bound_writes = !write_targets.is_empty();
         let has_search_code_marker = !search_code_terms.is_empty();
+        let has_search_checked_marker = !search_checked_targets.is_empty();
         let has_search_memory_marker = !search_memory_terms.is_empty();
 
         if has_patch && !read_only {
@@ -1048,6 +1158,7 @@ impl SubgoalCompletionEngine {
         let structural_search_contract = structural_target.is_some()
             && !has_path_bound_reads
             && !has_search_code_marker
+            && !has_search_checked_marker
             && !has_patch
             && !has_write
             && !objective.contains("READ_FUNCTION_OK:");
@@ -1073,6 +1184,12 @@ impl SubgoalCompletionEngine {
             conditions.push(CompletionCondition::SearchMarkerAcquired);
         }
 
+        for target in &search_checked_targets {
+            conditions.push(CompletionCondition::SearchCheckedAcquired {
+                target: target.clone(),
+            });
+        }
+
         if has_search_memory_intent || has_search_memory_marker {
             conditions.push(CompletionCondition::SearchMemoryMarkerAcquired);
         }
@@ -1085,6 +1202,7 @@ impl SubgoalCompletionEngine {
         if (has_analysis_intent || (has_read_intent && has_search_intent))
             && !has_path_bound_reads
             && !has_search_code_marker
+            && !has_search_checked_marker
             && !structural_search_contract
         {
             conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
@@ -1097,6 +1215,7 @@ impl SubgoalCompletionEngine {
             || has_search_intent
             || has_analysis_intent
             || has_path_bound_reads
+            || has_search_checked_marker
             || has_search_memory_marker;
 
         // A contract whose substantive conditions are exclusively search
@@ -1119,6 +1238,7 @@ impl SubgoalCompletionEngine {
                 matches!(
                     c,
                     CompletionCondition::SearchTermAcquired { .. }
+                        | CompletionCondition::SearchCheckedAcquired { .. }
                         | CompletionCondition::SearchMarkerAcquired
                         | CompletionCondition::SearchMemoryMarkerAcquired
                 )
@@ -1156,6 +1276,7 @@ impl SubgoalCompletionEngine {
                 matches!(
                     c,
                     CompletionCondition::PatchMarkerAcquired
+                        | CompletionCondition::PatchPathAcquired { .. }
                         | CompletionCondition::WriteMarkerAcquired
                 )
             })
@@ -1205,6 +1326,7 @@ impl SubgoalCompletionEngine {
                     condition,
                     CompletionCondition::WriteMarkerAcquired
                         | CompletionCondition::PatchMarkerAcquired
+                        | CompletionCondition::PatchPathAcquired { .. }
                         | CompletionCondition::WritePathAcquired { .. }
                 )
             })
@@ -1486,6 +1608,7 @@ mod tests {
                 CompletionCondition::WriteMarkerAcquired
                     | CompletionCondition::WritePathAcquired { .. }
                     | CompletionCondition::PatchMarkerAcquired
+                    | CompletionCondition::PatchPathAcquired { .. }
             )),
             "read-only mission must not require any write or patch condition"
         );
@@ -1507,10 +1630,10 @@ PATCH_FUNCTION_OK:crates/foo.rs:foo
 
         assert!(!contract.read_only);
         assert!(contract.is_mutation_task);
-        assert!(contract
-            .conditions
-            .iter()
-            .any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired)));
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::PatchMarkerAcquired | CompletionCondition::PatchPathAcquired { .. }
+        )));
     }
 
     #[test]
@@ -1993,10 +2116,10 @@ LINEAGE CONTEXT:
     fn path_bound_reads_do_not_discard_patch_marker() {
         let mission = "PATCH_FUNCTION_OK:a.rs:foo\nREAD_OK:b.rs";
         let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
-        assert!(contract
-            .conditions
-            .iter()
-            .any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired)));
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::PatchMarkerAcquired | CompletionCondition::PatchPathAcquired { .. }
+        )));
     }
 
     #[test]
@@ -2116,5 +2239,216 @@ mod newline_contract_tests {
         let obj = "Execute the bounded baseline command exactly as specified: cd /r && printf '%s\n' 'A' && printf '%s\n' 'B' && pwd";
         let cmd = extract_required_command(obj).expect("command extracted");
         assert!(cmd.ends_with("&& pwd"), "truncated: {cmd:?}");
+    }
+}
+
+#[cfg(test)]
+mod raw_command_objective_tests {
+    use super::*;
+
+    #[test]
+    fn raw_shell_objective_binds_exact_command() {
+        let m = "OBJECTIVE: cd ~/X && sqlite3 -readonly a.db \"SELECT 1;\" > /tmp/b.txt && ./nexus.sh\nASSIGNED ROLE: CodeAnalyzer\n\nMANDATORY NODE SUCCESS CRITERIA:\n- CMD_OK\n\nNODE COMPLETION RULE: x\n\nROOT DIRECTIVE CONTEXT:\nr\n\nLINEAGE CONTEXT:\n";
+        let c = SubgoalCompletionEngine::infer_contract("t", m);
+        assert!(
+            c.conditions.iter().any(|x| matches!(
+                x,
+                CompletionCondition::CommandExecutionVerified { command }
+                    if command.starts_with("cd ~/X && sqlite3")
+            )),
+            "{:?}",
+            c.conditions
+        );
+        assert!(!c.conditions.contains(&CompletionCondition::CommandMarkerAcquired));
+    }
+
+    #[test]
+    fn prose_objective_starting_with_find_is_not_a_command() {
+        assert!(extract_required_command("Find all usages of foo in src/").is_none());
+    }
+}
+
+#[cfg(test)]
+mod run_exactly_tests {
+    use super::*;
+
+    #[test]
+    fn run_exactly_binds_sqlite_command() {
+        let m = "Run exactly: sqlite3 -readonly nexus_daemon.db \"SELECT status, COUNT(*) FROM plan_runs GROUP BY status;\"";
+        assert_eq!(
+            extract_required_command(m).as_deref(),
+            Some("sqlite3 -readonly nexus_daemon.db \"SELECT status, COUNT(*) FROM plan_runs GROUP BY status;\"")
+        );
+    }
+
+    #[test]
+    fn schema_and_count_commands_do_not_collide() {
+        let a = extract_required_command("Run exactly: sqlite3 -readonly x.db \".schema plan_runs\"");
+        let b = extract_required_command("Run exactly: sqlite3 -readonly x.db \"SELECT 1;\"");
+        assert_ne!(a, b);
+    }
+}
+
+#[cfg(test)]
+mod pgrep_binding_tests {
+    use super::*;
+    #[test]
+    fn run_exactly_pgrep_binds() {
+        assert_eq!(
+            extract_required_command("Run exactly: pgrep -af nexus-ide-backend").as_deref(),
+            Some("pgrep -af nexus-ide-backend")
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod patch_path_integration_tests {
+    use super::{CompletionCondition, SubgoalCompletionEngine};
+    use crate::agent_protocol::AgentAction;
+
+    fn typed_patch(
+        contract: &super::SubgoalContract,
+    ) -> Option<(&str, &str, Option<&str>)> {
+        contract.conditions.iter().find_map(|c| match c {
+            CompletionCondition::PatchPathAcquired { kind, path, function_name } => {
+                Some((kind.as_str(), path.as_str(), function_name.as_deref()))
+            }
+            _ => None,
+        })
+    }
+
+    fn agent(json: serde_json::Value) -> AgentAction {
+        serde_json::from_value(json).expect("AgentAction JSON")
+    }
+
+    #[test]
+    fn diff_patch_criterion_parses_to_typed_variant() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - DIFF_PATCH_OK:bins/ide_backend\n\n\
+                       NODE COMPLETION RULE: x";
+        let c = SubgoalCompletionEngine::infer_contract("t", mission);
+        assert_eq!(typed_patch(&c), Some(("DIFF_PATCH_OK", "bins/ide_backend", None)));
+    }
+
+    #[test]
+    fn patch_function_criterion_parses_path_and_fn() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - PATCH_FUNCTION_OK:crates/foo.rs:foo\n\n\
+                       NODE COMPLETION RULE: x";
+        let c = SubgoalCompletionEngine::infer_contract("t", mission);
+        assert_eq!(typed_patch(&c), Some(("PATCH_FUNCTION_OK", "crates/foo.rs", Some("foo"))));
+    }
+
+    #[test]
+    fn wrong_kind_evidence_does_not_satisfy_diff_patch_criterion() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - DIFF_PATCH_OK:bins/ide_backend\n\n\
+                       NODE COMPLETION RULE: x";
+        let c = SubgoalCompletionEngine::infer_contract("t", mission);
+        // [PATCH_FUNCTION_OK] must NOT satisfy a DIFF_PATCH_OK criterion.
+        let fn_ev = "[PATCH_FUNCTION_OK] bins/ide_backend:init\nUpdated function 'init' in bins/ide_backend\n";
+        assert!(!SubgoalCompletionEngine::evaluate(&c, fn_ev, 1.0));
+        // Correct kind satisfies.
+        let diff_ev = "[DIFF_PATCH_OK] Applied changes to bins/ide_backend\n";
+        assert!(SubgoalCompletionEngine::evaluate(&c, diff_ev, 1.0));
+    }
+
+    #[test]
+    fn advancement_is_kind_exclusive() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - DIFF_PATCH_OK:src/foo.rs\n\n\
+                       NODE COMPLETION RULE: x";
+        let session = crate::cognition::epistemic_session::EpistemicSession::new(mission);
+        // Precondition: contract carries typed DIFF_PATCH_OK condition.
+        assert_eq!(
+            typed_patch(&session.contract),
+            Some(("DIFF_PATCH_OK", "src/foo.rs", None)),
+        );
+
+        let diff = agent(serde_json::json!({
+            "type": "diff_patch", "path": "src/foo.rs", "search": "a", "replace": "b"
+        }));
+        let pf = agent(serde_json::json!({
+            "type": "patch_function", "path": "src/foo.rs", "function_name": "foo", "new_body": "fn foo() {}"
+        }));
+        let rl = agent(serde_json::json!({
+            "type": "replace_lines", "path": "src/foo.rs", "start_line": 1, "end_line": 1, "replacement": "x"
+        }));
+
+        let advance = |a: &AgentAction| {
+            crate::cortical::contract_advance::action_advances_unmet_contract_condition(
+                a, &session, mission,
+            )
+        };
+        assert!(advance(&diff), "DiffPatch must advance DIFF_PATCH_OK");
+        assert!(!advance(&pf), "PatchFunction must NOT advance DIFF_PATCH_OK");
+        assert!(!advance(&rl), "ReplaceLines must NOT advance DIFF_PATCH_OK");
+    }
+}
+
+#[cfg(test)]
+mod search_checked_contract_tests {
+    use super::{CompletionCondition, SubgoalCompletionEngine};
+
+    #[test]
+    fn checked_search_criterion_is_preserved() {
+        let contract = SubgoalCompletionEngine::infer_contract(
+            "checked_search",
+            "SEARCH_CHECKED_OK:bins:unimplemented!",
+        );
+
+        assert!(contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchCheckedAcquired { target }
+                    if target == "bins:unimplemented!"
+            )
+        }));
+
+        assert!(!contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchTermAcquired { .. }
+            )
+        }));
+
+        assert!(!contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::MinBeliefScore(_)
+            )
+        }));
+    }
+
+    #[test]
+    fn checked_and_positive_search_criteria_remain_distinct() {
+        let contract = SubgoalCompletionEngine::infer_contract(
+            "mixed_search",
+            concat!(
+                "SEARCH_CODE_OK:crates:needle\n",
+                "SEARCH_CHECKED_OK:bins:needle"
+            ),
+        );
+
+        assert!(contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchTermAcquired { term }
+                    if term == "crates:needle"
+            )
+        }));
+
+        assert!(contract.conditions.iter().any(|condition| {
+            matches!(
+                condition,
+                CompletionCondition::SearchCheckedAcquired { target }
+                    if target == "bins:needle"
+            )
+        }));
     }
 }

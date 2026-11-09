@@ -1,10 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use nexus_ide_backend::system_monitor::SystemMonitor;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
+use nexus_cli_utils::parse_arg;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkReport {
@@ -18,19 +18,6 @@ pub struct BenchmarkReport {
     pub throughput_ops_sec: usize,
     pub heap_allocations_per_call: usize,
     pub status: String,
-}
-
-fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
-    for flag in flags {
-        if let Some(i) = args.iter().position(|r| r == flag) {
-            if let Some(val) = args.get(i + 1) {
-                if !val.starts_with('-') {
-                    return Some(val.clone());
-                }
-            }
-        }
-    }
-    None
 }
 
 fn main() -> Result<()> {
@@ -85,11 +72,7 @@ fn main() -> Result<()> {
     let json_output = serde_json::to_string_pretty(&report)?;
 
     if let Some(out_path) = output_path {
-        if let Some(parent) = out_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        fs::write(&out_path, &json_output)
-            .with_context(|| format!("Failed to write output to {:?}", out_path))?;
+        nexus_cli_utils::write_text_output(&out_path, &json_output)?;
     }
 
     println!("{}", json_output);

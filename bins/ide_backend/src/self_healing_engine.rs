@@ -5,10 +5,6 @@ use nexus_runtime_core::shared_state::VmoState;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
-pub fn init() {
-    tracing::info!(">> [SELF_HEALING] Suture engine initialised");
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
     _orchestrator: Arc<nexus_runtime_core::orchestrator::Orchestrator>,

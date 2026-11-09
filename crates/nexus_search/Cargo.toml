@@ -9,3 +9,6 @@ turbovec = "0.1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+openblas-src = { version = "0.10", features = ["cblas", "system"] }

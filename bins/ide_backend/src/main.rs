@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     // Must precede token creation and database initialization.
     // Keep this handle alive until main exits.
     let _daemon_lock = acquire_daemon_lock()?;
+    let _auth_key = auth::load_key_at_startup()?; // fail fast if NEXUS_AUTH_KEY missing/short
 
     security::write_startup_token()?;
     let api_key_str = std::env::var("GEMINI_API_KEY").unwrap_or_default().trim().to_string();
@@ -109,6 +109,15 @@ async fn main() -> anyhow::Result<()> {
                     r.skipped_live.len()
                 );
             }
+            if !r.stale_heartbeat.is_empty() {
+                tracing::warn!(
+                    "[BOOT] {} live-owner plan(s) have stale heartbeats; preserved, not aborted.",
+                    r.stale_heartbeat.len()
+                );
+                for id in &r.stale_heartbeat {
+                    tracing::warn!("[BOOT]   stale heartbeat: plan_id={}", id);
+                }
+            }
         }
         Err(e) => tracing::error!("[BOOT] Recovery failed: {}", e),
     }
@@ -123,8 +132,6 @@ async fn main() -> anyhow::Result<()> {
     let monitor = Arc::new(Mutex::new(nexus_ide_backend::system_monitor::SystemMonitor::new()));
     let resonance = Arc::new(std::sync::atomic::AtomicU32::new(1000));
 
-    let agent = Arc::new(nexus_model_hub::neural_agent::MicroAgent::init(tx.clone())?);
-    let arbiter = Arc::new(nexus_runtime_core::arbiter_agent::ArbiterAgent::new(agent.clone()));
 
     // 🌟 Boot all Subconscious Background Threads 🌟
     dream_cycle::spawn(
@@ -151,12 +158,10 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(server::AppState {
         client: req_client,
         monitor,
-        agent,
         orchestrator,
         memory,
         api_key,
         tx,
-        arbiter,
         workspace_root: PathBuf::from("."),
         vmo_state,
         cluster,
@@ -166,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 🌟 Boot WASM Sidecars 🌟
     let sidecars_dir = PathBuf::from("sidecars");
+    let mut sidecar_tasks = tokio::task::JoinSet::new();
     if let Ok(entries) = std::fs::read_dir(&sidecars_dir) {
         if let Ok(sidecar_host) = nexus_runtime_core::sidecar_host::SidecarHost::new(true) {
             let sidecar_host = Arc::new(sidecar_host);
@@ -174,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
                 if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
                     tracing::info!(">> [SIDECAR] Loading external cognitive module: {:?}", path);
                     let host = sidecar_host.clone();
-                    tokio::task::spawn_blocking(move || {
+                    sidecar_tasks.spawn_blocking(move || {
                         if let Err(e) = host.load_and_run(&path) {
                             let err_str = e.to_string();
                             if err_str.contains("_start")
@@ -192,6 +198,39 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+    }
+
+    tokio::spawn(async move {
+        while let Some(res) = sidecar_tasks.join_next().await {
+            if let Err(e) = res {
+                if e.is_panic() {
+                    tracing::error!("\x1b[31m[SIDECAR PANIC] A cognitive module worker thread crashed: {}\x1b[0m", e);
+                }
+            }
+        }
+    });
+
+    {
+        let palace = palace.clone();
+        let sig_handle = tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let (Ok(mut term), Ok(mut int)) =
+                (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) else { return };
+            tokio::select! { _ = term.recv() => {}, _ = int.recv() => {} }
+            match palace.abort_plans_owned_by(std::process::id() as i64).await {
+                Ok(n) => tracing::warn!("[SHUTDOWN] Aborted {} in-flight plan(s).", n),
+                Err(e) => tracing::error!("[SHUTDOWN] Abort failed: {}", e),
+            }
+            std::process::exit(0);
+        });
+
+        tokio::spawn(async move {
+            if let Err(e) = sig_handle.await {
+                if e.is_panic() {
+                    tracing::error!("[SHUTDOWN] FATAL: Signal handler task panicked: {}", e);
+                }
+            }
+        });
     }
 
     tracing::info!(">> Core Subsystems online. Binding Axum API Gateway to 0.0.0.0:3000...");
