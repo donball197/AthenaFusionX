@@ -99,3 +99,5 @@ zig-cache/
 zig-out/
 audit_out/
 *.prepatch
+audit_cargo.txt
+active_workspace_signatures.txt
