@@ -58,10 +58,24 @@ struct PlanGuard { memory: Arc<MemoryCortex>, plan_id: String }
 impl Drop for PlanGuard {
     fn drop(&mut self) {
         let (m, id) = (self.memory.clone(), self.plan_id.clone());
-        if let Ok(h) = tokio::runtime::Handle::try_current() {
-            h.spawn(async move {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
                 if let Err(e) = m.abort_plan_if_active(&id).await {
-                    tracing::warn!("[PLAN GUARD] abort of {} failed: {}", id, e);
+                    tracing::warn!("[PLAN GUARD] Async abort of active plan {} failed: {}", id, e);
+                }
+            });
+        } else {
+            tracing::warn!("[PLAN GUARD] No active Tokio runtime handle during drop for plan {}. Enqueuing sync fallback abort.", id);
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
+                if let Ok(runtime) = rt {
+                    runtime.block_on(async move {
+                        if let Err(e) = m.abort_plan_if_active(&id).await {
+                            tracing::error!("[PLAN GUARD] Sync fallback abort of plan {} failed: {}", id, e);
+                        }
+                    });
                 }
             });
         }
