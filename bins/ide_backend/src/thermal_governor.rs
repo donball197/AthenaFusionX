@@ -5,20 +5,6 @@ static THROTTLED: AtomicBool = AtomicBool::new(false);
 static PAUSED: AtomicBool = AtomicBool::new(false);
 static TEMP_C: AtomicU32 = AtomicU32::new(0);
 
-pub fn init() {
-    tracing::info!(">> [THERMAL] Governor initialised");
-}
-
-pub fn is_throttled() -> bool {
-    THROTTLED.load(Ordering::Relaxed)
-}
-pub fn is_paused() -> bool {
-    PAUSED.load(Ordering::Relaxed)
-}
-pub fn current_temp() -> f32 {
-    TEMP_C.load(Ordering::Relaxed) as f32
-}
-
 pub fn spawn() {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(10));

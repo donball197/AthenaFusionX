@@ -43,6 +43,17 @@ pub enum CompletionCondition {
         path: String,
     },
     PatchMarkerAcquired,
+    /// Kind- and path-bound patch requirement. Mirrors the verifier's
+    /// `PATCH_FUNCTION_OK:<path>:<fn>`, `DIFF_PATCH_OK:<path>`, and
+    /// `REPLACE_LINES_OK:<path>` criteria exactly. Prevents the cortex
+    /// from terminating on `[PATCH_FUNCTION_OK]` when the contract requires
+    /// `[DIFF_PATCH_OK]` (or vice versa). `PatchMarkerAcquired` remains
+    /// for inference paths that cannot determine a specific kind/path.
+    PatchPathAcquired {
+        kind: String,
+        path: String,
+        function_name: Option<String>,
+    },
     CommandMarkerAcquired,
     CommandExecutionVerified {
         command: String,
@@ -698,12 +709,50 @@ fn declared_criteria_contract(
         required_artifact_paths.push(ArtifactSpec { path, reason: "output_deliverable".into() });
     }
 
-    if (text.contains("PATCH_FUNCTION_OK:")
-        || text.contains("DIFF_PATCH_OK:")
-        || text.contains("REPLACE_LINES_OK:"))
-        && !read_only
-    {
-        conditions.push(CompletionCondition::PatchMarkerAcquired);
+    if !read_only {
+        let mut pushed_typed_patch = false;
+        for target in extract_all_named_targets(text, "DIFF_PATCH_OK:") {
+            let path = target.trim().to_string();
+            if !path.is_empty() {
+                conditions.push(CompletionCondition::PatchPathAcquired {
+                    kind: "DIFF_PATCH_OK".to_string(),
+                    path,
+                    function_name: None,
+                });
+                pushed_typed_patch = true;
+            }
+        }
+        for target in extract_all_named_targets(text, "REPLACE_LINES_OK:") {
+            let path = target.trim().to_string();
+            if !path.is_empty() {
+                conditions.push(CompletionCondition::PatchPathAcquired {
+                    kind: "REPLACE_LINES_OK".to_string(),
+                    path,
+                    function_name: None,
+                });
+                pushed_typed_patch = true;
+            }
+        }
+        for target in extract_all_named_targets(text, "PATCH_FUNCTION_OK:") {
+            let mut parts = target.splitn(2, ':');
+            let p = parts.next().unwrap_or("").trim().to_string();
+            let f = parts.next().unwrap_or("").trim().to_string();
+            if !p.is_empty() {
+                conditions.push(CompletionCondition::PatchPathAcquired {
+                    kind: "PATCH_FUNCTION_OK".to_string(),
+                    path: p,
+                    function_name: if f.is_empty() { None } else { Some(f) },
+                });
+                pushed_typed_patch = true;
+            }
+        }
+        if !pushed_typed_patch
+            && (text.contains("PATCH_FUNCTION_OK:")
+                || text.contains("DIFF_PATCH_OK:")
+                || text.contains("REPLACE_LINES_OK:"))
+        {
+            conditions.push(CompletionCondition::PatchMarkerAcquired);
+        }
     }
 
     for target in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
@@ -768,6 +817,7 @@ fn declared_criteria_contract(
             CompletionCondition::WritePathAcquired { .. }
                 | CompletionCondition::WriteMarkerAcquired
                 | CompletionCondition::PatchMarkerAcquired
+                | CompletionCondition::PatchPathAcquired { .. }
         )
     });
     let has_recon = conditions.iter().any(|c| {
@@ -1226,6 +1276,7 @@ impl SubgoalCompletionEngine {
                 matches!(
                     c,
                     CompletionCondition::PatchMarkerAcquired
+                        | CompletionCondition::PatchPathAcquired { .. }
                         | CompletionCondition::WriteMarkerAcquired
                 )
             })
@@ -1275,6 +1326,7 @@ impl SubgoalCompletionEngine {
                     condition,
                     CompletionCondition::WriteMarkerAcquired
                         | CompletionCondition::PatchMarkerAcquired
+                        | CompletionCondition::PatchPathAcquired { .. }
                         | CompletionCondition::WritePathAcquired { .. }
                 )
             })
@@ -1556,6 +1608,7 @@ mod tests {
                 CompletionCondition::WriteMarkerAcquired
                     | CompletionCondition::WritePathAcquired { .. }
                     | CompletionCondition::PatchMarkerAcquired
+                    | CompletionCondition::PatchPathAcquired { .. }
             )),
             "read-only mission must not require any write or patch condition"
         );
@@ -1577,10 +1630,10 @@ PATCH_FUNCTION_OK:crates/foo.rs:foo
 
         assert!(!contract.read_only);
         assert!(contract.is_mutation_task);
-        assert!(contract
-            .conditions
-            .iter()
-            .any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired)));
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::PatchMarkerAcquired | CompletionCondition::PatchPathAcquired { .. }
+        )));
     }
 
     #[test]
@@ -2063,10 +2116,10 @@ LINEAGE CONTEXT:
     fn path_bound_reads_do_not_discard_patch_marker() {
         let mission = "PATCH_FUNCTION_OK:a.rs:foo\nREAD_OK:b.rs";
         let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
-        assert!(contract
-            .conditions
-            .iter()
-            .any(|c| matches!(c, CompletionCondition::PatchMarkerAcquired)));
+        assert!(contract.conditions.iter().any(|c| matches!(
+            c,
+            CompletionCondition::PatchMarkerAcquired | CompletionCondition::PatchPathAcquired { .. }
+        )));
     }
 
     #[test]
@@ -2248,6 +2301,95 @@ mod pgrep_binding_tests {
     }
 }
 
+
+#[cfg(test)]
+mod patch_path_integration_tests {
+    use super::{CompletionCondition, SubgoalCompletionEngine};
+    use crate::agent_protocol::AgentAction;
+
+    fn typed_patch(
+        contract: &super::SubgoalContract,
+    ) -> Option<(&str, &str, Option<&str>)> {
+        contract.conditions.iter().find_map(|c| match c {
+            CompletionCondition::PatchPathAcquired { kind, path, function_name } => {
+                Some((kind.as_str(), path.as_str(), function_name.as_deref()))
+            }
+            _ => None,
+        })
+    }
+
+    fn agent(json: serde_json::Value) -> AgentAction {
+        serde_json::from_value(json).expect("AgentAction JSON")
+    }
+
+    #[test]
+    fn diff_patch_criterion_parses_to_typed_variant() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - DIFF_PATCH_OK:bins/ide_backend\n\n\
+                       NODE COMPLETION RULE: x";
+        let c = SubgoalCompletionEngine::infer_contract("t", mission);
+        assert_eq!(typed_patch(&c), Some(("DIFF_PATCH_OK", "bins/ide_backend", None)));
+    }
+
+    #[test]
+    fn patch_function_criterion_parses_path_and_fn() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - PATCH_FUNCTION_OK:crates/foo.rs:foo\n\n\
+                       NODE COMPLETION RULE: x";
+        let c = SubgoalCompletionEngine::infer_contract("t", mission);
+        assert_eq!(typed_patch(&c), Some(("PATCH_FUNCTION_OK", "crates/foo.rs", Some("foo"))));
+    }
+
+    #[test]
+    fn wrong_kind_evidence_does_not_satisfy_diff_patch_criterion() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - DIFF_PATCH_OK:bins/ide_backend\n\n\
+                       NODE COMPLETION RULE: x";
+        let c = SubgoalCompletionEngine::infer_contract("t", mission);
+        // [PATCH_FUNCTION_OK] must NOT satisfy a DIFF_PATCH_OK criterion.
+        let fn_ev = "[PATCH_FUNCTION_OK] bins/ide_backend:init\nUpdated function 'init' in bins/ide_backend\n";
+        assert!(!SubgoalCompletionEngine::evaluate(&c, fn_ev, 1.0));
+        // Correct kind satisfies.
+        let diff_ev = "[DIFF_PATCH_OK] Applied changes to bins/ide_backend\n";
+        assert!(SubgoalCompletionEngine::evaluate(&c, diff_ev, 1.0));
+    }
+
+    #[test]
+    fn advancement_is_kind_exclusive() {
+        let mission = "OBJECTIVE: x\nASSIGNED ROLE: CodeModifier\n\n\
+                       MANDATORY NODE SUCCESS CRITERIA:\n\
+                       - DIFF_PATCH_OK:src/foo.rs\n\n\
+                       NODE COMPLETION RULE: x";
+        let session = crate::cognition::epistemic_session::EpistemicSession::new(mission);
+        // Precondition: contract carries typed DIFF_PATCH_OK condition.
+        assert_eq!(
+            typed_patch(&session.contract),
+            Some(("DIFF_PATCH_OK", "src/foo.rs", None)),
+        );
+
+        let diff = agent(serde_json::json!({
+            "type": "diff_patch", "path": "src/foo.rs", "search": "a", "replace": "b"
+        }));
+        let pf = agent(serde_json::json!({
+            "type": "patch_function", "path": "src/foo.rs", "function_name": "foo", "new_body": "fn foo() {}"
+        }));
+        let rl = agent(serde_json::json!({
+            "type": "replace_lines", "path": "src/foo.rs", "start_line": 1, "end_line": 1, "replacement": "x"
+        }));
+
+        let advance = |a: &AgentAction| {
+            crate::cortical::contract_advance::action_advances_unmet_contract_condition(
+                a, &session, mission,
+            )
+        };
+        assert!(advance(&diff), "DiffPatch must advance DIFF_PATCH_OK");
+        assert!(!advance(&pf), "PatchFunction must NOT advance DIFF_PATCH_OK");
+        assert!(!advance(&rl), "ReplaceLines must NOT advance DIFF_PATCH_OK");
+    }
+}
 
 #[cfg(test)]
 mod search_checked_contract_tests {

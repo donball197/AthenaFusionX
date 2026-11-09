@@ -52,7 +52,9 @@ pub fn write_path_satisfied(evidence: &str, path: &str) -> bool {
 /// known top-level root). This keeps `path:term` parsing unambiguous for
 /// terms that themselves contain colons, such as Rust module paths.
 pub(crate) fn looks_like_workspace_path(s: &str) -> bool {
-    s.starts_with('/')
+    // DOT_ROOT: "." / "./" is the workspace root.
+    s == "." || s == "./"
+        || s.starts_with('/')
         || s.contains('/')
         || matches!(s, "crates" | "bins" | "src" | "vendor" | "apps" | "drones")
 }
@@ -78,7 +80,20 @@ pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
 
     let (path_part, term_part) = match expected.split_once(':') {
         Some((p, t)) if looks_like_workspace_path(p.trim()) => {
-            (p.trim().to_string(), t.trim().to_string())
+            // Trim BOTH leading and trailing slashes. The planner may emit
+            // `bins/:todo!` (trailing slash from mission text "bins/") or
+            // `/bins/:todo!` (absolute path form). Evidence records
+            // `Path: .../bins` without a trailing slash. trim_end_matches
+            // alone is insufficient for the leading-slash form because
+            // `format!("/{}", "/bins")` produces "//bins" which never
+            // matches a real evidence path.
+            (
+                {
+                    let t0 = p.trim().trim_matches('/');
+                    if t0 == "." { String::new() } else { t0.to_string() }
+                },
+                t.trim().to_string(),
+            )
         }
         _ => (String::new(), expected.clone()),
     };
@@ -133,7 +148,7 @@ pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
                 if let Some(recorded_path) =
                     path_field.trim().strip_prefix("Path:")
                 {
-                    let recorded_path = recorded_path.trim().to_lowercase();
+                    let recorded_path = recorded_path.trim().trim_matches('/').to_lowercase();
                     let recorded_query = query_field
                         .trim()
                         .trim_matches(|c| {
@@ -171,7 +186,20 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
     // path binding is intentionally skipped below.
     let (path_part, term_part) = match expected.split_once(':') {
         Some((p, t)) if looks_like_workspace_path(p.trim()) => {
-            (p.trim().to_string(), t.trim().to_string())
+            // Trim BOTH leading and trailing slashes. The planner may emit
+            // `bins/:todo!` (trailing slash from mission text "bins/") or
+            // `/bins/:todo!` (absolute path form). Evidence records
+            // `Path: .../bins` without a trailing slash. trim_end_matches
+            // alone is insufficient for the leading-slash form because
+            // `format!("/{}", "/bins")` produces "//bins" which never
+            // matches a real evidence path.
+            (
+                {
+                    let t0 = p.trim().trim_matches('/');
+                    if t0 == "." { String::new() } else { t0.to_string() }
+                },
+                t.trim().to_string(),
+            )
         }
         _ => (String::new(), expected.clone()),
     };
@@ -220,7 +248,7 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
         if has_matches {
             if let Some((path_field, query_field)) = header.split_once("| Query:") {
                 if let Some(recorded_path) = path_field.trim().strip_prefix("Path:") {
-                    let recorded_path = recorded_path.trim().to_lowercase();
+                    let recorded_path = recorded_path.trim().trim_matches('/').to_lowercase();
                     let recorded_query = query_field
                         .trim()
                         .trim_matches(|c| c == '\'' || c == '"' || c == '`')
@@ -297,6 +325,88 @@ pub fn has_patch_satisfied_marker(evidence: &str) -> bool {
     })
 }
 
+/// Record-scoped, kind-specific patch evidence check.
+///
+/// Each kind of patch marker has its own wire format emitted by the
+/// executor:
+///   `[DIFF_PATCH_OK] Applied changes to <path>`
+///   `[REPLACE_LINES_OK] Replaced lines N-M in <path>`
+///   `[PATCH_FUNCTION_OK] <path>:<fn>` (first line; body carries a
+///       human-readable summary referencing the same path/fn)
+///   `[PATCH_IDEMPOTENT_OK] <path>:<fn>` (first line; body is
+///       "PatchFunction already satisfied; source unchanged.")
+///
+/// A `PatchPathAcquired { kind: "DIFF_PATCH_OK", .. }` criterion must NOT
+/// be satisfied by `[PATCH_FUNCTION_OK]` (or vice versa). Path binding is
+/// exact after trim, so an unrelated path that merely *contains* the
+/// target is rejected.
+pub fn patch_path_satisfied(
+    evidence: &str,
+    kind: &str,
+    path: &str,
+    function_name: Option<&str>,
+) -> bool {
+    fn norm_path(p: &str) -> String {
+        let p = p.trim().trim_start_matches("./");
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Ok(rel) = std::path::Path::new(p).strip_prefix(&cwd) {
+                return rel.to_string_lossy().to_string();
+            }
+        }
+        p.to_string()
+    }
+    let target = norm_path(path);
+    if target.is_empty() {
+        return false;
+    }
+
+    match kind {
+        "DIFF_PATCH_OK" => evidence.lines().any(|l| {
+            if let Some(rest) = l.strip_prefix("[DIFF_PATCH_OK]") {
+                let rest = rest.trim();
+                let path_part = rest
+                    .strip_prefix("Applied changes to ")
+                    .unwrap_or(rest)
+                    .trim();
+                norm_path(path_part) == target
+            } else {
+                false
+            }
+        }),
+        "REPLACE_LINES_OK" => evidence.lines().any(|l| {
+            if let Some(rest) = l.strip_prefix("[REPLACE_LINES_OK]") {
+                let rest = rest.trim();
+                match rest.rfind(" in ") {
+                    Some(i) => norm_path(&rest[i + 4..]) == target,
+                    None => false,
+                }
+            } else {
+                false
+            }
+        }),
+        "PATCH_FUNCTION_OK" => evidence.lines().any(|l| {
+            let rest = if let Some(r) = l.strip_prefix("[PATCH_FUNCTION_OK]") {
+                r
+            } else if let Some(r) = l.strip_prefix("[PATCH_IDEMPOTENT_OK]") {
+                r
+            } else {
+                return false;
+            };
+            let rest = rest.trim();
+            match rest.split_once(':') {
+                Some((rec_path, rec_fn)) => {
+                    if norm_path(rec_path) != target {
+                        return false;
+                    }
+                    function_name.map_or(true, |f| rec_fn.trim() == f)
+                }
+                None => false,
+            }
+        }),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +473,31 @@ mod tests {
     #[test]
     fn idempotent_marker_is_not_generic_mutation() {
         assert!(!has_mutation_marker("[PATCH_IDEMPOTENT_OK] a.rs:x\n"));
+    }
+
+    #[test]
+    fn patch_path_satisfied_is_kind_specific() {
+        let diff_ev = "[DIFF_PATCH_OK] Applied changes to bins/ide_backend\n";
+        let fn_ev = "[PATCH_FUNCTION_OK] bins/ide_backend:init\nUpdated function 'init' in bins/ide_backend\n";
+        assert!(patch_path_satisfied(diff_ev, "DIFF_PATCH_OK", "bins/ide_backend", None));
+        assert!(!patch_path_satisfied(fn_ev, "DIFF_PATCH_OK", "bins/ide_backend", None));
+        assert!(patch_path_satisfied(fn_ev, "PATCH_FUNCTION_OK", "bins/ide_backend", Some("init")));
+        assert!(!patch_path_satisfied(fn_ev, "PATCH_FUNCTION_OK", "bins/ide_backend", Some("other")));
+    }
+
+    #[test]
+    fn patch_path_satisfied_rejects_superset_path() {
+        // An evidence path that merely *contains* the target must not match.
+        let ev = "[DIFF_PATCH_OK] Applied changes to bins/ide_backend/src/broker.rs\n";
+        assert!(!patch_path_satisfied(ev, "DIFF_PATCH_OK", "bins/ide_backend", None));
+        assert!(patch_path_satisfied(ev, "DIFF_PATCH_OK", "bins/ide_backend/src/broker.rs", None));
+    }
+
+    #[test]
+    fn patch_path_satisfied_replace_lines_format() {
+        let ev = "[REPLACE_LINES_OK] Replaced lines 8-10 in src/lib.rs\n";
+        assert!(patch_path_satisfied(ev, "REPLACE_LINES_OK", "src/lib.rs", None));
+        assert!(!patch_path_satisfied(ev, "REPLACE_LINES_OK", "src/main.rs", None));
     }
 
     #[test]
@@ -656,5 +791,49 @@ mod search_checked_tests {
         // Accepted because MATCHES exists (a real hit was found),
         // not because the trailing phrase proves absence.
         assert!(search_checked_satisfied(evidence, "bins:x"));
+    }
+}
+
+
+#[cfg(test)]
+mod trailing_slash_regression_tests {
+    use super::*;
+
+    #[test]
+    fn all_slash_forms_satisfy() {
+        let ev = concat!(
+            "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/bins | Query: 'todo!'\n",
+            "No code matches found in specified path.\n"
+        );
+        // All three criteria spellings must resolve to the same match:
+        assert!(search_checked_satisfied(ev, "bins:todo!"),
+            "bare form");
+        assert!(search_checked_satisfied(ev, "bins/:todo!"),
+            "trailing-slash form (planner copies from 'bins/' mission text)");
+        assert!(search_checked_satisfied(ev, "/bins/:todo!"),
+            "leading+trailing slash form (absolute path intent)");
+    }
+
+    #[test]
+    fn positive_matches_also_normalize() {
+        let ev = concat!(
+            "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/crates | Query: 'todo!'\n",
+            "MATCHES:\n",
+            "crates/foo.rs:1: todo!()\n"
+        );
+        assert!(search_checked_satisfied(ev, "crates/:todo!"));
+        assert!(search_checked_satisfied(ev, "crates:todo!"));
+        assert!(search_checked_satisfied(ev, "/crates/:todo!"));
+    }
+
+    #[test]
+    fn wrong_path_still_rejected() {
+        let ev = concat!(
+            "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/bins | Query: 'todo!'\n",
+            "No code matches found in specified path.\n"
+        );
+        assert!(!search_checked_satisfied(ev, "apps/:todo!"));
+        assert!(!search_checked_satisfied(ev, "crates/:todo!"));
+        assert!(!search_checked_satisfied(ev, "root/:todo!"));
     }
 }

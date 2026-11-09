@@ -310,6 +310,23 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                     }
                 }
             }
+
+//             // Normalize replace_lines model-side field names
+//             let is_replace_lines = obj
+//                 .get("type")
+//                 .and_then(serde_json::Value::as_str)
+//                 .is_some_and(|t| t == "replace_lines");
+//             if is_replace_lines {
+//                 if !obj.contains_key("replacement") {
+//                     if let Some(v) = obj
+//                         .remove("new_content")
+//                         .or_else(|| obj.remove("content"))
+//                         .or_else(|| obj.remove("new_body"))
+//                     {
+//                         obj.insert("replacement".to_string(), v);
+//                     }
+//                 }
+//             }
         };
 
         if let Some(arr) = val.as_array_mut() {
@@ -523,6 +540,75 @@ mod tests {
                 assert_eq!(max_lines, 50);
             }
             other => panic!("expected ReadFileChunk, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_lines_accepts_new_content_alias() {
+        let action = extract_single(
+            r#"[{
+                "type": "replace_lines",
+                "path": "bins/ide_backend/src/main.rs",
+                "start_line": 228,
+                "end_line": 228,
+                "new_content": "            return;",
+                "reasoning": "graceful shutdown"
+            }]"#,
+        );
+        match action {
+            AgentAction::ReplaceLines {
+                path,
+                start_line,
+                end_line,
+                replacement,
+                ..
+            } => {
+                assert_eq!(path, "bins/ide_backend/src/main.rs");
+                assert_eq!(start_line, 228);
+                assert_eq!(end_line, 228);
+                assert_eq!(replacement, "            return;");
+            }
+            other => panic!("expected ReplaceLines, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_lines_still_accepts_native_replacement() {
+        let action = extract_single(
+            r#"[{
+                "type": "replace_lines",
+                "path": "src/lib.rs",
+                "start_line": 10,
+                "end_line": 12,
+                "replacement": "fn foo() {}",
+                "reasoning": "native form"
+            }]"#,
+        );
+        match action {
+            AgentAction::ReplaceLines { replacement, .. } => {
+                assert_eq!(replacement, "fn foo() {}");
+            }
+            other => panic!("expected ReplaceLines, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_lines_accepts_content_alias() {
+        let action = extract_single(
+            r#"[{
+                "type": "replace_lines",
+                "path": "a.rs",
+                "start_line": 1,
+                "end_line": 1,
+                "content": "// replaced",
+                "reasoning": ""
+            }]"#,
+        );
+        match action {
+            AgentAction::ReplaceLines { replacement, .. } => {
+                assert_eq!(replacement, "// replaced");
+            }
+            other => panic!("expected ReplaceLines, got {:?}", other),
         }
     }
 }

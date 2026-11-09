@@ -36,6 +36,8 @@ members = [
     "crates/evolution_engine",
     "crates/nexus_dag_orchestrator",
     "crates/terminal_core",
+    "crates/nexus_cli_utils",
+    "crates/nexus_cli_utils",
     "bins/reflex_test",
 ]
 resolver = "2"

@@ -93,7 +93,6 @@ pub enum TokenVerdict {
     Valid,
     Expired,
     InvalidSignature,
-    MissingKey,
 }
 
 pub fn verify_token_detailed(token: &str) -> Result<TokenVerdict> {

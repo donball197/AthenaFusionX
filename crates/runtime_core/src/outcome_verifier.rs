@@ -126,6 +126,14 @@ impl OutcomeVerifier {
                 CompletionCondition::PatchMarkerAcquired => {
                     crate::evidence_markers::has_patch_satisfied_marker(local_evidence)
                 }
+                CompletionCondition::PatchPathAcquired { kind, path, function_name } => {
+                    crate::evidence_markers::patch_path_satisfied(
+                        local_evidence,
+                        kind,
+                        path,
+                        function_name.as_deref(),
+                    )
+                }
                 CompletionCondition::CommandMarkerAcquired => {
                     // A bare "[CMD_OK]" substring is not proof: mission text,
                     // quoted source, and tool output can all contain the

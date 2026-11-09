@@ -168,9 +168,25 @@ impl CorticalLoop {
             .iter()
             .map(|a| a.path.to_string())
             .find(|p| {
-                (p.ends_with(".md") || p.ends_with(".txt"))
-                    && !session.local_evidence.contains(&format!("[READ_OK] {}", p))
-                    && !session.local_evidence.contains(&format!("[AUTO_VERIFY_READ] {}", p))
+                if !(p.ends_with(".md") || p.ends_with(".txt")) {
+                    return false;
+                }
+                // Look only at evidence AFTER the most recent write of
+                // this path, so a rewrite triggers a fresh verification
+                // read (the earlier READ_OK is now stale).
+                let direct = format!("[WRITE_OK] {}", p);
+                let synth =
+                    format!("Successfully synthesized and wrote report to {}", p);
+                let since_write_start = session
+                    .local_evidence
+                    .rfind(&direct)
+                    .into_iter()
+                    .chain(session.local_evidence.rfind(&synth))
+                    .max()
+                    .unwrap_or(0);
+                let since_write = &session.local_evidence[since_write_start..];
+                !since_write.contains(&format!("[READ_OK] {}", p))
+                    && !since_write.contains(&format!("[AUTO_VERIFY_READ] {}", p))
             });
 
         let mut active_strategy = if write_phase_ready {
@@ -201,7 +217,43 @@ impl CorticalLoop {
         } else if session.contract.is_mutation_task
             && unwritten_targets.is_empty()
             && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
-            && !halt_rejected_since_last_evidence(&session.local_evidence)
+            && !session.contract.required_artifact_paths.is_empty()
+            && artifact_vetoed_after_last_write(&session.local_evidence)
+            && {
+                let target = session
+                    .contract
+                    .required_artifact_paths
+                    .first()
+                    .map(|a| a.path.as_str())
+                    .unwrap_or("");
+                artifact_rewrite_available(&session.local_evidence, target)
+            }
+        {
+            // CRITIC ARTIFACT-VETO RECOVERY -- when the Adversarial Critic
+            // rejected a just-written artifact, the halt phase is otherwise
+            // unescapable: the phase transition keeps re-forcing `halt`
+            // (because `[CRITIC_VETO]` is not `[HALT_REJECTED_REPORT]`),
+            // the strategist keeps proposing halt, and the critic keeps
+            // rejecting it. This branch forces a correction write instead.
+            let target = session
+                .contract
+                .required_artifact_paths
+                .first()
+                .map(|a| a.path.to_string())
+                .unwrap_or_default();
+            self.log(format!(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Critic rejected artifact; forcing correction `write_file:{}`.",
+                target
+            ));
+            session.local_evidence.push_str(&format!(
+                "\n[NODE PHASE] The artifact `{}` was rejected by the Adversarial Critic. Rewrite it to address the veto, then re-read it back before halting. Do NOT propose halt until the artifact is accepted.\n",
+                target
+            ));
+            format!("write_file:{}", target)
+        } else if session.contract.is_mutation_task
+            && unwritten_targets.is_empty()
+            && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
+            && !halt_rejected_since_last_write(&session.local_evidence)
             && {
                 // If the contract carries ONLY write conditions (no reads,
                 // searches, or belief thresholds), skip the recon check --
@@ -797,7 +849,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             // is outside the pinned strategy and the (possibly under-specified)
             // contract.
             let veto_recon_ok = (session.local_evidence.contains("[CRITIC_VETO]")
-                || session.local_evidence.contains("[HALT_REJECTED_REPORT]"))
+                || (session.local_evidence.contains("[HALT_REJECTED_REPORT]") || session.local_evidence.contains("[HALT_REJECTED]")))
                 && match first_action {
                     AgentAction::ReadFile { _thought_process: None, .. }
                     | AgentAction::ReadFileChunk { _thought_process: None, .. }
@@ -861,6 +913,25 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             && obj.contains("read_file")))
             };
 
+            // FIX BUG-03: a proposal to mutate a path whose read is already
+            // evidenced must not be classified as a strategy violation. The
+            // post-read mutation pivot hints this to the strategist; exempting
+            // the resulting action here prevents the hint being contradicted.
+            let post_read_mutation_pivot_ok = {
+                let proposed_path: Option<&str> = match first_action {
+                    AgentAction::PatchFunction { path, .. }
+                    | AgentAction::PatchFile { path, .. }
+                    | AgentAction::WriteFile { path, .. }
+                    | AgentAction::ReplaceLines { path, .. }
+                    | AgentAction::DiffPatch { path, .. } => Some(path.as_str()),
+                    _ => None,
+                };
+                proposed_path.map(|p| {
+                    session.local_evidence.contains(&format!("[READ_OK] {}", p))
+                        || session.local_evidence.contains(&format!("[READ_CHUNK_OK] File: {}", p))
+                }).unwrap_or(false)
+            };
+
             if !strategy_ok
                 && !advances_unmet
                 && !veto_recon_ok
@@ -868,6 +939,7 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 && !mandatory_pivot_ok
                 && !audit_read_pivot_ok
                 && !cross_action_pivot_ok
+                && !post_read_mutation_pivot_ok
             {
                 self.log(format!(
                     "\x1b[1;31m>> [STRATEGY VIOLATION]\x1b[0m Selected strategy '{}' produced incompatible action '{:?}'. Rejecting proposal and forcing re-strategy.",
@@ -988,6 +1060,46 @@ mod dir_child_tests {
 /// True when the most recent halt-report rejection is newer than the most recent
 /// successful physical evidence (a `[..._OK]` marker). The strategist has been told
 /// its report lacks findings and has gathered nothing since.
+/// True when any rejection marker appears after the most recent
+/// `[WRITE_OK]`. Covers both rejection stages:
+///   * `[CRITIC_VETO]` -- the Adversarial Critic rejected the artifact
+///     content (before dispatch).
+///   * `[HALT_REJECTED]` -- the mission verifier rejected the halt
+///     (after dispatch). This is the marker that actually appeared in
+///     the run where the loop relied on LLM variance to break out.
+/// Distinct from `halt_rejected_since_last_evidence`, which only tracks
+/// `[HALT_REJECTED_REPORT]` (report-shape rejections) and is used by the
+/// mutation-halt branch to defer to the strategist after a thin report.
+fn artifact_vetoed_after_last_write(evidence: &str) -> bool {
+    let last_write = evidence.rfind("[WRITE_OK]");
+    let last_reject = match (
+        evidence.rfind("[CRITIC_VETO]"),
+        evidence.rfind("[HALT_REJECTED]"),
+    ) {
+        (Some(v), Some(h)) => Some(v.max(h)),
+        (Some(v), None) => Some(v),
+        (None, Some(h)) => Some(h),
+        (None, None) => None,
+    };
+    match (last_write, last_reject) {
+        (Some(w), Some(r)) => r > w,
+        _ => false,
+    }
+}
+
+/// True while the artifact has been written fewer than 3 times, bounding
+/// the critic-driven rewrite loop.
+fn artifact_rewrite_available(evidence: &str, target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    evidence
+        .lines()
+        .filter(|l| l.trim_start().starts_with("[WRITE_OK]") && l.contains(target))
+        .count()
+        < 3
+}
+
 fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
     let mut last_reject: Option<usize> = None;
     let mut last_ok: Option<usize> = None;
@@ -1006,6 +1118,32 @@ fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
     }
     match (last_reject, last_ok) {
         (Some(r), Some(o)) => r > o,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+
+/// True when a halt rejection or critic veto is newer than the last mutation
+/// marker. Used only by the mutation-complete branch: the cortex must rewrite
+/// the artifact (and may run recon first) before halt is forced again.
+fn halt_rejected_since_last_write(evidence: &str) -> bool {
+    let mut last_reject: Option<usize> = None;
+    let mut last_write: Option<usize> = None;
+    for (i, l) in evidence.lines().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("[HALT_REJECTED") || t.starts_with("[CRITIC_VETO") {
+            last_reject = Some(i);
+        } else if t.starts_with("[WRITE_OK]")
+            || t.starts_with("[PATCH_FUNCTION_OK]")
+            || t.starts_with("[DIFF_PATCH_OK]")
+            || t.starts_with("[REPLACE_LINES_OK]")
+        {
+            last_write = Some(i);
+        }
+    }
+    match (last_reject, last_write) {
+        (Some(r), Some(w)) => r > w,
         (Some(_), None) => true,
         _ => false,
     }
@@ -1175,9 +1313,9 @@ fn auto_halt_report_aggregated(evidence: &str) -> String {
         } else if let Some(b) = cur.as_mut() {
             if let Some(s) = t.strip_prefix("Status:") {
                 b.1 = s.trim().to_string();
-            } else if t == "STDOUT:" {
+            } else if t == "STDOUT:" || t == "STDERR:" { /* STDERR-IN-REPORT */
                 in_stdout = true;
-            } else if in_stdout && t.starts_with('[') && t.contains(']') {
+            } else if in_stdout && t.starts_with('[') && t.contains(']') && !t.starts_with("[...") {
                 in_stdout = false;
             } else if in_stdout {
                 b.2.push_str(line);
@@ -1287,9 +1425,9 @@ fn auto_halt_report(evidence: &str) -> String {
                 b.0 = s.trim().to_string();
             } else if let Some(h) = t.strip_prefix("[CMD_HASH]") {
                 b.1 = h.trim().to_string();
-            } else if t == "STDOUT:" {
+            } else if t == "STDOUT:" || t == "STDERR:" { /* STDERR-IN-REPORT */
                 in_stdout = true;
-            } else if in_stdout && t.starts_with('[') && t.contains(']') {
+            } else if in_stdout && t.starts_with('[') && t.contains(']') && !t.starts_with("[...") {
                 in_stdout = false;
             } else if in_stdout {
                 b.2.push_str(line);
@@ -1358,5 +1496,74 @@ mod lineage_halt_tests {
         let r = auto_halt_report(ev);
         assert!(r.contains("inherited") && !r.contains("abc"));
         assert!(r.ends_with('.'));
+    }
+}
+
+#[cfg(test)]
+mod artifact_vetoed_predicate_tests {
+    use super::*;
+
+    /// True when any rejection marker appears AFTER the last write.
+    /// Covers all 8 orderings the real evidence stream can produce.
+    #[test]
+    fn no_write_at_all_is_not_vetoed() {
+        // Only a rejection, no [WRITE_OK]. The branch must not fire.
+        assert!(!artifact_vetoed_after_last_write("[CRITIC_VETO] x"));
+        assert!(!artifact_vetoed_after_last_write("[HALT_REJECTED] x"));
+    }
+
+    #[test]
+    fn write_then_critic_veto_is_vetoed() {
+        assert!(artifact_vetoed_after_last_write(
+            "[WRITE_OK] a.md\n[CRITIC_VETO] content wrong"
+        ));
+    }
+
+    #[test]
+    fn write_then_halt_rejected_is_vetoed() {
+        // This is the exact case that motivated the fix.
+        assert!(artifact_vetoed_after_last_write(
+            "[WRITE_OK] a.md\n[HALT_REJECTED] absence claims not paired"
+        ));
+    }
+
+    #[test]
+    fn write_then_both_rejections_is_vetoed() {
+        assert!(artifact_vetoed_after_last_write(
+            "[WRITE_OK] a.md\n[CRITIC_VETO] x\n[HALT_REJECTED] y"
+        ));
+    }
+
+    #[test]
+    fn rejection_before_write_is_stale() {
+        // Rejection predates the write. Nothing to correct; do not fire.
+        assert!(!artifact_vetoed_after_last_write(
+            "[CRITIC_VETO] x\n[WRITE_OK] a.md"
+        ));
+        assert!(!artifact_vetoed_after_last_write(
+            "[HALT_REJECTED] x\n[WRITE_OK] a.md"
+        ));
+    }
+
+    #[test]
+    fn write_without_rejection_is_not_vetoed() {
+        assert!(!artifact_vetoed_after_last_write("[WRITE_OK] a.md"));
+    }
+
+    #[test]
+    fn empty_evidence_is_not_vetoed() {
+        assert!(!artifact_vetoed_after_last_write(""));
+    }
+
+    #[test]
+    fn latest_of_either_marker_wins() {
+        // Two writes, a rejection between them, and a final rejection after
+        // the second write. The final rejection must be the one compared.
+        let ev = "[WRITE_OK] a.md\n[HALT_REJECTED] first try\n[WRITE_OK] a.md\n[CRITIC_VETO] second try";
+        assert!(artifact_vetoed_after_last_write(ev));
+
+        // Two writes, rejection between them, nothing after the second write.
+        let ev2 = "[WRITE_OK] a.md\n[CRITIC_VETO] first try\n[WRITE_OK] a.md";
+        assert!(!artifact_vetoed_after_last_write(ev2));
     }
 }

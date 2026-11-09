@@ -178,6 +178,34 @@ pub(crate) fn action_advances_unmet_contract_condition(
                     ),
                 }
             }
+            CC::PatchPathAcquired { kind, path: target_path, function_name } => {
+                match kind.as_str() {
+                    "DIFF_PATCH_OK" => matches!(
+                        action,
+                        AgentAction::DiffPatch { path, .. }
+                            if same_workspace_path(path, target_path)
+                    ),
+                    "REPLACE_LINES_OK" => matches!(
+                        action,
+                        AgentAction::ReplaceLines { path, .. }
+                            if same_workspace_path(path, target_path)
+                    ),
+                    "PATCH_FUNCTION_OK" => match function_name {
+                        Some(expected_fn) => matches!(
+                            action,
+                            AgentAction::PatchFunction { path, function_name, .. }
+                                if same_workspace_path(path, target_path)
+                                    && function_name.trim() == expected_fn.as_str()
+                        ),
+                        None => matches!(
+                            action,
+                            AgentAction::PatchFunction { path, .. }
+                                if same_workspace_path(path, target_path)
+                        ),
+                    },
+                    _ => false,
+                }
+            }
             CC::CommandMarkerAcquired => {
                 matches!(action, AgentAction::ExecuteCommand { .. })
             }

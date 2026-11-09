@@ -132,8 +132,6 @@ async fn main() -> anyhow::Result<()> {
     let monitor = Arc::new(Mutex::new(nexus_ide_backend::system_monitor::SystemMonitor::new()));
     let resonance = Arc::new(std::sync::atomic::AtomicU32::new(1000));
 
-    let agent = Arc::new(nexus_model_hub::neural_agent::MicroAgent::init(tx.clone())?);
-    let arbiter = Arc::new(nexus_runtime_core::arbiter_agent::ArbiterAgent::new(agent.clone()));
 
     // 🌟 Boot all Subconscious Background Threads 🌟
     dream_cycle::spawn(
@@ -160,12 +158,10 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(server::AppState {
         client: req_client,
         monitor,
-        agent,
         orchestrator,
         memory,
         api_key,
         tx,
-        arbiter,
         workspace_root: PathBuf::from("."),
         vmo_state,
         cluster,

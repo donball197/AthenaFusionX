@@ -27,12 +27,10 @@ struct Assets;
 pub struct AppState {
     pub client: reqwest::Client,
     pub monitor: Arc<tokio::sync::Mutex<nexus_ide_backend::system_monitor::SystemMonitor>>,
-    pub agent: Arc<nexus_model_hub::neural_agent::MicroAgent>,
     pub orchestrator: Arc<nexus_runtime_core::orchestrator::Orchestrator>,
     pub memory: Arc<MemoryCortex>,
     pub api_key: SecretString,
     pub tx: tokio::sync::broadcast::Sender<String>,
-    pub arbiter: Arc<nexus_runtime_core::arbiter_agent::ArbiterAgent>,
     pub workspace_root: PathBuf,
     pub vmo_state: Arc<tokio::sync::Mutex<VmoState>>,
     pub cluster: Arc<nexus_runtime_core::cluster::ClusterMesh>,

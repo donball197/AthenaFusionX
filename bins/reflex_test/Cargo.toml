@@ -1,5 +1,5 @@
 [package]
-name = "reflex_test"
+name = "reflex-test"
 edition.workspace = true
 version.workspace = true
 

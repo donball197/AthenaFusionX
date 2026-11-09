@@ -341,6 +341,26 @@ impl CorticalLoop {
             }
         }
 
+        // BUG-19: a proposal that deterministically resolves at
+        // least one unmet completion condition is contract-
+        // progressing by construction. The LLM critic's role is
+        // scope/safety review; "is this enough progress?" has a
+        // deterministic answer (task 2: six parallel criteria
+        // flattened into one node; each 1-of-6 search was approved
+        // or vetoed at the LLM's whim).
+        if crate::contract_status::proposal_advances_contract(
+            &actions,
+            &session.contract,
+            &session.local_evidence,
+        ) {
+            self.log(
+                "\x1b[1;36m>> [CRITIC BYPASS] Proposal advances contract deterministically; LLM critic skipped.\x1b[0m"
+                    .to_string(),
+            );
+            session.last_critic_rejected_actions = None;
+            return Ok(CortexState::Execute { actions, proposal, belief });
+        }
+
         self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
         session.budget.record_call();
 
