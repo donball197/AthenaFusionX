@@ -200,7 +200,7 @@ impl CorticalLoop {
             };
 
             let motor_cmd =
-                MotorCortex::translate(&intent, None, action, capability, proposal.clone());
+                MotorCortex::translate(&intent, None, action.clone(), capability, proposal.clone());
 
             if let Err(gate_err) = self.action_gate.approve(&motor_cmd) {
                 mutation_paths.truncate(mutation_paths_checkpoint);
@@ -228,6 +228,11 @@ impl CorticalLoop {
             // execution. A blocked action is therefore never presented to the
             // evaluator as executed.
             session.record_global_action_attempt(&action_key);
+            // BUG-17: log the action itself so the code-shift listener
+            // can answer "did we touch path P?" without parsing a hash.
+            // Without this call, `executed_action_log` stays empty and
+            // every self-write is misclassified as an external shift.
+            session.record_action_attempt(&action);
             executed_actions.push(executed_action_json);
 
             self.log("\x1b[35m>> [MOTOR CORTEX] Emitting authorized MotorCommand to RoboticExecutor...\x1b[0m".to_string());
