@@ -33,11 +33,8 @@ nexus_action_identity_algorithms = { path = "../../algorithms/action_identity" }
 nexus_algorithms = { path = "../../algorithms/nexus_algorithms" }
 sha2 = "0.10"
 
-[lints.clippy]
-needless_question_mark = "allow"
-
-[lints.cargo]
-unused_dependencies = "allow"
+[lints]
+workspace = true
 
 [features]
 default = []

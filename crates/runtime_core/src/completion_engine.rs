@@ -2635,7 +2635,6 @@ CONSTRAINTS:
 
 #[cfg(test)]
 mod surgical_recon_write_tests {
-    use super::*;
 
     #[test]
     fn residual_command_marker_does_not_block_recon_for_write_phase() {
