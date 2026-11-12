@@ -174,7 +174,7 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
             "Halt the current cognitive task when the mission is successfully completed.",
             &["reasoning"],
             json!({
-                "reasoning": { "type": "string", "description": "Summary of completed objective." },
+                "reasoning": { "type": "string", "description": "Complete inline deliverable or concise summary of verified findings." },
             }),
         ),
     ]

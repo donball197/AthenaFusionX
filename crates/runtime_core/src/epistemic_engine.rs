@@ -1137,7 +1137,12 @@ authoritative action representation."#,
             mission, strategy, world_context, bounded_evidence
         );
 
-        let strategy_tools = crate::tools::schema::tool_declarations_for_strategy(phase, strategy);
+        let is_halt_strategy = strategy == "halt" || strategy.starts_with("halt:");
+        let strategy_tools = if is_halt_strategy {
+            Vec::new()
+        } else {
+            crate::tools::schema::tool_declarations_for_strategy(phase, strategy)
+        };
 
         let mut payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -1155,13 +1160,15 @@ authoritative action representation."#,
         // resolves to exactly one native tool, force that tool at the
         // OpenAI-compatible provider boundary. This prevents the model from
         // silently substituting another native action.
-        if let Some(expected_tool) = crate::tools::schema::native_tool_name_for_strategy(strategy) {
+        if !is_halt_strategy {
+          if let Some(expected_tool) = crate::tools::schema::native_tool_name_for_strategy(strategy) {
             payload["forced_tool_choice"] = serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": expected_tool
                 }
             });
+          }
         }
 
         let models = match nexus_algorithms::Router::select("action_planning") {

@@ -177,7 +177,8 @@ impl CorticalLoop {
                 // must not pass on length alone.
                 if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
                     let tail = reasoning.trim_end();
-                    if !tail.ends_with(['.', ')', '!', '`', '"']) {
+                    let unclosed_backtick = reasoning.matches('`').count() % 2 != 0;
+                    if unclosed_backtick || !tail.ends_with(['.', ')', '!', '`', '"']) {
                         defects.push(format!(
                             "report appears truncated (ends with {:?}); finish the final sentence",
                             tail.chars()

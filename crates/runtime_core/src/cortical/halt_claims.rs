@@ -238,6 +238,8 @@ const META_STUB_PHRASES: &[&str] = &[
     "report has been synthesized",
     "has been synthesized inline",
     "mandatory node success criteria have been",
+    "evidence is sufficient to answer",
+    "halting with the inline report",
 ];
 
 /// Defects that make a halt text a non-report. Empty = acceptable.
@@ -263,9 +265,12 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
             verified_any.push(name);
         }
     }
-    if META_STUB_PHRASES.iter().any(|p| lower.contains(p)) && verified_any.is_empty() {
+    if META_STUB_PHRASES.iter().any(|p| lower.contains(p))
+        && (verified_any.is_empty()
+            || (verified_any.len() <= 1 && lower.contains("no further actions are needed")))
+    {
         out.push(
-            "meta-summary claims a report exists without delivering inline findings or cited symbols"
+            "meta-summary claims a report exists without delivering inline findings"
                 .to_string(),
         );
     }
