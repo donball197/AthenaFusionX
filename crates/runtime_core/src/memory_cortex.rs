@@ -141,10 +141,7 @@ impl MemoryCortex {
         status: &str,
         updated_at: i64,
     ) -> anyhow::Result<bool> {
-        Ok(self
-            .palace
-            .update_plan_run_checkpoint(id, graph, status, updated_at)
-            .await?)
+        Ok(self.palace.update_plan_run_checkpoint(id, graph, status, updated_at).await?)
     }
 
     /// Delegate a heartbeat-only update to the palace. Called by the

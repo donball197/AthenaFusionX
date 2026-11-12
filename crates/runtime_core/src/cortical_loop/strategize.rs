@@ -2,6 +2,26 @@
 
 use super::*;
 
+/// True when the strategist's raw proposal wire form contains control-token
+/// leak markers. Such proposals fail `json_parser::extract_actions` and leave
+/// `actions` empty, but auto-halt must NOT fire in that case: the model's
+/// intent was to run a command (the command is embedded in the leaked halt
+/// reasoning). Parsing failure means we cannot extract that intent, and the
+/// only safe recovery is parse-fault handling (evidence marker + belief decay
+/// + re-strategize), not a synthesized halt that discards the intent.
+fn proposal_was_malformed(raw: &str) -> bool {
+    raw.contains("<|end|>")
+        || raw.contains("<|start|>")
+        || raw.contains("<rfl:")
+        || raw.contains("to=execute_command")
+        || raw.contains("to=halt")
+        || raw.contains("to=read_file")
+        || raw.contains("to=write_file")
+        || raw.contains("assistant to=")
+        || raw.contains("Assistant to=")
+        || raw.contains("tool to=")
+}
+
 impl CorticalLoop {
     pub(super) async fn handle_strategize(
         &mut self,
@@ -162,12 +182,8 @@ impl CorticalLoop {
         // strategies, so the Cortex must supply the correct strategy here.
         // AUTO-VERIFY: after a report artifact is written, read it back once so the
         // verifier has a READ_OK to pair claims against, before any halt is forced.
-        let auto_verify_path: Option<String> = session
-            .contract
-            .required_artifact_paths
-            .iter()
-            .map(|a| a.path.to_string())
-            .find(|p| {
+        let auto_verify_path: Option<String> =
+            session.contract.required_artifact_paths.iter().map(|a| a.path.to_string()).find(|p| {
                 if !(p.ends_with(".md") || p.ends_with(".txt")) {
                     return false;
                 }
@@ -175,8 +191,7 @@ impl CorticalLoop {
                 // this path, so a rewrite triggers a fresh verification
                 // read (the earlier READ_OK is now stale).
                 let direct = format!("[WRITE_OK] {}", p);
-                let synth =
-                    format!("Successfully synthesized and wrote report to {}", p);
+                let synth = format!("Successfully synthesized and wrote report to {}", p);
                 let since_write_start = session
                     .local_evidence
                     .rfind(&direct)
@@ -426,9 +441,7 @@ impl CorticalLoop {
         // parsed JSON values; we strip at the string level here so the
         // JSON parser can even see the structure.
         let raw_proposal = {
-            let stripped: String = crate::proposal_sanitize::strip_control_tokens(
-                &raw_proposal,
-            );
+            let stripped: String = crate::proposal_sanitize::strip_control_tokens(&raw_proposal);
             crate::json_parser::sanitize_json_escapes(&stripped)
         };
         let mut actions = match crate::json_parser::extract_actions(&raw_proposal) {
@@ -528,7 +541,9 @@ impl CorticalLoop {
             && !session.local_evidence.contains("READ_ERROR")
             && !session.local_evidence.contains("[READ_");
 
-        if status == ContractStatus::Satisfied
+        // Auto-halt is suppressed when the proposal failed to parse: parse-fault recovery must run so the model's intent (e.g. a leaked execute_command) is recovered on the next turn.
+        if !proposal_was_malformed(&raw_proposal)
+            && status == ContractStatus::Satisfied
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
@@ -654,7 +669,9 @@ impl CorticalLoop {
             let key = crate::cortical::critic_filter::attempt_key(&*session, a);
             session.global_action_attempt_count(&key) >= 1
         });
-        if status == ContractStatus::Satisfied
+        // Auto-halt is suppressed when the proposal failed to parse: parse-fault recovery must run so the model's intent (e.g. a leaked execute_command) is recovered on the next turn.
+        if !proposal_was_malformed(&raw_proposal)
+            && status == ContractStatus::Satisfied
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
             && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
@@ -849,7 +866,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             // is outside the pinned strategy and the (possibly under-specified)
             // contract.
             let veto_recon_ok = (session.local_evidence.contains("[CRITIC_VETO]")
-                || (session.local_evidence.contains("[HALT_REJECTED_REPORT]") || session.local_evidence.contains("[HALT_REJECTED]")))
+                || (session.local_evidence.contains("[HALT_REJECTED_REPORT]")
+                    || session.local_evidence.contains("[HALT_REJECTED]")))
                 && match first_action {
                     AgentAction::ReadFile { _thought_process: None, .. }
                     | AgentAction::ReadFileChunk { _thought_process: None, .. }
@@ -906,8 +924,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 );
                 evidence_done
                     && ((active_strategy.contains("read_file")
-                            && proposes_command
-                            && (obj.contains("execute_command") || obj.contains("free -h")))
+                        && proposes_command
+                        && (obj.contains("execute_command") || obj.contains("free -h")))
                         || (active_strategy.contains("execute_command")
                             && proposes_read
                             && obj.contains("read_file")))
@@ -926,10 +944,14 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     | AgentAction::DiffPatch { path, .. } => Some(path.as_str()),
                     _ => None,
                 };
-                proposed_path.map(|p| {
-                    session.local_evidence.contains(&format!("[READ_OK] {}", p))
-                        || session.local_evidence.contains(&format!("[READ_CHUNK_OK] File: {}", p))
-                }).unwrap_or(false)
+                proposed_path
+                    .map(|p| {
+                        session.local_evidence.contains(&format!("[READ_OK] {}", p))
+                            || session
+                                .local_evidence
+                                .contains(&format!("[READ_CHUNK_OK] File: {}", p))
+                    })
+                    .unwrap_or(false)
             };
 
             if !strategy_ok
@@ -1072,10 +1094,7 @@ mod dir_child_tests {
 /// mutation-halt branch to defer to the strategist after a thin report.
 fn artifact_vetoed_after_last_write(evidence: &str) -> bool {
     let last_write = evidence.rfind("[WRITE_OK]");
-    let last_reject = match (
-        evidence.rfind("[CRITIC_VETO]"),
-        evidence.rfind("[HALT_REJECTED]"),
-    ) {
+    let last_reject = match (evidence.rfind("[CRITIC_VETO]"), evidence.rfind("[HALT_REJECTED]")) {
         (Some(v), Some(h)) => Some(v.max(h)),
         (Some(v), None) => Some(v),
         (None, Some(h)) => Some(h),
@@ -1122,7 +1141,6 @@ fn halt_rejected_since_last_evidence(evidence: &str) -> bool {
         _ => false,
     }
 }
-
 
 /// True when a halt rejection or critic veto is newer than the last mutation
 /// marker. Used only by the mutation-complete branch: the cortex must rewrite
@@ -1313,7 +1331,8 @@ fn auto_halt_report_aggregated(evidence: &str) -> String {
         } else if let Some(b) = cur.as_mut() {
             if let Some(s) = t.strip_prefix("Status:") {
                 b.1 = s.trim().to_string();
-            } else if t == "STDOUT:" || t == "STDERR:" { /* STDERR-IN-REPORT */
+            } else if t == "STDOUT:" || t == "STDERR:" {
+                /* STDERR-IN-REPORT */
                 in_stdout = true;
             } else if in_stdout && t.starts_with('[') && t.contains(']') && !t.starts_with("[...") {
                 in_stdout = false;
@@ -1380,9 +1399,13 @@ fn auto_halt_report_aggregated(evidence: &str) -> String {
         report.push('\n');
     }
     if ok.is_empty() {
-        report.push_str("Every action above is physically evidenced in this session's [*_OK] markers.");
+        report.push_str(
+            "Every action above is physically evidenced in this session's [*_OK] markers.",
+        );
     } else {
-        report.push_str("Each command above was recorded with a clean exit status in [CMD_OK] evidence.");
+        report.push_str(
+            "Each command above was recorded with a clean exit status in [CMD_OK] evidence.",
+        );
     }
     report
 }
@@ -1425,7 +1448,8 @@ fn auto_halt_report(evidence: &str) -> String {
                 b.0 = s.trim().to_string();
             } else if let Some(h) = t.strip_prefix("[CMD_HASH]") {
                 b.1 = h.trim().to_string();
-            } else if t == "STDOUT:" || t == "STDERR:" { /* STDERR-IN-REPORT */
+            } else if t == "STDOUT:" || t == "STDERR:" {
+                /* STDERR-IN-REPORT */
                 in_stdout = true;
             } else if in_stdout && t.starts_with('[') && t.contains(']') && !t.starts_with("[...") {
                 in_stdout = false;
@@ -1514,9 +1538,7 @@ mod artifact_vetoed_predicate_tests {
 
     #[test]
     fn write_then_critic_veto_is_vetoed() {
-        assert!(artifact_vetoed_after_last_write(
-            "[WRITE_OK] a.md\n[CRITIC_VETO] content wrong"
-        ));
+        assert!(artifact_vetoed_after_last_write("[WRITE_OK] a.md\n[CRITIC_VETO] content wrong"));
     }
 
     #[test]
@@ -1537,12 +1559,8 @@ mod artifact_vetoed_predicate_tests {
     #[test]
     fn rejection_before_write_is_stale() {
         // Rejection predates the write. Nothing to correct; do not fire.
-        assert!(!artifact_vetoed_after_last_write(
-            "[CRITIC_VETO] x\n[WRITE_OK] a.md"
-        ));
-        assert!(!artifact_vetoed_after_last_write(
-            "[HALT_REJECTED] x\n[WRITE_OK] a.md"
-        ));
+        assert!(!artifact_vetoed_after_last_write("[CRITIC_VETO] x\n[WRITE_OK] a.md"));
+        assert!(!artifact_vetoed_after_last_write("[HALT_REJECTED] x\n[WRITE_OK] a.md"));
     }
 
     #[test]
@@ -1559,11 +1577,36 @@ mod artifact_vetoed_predicate_tests {
     fn latest_of_either_marker_wins() {
         // Two writes, a rejection between them, and a final rejection after
         // the second write. The final rejection must be the one compared.
-        let ev = "[WRITE_OK] a.md\n[HALT_REJECTED] first try\n[WRITE_OK] a.md\n[CRITIC_VETO] second try";
+        let ev =
+            "[WRITE_OK] a.md\n[HALT_REJECTED] first try\n[WRITE_OK] a.md\n[CRITIC_VETO] second try";
         assert!(artifact_vetoed_after_last_write(ev));
 
         // Two writes, rejection between them, nothing after the second write.
         let ev2 = "[WRITE_OK] a.md\n[CRITIC_VETO] first try\n[WRITE_OK] a.md";
         assert!(!artifact_vetoed_after_last_write(ev2));
+    }
+}
+
+#[cfg(test)]
+mod proposal_sanity_tests {
+    use super::proposal_was_malformed;
+
+    #[test]
+    fn detects_control_token_leak_from_failed_trace() {
+        // Exact wire form from turn 23 of the marker_summary mission. The
+        // model tried to emit halt-with-embedded-execute-command and the
+        // parse rejected it as a control-token leak.
+        let raw = r#"[{"type":"halt","reasoning":"The report still contains unverified line citations. I need numbered source output before rewriting marker_summary.md.<|end|><|start|>assistant to=execute_command<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name=\"command\">\nnl -ba crates/runtime_core/src/evidence_paths.rs"}]"#;
+        assert!(proposal_was_malformed(raw));
+    }
+
+    #[test]
+    fn clean_proposal_is_not_malformed() {
+        let clean =
+            r#"[{"type":"halt","reasoning":"Deliverable written. No further action needed."}]"#;
+        assert!(!proposal_was_malformed(clean));
+
+        let write = r#"[{"type":"write_file","path":"out.md","content":"Report"}]"#;
+        assert!(!proposal_was_malformed(write));
     }
 }

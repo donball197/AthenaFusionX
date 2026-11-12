@@ -278,10 +278,7 @@ fn try_one_shot_fault_injection(
 /// constructing a full RoboticExecutor (which needs episode state,
 /// broadcast channel, and action cache).
 pub(crate) fn validate_search_query(query: &str) -> anyhow::Result<()> {
-    if query.trim().is_empty()
-        || query.contains('\n')
-        || query.contains('\r')
-    {
+    if query.trim().is_empty() || query.contains('\n') || query.contains('\r') {
         return Err(anyhow::anyhow!(
             "SEARCH_FAILED: query must be non-empty and contain no line breaks"
         ));
@@ -620,16 +617,10 @@ impl RoboticExecutor {
                 validate_search_query(&query)?;
 
                 let safe_path =
-                    if path.trim().is_empty() {
-                        PathBuf::from("crates")
-                    } else {
-                        sanitize(&path)?
-                    };
+                    if path.trim().is_empty() { PathBuf::from("crates") } else { sanitize(&path)? };
 
                 let p_str = safe_path.to_str().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "SEARCH_FAILED: search path is not valid UTF-8"
-                    )
+                    anyhow::anyhow!("SEARCH_FAILED: search path is not valid UTF-8")
                 })?;
 
                 // Shell-free search. rg is a fast path; grep is the
@@ -659,12 +650,12 @@ impl RoboticExecutor {
                 };
 
                 let rg_args: Vec<&str> = if is_workspace_root {
-                    vec!["--type","rust","-n","-C","2","-i","-e",query.as_str(),p_str]
+                    vec!["--type", "rust", "-n", "-C", "2", "-i", "-e", query.as_str(), p_str]
                 } else {
-                    vec!["-n","-C","2","-i","-e",query.as_str(),p_str]
+                    vec!["-n", "-C", "2", "-i", "-e", query.as_str(), p_str]
                 };
 
-                let mut grep_args: Vec<&str> = vec!["-rn","-C","2"];
+                let mut grep_args: Vec<&str> = vec!["-rn", "-C", "2"];
                 if is_workspace_root {
                     grep_args.push("--include=*.rs");
                 }
@@ -702,28 +693,24 @@ impl RoboticExecutor {
                         Err(e) => {
                             return Err(anyhow::anyhow!(
                                 "SEARCH_FAILED path={} query={:?}: {}",
-                                p_str, query, e
+                                p_str,
+                                query,
+                                e
                             ));
                         }
                     }
                 };
 
                 let trunc = if stdout.chars().count() > 8000 {
-                    let prefix: String =
-                        stdout.chars().take(8000).collect();
-                    format!(
-                        "{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]",
-                        prefix
-                    )
+                    let prefix: String = stdout.chars().take(8000).collect();
+                    format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", prefix)
                 } else {
                     stdout
                 };
 
                 Ok(format!(
                     "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}",
-                    p_str,
-                    query,
-                    trunc
+                    p_str, query, trunc
                 ))
             }
             MotorAction::ReplaceLines { path, start_line, end_line, replacement } => {

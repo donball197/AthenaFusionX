@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use nexus_cli_utils::parse_arg;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use nexus_cli_utils::parse_arg;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

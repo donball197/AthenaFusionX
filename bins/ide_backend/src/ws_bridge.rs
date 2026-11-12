@@ -17,10 +17,7 @@ pub async fn ws_telemetry_handler(
     let authorized = q
         .get("token")
         .map(|t| {
-            matches!(
-                crate::auth::verify_token_detailed(t),
-                Ok(crate::auth::TokenVerdict::Valid)
-            )
+            matches!(crate::auth::verify_token_detailed(t), Ok(crate::auth::TokenVerdict::Valid))
         })
         .unwrap_or(false);
 

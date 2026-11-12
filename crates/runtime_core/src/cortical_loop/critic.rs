@@ -31,6 +31,7 @@ impl CorticalLoop {
                         .map(crate::cortical::action_identity::action_key)
                         .collect::<Vec<_>>(),
                 );
+                session.last_critic_rejected_at_evidence_len = Some(session.local_evidence.len());
                 session.local_evidence.push_str(&format!(
                     "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
                     msg
@@ -128,6 +129,8 @@ impl CorticalLoop {
                             .map(crate::cortical::action_identity::action_key)
                             .collect::<Vec<_>>(),
                     );
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
                     session.local_evidence.push_str(&format!(
                         "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
                         msg
@@ -236,7 +239,18 @@ impl CorticalLoop {
         let current_action_keys =
             actions.iter().map(crate::cortical::action_identity::action_key).collect::<Vec<_>>();
 
-        if session.last_critic_rejected_actions.as_ref() == Some(&current_action_keys) {
+        // Evidence-growth gate: a retried action batch is only repeat-vetoed
+        // while evidence has not meaningfully grown since the last rejection.
+        // 500 bytes is larger than any single [CRITIC_VETO] + [CRITIC_REPEAT_VETO]
+        // message pair, so ordinary veto churn does not trip the gate; any real
+        // tool result (read, search, command) does.
+        const REPEAT_VETO_EVIDENCE_GROWTH_FLOOR: usize = 500;
+        let evidence_unchanged = session.last_critic_rejected_at_evidence_len.map_or(true, |len| {
+            session.local_evidence.len().saturating_sub(len) < REPEAT_VETO_EVIDENCE_GROWTH_FLOOR
+        });
+        if session.last_critic_rejected_actions.as_ref() == Some(&current_action_keys)
+            && evidence_unchanged
+        {
             self.log(
                 "\x1b[1;31m>> [CRITIC REPEAT VETO] Exact previously rejected action batch proposed again; rejecting before critic re-evaluation.\x1b[0m"
                     .to_string(),
@@ -412,6 +426,40 @@ impl CorticalLoop {
             critic_evidence,
             contract_facts(&session.contract.conditions, &session.local_evidence)
         );
+        // For write_file proposals, the proposal supersedes any prior version
+        // of the same path still visible in local_evidence. Without this note,
+        // the LLM critic compares the new content against the stale content
+        // captured by an earlier [READ_OK] / earlier write and vetoes the
+        // correction as a mismatch. The note is emitted unconditionally for
+        // write_file actions; when no prior version exists the phrase "any
+        // previous content" is vacuously satisfied and the note is harmless.
+        let supersession_note: String = actions
+            .iter()
+            .filter_map(|a| match a {
+                AgentAction::WriteFile { path, .. } => Some(format!(
+                    "\n[CRITIC PROPOSAL AUTHORITY - {}] The proposed write_file \
+                     REPLACES any previous content of this path visible in the \
+                     evidence above. Judge the PROPOSAL CONTENT against the \
+                     SOURCE-CODE evidence (READ_OK blocks for other paths, \
+                     CMD_OK output, SEARCH_CODE_OK results). Do NOT reject a \
+                     proposal because it differs from the previous version of \
+                     the same file in local_evidence - that is the correct \
+                     behavior for a correction after a prior rejection.\n",
+                    path
+                )),
+                _ => None,
+            })
+            .collect();
+        let critic_evidence = format!("{}{}", critic_evidence, supersession_note);
+        let citation_note = concat!(
+            "\n[CRITIC CITATION DISCIPLINE] ",
+            "Assert line numbers or symbol spans ONLY when those exact numbers ",
+            "are visible in a READ_OK / READ_CHUNK_OK body already in evidence. ",
+            "If a span is not visible, say unverified. Do NOT invent lines N-M ",
+            "and do NOT hand the strategist a full replacement report filled with ",
+            "guessed line ranges. Demand re-derivation from the traced source body.\n",
+        );
+        let critic_evidence = format!("{}{}", critic_evidence, citation_note);
         match EpistemicEngine::criticize_proposal(
             &self.client,
             &self.api_key,
@@ -545,13 +593,20 @@ impl CorticalLoop {
                         .collect::<Vec<_>>();
 
                     session.last_critic_rejected_actions = Some(rejected_action_keys);
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
 
                     // Feed the critic's rejection back into the next
                     // Strategize -> Propose cycle. Graph-only feedback is not
                     // sufficient because the strategist receives local_evidence.
+                    // Strip ungrounded line-span prescriptions so the strategist
+                    // re-derives citations from READ_OK instead of obeying invented ranges.
+                    let critique_flat = critic.critique.replace('\n', " ");
+                    let guarded_critique =
+                        sanitize_ungrounded_citation_veto(&critique_flat, &session.local_evidence);
                     let veto_feedback = format!(
                         "\n[CRITIC_VETO] {} [CRITIC_VETO_ACTION] The rejected proposal MUST NOT be repeated. Select a materially different, mission-compliant action.\n",
-                        critic.critique.replace('\n', " ")
+                        guarded_critique
                     );
                     session.local_evidence.push_str(&veto_feedback);
 
@@ -588,6 +643,76 @@ impl CorticalLoop {
 /// Text a patch_function `new_body` must contain for the file's language: the
 /// COMPLETE function item including its signature (per-language keyword; bare
 /// function name for unknown languages).
+
+fn sanitize_ungrounded_citation_veto(verdict: &str, evidence: &str) -> String {
+    let spans = regex_lite_spans(verdict);
+    if spans.is_empty() {
+        return verdict.to_string();
+    }
+
+    let mut out = verdict.to_string();
+    let mut any_ungrounded = false;
+    for span in &spans {
+        if evidence.contains(span) {
+            continue;
+        }
+        any_ungrounded = true;
+        // Neutralize the token so the strategist cannot copy it as authority.
+        out = out.replace(span, "unverified-span");
+    }
+
+    if any_ungrounded {
+        out.push_str(
+            "\n[CITATION_GUARD] One or more prescribed line ranges in this veto do not appear in local evidence. Ignore unverified-span placeholders. Re-derive symbol spans from the existing READ_OK / READ_CHUNK_OK body and rewrite the report from that body only. Do not trust invented line ranges.",
+        );
+    }
+    out
+}
+
+fn regex_lite_spans(text: &str) -> Vec<String> {
+    // Candidate line-range tokens of the form N-M.
+    // If the critique mentions "line" anywhere, every N-M is a candidate
+    // (covers "not 95-105, 111-132, and 140-165" after an earlier "lines ...").
+    // Otherwise require a local "line" window so version ranges in unrelated
+    // vetoes are left alone.
+    let line_context_global = text.to_ascii_lowercase().contains("line");
+    let mut spans = Vec::new();
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < n && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let a = &text[start..i];
+            if i < n && bytes[i] == b'-' {
+                let j = i + 1;
+                let mut k = j;
+                while k < n && bytes[k].is_ascii_digit() {
+                    k += 1;
+                }
+                if k > j {
+                    let accept = if line_context_global {
+                        true
+                    } else {
+                        let ctx_from = start.saturating_sub(12);
+                        text[ctx_from..k].to_ascii_lowercase().contains("line")
+                    };
+                    if accept {
+                        spans.push(format!("{}-{}", a, &text[j..k]));
+                    }
+                    i = k;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    spans
+}
+
 fn patch_signature_needle(path: &str, name: &str) -> String {
     let ext = std::path::Path::new(path.trim())
         .extension()
@@ -799,6 +924,58 @@ mod critic_normalize_tests {
             is_required_verification_command(&conditions, evidence, &action),
             "critic bypass must accept the bare command when the contract \
              carries a directive suffix"
+        );
+    }
+}
+
+#[cfg(test)]
+mod citation_sanitizer_tests {
+    use super::*;
+
+    #[test]
+    fn sanitizer_strips_invented_line_ranges() {
+        // Exact critique from turn 14 of the failed marker_summary trace.
+        // Every line number is invented — real source has is_marker_line
+        // at 95, cmd_ok_binds_command at 111, read_path_satisfied at 140.
+        let bad = "the proposed halt is premature because marker_summary.md \
+                   cites incorrect line ranges. Source shows `is_marker_line` \
+                   at lines 80-90, `cmd_ok_binds_command` at lines 93-114, \
+                   and `read_path_satisfied` at lines 117-142, not 95-105, \
+                   111-132, and 140-165.";
+
+        let clean = sanitize_ungrounded_citation_veto(bad, "");
+
+        for forbidden in ["80-90", "93-114", "117-142", "95-105", "111-132", "140-165"] {
+            assert!(
+                !clean.contains(forbidden),
+                "invented range {:?} survived sanitization: {}",
+                forbidden,
+                clean
+            );
+        }
+
+        assert!(
+            clean.contains("premature") || clean.contains("incorrect"),
+            "sanitizer stripped the entire critique, leaving no guidance: {}",
+            clean
+        );
+    }
+
+    #[test]
+    fn sanitizer_passes_through_critiques_without_line_numbers() {
+        let clean_input = "the artifact does not cite the specific functions \
+                           the objective requires.";
+        let output = sanitize_ungrounded_citation_veto(clean_input, "");
+
+        assert!(
+            output.contains("does not cite the specific functions"),
+            "sanitizer lost semantic content: {}",
+            output
+        );
+        assert!(
+            !output.contains("lines"),
+            "sanitizer introduced \"lines\" where input had none: {}",
+            output
         );
     }
 }

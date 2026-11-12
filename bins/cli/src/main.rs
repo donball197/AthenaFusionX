@@ -16,7 +16,9 @@ async fn main() -> anyhow::Result<()> {
         .trim()
         .to_string();
 
-    let ws_url: &'static str = Box::leak(format!("ws://127.0.0.1:3000/ws/telemetry?token={}", token.trim()).into_boxed_str());
+    let ws_url: &'static str = Box::leak(
+        format!("ws://127.0.0.1:3000/ws/telemetry?token={}", token.trim()).into_boxed_str(),
+    );
 
     let ws_stream = match connect_async(ws_url).await {
         Ok((stream, _)) => Some(stream),

@@ -18,10 +18,7 @@ pub struct MerkleLeaf {
 
 impl MerkleLeaf {
     pub fn new(action: AgentAction, actor_id: &str) -> Self {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
         // Prevent serialization failures from silently breaking the chain
         let action_bytes = serde_json::to_vec(&action)
@@ -31,7 +28,7 @@ impl MerkleLeaf {
         hasher.update(&action_bytes);
         hasher.update(actor_id.as_bytes());
         hasher.update(ts.to_be_bytes());
-        
+
         Self {
             action,
             actor_id: actor_id.to_string(),
@@ -56,7 +53,8 @@ impl Default for GovernanceLog {
     fn default() -> Self {
         Self {
             history: VecDeque::with_capacity(1000),
-            root_hash: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            root_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
             max_capacity: 1000,
         }
     }
@@ -84,7 +82,7 @@ impl GovernanceLog {
         if self.history.len() >= self.max_capacity {
             self.history.pop_front();
         }
-        
+
         self.history.push_back(leaf);
 
         if self.history.len() % 10 == 0 {

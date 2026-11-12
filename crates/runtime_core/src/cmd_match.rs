@@ -39,6 +39,8 @@ fn strip_directive_suffix(s: &str) -> &str {
         " and report the findings",
         " and report findings",
         " and report stdout",
+        " 2>&1",
+        " 2>/dev/null",
     ] {
         if let Some(stripped) = s.strip_suffix(suffix) {
             return stripped.trim_end();
@@ -82,7 +84,9 @@ pub fn strip_workspace_cd_prefix(cmd: &str) -> &str {
     let bare = target.trim_matches(|c| c == '"' || c == '\'');
     let Ok(cwd) = std::env::current_dir() else { return s };
     let Ok(canon) = std::fs::canonicalize(bare) else { return s };
-    if cwd != canon { return s; }
+    if cwd != canon {
+        return s;
+    }
     rest[target_end + sep_len..].trim_start()
 }
 
@@ -92,14 +96,12 @@ pub fn command_condition_met(cmd: &str, evidence: &str) -> bool {
     // and the mission verifier found it insufficient. Require fresh command
     // output before returning true again, so the strategist's pending command
     // actually runs instead of being pre-empted by an identical auto-halt.
-    let rejected_after_last_ok = match (
-        evidence.rfind("[HALT_REJECTED]"),
-        evidence.rfind("[CMD_OK]"),
-    ) {
-        (Some(r), Some(o)) => r > o,
-        (Some(_), None) => true,
-        _ => false,
-    };
+    let rejected_after_last_ok =
+        match (evidence.rfind("[HALT_REJECTED]"), evidence.rfind("[CMD_OK]")) {
+            (Some(r), Some(o)) => r > o,
+            (Some(_), None) => true,
+            _ => false,
+        };
     if rejected_after_last_ok {
         return false;
     }
@@ -140,9 +142,7 @@ fn command_segment_met(want_cmd: &str, evidence: &str) -> bool {
             if trimmed.starts_with("Status:") {
                 // Segment matching is authorized only by a clean exit.
                 if status_line_ok(trimmed)
-                    && buf.lines().any(|command_line| {
-                        segment_match_line(command_line, &want)
-                    })
+                    && buf.lines().any(|command_line| segment_match_line(command_line, &want))
                 {
                     return true;
                 }
@@ -300,6 +300,26 @@ mod tests {
                 normalize_cmd("find X | wc -l")
             );
         }
+
+        #[test]
+        fn strips_stderr_redirects() {
+            assert_eq!(
+                strip_directive_suffix("cargo check --workspace 2>&1"),
+                "cargo check --workspace"
+            );
+            assert_eq!(
+                strip_directive_suffix("cargo check --workspace 2>/dev/null"),
+                "cargo check --workspace"
+            );
+        }
+
+        #[test]
+        fn normalize_stderr_redirect_matches_bare() {
+            assert_eq!(
+                normalize_cmd("cargo check --workspace 2>&1"),
+                normalize_cmd("cargo check --workspace")
+            );
+        }
     }
 }
 
@@ -309,9 +329,6 @@ mod literal_newline_tests {
 
     #[test]
     fn literal_backslash_n_equals_real_newline() {
-        assert_eq!(
-            cmd_hash("printf '%s\\n' 'A' && pwd"),
-            cmd_hash("printf '%s\n' 'A' && pwd")
-        );
+        assert_eq!(cmd_hash("printf '%s\\n' 'A' && pwd"), cmd_hash("printf '%s\n' 'A' && pwd"));
     }
 }

@@ -20,19 +20,19 @@
   {
     "provider": "Google",
     "name": "deep-research-max-preview-04-2026",
-    "context": "131.1K in / 65.5K out",
+    "context": "1.0M in / 65.5K out",
     "category": "GENERAL"
   },
   {
     "provider": "Google",
     "name": "deep-research-preview-04-2026",
-    "context": "131.1K in / 65.5K out",
+    "context": "1.0M in / 65.5K out",
     "category": "GENERAL"
   },
   {
     "provider": "Google",
     "name": "deep-research-pro-preview-12-2025",
-    "context": "131.1K in / 65.5K out",
+    "context": "1.0M in / 65.5K out",
     "category": "PRO"
   },
   {
@@ -194,6 +194,12 @@
   {
     "provider": "Google",
     "name": "gemini-4-argon",
+    "context": "1.0M in / 32.8K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
+    "name": "gemini-4-carbon",
     "context": "1.0M in / 32.8K out",
     "category": "GENERAL"
   },

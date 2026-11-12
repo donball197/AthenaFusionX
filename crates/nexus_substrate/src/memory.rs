@@ -87,7 +87,8 @@ pub struct MemoryPalace {
 }
 
 impl MemoryPalace {
-    pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> { let t0 = std::time::Instant::now();
+    pub async fn new(db_path: &str) -> Result<Self, sqlx::Error> {
+        let t0 = std::time::Instant::now();
         if !Path::new(db_path).exists() {
             std::fs::File::create(db_path).ok();
         }
@@ -99,13 +100,16 @@ impl MemoryPalace {
             .pragma("cache_size", "-16000");
 
         let pool =
-            SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?; println!("[PALACE TIMING] Pool connected at +{:?}", t0.elapsed());
+            SqlitePoolOptions::new().max_connections(5).connect_with(connect_options).await?;
+        println!("[PALACE TIMING] Pool connected at +{:?}", t0.elapsed());
 
         let vault = Arc::new(Mutex::new(VectorVault::new(crate::vector_bridge::EMBEDDING_DIM, 4)));
 
         let palace = Self { pool, vault };
-        palace.init_full_schema().await?; println!("[PALACE TIMING] Schema init at +{:?}", t0.elapsed());
-        palace.hydrate_vault().await?; println!("[PALACE TIMING] Vault hydrated at +{:?}", t0.elapsed());
+        palace.init_full_schema().await?;
+        println!("[PALACE TIMING] Schema init at +{:?}", t0.elapsed());
+        palace.hydrate_vault().await?;
+        println!("[PALACE TIMING] Vault hydrated at +{:?}", t0.elapsed());
 
         Ok(palace)
     }
@@ -796,17 +800,25 @@ impl MemoryPalace {
     /// Guarded Active -> Aborted for one plan. Never touches terminal rows.
     pub async fn abort_plan_if_active(&self, id: &str) -> Result<bool, sqlx::Error> {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
         let r = sqlx::query(
-            "UPDATE plan_runs SET status='Aborted', updated_at=? WHERE id=? AND status='Active'")
-            .bind(now).bind(id).execute(&self.pool).await?;
+            "UPDATE plan_runs SET status='Aborted', updated_at=? WHERE id=? AND status='Active'",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() == 1)
     }
 
     /// Abort every non-terminal plan owned by this pid (used on SIGTERM/SIGINT).
     pub async fn abort_plans_owned_by(&self, pid: i64) -> Result<u64, sqlx::Error> {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
         let r = sqlx::query(
             "UPDATE plan_runs SET status='Aborted', updated_at=? WHERE owner_pid=? AND status IN ('Active','Suspended')")
             .bind(now).bind(pid).execute(&self.pool).await?;
@@ -847,10 +859,7 @@ impl MemoryPalace {
             let last_heartbeat: i64 = row.try_get("last_heartbeat").unwrap_or(0);
 
             let owner_alive = owner_pid
-                .map(|pid| {
-                    pid > 0
-                        && std::path::Path::new(&format!("/proc/{}", pid)).exists()
-                })
+                .map(|pid| pid > 0 && std::path::Path::new(&format!("/proc/{}", pid)).exists())
                 .unwrap_or(false);
             let heartbeat_stale = last_heartbeat <= 0
                 || now.saturating_sub(last_heartbeat) >= LIVE_HEARTBEAT_WINDOW_SECS;
@@ -898,7 +907,15 @@ impl MemoryPalace {
         Ok(report)
     }
 
-    pub async fn abort_orphaned_plans(&self) -> Result<u64, sqlx::Error> { let res = sqlx::query("UPDATE plan_runs SET status = 'Aborted' WHERE status IN ('Active', 'Suspended')").execute(&self.pool).await?; Ok(res.rows_affected()) } pub async fn recover_active_plans(&self) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    pub async fn abort_orphaned_plans(&self) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query(
+            "UPDATE plan_runs SET status = 'Aborted' WHERE status IN ('Active', 'Suspended')",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+    pub async fn recover_active_plans(&self) -> Result<Vec<(String, String, String)>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, root_directive, graph_json FROM plan_runs WHERE status IN ('Active', 'Suspended') ORDER BY updated_at ASC")
             .fetch_all(&self.pool).await?;
         Ok(rows
@@ -1035,7 +1052,6 @@ mod scoped_recall_e2e_tests {
     }
 }
 
-
 #[cfg(test)]
 mod recovery_ownership_tests {
     use super::*;
@@ -1105,10 +1121,7 @@ mod recovery_ownership_tests {
             vault: Arc::new(Mutex::new(VectorVault::new(EMBEDDING_DIM, 4))),
         };
 
-        let report = palace
-            .recover_or_abort_orphaned_plans()
-            .await
-            .expect("run recovery");
+        let report = palace.recover_or_abort_orphaned_plans().await.expect("run recovery");
 
         assert_eq!(report.skipped_live, vec!["live-stale"]);
         assert_eq!(report.stale_heartbeat, vec!["live-stale"]);
@@ -1116,28 +1129,25 @@ mod recovery_ownership_tests {
         assert_eq!(report.recoverable.len(), 1);
         assert_eq!(report.recoverable[0].id, "dead-fresh");
 
-        let live_status: String = sqlx::query_scalar(
-            "SELECT status FROM plan_runs WHERE id = 'live-stale'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("read live plan status");
+        let live_status: String =
+            sqlx::query_scalar("SELECT status FROM plan_runs WHERE id = 'live-stale'")
+                .fetch_one(&pool)
+                .await
+                .expect("read live plan status");
         assert_eq!(live_status, "Active");
 
-        let dead_status: String = sqlx::query_scalar(
-            "SELECT status FROM plan_runs WHERE id = 'dead-fresh'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("read dead plan status");
+        let dead_status: String =
+            sqlx::query_scalar("SELECT status FROM plan_runs WHERE id = 'dead-fresh'")
+                .fetch_one(&pool)
+                .await
+                .expect("read dead plan status");
         assert_eq!(dead_status, "Aborted");
 
-        let completed_status: String = sqlx::query_scalar(
-            "SELECT status FROM plan_runs WHERE id = 'already-completed'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("read completed plan status");
+        let completed_status: String =
+            sqlx::query_scalar("SELECT status FROM plan_runs WHERE id = 'already-completed'")
+                .fetch_one(&pool)
+                .await
+                .expect("read completed plan status");
         assert_eq!(completed_status, "Completed");
     }
 }

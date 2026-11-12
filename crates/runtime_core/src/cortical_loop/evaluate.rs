@@ -311,7 +311,10 @@ impl CorticalLoop {
                         for p in &session.contract.required_artifact_paths {
                             if let Ok(body) = std::fs::read_to_string(&p.path) {
                                 let body: String = body.chars().take(12_000).collect();
-                                v.push_str(&format!("\n\nARTIFACT CONTENT ({}):\n{}", p.path, body));
+                                v.push_str(&format!(
+                                    "\n\nARTIFACT CONTENT ({}):\n{}",
+                                    p.path, body
+                                ));
                             }
                         }
                         v

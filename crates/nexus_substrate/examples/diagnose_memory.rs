@@ -58,15 +58,14 @@ async fn main() -> Result<()> {
         );
     }
 
-    let memories =
-        palace
-            .semantic_search_taint_scoped(
-                &embedding,
-                3,
-                nexus_substrate::taint::FlowPolicy::INTERNAL_SINK,
-            )
-            .await
-            .context("production semantic_search failed")?;
+    let memories = palace
+        .semantic_search_taint_scoped(
+            &embedding,
+            3,
+            nexus_substrate::taint::FlowPolicy::INTERNAL_SINK,
+        )
+        .await
+        .context("production semantic_search failed")?;
 
     println!();
     println!("==================================================");

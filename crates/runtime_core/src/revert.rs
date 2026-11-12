@@ -24,9 +24,15 @@ fn repo_root(dir: &Path) -> Result<PathBuf, String> {
 fn governing_repo(outer_root: &Path, target: &Path) -> PathBuf {
     let mut cur = target.parent();
     while let Some(dir) = cur {
-        if !dir.starts_with(outer_root) { break; }
-        if dir.join(".git").exists() { return dir.to_path_buf(); }
-        if dir == outer_root { break; }
+        if !dir.starts_with(outer_root) {
+            break;
+        }
+        if dir.join(".git").exists() {
+            return dir.to_path_buf();
+        }
+        if dir == outer_root {
+            break;
+        }
         cur = dir.parent();
     }
     outer_root.to_path_buf()
@@ -50,22 +56,15 @@ pub(crate) fn revert_mutation_path(path: &str) -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     revert_in(&cwd, path, &|dir, spec| {
         let dir_s = dir.to_string_lossy().to_string();
-        crate::podman::PodmanShield::execute_argv(
-            "git",
-            &["-C", &dir_s, "checkout", "--", spec],
-        )
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        crate::podman::PodmanShield::execute_argv("git", &["-C", &dir_s, "checkout", "--", spec])
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     })
 }
 
 /// `dir` is where relative `path`s resolve and where git runs.
 /// `checkout` restores one tracked pathspec and reports success.
-fn revert_in(
-    dir: &Path,
-    path: &str,
-    checkout: &dyn Fn(&Path, &str) -> bool,
-) -> Result<(), String> {
+fn revert_in(dir: &Path, path: &str, checkout: &dyn Fn(&Path, &str) -> bool) -> Result<(), String> {
     let root = repo_root(dir)?;
     let dir_canon = dir.canonicalize().map_err(|e| e.to_string())?;
     let joined = dir_canon.join(path);
@@ -90,21 +89,14 @@ fn revert_in(
     // rooted at `root`; for a path inside a nested worktree (e.g.
     // vendor/upstream/x.rs) it is the nested repo.
     let governing = governing_repo(&root, &target);
-    let spec = target
-        .strip_prefix(&governing)
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string();
+    let spec =
+        target.strip_prefix(&governing).map_err(|e| e.to_string())?.to_string_lossy().to_string();
 
     if is_tracked(&governing, &spec)? {
         if checkout(&governing, &spec) {
             Ok(())
         } else {
-            Err(format!(
-                "git checkout failed for {} (repo {})",
-                spec,
-                governing.display()
-            ))
+            Err(format!("git checkout failed for {} (repo {})", spec, governing.display()))
         }
     } else if std::fs::symlink_metadata(&target).is_ok() {
         std::fs::remove_file(&target).map_err(|e| e.to_string())
@@ -293,5 +285,4 @@ mod tests {
         );
         assert!(inner.join("x.rs").exists());
     }
-
 }

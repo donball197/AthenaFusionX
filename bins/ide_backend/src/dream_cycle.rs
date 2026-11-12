@@ -3,20 +3,27 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 
-
-
-pub fn spawn(
+pub async fn run(
     palace: Arc<MemoryPalace>,
     tx: broadcast::Sender<String>,
     client: reqwest::Client,
     api_key: String,
     orchestrator: Arc<nexus_runtime_core::orchestrator::Orchestrator>,
-) {
-    tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(30 * 60));
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
+    mut shutdown: broadcast::Receiver<()>,
+) -> anyhow::Result<()> {
+    let mut ticker = interval(Duration::from_secs(30 * 60));
+    ticker.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => {
+                tracing::info!("[DREAM_CYCLE] Shutdown received");
+                return Ok(());
+            }
+            _ = ticker.tick() => {}
+        }
+
+        let cycle = async {
             tracing::info!("[DREAM_CYCLE] Beginning synthesis pass…");
             let _ = tx.send(
                 serde_json::json!({"type":"LOG_EVENT","payload":"[DREAM] Synthesis cycle awakening…"})
@@ -29,7 +36,7 @@ pub fn spawn(
                 .unwrap_or_default();
 
             if strands.is_empty() {
-                continue;
+                return;
             }
 
             let context = strands
@@ -63,6 +70,14 @@ pub fn spawn(
                 }
                 Err(e) => tracing::warn!("[DREAM_CYCLE] Synthesis failed: {}", e),
             }
+        };
+
+        tokio::select! {
+            _ = shutdown.recv() => {
+                tracing::info!("[DREAM_CYCLE] Shutdown received during synthesis");
+                return Ok(());
+            }
+            _ = cycle => {}
         }
-    });
+    }
 }

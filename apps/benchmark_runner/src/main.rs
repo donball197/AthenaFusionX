@@ -1,10 +1,10 @@
 use anyhow::Result;
+use nexus_cli_utils::parse_arg;
 use nexus_ide_backend::system_monitor::SystemMonitor;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
-use nexus_cli_utils::parse_arg;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkReport {

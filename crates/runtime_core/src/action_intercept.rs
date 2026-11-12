@@ -17,8 +17,7 @@ pub fn intercept_fallback_action(action_str: &str) -> Option<AgentAction> {
         let parts: Vec<&str> = action_str.split_whitespace().collect();
         if parts.len() >= 3 && parts[0] == "search_code" {
             let path = parts[1].to_string();
-            let query =
-                parts[2..].join(" ").trim_matches('\'').trim_matches('"').to_string();
+            let query = parts[2..].join(" ").trim_matches('\'').trim_matches('"').to_string();
 
             if !path.trim().is_empty() && !query.trim().is_empty() {
                 return Some(AgentAction::SearchCode {
@@ -77,8 +76,7 @@ fn intercept_labeled_proposal(text: &str) -> Option<AgentAction> {
             text,
             &["[PATH]:", "[PATH]", "Target Path:", "target path:", "Path:", "path:"],
         );
-        let query =
-            labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"]);
+        let query = labeled_value(text, &["[QUERY]:", "[QUERY]", "Query:", "query:"]);
 
         let (Some(path), Some(query)) = (path, query) else {
             return None;
@@ -256,16 +254,15 @@ mod tests {
 
     #[test]
     fn rejects_labeled_search_code_without_path() {
-        assert!(intercept_fallback_action(
-            "[ACTION]: search_code\n[QUERY]: router"
-        ).is_none());
+        assert!(intercept_fallback_action("[ACTION]: search_code\n[QUERY]: router").is_none());
     }
 
     #[test]
     fn rejects_labeled_search_code_without_query() {
         assert!(intercept_fallback_action(
             "[ACTION]: search_code\n[PATH]: crates/runtime_core/src\n[QUERY]:"
-        ).is_none());
+        )
+        .is_none());
     }
 
     #[test]

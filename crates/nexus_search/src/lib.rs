@@ -48,11 +48,16 @@ impl VectorVault {
     pub fn commit_batch(&mut self, items: &[(u64, Vec<f32>)]) -> Result<(), String> {
         let mut flat: Vec<f32> = Vec::with_capacity(items.len() * self.dimension);
         for (_, v) in items {
-            if v.len() != self.dimension { return Err("Dimension mismatch in batch".into()); }
+            if v.len() != self.dimension {
+                return Err("Dimension mismatch in batch".into());
+            }
             flat.extend_from_slice(v);
         }
         self.index.add(&flat);
-        for (id, _) in items { self.id_map.insert(self.current_idx, *id); self.current_idx += 1; }
+        for (id, _) in items {
+            self.id_map.insert(self.current_idx, *id);
+            self.current_idx += 1;
+        }
         Ok(())
     }
 

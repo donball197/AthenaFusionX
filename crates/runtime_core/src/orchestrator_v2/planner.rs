@@ -61,25 +61,21 @@ fn apply_read_only_search_rewrite(graph: &mut TaskGraph, directive: &str) {
     // source, and the audit rewrite's source-only classification would
     // silently weaken that contract. The two policies are intentionally
     // distinct.
-    let graph_has_any_mutation = graph.nodes.values().any(|n| {
-        n.success_criteria.iter().any(|c| criterion_is_any_mutation(c))
-    });
+    let graph_has_any_mutation = graph
+        .nodes
+        .values()
+        .any(|n| n.success_criteria.iter().any(|c| criterion_is_any_mutation(c)));
     if graph_has_any_mutation {
         return;
     }
     for node in graph.nodes.values_mut() {
         for criterion in node.success_criteria.iter_mut() {
             if criterion.starts_with("SEARCH_CODE_OK:") {
-                *criterion = criterion.replacen(
-                    "SEARCH_CODE_OK:",
-                    "SEARCH_CHECKED_OK:",
-                    1,
-                );
+                *criterion = criterion.replacen("SEARCH_CODE_OK:", "SEARCH_CHECKED_OK:", 1);
             }
         }
     }
 }
-
 
 /// True when the directive reads as an audit / survey / inventory
 /// objective: "look and report", not "find and change". Deliberately
@@ -162,20 +158,17 @@ fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
     if directive_requires_positive_match(directive) {
         return;
     }
-    let graph_has_source_mutation = graph.nodes.values().any(|n| {
-        n.success_criteria.iter().any(|c| criterion_is_source_mutation(c))
-    });
+    let graph_has_source_mutation = graph
+        .nodes
+        .values()
+        .any(|n| n.success_criteria.iter().any(|c| criterion_is_source_mutation(c)));
     if graph_has_source_mutation {
         return;
     }
     for node in graph.nodes.values_mut() {
         for criterion in node.success_criteria.iter_mut() {
             if criterion.starts_with("SEARCH_CODE_OK:") {
-                *criterion = criterion.replacen(
-                    "SEARCH_CODE_OK:",
-                    "SEARCH_CHECKED_OK:",
-                    1,
-                );
+                *criterion = criterion.replacen("SEARCH_CODE_OK:", "SEARCH_CHECKED_OK:", 1);
             }
         }
     }
@@ -729,17 +722,16 @@ OUTPUT ONLY VALID JSON with this exact structure:
         // A focused Assessment algebra verification is allowed to inspect
         // the supplied table, even when the directive says "reviewing".
         // Preserve the exclusion for ordinary "review the Assessment" tasks.
-        let assessment_algebra_verification =
-            action
-                && mathematical_structure
-                && lower.contains("assessment")
-                && lower.contains("all")
-                && lower.contains("any")
-                && (lower.contains("commutative")
-                    || lower.contains("idempotent")
-                    || lower.contains("duality"))
-                && !lower.contains("review the assessment")
-                && !software_artifact;
+        let assessment_algebra_verification = action
+            && mathematical_structure
+            && lower.contains("assessment")
+            && lower.contains("all")
+            && lower.contains("any")
+            && (lower.contains("commutative")
+                || lower.contains("idempotent")
+                || lower.contains("duality"))
+            && !lower.contains("review the assessment")
+            && !software_artifact;
 
         if assessment_algebra_verification {
             return true;
@@ -758,25 +750,17 @@ OUTPUT ONLY VALID JSON with this exact structure:
         // Capture the actual canonical implementation as independent input.
         let canonical_all: Vec<Vec<String>> = Assessment::STATES
             .iter()
-            .map(|a| {
-                Assessment::STATES
-                    .iter()
-                    .map(|b| format!("{:?}", a.all(*b)))
-                    .collect()
-            })
+            .map(|a| Assessment::STATES.iter().map(|b| format!("{:?}", a.all(*b))).collect())
             .collect();
 
-        let dual_states: Vec<String> = Assessment::STATES
-            .iter()
-            .map(|state| format!("{:?}", state.dual()))
-            .collect();
+        let dual_states: Vec<String> =
+            Assessment::STATES.iter().map(|state| format!("{:?}", state.dual())).collect();
 
         let directive_json =
             serde_json::to_string(directive).expect("directive JSON serialization");
         let canonical_json =
             serde_json::to_string(&canonical_all).expect("canonical table JSON serialization");
-        let dual_json =
-            serde_json::to_string(&dual_states).expect("dual map JSON serialization");
+        let dual_json = serde_json::to_string(&dual_states).expect("dual map JSON serialization");
 
         // The Python program parses the ALL table from the original directive.
         // It does not silently replace that table with the Rust implementation.
@@ -966,7 +950,8 @@ for row, column, supplied, canonical in mismatches:
 # Exit successfully after all input and algebra checks have completed.
 print("VERIFICATION_EXECUTED True")
 print("VERIFICATION_COMPLETE True")
-"###.to_string();
+"###
+        .to_string();
 
         python = python.replace("__DIRECTIVE_JSON__", &directive_json);
         python = python.replace("__CANONICAL_JSON__", &canonical_json);
@@ -1218,9 +1203,7 @@ Tasks:
         let command = crate::completion_engine::extract_required_command(&node.objective)
             .expect("mathematical node must expose an exact executable command");
 
-        assert!(command.starts_with(
-            "python3 - <<'ATHENAFUSIONX_MATH_VERIFY_EOF'"
-        ));
+        assert!(command.starts_with("python3 - <<'ATHENAFUSIONX_MATH_VERIFY_EOF'"));
         assert!(command.contains("ALL TABLE"));
         assert!(command.contains("ANY TABLE"));
         assert!(command.contains("DUALITY_ALL_36"));
@@ -1504,21 +1487,18 @@ mod short_directive_tests {
 
     #[test]
     fn long_structured_missions_do_not() {
-        let mission = "# MISSION: X\n\n## Objective\n\nSearch the checkout. Do not use semantic memory.\n";
+        let mission =
+            "# MISSION: X\n\n## Objective\n\nSearch the checkout. Do not use semantic memory.\n";
         assert!(!is_short_plain_directive(mission));
         assert!(!is_short_plain_directive(&"search memory ".repeat(40)));
         assert!(!is_short_plain_directive("a\nb\nc\nd\ne\nf\ng search memory"));
     }
 }
 
-
-
 #[cfg(test)]
 mod audit_rewrite_tests {
     use super::*;
-    use crate::orchestrator_v2::task_graph::{
-        TaskExecutionState, TaskGraph, TaskNode, TaskStatus,
-    };
+    use crate::orchestrator_v2::task_graph::{TaskExecutionState, TaskGraph, TaskNode, TaskStatus};
     use std::collections::HashMap;
 
     fn node_with(criteria: &[&str]) -> TaskNode {
@@ -1547,10 +1527,7 @@ mod audit_rewrite_tests {
     fn audit_word_triggers_rewrite() {
         let mut g = graph_with(&["SEARCH_CODE_OK:bins:todo!"]);
         apply_audit_search_rewrite(&mut g, "Audit the codebase for stubs.");
-        assert_eq!(
-            g.nodes["t"].success_criteria,
-            vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()]
-        );
+        assert_eq!(g.nodes["t"].success_criteria, vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()]);
     }
 
     #[test]
@@ -1588,10 +1565,7 @@ mod audit_rewrite_tests {
     #[test]
     fn must_find_overrides_audit_intent() {
         let mut g = graph_with(&["SEARCH_CODE_OK:crates:deprecated_fn"]);
-        apply_audit_search_rewrite(
-            &mut g,
-            "Audit the code to locate every deprecated_fn usage.",
-        );
+        apply_audit_search_rewrite(&mut g, "Audit the code to locate every deprecated_fn usage.");
         assert_eq!(
             g.nodes["t"].success_criteria,
             vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()]
@@ -1609,10 +1583,8 @@ mod audit_rewrite_tests {
 
     #[test]
     fn patch_like_criteria_gate_the_rewrite() {
-        let mut g = graph_with(&[
-            "SEARCH_CODE_OK:crates:todo!",
-            "PATCH_FUNCTION_OK:crates/foo.rs:bar",
-        ]);
+        let mut g =
+            graph_with(&["SEARCH_CODE_OK:crates:todo!", "PATCH_FUNCTION_OK:crates/foo.rs:bar"]);
         apply_audit_search_rewrite(&mut g, "Audit and fix all stubs.");
         assert!(
             g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
@@ -1622,20 +1594,14 @@ mod audit_rewrite_tests {
 
     #[test]
     fn diff_patch_gates_the_rewrite() {
-        let mut g = graph_with(&[
-            "SEARCH_CODE_OK:crates:todo!",
-            "DIFF_PATCH_OK:crates/foo.rs",
-        ]);
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:todo!", "DIFF_PATCH_OK:crates/foo.rs"]);
         apply_audit_search_rewrite(&mut g, "Audit and fix stubs.");
         assert!(g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")));
     }
 
     #[test]
     fn replace_lines_gates_the_rewrite() {
-        let mut g = graph_with(&[
-            "SEARCH_CODE_OK:crates:todo!",
-            "REPLACE_LINES_OK:crates/foo.rs",
-        ]);
+        let mut g = graph_with(&["SEARCH_CODE_OK:crates:todo!", "REPLACE_LINES_OK:crates/foo.rs"]);
         apply_audit_search_rewrite(&mut g, "Audit and fix stubs.");
         assert!(g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")));
     }
@@ -1652,14 +1618,8 @@ mod audit_rewrite_tests {
 
     #[test]
     fn write_report_does_not_gate_the_rewrite() {
-        let mut g = graph_with(&[
-            "SEARCH_CODE_OK:bins:todo!",
-            "WRITE_OK:full_system_audit.md",
-        ]);
-        apply_audit_search_rewrite(
-            &mut g,
-            "Audit the codebase and write a report.",
-        );
+        let mut g = graph_with(&["SEARCH_CODE_OK:bins:todo!", "WRITE_OK:full_system_audit.md"]);
+        apply_audit_search_rewrite(&mut g, "Audit the codebase and write a report.");
         assert!(
             g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CHECKED_OK:")),
             "report write must NOT gate the audit rewrite"
@@ -1714,38 +1674,41 @@ mod audit_rewrite_tests {
 
     fn two_node_graph_with_source_mutation() -> TaskGraph {
         let mut g = TaskGraph { nodes: HashMap::new() };
-        g.nodes.insert("a".to_string(), TaskNode {
-            id: "a".to_string(),
-            deps: vec![],
-            required_agent: "CodeAnalyzer".to_string(),
-            status: TaskStatus::Pending,
-            objective: "search".to_string(),
-            success_criteria: vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()],
-            execution_state: TaskExecutionState::default(),
-            output_evidence: None,
-            priority: 1,
-        });
-        g.nodes.insert("b".to_string(), TaskNode {
-            id: "b".to_string(),
-            deps: vec![],
-            required_agent: "CodeAnalyzer".to_string(),
-            status: TaskStatus::Pending,
-            objective: "patch".to_string(),
-            success_criteria: vec!["PATCH_FUNCTION_OK:crates/foo.rs:fix".to_string()],
-            execution_state: TaskExecutionState::default(),
-            output_evidence: None,
-            priority: 2,
-        });
+        g.nodes.insert(
+            "a".to_string(),
+            TaskNode {
+                id: "a".to_string(),
+                deps: vec![],
+                required_agent: "CodeAnalyzer".to_string(),
+                status: TaskStatus::Pending,
+                objective: "search".to_string(),
+                success_criteria: vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()],
+                execution_state: TaskExecutionState::default(),
+                output_evidence: None,
+                priority: 1,
+            },
+        );
+        g.nodes.insert(
+            "b".to_string(),
+            TaskNode {
+                id: "b".to_string(),
+                deps: vec![],
+                required_agent: "CodeAnalyzer".to_string(),
+                status: TaskStatus::Pending,
+                objective: "patch".to_string(),
+                success_criteria: vec!["PATCH_FUNCTION_OK:crates/foo.rs:fix".to_string()],
+                execution_state: TaskExecutionState::default(),
+                output_evidence: None,
+                priority: 2,
+            },
+        );
         g
     }
 
     #[test]
     fn read_only_plus_must_find_keeps_strict() {
         let mut g = graph_with(&["SEARCH_CODE_OK:crates:deprecated_fn"]);
-        apply_read_only_search_rewrite(
-            &mut g,
-            "READ-ONLY. Find all usages of deprecated_fn.",
-        );
+        apply_read_only_search_rewrite(&mut g, "READ-ONLY. Find all usages of deprecated_fn.");
         assert_eq!(
             g.nodes["t"].success_criteria,
             vec!["SEARCH_CODE_OK:crates:deprecated_fn".to_string()],
@@ -1770,14 +1733,8 @@ mod audit_rewrite_tests {
         // must not weaken a search in a malformed graph; the audit
         // helper (which does allow report writes) is the one that
         // distinguishes .md from .rs.
-        let mut g = graph_with(&[
-            "SEARCH_CODE_OK:bins:todo!",
-            "WRITE_OK:audit_report.md",
-        ]);
-        apply_read_only_search_rewrite(
-            &mut g,
-            "READ-ONLY. Do not modify any files.",
-        );
+        let mut g = graph_with(&["SEARCH_CODE_OK:bins:todo!", "WRITE_OK:audit_report.md"]);
+        apply_read_only_search_rewrite(&mut g, "READ-ONLY. Do not modify any files.");
         assert!(
             g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
             "READ-ONLY must keep strict when any WRITE_OK: is present"
@@ -1799,14 +1756,8 @@ mod audit_rewrite_tests {
         // Audit policy: report writes do NOT gate the audit rewrite.
         // This is the mirror of read_only_plus_report_artifact_keeps_strict
         // and demonstrates that the two policies are intentionally distinct.
-        let mut g = graph_with(&[
-            "SEARCH_CODE_OK:bins:todo!",
-            "WRITE_OK:full_system_audit.md",
-        ]);
-        apply_audit_search_rewrite(
-            &mut g,
-            "Audit the codebase and write a report.",
-        );
+        let mut g = graph_with(&["SEARCH_CODE_OK:bins:todo!", "WRITE_OK:full_system_audit.md"]);
+        apply_audit_search_rewrite(&mut g, "Audit the codebase and write a report.");
         assert!(
             g.nodes["t"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CHECKED_OK:")),
             "audit + report write must rewrite to checked"

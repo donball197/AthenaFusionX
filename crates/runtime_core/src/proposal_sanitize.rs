@@ -100,9 +100,9 @@ pub fn leak_confined_to_reasoning(original: &Value) -> bool {
 /// True if the proposal contains a `halt` whose text was cut by sanitizing.
 pub fn stripped_halt(s: &Sanitized, original: &Value) -> bool {
     s.stripped
-        && original
-            .as_array()
-            .is_some_and(|a| a.iter().any(|o| o.get("type").and_then(Value::as_str) == Some("halt")))
+        && original.as_array().is_some_and(|a| {
+            a.iter().any(|o| o.get("type").and_then(Value::as_str) == Some("halt"))
+        })
 }
 
 #[cfg(test)]

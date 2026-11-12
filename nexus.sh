@@ -97,13 +97,16 @@ fi
 # --- 6. Start Background Daemon ---
 echo -e "\x1b[36m[2/3] Initializing Background Daemon (Port 3000)...\x1b[0m"
 if [ -f daemon.log ]; then mv daemon.log "daemon.$(date +%s).log"; fi
-"${TARGET_DIR}/nexus-ide-backend" > daemon.log 2>&1 &
+"${TARGET_DIR}/nexus-ide-backend" 9>&- > daemon.log 2>&1 &
 DAEMON_PID=$!
 
 cleanup() {
     tput cnorm 2>/dev/null || true
     echo -e "\n\x1b[31m>> Shutting down Background Daemon (PID: $DAEMON_PID)...\x1b[0m"
-    kill "$DAEMON_PID" 2>/dev/null || true
+    if kill -0 "$DAEMON_PID" 2>/dev/null; then
+        kill -TERM "$DAEMON_PID" 2>/dev/null || true
+        wait "$DAEMON_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup SIGINT SIGTERM EXIT
 
@@ -128,4 +131,4 @@ fi
 
 # --- 8. Launch Interactive CLI Client ---
 echo -e "\x1b[36m[3/3] Launching Interactive CLI Client...\x1b[0m"
-"${TARGET_DIR}/nexus-cli"
+"${TARGET_DIR}/nexus-cli" 9>&-

@@ -499,7 +499,11 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
             .trim_start();
         let mut body = body;
         for p in [
-            "run exactly:", "execute exactly:", "run exactly", "execute exactly", "run:",
+            "run exactly:",
+            "execute exactly:",
+            "run exactly",
+            "execute exactly",
+            "run:",
             "execute:",
         ] {
             if body.len() >= p.len()
@@ -513,6 +517,32 @@ pub(crate) fn extract_required_command(objective: &str) -> Option<String> {
         let first = body.split_whitespace().next().unwrap_or("");
         if RAW_LEADERS.iter().any(|b| first == *b) {
             let line = take_balanced_lines(body);
+            // Trailing prose ("cargo check --workspace, and record ...") is an
+            // instruction about the report, not part of the command. The cut is
+            // quote-aware, so `grep "a, and b" f` is untouched.
+            const RAW_PROSE_STOPPERS: &[&str] = &[
+                // Comma forms — covered by execute_exactly_cuts_trailing_record_clause.
+                ", and ",
+                ", then ",
+                ", record ",
+                ", report ",
+                ", capture ",
+                " and record ",
+                " and report ",
+                " and then ",
+                // Period forms — the class that failed task_workspace_compilation
+                // (2026-11-09): "cargo check --workspace. Record whether ...".
+                ". Record ",
+                ". Report ",
+                ". Capture ",
+                ". Then ",
+                ". Run ",
+                ". Execute ",
+                ". Save ",
+                ". Write ",
+                ". Ensure ",
+            ];
+            let line = truncate_at_unquoted_stopper(&line, RAW_PROSE_STOPPERS);
             let line = line.trim();
             if !line.is_empty() {
                 return Some(line.to_string());
@@ -691,17 +721,18 @@ fn detect_read_only(text: &str) -> bool {
 
 fn declared_criteria_contract(
     node_id: &str,
-    text: &str,
+    criteria_text: &str,
+    full_text: &str,
     read_only: bool,
 ) -> Option<SubgoalContract> {
     let mut conditions: Vec<CompletionCondition> = Vec::new();
     let mut required_artifact_paths: Vec<ArtifactSpec> = Vec::new();
 
-    for path in extract_all_named_targets(text, "READ_OK:") {
+    for path in extract_all_named_targets(criteria_text, "READ_OK:") {
         conditions.push(CompletionCondition::ReadPathAcquired { path });
     }
 
-    for path in extract_all_named_targets(text, "WRITE_OK:") {
+    for path in extract_all_named_targets(criteria_text, "WRITE_OK:") {
         if read_only {
             continue;
         }
@@ -711,7 +742,7 @@ fn declared_criteria_contract(
 
     if !read_only {
         let mut pushed_typed_patch = false;
-        for target in extract_all_named_targets(text, "DIFF_PATCH_OK:") {
+        for target in extract_all_named_targets(criteria_text, "DIFF_PATCH_OK:") {
             let path = target.trim().to_string();
             if !path.is_empty() {
                 conditions.push(CompletionCondition::PatchPathAcquired {
@@ -722,7 +753,7 @@ fn declared_criteria_contract(
                 pushed_typed_patch = true;
             }
         }
-        for target in extract_all_named_targets(text, "REPLACE_LINES_OK:") {
+        for target in extract_all_named_targets(criteria_text, "REPLACE_LINES_OK:") {
             let path = target.trim().to_string();
             if !path.is_empty() {
                 conditions.push(CompletionCondition::PatchPathAcquired {
@@ -733,7 +764,7 @@ fn declared_criteria_contract(
                 pushed_typed_patch = true;
             }
         }
-        for target in extract_all_named_targets(text, "PATCH_FUNCTION_OK:") {
+        for target in extract_all_named_targets(criteria_text, "PATCH_FUNCTION_OK:") {
             let mut parts = target.splitn(2, ':');
             let p = parts.next().unwrap_or("").trim().to_string();
             let f = parts.next().unwrap_or("").trim().to_string();
@@ -747,15 +778,15 @@ fn declared_criteria_contract(
             }
         }
         if !pushed_typed_patch
-            && (text.contains("PATCH_FUNCTION_OK:")
-                || text.contains("DIFF_PATCH_OK:")
-                || text.contains("REPLACE_LINES_OK:"))
+            && (criteria_text.contains("PATCH_FUNCTION_OK:")
+                || criteria_text.contains("DIFF_PATCH_OK:")
+                || criteria_text.contains("REPLACE_LINES_OK:"))
         {
             conditions.push(CompletionCondition::PatchMarkerAcquired);
         }
     }
 
-    for target in extract_all_named_targets(text, "SEARCH_CODE_OK:") {
+    for target in extract_all_named_targets(criteria_text, "SEARCH_CODE_OK:") {
         // Preserve the full "<path>:<term>" form. Stripping the path collapsed
         // `crates:unimplemented!` and `bins:unimplemented!` into one bare
         // term, so a single `crates` search satisfied both criteria and the
@@ -765,20 +796,22 @@ fn declared_criteria_contract(
         conditions.push(CompletionCondition::SearchTermAcquired { term: target });
     }
 
-    for target in extract_all_named_targets(text, "SEARCH_CHECKED_OK:") {
+    for target in extract_all_named_targets(criteria_text, "SEARCH_CHECKED_OK:") {
         conditions.push(CompletionCondition::SearchCheckedAcquired { target });
     }
 
-    if text.contains("SEARCH_MEMORY_OK") {
+    if criteria_text.contains("SEARCH_MEMORY_OK") {
         conditions.push(CompletionCondition::SearchMemoryMarkerAcquired);
     }
 
-    if text.contains("DAG_LINEAGE_OK") || text.contains("LINEAGE MODE: INHERIT_ONLY") {
+    if criteria_text.contains("DAG_LINEAGE_OK")
+        || criteria_text.contains("LINEAGE MODE: INHERIT_ONLY")
+    {
         conditions.push(CompletionCondition::LineageEvidenceAcquired);
     }
 
-    if let Some(pos) = text.find("READ_FUNCTION_OK:") {
-        let remainder = &text[pos + "READ_FUNCTION_OK:".len()..];
+    if let Some(pos) = criteria_text.find("READ_FUNCTION_OK:") {
+        let remainder = &criteria_text[pos + "READ_FUNCTION_OK:".len()..];
         let target =
             remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
         let mut parts = target.splitn(2, ':');
@@ -790,8 +823,8 @@ fn declared_criteria_contract(
         }
     }
 
-    if text.contains("CMD_OK") {
-        if let Some(command) = extract_required_command(text) {
+    if criteria_text.contains("CMD_OK") {
+        if let Some(command) = extract_required_command(full_text) {
             conditions.push(CompletionCondition::CommandExecutionVerified { command });
         } else {
             conditions.push(CompletionCondition::CommandMarkerAcquired);
@@ -841,7 +874,7 @@ fn declared_criteria_contract(
 
     Some(SubgoalContract {
         node_id: node_id.to_string(),
-        objective: text.to_string(),
+        objective: full_text.to_string(),
         is_mutation_task: has_output,
         read_only,
         conditions,
@@ -877,10 +910,14 @@ impl SubgoalCompletionEngine {
         // The heuristic matches the declaration forms used by real
         // missions. Matching is on the already-lowercased objective text,
         // so case is irrelevant. See also cortical_loop::handle_execute.
-        let declared_mutation_criteria = objective.contains("WRITE_OK:")
-            || objective.contains("PATCH_FUNCTION_OK:")
-            || objective.contains("DIFF_PATCH_OK:")
-            || objective.contains("REPLACE_LINES_OK:");
+        // Marker-string authority lives in the criteria block, not in
+        // the whole mission text. A mission that merely *discusses* a
+        // marker (e.g. an audit documenting the executor) must not be
+        // treated as declaring that marker as a requirement.
+        let declared_mutation_criteria = scopes.criteria.contains("WRITE_OK:")
+            || scopes.criteria.contains("PATCH_FUNCTION_OK:")
+            || scopes.criteria.contains("DIFF_PATCH_OK:")
+            || scopes.criteria.contains("REPLACE_LINES_OK:");
         let read_only = !declared_mutation_criteria
             && (detect_read_only(objective)
                 || detect_read_only(scopes.root_directive)
@@ -889,7 +926,9 @@ impl SubgoalCompletionEngine {
                     scopes.root_directive,
                 ));
 
-        if let Some(contract) = declared_criteria_contract(node_id, objective, read_only) {
+        if let Some(contract) =
+            declared_criteria_contract(node_id, scopes.criteria, objective, read_only)
+        {
             return contract;
         }
 
@@ -902,7 +941,7 @@ impl SubgoalCompletionEngine {
         // mutates" would rely solely on the execute-time refusal in
         // cortical_loop::handle_execute rather than being true by
         // construction.
-        if (objective.contains("PATCH_FUNCTION_OK:")
+        if (scopes.criteria.contains("PATCH_FUNCTION_OK:")
             || (classify_text.contains("patch_function")
                 && !classify_text.contains("read_function")))
             && !read_only
@@ -918,8 +957,8 @@ impl SubgoalCompletionEngine {
         }
 
         // Explicit READ_FUNCTION_OK contract:
-        if let Some(pos) = objective.find("READ_FUNCTION_OK:") {
-            let remainder = &objective[pos + "READ_FUNCTION_OK:".len()..];
+        if let Some(pos) = scopes.criteria.find("READ_FUNCTION_OK:") {
+            let remainder = &scopes.criteria[pos + "READ_FUNCTION_OK:".len()..];
             let target =
                 remainder.lines().next().unwrap_or("").trim().trim_matches('`').trim_matches('"');
             let mut parts = target.splitn(2, ':');
@@ -969,10 +1008,10 @@ impl SubgoalCompletionEngine {
         }
 
         // Inline-analysis contract: no reads, searches, or belief threshold.
-        if objective.contains("ANALYSIS_OK")
-            && !objective.contains("READ_OK:")
-            && !objective.contains("SEARCH_CODE_OK:")
-            && !objective.contains("SEARCH_CHECKED_OK:")
+        if scopes.criteria.contains("ANALYSIS_OK")
+            && !scopes.criteria.contains("READ_OK:")
+            && !scopes.criteria.contains("SEARCH_CODE_OK:")
+            && !scopes.criteria.contains("SEARCH_CHECKED_OK:")
         {
             return SubgoalContract {
                 node_id: node_id.to_string(),
@@ -1104,13 +1143,13 @@ impl SubgoalCompletionEngine {
         // when the mission ALSO names path-bound criteria (READ_OK:,
         // WRITE_OK:), do not discard them. Fall through so the intent
         // block below preserves every declared criterion.
-        let has_explicit_path_bound = objective.contains("READ_OK:")
-            || objective.contains("WRITE_OK:")
-            || objective.contains("SEARCH_CODE_OK:")
-            || objective.contains("SEARCH_CHECKED_OK:")
-            || objective.contains("SEARCH_MEMORY_OK:")
-            || objective.contains("PATCH_FUNCTION_OK:")
-            || objective.contains("READ_FUNCTION_OK:");
+        let has_explicit_path_bound = scopes.criteria.contains("READ_OK:")
+            || scopes.criteria.contains("WRITE_OK:")
+            || scopes.criteria.contains("SEARCH_CODE_OK:")
+            || scopes.criteria.contains("SEARCH_CHECKED_OK:")
+            || scopes.criteria.contains("SEARCH_MEMORY_OK:")
+            || scopes.criteria.contains("PATCH_FUNCTION_OK:")
+            || scopes.criteria.contains("READ_FUNCTION_OK:");
         if has_search_memory_intent && !has_explicit_path_bound {
             return SubgoalContract {
                 node_id: node_id.to_string(),
@@ -1126,12 +1165,12 @@ impl SubgoalCompletionEngine {
         // authoritative for their respective category: emit one typed
         // condition per named target instead of the path-blind default.
         // Every OTHER declared criterion is preserved.
-        let read_targets = extract_all_named_targets(objective, "READ_OK:");
-        let write_targets = extract_all_named_targets(objective, "WRITE_OK:");
-        let search_code_terms = extract_all_named_targets(objective, "SEARCH_CODE_OK:");
+        let read_targets = extract_all_named_targets(scopes.criteria, "READ_OK:");
+        let write_targets = extract_all_named_targets(scopes.criteria, "WRITE_OK:");
+        let search_code_terms = extract_all_named_targets(scopes.criteria, "SEARCH_CODE_OK:");
         let search_checked_targets =
-            extract_all_named_targets(objective, "SEARCH_CHECKED_OK:");
-        let search_memory_terms = extract_all_named_targets(objective, "SEARCH_MEMORY_OK:");
+            extract_all_named_targets(scopes.criteria, "SEARCH_CHECKED_OK:");
+        let search_memory_terms = extract_all_named_targets(scopes.criteria, "SEARCH_MEMORY_OK:");
         let has_path_bound_reads = !read_targets.is_empty();
         let has_path_bound_writes = !write_targets.is_empty();
         let has_search_code_marker = !search_code_terms.is_empty();
@@ -1185,9 +1224,7 @@ impl SubgoalCompletionEngine {
         }
 
         for target in &search_checked_targets {
-            conditions.push(CompletionCondition::SearchCheckedAcquired {
-                target: target.clone(),
-            });
+            conditions.push(CompletionCondition::SearchCheckedAcquired { target: target.clone() });
         }
 
         if has_search_memory_intent || has_search_memory_marker {
@@ -1284,7 +1321,7 @@ impl SubgoalCompletionEngine {
             conditions.push(CompletionCondition::WriteMarkerAcquired);
         }
 
-        if objective.contains("ANALYSIS_OK")
+        if scopes.criteria.contains("ANALYSIS_OK")
             && !conditions.iter().any(|c| matches!(c, CompletionCondition::HaltDelivered))
         {
             conditions.push(CompletionCondition::HaltDelivered);
@@ -1632,7 +1669,8 @@ PATCH_FUNCTION_OK:crates/foo.rs:foo
         assert!(contract.is_mutation_task);
         assert!(contract.conditions.iter().any(|c| matches!(
             c,
-            CompletionCondition::PatchMarkerAcquired | CompletionCondition::PatchPathAcquired { .. }
+            CompletionCondition::PatchMarkerAcquired
+                | CompletionCondition::PatchPathAcquired { .. }
         )));
     }
 
@@ -2118,7 +2156,8 @@ LINEAGE CONTEXT:
         let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
         assert!(contract.conditions.iter().any(|c| matches!(
             c,
-            CompletionCondition::PatchMarkerAcquired | CompletionCondition::PatchPathAcquired { .. }
+            CompletionCondition::PatchMarkerAcquired
+                | CompletionCondition::PatchPathAcquired { .. }
         )));
     }
 
@@ -2283,7 +2322,8 @@ mod run_exactly_tests {
 
     #[test]
     fn schema_and_count_commands_do_not_collide() {
-        let a = extract_required_command("Run exactly: sqlite3 -readonly x.db \".schema plan_runs\"");
+        let a =
+            extract_required_command("Run exactly: sqlite3 -readonly x.db \".schema plan_runs\"");
         let b = extract_required_command("Run exactly: sqlite3 -readonly x.db \"SELECT 1;\"");
         assert_ne!(a, b);
     }
@@ -2301,15 +2341,12 @@ mod pgrep_binding_tests {
     }
 }
 
-
 #[cfg(test)]
 mod patch_path_integration_tests {
     use super::{CompletionCondition, SubgoalCompletionEngine};
     use crate::agent_protocol::AgentAction;
 
-    fn typed_patch(
-        contract: &super::SubgoalContract,
-    ) -> Option<(&str, &str, Option<&str>)> {
+    fn typed_patch(contract: &super::SubgoalContract) -> Option<(&str, &str, Option<&str>)> {
         contract.conditions.iter().find_map(|c| match c {
             CompletionCondition::PatchPathAcquired { kind, path, function_name } => {
                 Some((kind.as_str(), path.as_str(), function_name.as_deref()))
@@ -2365,10 +2402,7 @@ mod patch_path_integration_tests {
                        NODE COMPLETION RULE: x";
         let session = crate::cognition::epistemic_session::EpistemicSession::new(mission);
         // Precondition: contract carries typed DIFF_PATCH_OK condition.
-        assert_eq!(
-            typed_patch(&session.contract),
-            Some(("DIFF_PATCH_OK", "src/foo.rs", None)),
-        );
+        assert_eq!(typed_patch(&session.contract), Some(("DIFF_PATCH_OK", "src/foo.rs", None)),);
 
         let diff = agent(serde_json::json!({
             "type": "diff_patch", "path": "src/foo.rs", "search": "a", "replace": "b"
@@ -2411,28 +2445,20 @@ mod search_checked_contract_tests {
         }));
 
         assert!(!contract.conditions.iter().any(|condition| {
-            matches!(
-                condition,
-                CompletionCondition::SearchTermAcquired { .. }
-            )
+            matches!(condition, CompletionCondition::SearchTermAcquired { .. })
         }));
 
-        assert!(!contract.conditions.iter().any(|condition| {
-            matches!(
-                condition,
-                CompletionCondition::MinBeliefScore(_)
-            )
-        }));
+        assert!(!contract
+            .conditions
+            .iter()
+            .any(|condition| { matches!(condition, CompletionCondition::MinBeliefScore(_)) }));
     }
 
     #[test]
     fn checked_and_positive_search_criteria_remain_distinct() {
         let contract = SubgoalCompletionEngine::infer_contract(
             "mixed_search",
-            concat!(
-                "SEARCH_CODE_OK:crates:needle\n",
-                "SEARCH_CHECKED_OK:bins:needle"
-            ),
+            concat!("SEARCH_CODE_OK:crates:needle\n", "SEARCH_CHECKED_OK:bins:needle"),
         );
 
         assert!(contract.conditions.iter().any(|condition| {
@@ -2450,5 +2476,65 @@ mod search_checked_contract_tests {
                     if target == "bins:needle"
             )
         }));
+    }
+
+    #[test]
+    fn objective_prose_mentioning_marker_does_not_mint_condition() {
+        // Regression for Mission D failure mode (attempts 1 and 2):
+        // a mission whose objective *discusses* a marker (audits, reports,
+        // test fixtures) must not inherit that marker as a declared
+        // completion condition. Marker mining is authoritative only in the
+        // MANDATORY NODE SUCCESS CRITERIA block.
+        let mission = concat!(
+            "OBJECTIVE: Audit how the executor uses the CMD_OK marker in its evidence stream.\n",
+            "ASSIGNED ROLE: CodeAnalyzer\n\n",
+            "MANDATORY NODE SUCCESS CRITERIA:\n",
+            "READ_OK:crates/runtime_core/src/executor.rs\n\n",
+            "NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced.\n",
+        );
+        let contract = SubgoalCompletionEngine::infer_contract("t", mission);
+
+        // Objective prose mentions CMD_OK. Pre-fix, declared_criteria_contract
+        // was called with the full inference_text, so this mention became a
+        // CommandMarkerAcquired condition the agent could not satisfy by
+        // reading files.
+        assert!(
+            !contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::CommandMarkerAcquired
+                    | CompletionCondition::CommandExecutionVerified { .. }
+            )),
+            "objective prose mentioning CMD_OK must not mint a command condition: {:?}",
+            contract.conditions
+        );
+
+        // The declared criterion is still honored.
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::ReadPathAcquired { path }
+                    if path == "crates/runtime_core/src/executor.rs"
+            )),
+            "declared READ_OK criterion must survive: {:?}",
+            contract.conditions
+        );
+    }
+
+    #[test]
+    fn single_line_directive_without_header_still_mines_markers() {
+        // Guard rail: the scoping fix must not break the fallback path.
+        // Missions with no MANDATORY NODE SUCCESS CRITERIA header parse
+        // with scopes.criteria == raw (from MissionScopes::parse), so a
+        // single-line directive keeps working.
+        let contract = SubgoalCompletionEngine::infer_contract("t", "READ_OK:crates/foo.rs");
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::ReadPathAcquired { path }
+                    if path == "crates/foo.rs"
+            )),
+            "single-line directives must still mine markers: {:?}",
+            contract.conditions
+        );
     }
 }

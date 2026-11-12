@@ -63,11 +63,8 @@ fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
                 key_symbols.push(sig);
             }
         }
-        let symbols_summary = if key_symbols.is_empty() {
-            read_line_summary(&lines)
-        } else {
-            key_symbols.join(", ")
-        };
+        let symbols_summary =
+            if key_symbols.is_empty() { read_line_summary(&lines) } else { key_symbols.join(", ") };
 
         let tuple = EpistemicTuple::new("AST", path, "DEFINES", &symbols_summary, 1.0);
         let prop =
@@ -201,6 +198,14 @@ pub struct EpistemicSession {
     /// the historical record of the veto.
     #[serde(skip)]
     pub last_critic_rejected_actions: Option<Vec<String>>,
+    /// `local_evidence.len()` at the moment of the last critic rejection.
+    /// A retried proposal whose batch matches the last rejection is only
+    /// repeat-vetoed while evidence has not meaningfully grown since the
+    /// veto; once the strategist produces new evidence the critic gets a
+    /// re-look. Prevents a single stale veto from deadlocking a correction
+    /// cycle that is producing fresh reconnaissance.
+    #[serde(skip)]
+    pub last_critic_rejected_at_evidence_len: Option<usize>,
 }
 
 impl EpistemicSession {
@@ -223,6 +228,7 @@ impl EpistemicSession {
             consecutive_mutation_vetoes: 0,
             tuples: Vec::new(),
             last_critic_rejected_actions: None,
+            last_critic_rejected_at_evidence_len: None,
         }
     }
 
@@ -395,7 +401,8 @@ mod read_line_summary_tests {
 
     #[test]
     fn directory_listing_is_not_described_as_a_file() {
-        let raw = "[READ_OK] d\nDIRECTORY LISTING:\nENTRIES: 2 (read individual files)\nd/a.rs\nd/b.rs\n";
+        let raw =
+            "[READ_OK] d\nDIRECTORY LISTING:\nENTRIES: 2 (read individual files)\nd/a.rs\nd/b.rs\n";
         let lines: Vec<&str> = raw.lines().collect();
         assert_eq!(read_line_summary(&lines), "Directory listing (2 entries)");
     }

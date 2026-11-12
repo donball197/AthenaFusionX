@@ -69,10 +69,7 @@ pub(crate) fn action_key(action: &AgentAction) -> String {
 /// the code-shift listener to distinguish self-inflicted mutations from
 /// external ones. Prefer this over substring matching on `local_evidence`,
 /// which also matches inherited DAG lineage and critic text.
-pub(crate) fn action_touches_path(
-    action: &crate::agent_protocol::AgentAction,
-    path: &str,
-) -> bool {
+pub(crate) fn action_touches_path(action: &crate::agent_protocol::AgentAction, path: &str) -> bool {
     use crate::agent_protocol::AgentAction as A;
     match action {
         A::PatchFile { path: p, .. }

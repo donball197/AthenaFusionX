@@ -93,11 +93,11 @@ fn word_present(hay: &str, needle: &str) -> bool {
 /// rejection message) can never verify its own claims.
 pub fn verification_corpus(local_evidence: &str, current_turn_evidence: &str) -> String {
     local_evidence
-    .replace(current_turn_evidence, "")
-    .lines()
-    .filter(|l| !l.starts_with("[HALT"))
-    .collect::<Vec<_>>()
-    .join("\n")
+        .replace(current_turn_evidence, "")
+        .lines()
+        .filter(|l| !l.starts_with("[HALT"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// True when the backticked span sits in an absence claim ("no `x` exists",
@@ -109,13 +109,24 @@ fn absence_context(report: &str, start: usize, end: usize) -> bool {
     let skip = tail.len().saturating_sub(60);
     let before: String = tail[skip..].iter().collect::<String>().to_lowercase();
     let before = before.trim_end().trim_end_matches('`').trim_end().to_string();
-    let after: String = report.get(end..).unwrap_or("").chars().take(70).collect::<String>().to_lowercase();
+    let after: String =
+        report.get(end..).unwrap_or("").chars().take(70).collect::<String>().to_lowercase();
     ["no", "not", "never", "without", "neither", "nor", "absent"]
         .iter()
         .any(|w| before.ends_with(w))
-        || ["does not", "not appear", "not found", "not present", "never ", "is absent", "doesn't", "no such", "not exist"]
-            .iter()
-            .any(|w| after.contains(w))
+        || [
+            "does not",
+            "not appear",
+            "not found",
+            "not present",
+            "never ",
+            "is absent",
+            "doesn't",
+            "no such",
+            "not exist",
+        ]
+        .iter()
+        .any(|w| after.contains(w))
 }
 
 /// Backticked identifiers in `report` that do not appear in `corpus`.
@@ -134,15 +145,18 @@ pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
         let span_end = span_start + part.len();
         let span = part.trim().trim_end_matches("()");
         let name = span.rsplit("::").next().unwrap_or("");
-        if !is_ident(name) || SKIP.contains(&name) {
+        if !is_ident(name) || SKIP.contains(&name) || is_grounding_skip_token(name) {
             continue;
         }
         // General Markdown Formatting Fix:
-        // A backticked word is considered verified if it appears anywhere in the 
+        // A backticked word is considered verified if it appears anywhere in the
         // physical evidence (e.g. cargo check output, variable names, internal functions).
         // It does not need to be a formal `pub` definition.
         let found = word_present(corpus, name);
-        if !found && !absence_context(report, span_start, span_end) && !bad.iter().any(|b| b == name) {
+        if !found
+            && !absence_context(report, span_start, span_end)
+            && !bad.iter().any(|b| b == name)
+        {
             bad.push(name.to_string());
         }
     }
@@ -989,7 +1003,9 @@ mod absence_tests {
     fn absence_claims_pass_invented_claims_fail() {
         let corpus = "fn real() {}";
         assert!(unverified_symbols("(c) No `active_graph` symbol exists.", corpus).is_empty());
-        assert!(unverified_symbols("The `active_graph` identifier does not appear.", corpus).is_empty());
+        assert!(
+            unverified_symbols("The `active_graph` identifier does not appear.", corpus).is_empty()
+        );
         assert_eq!(unverified_symbols("`invented_fn` returns 3", corpus), vec!["invented_fn"]);
     }
 }
@@ -1017,45 +1033,64 @@ mod wants_pub_items_dry_run {
 
     #[test]
     fn components_are_not_pub_item_requests() {
-        assert!(!wants_pub_items(NODE4_OBJECTIVE),
-            "node 4's own objective does NOT ask for public API items");
-        assert!(!wants_pub_items(ROOT_DIRECTIVE),
-            "the root directive does NOT ask for public API items");
-        assert!(NODE3_LINEAGE.contains("pub struct"),
-            "sanity: lineage DOES contain 'pub struct' from upstream evidence");
+        assert!(
+            !wants_pub_items(NODE4_OBJECTIVE),
+            "node 4's own objective does NOT ask for public API items"
+        );
+        assert!(
+            !wants_pub_items(ROOT_DIRECTIVE),
+            "the root directive does NOT ask for public API items"
+        );
+        assert!(
+            NODE3_LINEAGE.contains("pub struct"),
+            "sanity: lineage DOES contain 'pub struct' from upstream evidence"
+        );
     }
 
     #[test]
     fn composite_mission_no_longer_fires_the_gate() {
         let composite = composite_mission();
-        assert!(!wants_pub_items(&composite),
-            "FIX CONFIRMED: composite mission no longer triggers wants_pub_items");
+        assert!(
+            !wants_pub_items(&composite),
+            "FIX CONFIRMED: composite mission no longer triggers wants_pub_items"
+        );
     }
 
     #[test]
     fn genuine_pub_item_missions_still_fire() {
-        assert!(wants_pub_items("List the pub fn items in src/lib.rs"),
-            "REGRESSION: real pub-fn missions must still trigger the gate");
-        assert!(wants_pub_items("Enumerate the public API of nexus_runtime_core"),
-            "REGRESSION: 'public API' missions must still trigger");
-        assert!(wants_pub_items("Output every pub struct Name in the crate"),
-            "REGRESSION: 'pub struct' missions must still trigger");
+        assert!(
+            wants_pub_items("List the pub fn items in src/lib.rs"),
+            "REGRESSION: real pub-fn missions must still trigger the gate"
+        );
+        assert!(
+            wants_pub_items("Enumerate the public API of nexus_runtime_core"),
+            "REGRESSION: 'public API' missions must still trigger"
+        );
+        assert!(
+            wants_pub_items("Output every pub struct Name in the crate"),
+            "REGRESSION: 'pub struct' missions must still trigger"
+        );
     }
 
     #[test]
     fn strip_lineage_is_what_makes_it_work() {
         let composite = composite_mission();
         let stripped_len = strip_lineage(&composite).len();
-        assert!(stripped_len < composite.len(),
-            "strip_lineage must shorten a lineage-bearing mission");
+        assert!(
+            stripped_len < composite.len(),
+            "strip_lineage must shorten a lineage-bearing mission"
+        );
         let stripped = &composite[..stripped_len];
-        assert!(!stripped.to_ascii_lowercase().contains("pub struct"),
-            "after stripping, the string no longer contains 'pub struct'");
+        assert!(
+            !stripped.to_ascii_lowercase().contains("pub struct"),
+            "after stripping, the string no longer contains 'pub struct'"
+        );
     }
 
     #[test]
     fn strip_lineage_picks_the_earliest_marker() {
-        let text = "OBJECTIVE: foo\n\nLINEAGE CONTEXT:\n[DEPENDENCY LINEAGE FROM t]:\npub struct Bar";
+        let text =
+            "OBJECTIVE: foo\n\nLINEAGE CONTEXT:\n[DEPENDENCY LINEAGE FROM t]:\npub struct Bar";
         let cut = strip_lineage(text);
         assert!(!cut.contains("pub struct"));
         assert!(cut.contains("OBJECTIVE: foo"));

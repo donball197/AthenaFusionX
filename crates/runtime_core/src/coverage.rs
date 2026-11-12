@@ -25,7 +25,7 @@ impl CoverageLedger {
     /// Idempotent: replayed evidence (reflection blocks repeat markers) is safe.
     pub fn ingest(&mut self, evidence: &str) {
         let lines: Vec<&str> = evidence.lines().collect();
-        
+
         // 1. Find the last path actively read in the evidence
         let mut target_path = None;
         for line in &lines {
@@ -38,9 +38,11 @@ impl CoverageLedger {
                 target_path = Some(p.to_string());
             }
         }
-        
-        let Some(target) = target_path else { return; };
-        
+
+        let Some(target) = target_path else {
+            return;
+        };
+
         // 2. Process all events chronologically, accumulating coverage for the target path
         let mut i = 0;
         while i < lines.len() {
@@ -60,12 +62,17 @@ impl CoverageLedger {
             } else if lines[i].starts_with("[READ_OK] ") {
                 let p = lines[i].trim_start_matches("[READ_OK] ").trim();
                 let mut j = i + 1;
-                while j < lines.len() && !lines[j].starts_with("[READ_CHUNK_OK]") && !lines[j].starts_with("[READ_OK]") {
+                while j < lines.len()
+                    && !lines[j].starts_with("[READ_CHUNK_OK]")
+                    && !lines[j].starts_with("[READ_OK]")
+                {
                     j += 1;
                 }
                 if p == target {
-                    let slice = lines[i..j].join("
-");
+                    let slice = lines[i..j].join(
+                        "
+",
+                    );
                     self.ingest_read_ok_blocks(&slice);
                 }
                 i = j;
@@ -314,10 +321,7 @@ fn normalize_workspace_path(p: &str) -> String {
     std::env::current_dir()
         .ok()
         .and_then(|cwd| {
-            std::path::Path::new(p)
-                .strip_prefix(&cwd)
-                .ok()
-                .map(|r| r.to_string_lossy().to_string())
+            std::path::Path::new(p).strip_prefix(&cwd).ok().map(|r| r.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| p.trim_start_matches("./").to_string())
 }

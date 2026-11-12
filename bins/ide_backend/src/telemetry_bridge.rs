@@ -4,32 +4,39 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tokio::time::{interval, Duration};
 
-pub fn spawn(
+pub async fn run(
     tx: broadcast::Sender<String>,
     monitor: Arc<Mutex<nexus_ide_backend::system_monitor::SystemMonitor>>,
     resonance: Arc<std::sync::atomic::AtomicU32>,
-) {
-    tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(3));
-        loop {
-            ticker.tick().await;
-            let vitals = {
-                let mut m = monitor.lock().await;
-                m.get_vitals()
-            };
-            let res = resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0;
-            let active_vmos = nexus_substrate::kernel::get_active_vmos();
+    mut shutdown: broadcast::Receiver<()>,
+) -> anyhow::Result<()> {
+    let mut ticker = interval(Duration::from_secs(3));
 
-            let msg = serde_json::json!({
-                "type":        "VITALS",
-                "cpu_load":    vitals.cpu_load,
-                "ram_gb":      vitals.ram_gb,
-                "total_ram_gb": vitals.total_ram_gb,
-                "temperature": vitals.temperature,
-                "resonance":   res,
-                "active_vmos": active_vmos,
-            });
-            let _ = tx.send(msg.to_string());
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => {
+                tracing::info!("[TELEMETRY] Shutdown received");
+                return Ok(());
+            }
+            _ = ticker.tick() => {}
         }
-    });
+
+        let vitals = {
+            let mut m = monitor.lock().await;
+            m.get_vitals()
+        };
+        let res = resonance.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0;
+        let active_vmos = nexus_substrate::kernel::get_active_vmos();
+
+        let msg = serde_json::json!({
+            "type": "VITALS",
+            "cpu_load": vitals.cpu_load,
+            "ram_gb": vitals.ram_gb,
+            "total_ram_gb": vitals.total_ram_gb,
+            "temperature": vitals.temperature,
+            "resonance": res,
+            "active_vmos": active_vmos,
+        });
+        let _ = tx.send(msg.to_string());
+    }
 }

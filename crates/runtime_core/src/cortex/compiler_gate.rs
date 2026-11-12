@@ -46,10 +46,8 @@ impl CompilerGate {
 
         // Cache cargo metadata per manifest so multi-file mutations in the
         // same nested workspace only shell out once.
-        let mut meta_cache: std::collections::HashMap<
-            PathBuf,
-            (PathBuf, Vec<serde_json::Value>),
-        > = std::collections::HashMap::new();
+        let mut meta_cache: std::collections::HashMap<PathBuf, (PathBuf, Vec<serde_json::Value>)> =
+            std::collections::HashMap::new();
 
         let root_meta = Self::load_workspace_metadata(&workspace_manifest).await?;
         meta_cache.insert(workspace_manifest.clone(), root_meta.clone());
@@ -119,12 +117,8 @@ impl CompilerGate {
 
         if let Some((manifest, _)) = matched.first() {
             let manifest = manifest.clone();
-            let packages: Vec<String> =
-                matched.into_iter().map(|(_, pkg)| pkg).collect();
-            Ok(RustVerificationTarget::WorkspacePackages {
-                workspace_manifest: manifest,
-                packages,
-            })
+            let packages: Vec<String> = matched.into_iter().map(|(_, pkg)| pkg).collect();
+            Ok(RustVerificationTarget::WorkspacePackages { workspace_manifest: manifest, packages })
         } else if !standalone_files.is_empty() {
             Ok(RustVerificationTarget::StandaloneFiles { files: standalone_files })
         } else {
@@ -177,12 +171,10 @@ impl CompilerGate {
             let Some(name) = package.get("name").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let Some(manifest_path) = package.get("manifest_path").and_then(|v| v.as_str())
-            else {
+            let Some(manifest_path) = package.get("manifest_path").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let Ok(package_root) = Path::new(manifest_path).parent().ok_or("invalid path")
-            else {
+            let Ok(package_root) = Path::new(manifest_path).parent().ok_or("invalid path") else {
                 continue;
             };
             if abs_path.starts_with(package_root) {

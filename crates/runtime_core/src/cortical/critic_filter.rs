@@ -131,8 +131,7 @@ impl CorticalLoop {
             && !refused_cmds.is_empty()
             && !session.local_evidence.contains("[REFUSAL_HALT_EMITTED]")
         {
-            let cmds: Vec<String> =
-                refused_cmds.iter().map(|c| c.replace('`', "")).collect();
+            let cmds: Vec<String> = refused_cmds.iter().map(|c| c.replace('`', "")).collect();
             let report = format!(
                 "Read-only gate refusal finding: the read-only command gate refused the required command before execution, so no command output was collected and this audit criterion is not met. Refused command: {}. The gate refuses command substitution, redirection and other constructs it cannot prove read-only; the command must be rewritten without them to be retried.",
                 cmds.join(" ; ")

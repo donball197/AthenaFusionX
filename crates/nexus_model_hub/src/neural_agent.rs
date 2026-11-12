@@ -193,8 +193,7 @@ impl MicroAgent {
 
         let mut rb = client.post(&url).json(&req_payload);
         if is_reflection {
-            let key = std::env::var("REFLECTION_API_KEY")
-                .unwrap_or_else(|_| api_key.to_string());
+            let key = std::env::var("REFLECTION_API_KEY").unwrap_or_else(|_| api_key.to_string());
             if key.trim().is_empty() {
                 anyhow::bail!("REFLECTION_API_KEY is missing for the selected Beam model");
             }

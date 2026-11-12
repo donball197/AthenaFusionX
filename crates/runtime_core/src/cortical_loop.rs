@@ -28,10 +28,10 @@ use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
 
-mod strategize;
 mod critic;
-mod execute;
 mod evaluate;
+mod execute;
+mod strategize;
 
 #[derive(Debug)]
 pub enum CortexOutcome {
@@ -335,18 +335,14 @@ impl CorticalLoop {
             if !evidence.trim().is_empty() {
                 use sha2::{Digest, Sha256};
                 let trimmed = evidence.trim();
-                let digest = format!("{:x}", Sha256::digest(trimmed.as_bytes()));
+                // Hash exactly the payload that the verifier will extract.
+                let inherited = inherit_physical_evidence(trimmed);
+                let inherited = inherited.trim();
+                let digest = format!("{:x}", Sha256::digest(inherited.as_bytes()));
                 session.local_evidence.push_str(&format!(
                     "\n[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]\n",
                     digest,
-                    // FIX BUG-06: inherit only physical evidence lines; drop
-                    // [RECON_REQUESTED], [CRITIC_*], [HALT_REJECTED_*] chatter.
-                    trimmed.lines().filter(|l| {
-                        let l = l.trim_start();
-                        l.starts_with("[READ_OK]") || l.starts_with("[READ_CHUNK_OK]")
-                            || l.starts_with("[CMD_OK]") || l.starts_with("[WRITE_OK]")
-                            || l.starts_with("[PATCH_OK]") || l.starts_with("[REPLACE_LINES_OK]")
-                    }).collect::<Vec<_>>().join("\n"),
+                    inherited,
                     digest
                 ));
             }
@@ -664,7 +660,6 @@ impl CorticalLoop {
     ) -> bool {
         !unwritten_targets.is_empty() && recon_ready && !contract.read_only
     }
-
 }
 
 /// Classification of a single `PatchFunction` action against the on-disk
@@ -682,3 +677,126 @@ pub(crate) use crate::cortical::patch_classification::{classify_patch_action, Pa
 #[cfg(test)]
 #[path = "cortical/loop_tests.rs"]
 mod tests;
+
+/// Keep physical-evidence blocks (marker line AND the body that follows it);
+/// drop critic/halt/recon chatter. Capped to bound prompt size.
+fn inherit_physical_evidence(evidence: &str) -> String {
+    // Includes the real executor patch markers. The old list carried
+    // "[PATCH_OK]" -- a marker the executor never emits -- so
+    // [PATCH_FUNCTION_OK], [PATCH_IDEMPOTENT_OK], and [DIFF_PATCH_OK]
+    // were silently filtered out of inherited lineage evidence.
+    // [WRITE_NOOP] is included for symmetry with [WRITE_OK]: both
+    // prove the requested end-state exists on disk.
+    const KEEP: [&str; 9] = [
+        "[READ_OK]",
+        "[READ_CHUNK_OK]",
+        "[CMD_OK]",
+        "[WRITE_OK]",
+        "[WRITE_NOOP]",
+        "[PATCH_FUNCTION_OK]",
+        "[PATCH_IDEMPOTENT_OK]",
+        "[DIFF_PATCH_OK]",
+        "[REPLACE_LINES_OK]",
+    ];
+    // Uppercase-only bracket tags are harness markers; "[dependencies]" etc. are file content.
+    fn is_marker(t: &str) -> bool {
+        t.starts_with('[')
+            && t.find(']').map_or(false, |i| {
+                i >= 4
+                    && t[1..i].chars().all(|c| {
+                        c.is_ascii_uppercase()
+                            || c.is_ascii_digit()
+                            || matches!(c, '_' | ' ' | '-' | ':')
+                    })
+            })
+    }
+    let mut out: Vec<&str> = Vec::new();
+    let mut keeping = false;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if KEEP.iter().any(|p| t.starts_with(p)) {
+            keeping = true;
+            out.push(line);
+        } else if is_marker(t) {
+            keeping = false;
+        } else if keeping {
+            out.push(line);
+        }
+    }
+    out.join("\n").chars().take(120_000).collect()
+}
+
+#[cfg(test)]
+mod inherit_evidence_tests {
+    use super::inherit_physical_evidence;
+
+    #[test]
+    fn keeps_read_body_and_drops_chatter() {
+        let ev = "[READ_OK] a.rs\nFULL FILE CONTENT:\nfn main() {}\n[dependencies]\n[CRITIC_VETO] no\nchatter\n[CMD_OK] Command: ls\nSTDOUT:\nx";
+        let out = inherit_physical_evidence(ev);
+        assert!(out.contains("fn main() {}"));
+        assert!(out.contains("[dependencies]"));
+        assert!(out.contains("STDOUT:"));
+        assert!(!out.contains("CRITIC_VETO"));
+        assert!(!out.contains("chatter"));
+    }
+
+    #[test]
+    fn lineage_hash_matches_filtered_payload_verified_by_consumer() {
+        use sha2::{Digest, Sha256};
+
+        let ancestor = "[READ_OK] src/main.rs\nFULL FILE CONTENT:\nfn main() {}\n[CRITIC_VETO] discarded chatter\nchatter";
+        let filtered = inherit_physical_evidence(ancestor.trim());
+        let payload = filtered.trim();
+
+        // Reproduce the former producer behavior: hashing the unfiltered
+        // ancestor evidence must not validate the filtered envelope.
+        let old_digest = format!("{:x}", Sha256::digest(ancestor.trim().as_bytes()));
+        let old_envelope = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]",
+            old_digest, payload, old_digest
+        );
+        assert!(
+            !crate::outcome_verifier::verify_lineage_provenance(&old_envelope),
+            "unfiltered ancestor hash must not validate a filtered payload"
+        );
+
+        // The corrected producer hashes the exact payload placed in the
+        // envelope, matching the verifier's extraction and trim behavior.
+        let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+        let envelope = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]",
+            digest, payload, digest
+        );
+
+        assert!(
+            crate::outcome_verifier::verify_lineage_provenance(&envelope),
+            "filtered payload and declared SHA-256 must agree"
+        );
+    }
+
+    #[test]
+    fn keeps_patch_markers_from_inherited_evidence() {
+        // Regression: the old KEEP list contained "[PATCH_OK]" (never
+        // emitted by the executor) and omitted the real patch markers,
+        // so [PATCH_FUNCTION_OK], [PATCH_IDEMPOTENT_OK], and
+        // [DIFF_PATCH_OK] were silently dropped from inherited lineage.
+        // A downstream node with a PATCH_FUNCTION_OK: criterion then
+        // failed closed on evidence its ancestor had physically produced.
+        let ev = concat!(
+            "[PATCH_FUNCTION_OK] src/math.rs:add\n",
+            "Updated function 'add' in src/math.rs\n",
+            "[DIFF_PATCH_OK] Applied changes to src/lib.rs\n",
+            "[PATCH_IDEMPOTENT_OK] src/other.rs:noop\n",
+            "PatchFunction already satisfied; source unchanged.\n",
+            "[WRITE_NOOP] out.md -- content identical to existing file\n",
+            "[CRITIC_VETO] filtered out\n",
+        );
+        let out = inherit_physical_evidence(ev);
+        assert!(out.contains("[PATCH_FUNCTION_OK] src/math.rs:add"));
+        assert!(out.contains("[DIFF_PATCH_OK] Applied changes to src/lib.rs"));
+        assert!(out.contains("[PATCH_IDEMPOTENT_OK] src/other.rs:noop"));
+        assert!(out.contains("[WRITE_NOOP] out.md"));
+        assert!(!out.contains("[CRITIC_VETO]"));
+    }
+}

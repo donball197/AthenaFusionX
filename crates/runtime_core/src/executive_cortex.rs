@@ -87,7 +87,11 @@ impl ExecutiveCortex {
         // terminal Completed/Aborted status written by task_manager.
         for goal in active_goals {
             if let Err(e) = self.memory.heartbeat_plan_run(&goal.plan_id).await {
-                tracing::warn!("[EXECUTIVE CORTEX] Heartbeat failed for plan {}: {}", goal.plan_id, e);
+                tracing::warn!(
+                    "[EXECUTIVE CORTEX] Heartbeat failed for plan {}: {}",
+                    goal.plan_id,
+                    e
+                );
             }
             tracing::debug!(
                 "[EXECUTIVE CORTEX] Heartbeat: goal {} (plan {}) status {:?}.",

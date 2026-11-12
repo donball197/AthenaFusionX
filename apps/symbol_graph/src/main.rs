@@ -2,9 +2,9 @@ mod exporter;
 mod graph;
 mod loader;
 
+use nexus_cli_utils::parse_arg;
 use std::env;
 use std::path::{Path, PathBuf};
-use nexus_cli_utils::parse_arg;
 
 fn find_map_file() -> PathBuf {
     let candidates = [

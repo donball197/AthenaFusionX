@@ -54,7 +54,10 @@ pub struct TaskContext {
 
 /// Guarantees a terminal status on every exit path (early return, panic,
 /// future cancellation). No-op if the plan already reached Completed/Aborted.
-struct PlanGuard { memory: Arc<MemoryCortex>, plan_id: String }
+struct PlanGuard {
+    memory: Arc<MemoryCortex>,
+    plan_id: String,
+}
 impl Drop for PlanGuard {
     fn drop(&mut self) {
         let (m, id) = (self.memory.clone(), self.plan_id.clone());
@@ -67,13 +70,15 @@ impl Drop for PlanGuard {
         } else {
             tracing::warn!("[PLAN GUARD] No active Tokio runtime handle during drop for plan {}. Enqueuing sync fallback abort.", id);
             std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build();
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
                 if let Ok(runtime) = rt {
                     runtime.block_on(async move {
                         if let Err(e) = m.abort_plan_if_active(&id).await {
-                            tracing::error!("[PLAN GUARD] Sync fallback abort of plan {} failed: {}", id, e);
+                            tracing::error!(
+                                "[PLAN GUARD] Sync fallback abort of plan {} failed: {}",
+                                id,
+                                e
+                            );
                         }
                     });
                 }
@@ -104,11 +109,14 @@ async fn send_task_inner(
     // is deliberately not started until the initial plan row is durable.
     let plan_id = uuid::Uuid::new_v4().to_string();
 
-    let mut graph =
-        match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
-            Ok(g) => g,
-            Err(e) => return Err(TaskError::Planner(format!("Planner failed to decompose objective: {}", e))),
-        };
+    let mut graph = match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive)
+        .await
+    {
+        Ok(g) => g,
+        Err(e) => {
+            return Err(TaskError::Planner(format!("Planner failed to decompose objective: {}", e)))
+        }
+    };
 
     let expected_paths: Vec<String> =
         crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", raw_directive)
@@ -135,7 +143,10 @@ async fn send_task_inner(
     let initial_graph_json = match serde_json::to_string(&graph) {
         Ok(json) => json,
         Err(error) => {
-            return Err(TaskError::Persistence(format!("Could not serialize initial plan graph: {}", error)));
+            return Err(TaskError::Persistence(format!(
+                "Could not serialize initial plan graph: {}",
+                error
+            )));
         }
     };
     let initial_now = std::time::SystemTime::now()
@@ -145,16 +156,13 @@ async fn send_task_inner(
 
     if let Err(error) = ctx
         .memory
-        .upsert_plan_run(
-            &plan_id,
-            raw_directive,
-            &initial_graph_json,
-            "Active",
-            initial_now,
-        )
+        .upsert_plan_run(&plan_id, raw_directive, &initial_graph_json, "Active", initial_now)
         .await
     {
-        return Err(TaskError::Persistence(format!("Plan {} was not stored; execution was not started: {}", plan_id, error)));
+        return Err(TaskError::Persistence(format!(
+            "Plan {} was not stored; execution was not started: {}",
+            plan_id, error
+        )));
     }
 
     let _plan_guard = PlanGuard { memory: ctx.memory.clone(), plan_id: plan_id.clone() };
@@ -178,7 +186,10 @@ async fn send_task_inner(
         })
         .await
     {
-        return Err(TaskError::Persistence(format!("Plan {} was stored, but Executive Cortex goal registration failed: {}", plan_id, error)));
+        return Err(TaskError::Persistence(format!(
+            "Plan {} was stored, but Executive Cortex goal registration failed: {}",
+            plan_id, error
+        )));
     }
 
     let cortex_handle = tokio::spawn(executive_cortex.run_actor_loop());
@@ -203,11 +214,19 @@ async fn send_task_inner(
 
     for task_id in order {
         if cortex_handle.is_finished() {
-            return Err(TaskError::Cortex("Executive Cortex actor terminated unexpectedly (panicked) during DAG execution.".into()));
+            return Err(TaskError::Cortex(
+                "Executive Cortex actor terminated unexpectedly (panicked) during DAG execution."
+                    .into(),
+            ));
         }
         let node = match graph.nodes.get(&task_id) {
             Some(n) => n.clone(),
-            None => return Err(TaskError::Planner(format!("Node {} missing from graph structure", task_id))),
+            None => {
+                return Err(TaskError::Planner(format!(
+                    "Node {} missing from graph structure",
+                    task_id
+                )))
+            }
         };
 
         // A node is blocked only by a failed DEPENDENCY, not by loop
@@ -246,7 +265,10 @@ async fn send_task_inner(
             for dep in &node.deps {
                 if let Some(out) = task_outputs.get(dep) {
                     let bounded_out = if out.len() > 1500 {
-                        format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", out.chars().take(1500).collect::<String>())
+                        format!(
+                            "{}... [TRUNCATED FOR CONTEXT BOUNDS]",
+                            out.chars().take(1500).collect::<String>()
+                        )
                     } else {
                         out.clone()
                     };
@@ -613,7 +635,10 @@ async fn send_task_inner(
         let checkpoint_graph_json = match serde_json::to_string(&graph) {
             Ok(json) => json,
             Err(error) => {
-                return Err(TaskError::Persistence(format!("Could not serialize checkpoint for plan {}: {}", plan_id, error)));
+                return Err(TaskError::Persistence(format!(
+                    "Could not serialize checkpoint for plan {}: {}",
+                    plan_id, error
+                )));
             }
         };
         let checkpoint_now = std::time::SystemTime::now()
@@ -623,20 +648,21 @@ async fn send_task_inner(
 
         match ctx
             .memory
-            .update_plan_run_checkpoint(
-                &plan_id,
-                &checkpoint_graph_json,
-                "Active",
-                checkpoint_now,
-            )
+            .update_plan_run_checkpoint(&plan_id, &checkpoint_graph_json, "Active", checkpoint_now)
             .await
         {
             Ok(true) => {}
             Ok(false) => {
-                return Err(TaskError::Persistence(format!("Plan {} was no longer Active; downstream execution halted.", plan_id)));
+                return Err(TaskError::Persistence(format!(
+                    "Plan {} was no longer Active; downstream execution halted.",
+                    plan_id
+                )));
             }
             Err(error) => {
-                return Err(TaskError::Persistence(format!("Checkpoint for plan {} failed; downstream execution halted: {}", plan_id, error)));
+                return Err(TaskError::Persistence(format!(
+                    "Checkpoint for plan {} failed; downstream execution halted: {}",
+                    plan_id, error
+                )));
             }
         }
 
@@ -666,7 +692,10 @@ async fn send_task_inner(
     let final_graph_json = match serde_json::to_string(&graph) {
         Ok(json) => json,
         Err(error) => {
-            return Err(TaskError::Persistence(format!("Could not serialize final graph for plan {}: {}", plan_id, error)));
+            return Err(TaskError::Persistence(format!(
+                "Could not serialize final graph for plan {}: {}",
+                plan_id, error
+            )));
         }
     };
     let final_status = if mission_had_failures
@@ -684,20 +713,21 @@ async fn send_task_inner(
 
     match ctx
         .memory
-        .update_plan_run_checkpoint(
-            &plan_id,
-            &final_graph_json,
-            final_status,
-            final_now,
-        )
+        .update_plan_run_checkpoint(&plan_id, &final_graph_json, final_status, final_now)
         .await
     {
         Ok(true) => {}
         Ok(false) => {
-            return Err(TaskError::Persistence(format!("Plan {} could not transition from Active to {}.", plan_id, final_status)));
+            return Err(TaskError::Persistence(format!(
+                "Plan {} could not transition from Active to {}.",
+                plan_id, final_status
+            )));
         }
         Err(error) => {
-            return Err(TaskError::Persistence(format!("Final {} transition for plan {} failed: {}", final_status, plan_id, error)));
+            return Err(TaskError::Persistence(format!(
+                "Final {} transition for plan {} failed: {}",
+                final_status, plan_id, error
+            )));
         }
     }
 

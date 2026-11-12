@@ -53,12 +53,12 @@ pub fn write_path_satisfied(evidence: &str, path: &str) -> bool {
 /// terms that themselves contain colons, such as Rust module paths.
 pub(crate) fn looks_like_workspace_path(s: &str) -> bool {
     // DOT_ROOT: "." / "./" is the workspace root.
-    s == "." || s == "./"
+    s == "."
+        || s == "./"
         || s.starts_with('/')
         || s.contains('/')
         || matches!(s, "crates" | "bins" | "src" | "vendor" | "apps" | "drones")
 }
-
 
 /// True when evidence records a successful, path/query-bound search.
 ///
@@ -90,7 +90,11 @@ pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
             (
                 {
                     let t0 = p.trim().trim_matches('/');
-                    if t0 == "." { String::new() } else { t0.to_string() }
+                    if t0 == "." {
+                        String::new()
+                    } else {
+                        t0.to_string()
+                    }
                 },
                 t.trim().to_string(),
             )
@@ -106,9 +110,7 @@ pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
     let mut i = 0usize;
 
     while i < lines.len() {
-        let Some(header_body) =
-            lines[i].trim_start().strip_prefix("[SEARCH_CODE_OK]")
-        else {
+        let Some(header_body) = lines[i].trim_start().strip_prefix("[SEARCH_CODE_OK]") else {
             i += 1;
             continue;
         };
@@ -142,26 +144,18 @@ pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
         let successful_outcome = has_matches || exact_no_match;
 
         if successful_outcome {
-            if let Some((path_field, query_field)) =
-                header.split_once("| Query:")
-            {
-                if let Some(recorded_path) =
-                    path_field.trim().strip_prefix("Path:")
-                {
+            if let Some((path_field, query_field)) = header.split_once("| Query:") {
+                if let Some(recorded_path) = path_field.trim().strip_prefix("Path:") {
                     let recorded_path = recorded_path.trim().trim_matches('/').to_lowercase();
                     let recorded_query = query_field
                         .trim()
-                        .trim_matches(|c| {
-                            c == '\'' || c == '"' || c == '`'
-                        })
+                        .trim_matches(|c| c == '\'' || c == '"' || c == '`')
                         .to_lowercase();
 
                     if !recorded_query.is_empty() {
                         let path_ok = path_part.is_empty()
                             || recorded_path == path_part
-                            || recorded_path.ends_with(
-                                &format!("/{}", path_part)
-                            );
+                            || recorded_path.ends_with(&format!("/{}", path_part));
 
                         if path_ok && recorded_query.contains(&term_part) {
                             return true;
@@ -196,7 +190,11 @@ pub fn search_term_satisfied(evidence: &str, expected: &str) -> bool {
             (
                 {
                     let t0 = p.trim().trim_matches('/');
-                    if t0 == "." { String::new() } else { t0.to_string() }
+                    if t0 == "." {
+                        String::new()
+                    } else {
+                        t0.to_string()
+                    }
                 },
                 t.trim().to_string(),
             )
@@ -364,10 +362,7 @@ pub fn patch_path_satisfied(
         "DIFF_PATCH_OK" => evidence.lines().any(|l| {
             if let Some(rest) = l.strip_prefix("[DIFF_PATCH_OK]") {
                 let rest = rest.trim();
-                let path_part = rest
-                    .strip_prefix("Applied changes to ")
-                    .unwrap_or(rest)
-                    .trim();
+                let path_part = rest.strip_prefix("Applied changes to ").unwrap_or(rest).trim();
                 norm_path(path_part) == target
             } else {
                 false
@@ -482,7 +477,12 @@ mod tests {
         assert!(patch_path_satisfied(diff_ev, "DIFF_PATCH_OK", "bins/ide_backend", None));
         assert!(!patch_path_satisfied(fn_ev, "DIFF_PATCH_OK", "bins/ide_backend", None));
         assert!(patch_path_satisfied(fn_ev, "PATCH_FUNCTION_OK", "bins/ide_backend", Some("init")));
-        assert!(!patch_path_satisfied(fn_ev, "PATCH_FUNCTION_OK", "bins/ide_backend", Some("other")));
+        assert!(!patch_path_satisfied(
+            fn_ev,
+            "PATCH_FUNCTION_OK",
+            "bins/ide_backend",
+            Some("other")
+        ));
     }
 
     #[test]
@@ -562,7 +562,8 @@ mod tests {
 
     #[test]
     fn no_match_marker_never_satisfies_term_bound_criterion() {
-        let ev = "[SEARCH_CODE_OK] Path: bins | Query: 'x'\nNo code matches found in specified path.";
+        let ev =
+            "[SEARCH_CODE_OK] Path: bins | Query: 'x'\nNo code matches found in specified path.";
         assert!(!search_term_satisfied(ev, "bins:x"));
         assert!(!search_term_satisfied(ev, "x"));
     }
@@ -618,6 +619,22 @@ mod tests {
         assert!(!has_artifact_write("[READ_OK] foo.rs\n", "foo.rs"));
         assert!(!has_artifact_write("[SEARCH_CODE_OK] Path: foo.rs | Query: 'x'\n", "foo.rs"));
     }
+
+    #[test]
+    fn artifact_write_rejects_marker_inside_read_body() {
+        // Regression: the prior `line_lower.contains(m)` marker gate treated
+        // a [READ_OK] whose body contained "[WRITE_OK] target.md" as a real
+        // write, falsely satisfying a write contract for a path never written.
+        let ev = concat!(
+            "[READ_OK] docs/readme.md\n",
+            "FULL FILE CONTENT:\n",
+            "Example: [WRITE_OK] target.md -- not a real write\n",
+        );
+        assert!(!has_artifact_write(ev, "target.md"));
+        // Sanity: the same marker delivered as a real line-prefixed write
+        // is still accepted.
+        assert!(has_artifact_write("[WRITE_OK] target.md\n", "target.md"));
+    }
 }
 
 /// PATCH 1a: Returns true if `evidence` contains a successful write marker
@@ -644,20 +661,27 @@ pub fn has_artifact_write(evidence: &str, target_path_substr: &str) -> bool {
         .and_then(|f| f.to_str())
         .unwrap_or(&target_lower);
 
-    let markers = [
+    // Line-anchored marker gate. The prior check used `line_lower.contains(m)`,
+    // which matched marker strings anywhere in a line -- including the body of
+    // a [READ_OK] whose file content contained a literal "[WRITE_OK] target.md".
+    // Requiring the marker at the start of the trimmed line closes that
+    // spoofing vector. The SynthesizeReport emission shape
+    // ("[WRITE_OK] Successfully synthesized and wrote report to <path>")
+    // still starts with "[WRITE_OK]", so it is unaffected.
+    let anchored_markers = [
         "[write_ok]",
         "[diff_patch_ok]",
         "[patch_function_ok]",
+        "[patch_idempotent_ok]",
         "[replace_lines_ok]",
         "[write_noop]",
-        "synthesized and wrote report to",
     ];
     for line in evidence.lines() {
-        let line_lower = line.to_lowercase();
-        if !markers.iter().any(|m| line_lower.contains(m)) {
+        let t = line.trim_start().to_lowercase();
+        if !anchored_markers.iter().any(|m| t.starts_with(m)) {
             continue;
         }
-        if path_component_match(&line_lower, &target_lower, target_basename) {
+        if path_component_match(&t, &target_lower, target_basename) {
             return true;
         }
     }
@@ -707,7 +731,6 @@ fn path_token_matches(token: &str, target: &str, target_basename: &str) -> bool 
     false
 }
 
-
 #[cfg(test)]
 mod search_checked_tests {
     use super::{search_checked_satisfied, search_term_satisfied};
@@ -719,14 +742,8 @@ mod search_checked_tests {
             "No code matches found in specified path.\n"
         );
 
-        assert!(search_checked_satisfied(
-            evidence,
-            "bins:unimplemented!"
-        ));
-        assert!(!search_term_satisfied(
-            evidence,
-            "bins:unimplemented!"
-        ));
+        assert!(search_checked_satisfied(evidence, "bins:unimplemented!"));
+        assert!(!search_term_satisfied(evidence, "bins:unimplemented!"));
     }
 
     #[test]
@@ -737,10 +754,7 @@ mod search_checked_tests {
             "main.rs:10: unimplemented!()\n"
         );
 
-        assert!(search_checked_satisfied(
-            evidence,
-            "bins:unimplemented!"
-        ));
+        assert!(search_checked_satisfied(evidence, "bins:unimplemented!"));
     }
 
     #[test]
@@ -750,22 +764,13 @@ mod search_checked_tests {
             "No code matches found in specified path.\n"
         );
 
-        assert!(!search_checked_satisfied(
-            evidence,
-            "bins:unimplemented!"
-        ));
-        assert!(!search_checked_satisfied(
-            evidence,
-            "crates:another_term"
-        ));
+        assert!(!search_checked_satisfied(evidence, "bins:unimplemented!"));
+        assert!(!search_checked_satisfied(evidence, "crates:another_term"));
     }
 
     #[test]
     fn rejects_unbound_or_inexact_no_match_text() {
-        assert!(!search_checked_satisfied(
-            "No code matches found in specified path.",
-            "bins:x"
-        ));
+        assert!(!search_checked_satisfied("No code matches found in specified path.", "bins:x"));
 
         assert!(!search_checked_satisfied(
             "[SEARCH_CODE_OK] Path: bins | Query: 'x'\n\
@@ -794,7 +799,6 @@ mod search_checked_tests {
     }
 }
 
-
 #[cfg(test)]
 mod trailing_slash_regression_tests {
     use super::*;
@@ -806,12 +810,15 @@ mod trailing_slash_regression_tests {
             "No code matches found in specified path.\n"
         );
         // All three criteria spellings must resolve to the same match:
-        assert!(search_checked_satisfied(ev, "bins:todo!"),
-            "bare form");
-        assert!(search_checked_satisfied(ev, "bins/:todo!"),
-            "trailing-slash form (planner copies from 'bins/' mission text)");
-        assert!(search_checked_satisfied(ev, "/bins/:todo!"),
-            "leading+trailing slash form (absolute path intent)");
+        assert!(search_checked_satisfied(ev, "bins:todo!"), "bare form");
+        assert!(
+            search_checked_satisfied(ev, "bins/:todo!"),
+            "trailing-slash form (planner copies from 'bins/' mission text)"
+        );
+        assert!(
+            search_checked_satisfied(ev, "/bins/:todo!"),
+            "leading+trailing slash form (absolute path intent)"
+        );
     }
 
     #[test]

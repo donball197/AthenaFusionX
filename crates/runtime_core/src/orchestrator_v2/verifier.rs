@@ -162,7 +162,7 @@ impl Verifier {
             let criterion = criterion.trim();
 
             let satisfied = if criterion == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED" {
-                evidence.contains("[DAG NODE COMPLETE]")
+                evidence.lines().any(|l| l.trim_start().starts_with("[DAG NODE COMPLETE]"))
             } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
                 read_evidence_matches_path(evidence, path.trim())
             } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
@@ -175,7 +175,7 @@ impl Verifier {
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CHECKED_OK:") {
                 crate::evidence_markers::search_checked_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
-                evidence.contains("[HALT]")
+                evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
             } else if criterion == "SEARCH_MEMORY_OK" {
                 evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
@@ -222,28 +222,55 @@ impl Verifier {
                             .any(|l| l.trim() == "Status: exit status: 0")
                 })
             } else if criterion == "PATCH_FUNCTION_OK" {
-                evidence.contains("[PATCH_FUNCTION_OK]")
-                    || evidence.contains("[PATCH_IDEMPOTENT_OK]")
+                evidence.lines().any(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("[PATCH_FUNCTION_OK]") || t.starts_with("[PATCH_IDEMPOTENT_OK]")
+                })
             } else if let Some(func) = criterion.strip_prefix("PATCH_FUNCTION_OK:") {
                 let mut parts = func.splitn(2, ':');
-                let path = parts.next().unwrap_or("").trim();
-                let name = parts.next().unwrap_or("").trim();
-                (evidence.contains("[PATCH_FUNCTION_OK]")
-                    || evidence.contains("[PATCH_IDEMPOTENT_OK]"))
-                    && (evidence.contains(func)
-                        || (!path.is_empty()
-                            && !name.is_empty()
-                            && evidence.contains(path)
-                            && evidence.contains(name))
-                        || (!name.is_empty() && evidence.contains(name)))
+                let path_or_name = parts.next().unwrap_or("").trim();
+                let maybe_name = parts.next().unwrap_or("").trim();
+                if path_or_name.is_empty() {
+                    false
+                } else if maybe_name.is_empty() {
+                    // Single-field form. Bind the function name to a real
+                    // [PATCH_FUNCTION_OK] or [PATCH_IDEMPOTENT_OK] record,
+                    // so the name appearing in unrelated read text does
+                    // not satisfy this criterion.
+                    evidence.lines().any(|l| {
+                        let t = l.trim_start();
+                        let rest = match t.strip_prefix("[PATCH_FUNCTION_OK]") {
+                            Some(r) => r,
+                            None => match t.strip_prefix("[PATCH_IDEMPOTENT_OK]") {
+                                Some(r) => r,
+                                None => return false,
+                            },
+                        };
+                        rest.contains(path_or_name)
+                    })
+                } else {
+                    // Two-field form (<path>:<fn>). Delegate to the shared
+                    // record-scoped matcher, which binds kind + path + fn.
+                    crate::evidence_markers::patch_path_satisfied(
+                        evidence,
+                        "PATCH_FUNCTION_OK",
+                        path_or_name,
+                        Some(maybe_name),
+                    )
+                }
             } else if criterion == "DIFF_PATCH_OK" {
-                evidence.contains("[DIFF_PATCH_OK]")
+                evidence.lines().any(|l| l.trim_start().starts_with("[DIFF_PATCH_OK]"))
             } else if let Some(path) = criterion.strip_prefix("DIFF_PATCH_OK:") {
-                evidence.contains("[DIFF_PATCH_OK]") && evidence.contains(path)
+                crate::evidence_markers::patch_path_satisfied(evidence, "DIFF_PATCH_OK", path, None)
             } else if criterion == "REPLACE_LINES_OK" {
-                evidence.contains("[REPLACE_LINES_OK]")
+                evidence.lines().any(|l| l.trim_start().starts_with("[REPLACE_LINES_OK]"))
             } else if let Some(path) = criterion.strip_prefix("REPLACE_LINES_OK:") {
-                evidence.contains("[REPLACE_LINES_OK]") && evidence.contains(path)
+                crate::evidence_markers::patch_path_satisfied(
+                    evidence,
+                    "REPLACE_LINES_OK",
+                    path,
+                    None,
+                )
             } else if criterion == "DAG_LINEAGE_OK" {
                 crate::outcome_verifier::verify_lineage_provenance(evidence)
             } else {
@@ -367,10 +394,7 @@ mod tests {
             "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nlib.rs:1: unimplemented!()\n",
             "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nmain.rs:1: unimplemented!()\n",
         );
-        assert_eq!(
-            Verifier::verify_contract("t", both, &criteria),
-            VerificationResult::Success
-        );
+        assert_eq!(Verifier::verify_contract("t", both, &criteria), VerificationResult::Success);
     }
 
     #[test]

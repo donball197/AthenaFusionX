@@ -65,21 +65,16 @@ pub(crate) fn action_advances_unmet_contract_condition(
                     // Match the evidence verifier's path:term convention.
                     // A colon is a path separator only when its prefix
                     // actually resembles a workspace path.
-                    let (expected_path, expected_term) =
-                        match expected.split_once(':') {
-                            Some((candidate_path, candidate_term))
-                                if crate::evidence_markers::
-                                    looks_like_workspace_path(
-                                        candidate_path.trim()
-                                    ) =>
-                            {
-                                (
-                                    Some(candidate_path.trim()),
-                                    candidate_term.trim(),
-                                )
-                            }
-                            _ => (None, expected),
-                        };
+                    let (expected_path, expected_term) = match expected.split_once(':') {
+                        Some((candidate_path, candidate_term))
+                            if crate::evidence_markers::looks_like_workspace_path(
+                                candidate_path.trim(),
+                            ) =>
+                        {
+                            (Some(candidate_path.trim()), candidate_term.trim())
+                        }
+                        _ => (None, expected),
+                    };
 
                     if expected_term.is_empty() {
                         false
@@ -114,9 +109,7 @@ pub(crate) fn action_advances_unmet_contract_condition(
                     }
                 }
             }
-            CC::SearchCheckedAcquired { target } => {
-                search_action_matches_target(action, target)
-            }
+            CC::SearchCheckedAcquired { target } => search_action_matches_target(action, target),
             CC::SearchMemoryMarkerAcquired => {
                 matches!(action, AgentAction::SearchMemory { .. })
             }
@@ -259,14 +252,9 @@ fn search_action_matches_target(action: &AgentAction, target: &str) -> bool {
 
     let (expected_path, expected_term) = match expected.split_once(':') {
         Some((candidate_path, candidate_term))
-            if crate::evidence_markers::looks_like_workspace_path(
-                candidate_path.trim()
-            ) =>
+            if crate::evidence_markers::looks_like_workspace_path(candidate_path.trim()) =>
         {
-            (
-                Some(candidate_path.trim()),
-                candidate_term.trim(),
-            )
+            (Some(candidate_path.trim()), candidate_term.trim())
         }
         _ => (None, expected),
     };
@@ -356,7 +344,6 @@ mod same_workspace_path_tests {
     }
 }
 
-
 #[cfg(test)]
 mod search_action_matches_target_tests {
     use super::*;
@@ -373,49 +360,31 @@ mod search_action_matches_target_tests {
 
     #[test]
     fn crates_target_matched_by_crates_action() {
-        assert!(search_action_matches_target(
-            &sc("crates", "todo!"),
-            "crates:todo!"
-        ));
+        assert!(search_action_matches_target(&sc("crates", "todo!"), "crates:todo!"));
     }
 
     #[test]
     fn crates_target_rejected_by_bins_action() {
-        assert!(!search_action_matches_target(
-            &sc("bins", "todo!"),
-            "crates:todo!"
-        ));
+        assert!(!search_action_matches_target(&sc("bins", "todo!"), "crates:todo!"));
     }
 
     #[test]
     fn empty_path_defaults_to_crates() {
-        assert!(search_action_matches_target(
-            &sc("", "todo!"),
-            "crates:todo!"
-        ));
+        assert!(search_action_matches_target(&sc("", "todo!"), "crates:todo!"));
     }
 
     #[test]
     fn empty_query_never_matches() {
-        assert!(!search_action_matches_target(
-            &sc("crates", ""),
-            "crates:todo!"
-        ));
+        assert!(!search_action_matches_target(&sc("crates", ""), "crates:todo!"));
     }
 
     #[test]
     fn bare_target_matches_any_path() {
-        assert!(search_action_matches_target(
-            &sc("bins", "todo!"),
-            "todo!"
-        ));
+        assert!(search_action_matches_target(&sc("bins", "todo!"), "todo!"));
     }
 
     #[test]
     fn empty_target_never_matches() {
-        assert!(!search_action_matches_target(
-            &sc("crates", "todo!"),
-            ""
-        ));
+        assert!(!search_action_matches_target(&sc("crates", "todo!"), ""));
     }
 }

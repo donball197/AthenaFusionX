@@ -117,7 +117,6 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     let clean_text = if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&clean_text) {
         let process_obj = |obj: &mut serde_json::Map<String, serde_json::Value>| {
-
             // Float to Int normalization for model quirks
             for key in ["start_line", "max_lines", "end_line", "offset", "limit"] {
                 if let Some(val) = obj.get_mut(key) {
@@ -130,7 +129,7 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                     }
                 }
             }
-    
+
             if let Some(tool_val) = obj.remove("tool") {
                 obj.insert("type".to_string(), tool_val);
             }
@@ -311,22 +310,22 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                 }
             }
 
-//             // Normalize replace_lines model-side field names
-//             let is_replace_lines = obj
-//                 .get("type")
-//                 .and_then(serde_json::Value::as_str)
-//                 .is_some_and(|t| t == "replace_lines");
-//             if is_replace_lines {
-//                 if !obj.contains_key("replacement") {
-//                     if let Some(v) = obj
-//                         .remove("new_content")
-//                         .or_else(|| obj.remove("content"))
-//                         .or_else(|| obj.remove("new_body"))
-//                     {
-//                         obj.insert("replacement".to_string(), v);
-//                     }
-//                 }
-//             }
+            //             // Normalize replace_lines model-side field names
+            //             let is_replace_lines = obj
+            //                 .get("type")
+            //                 .and_then(serde_json::Value::as_str)
+            //                 .is_some_and(|t| t == "replace_lines");
+            //             if is_replace_lines {
+            //                 if !obj.contains_key("replacement") {
+            //                     if let Some(v) = obj
+            //                         .remove("new_content")
+            //                         .or_else(|| obj.remove("content"))
+            //                         .or_else(|| obj.remove("new_body"))
+            //                     {
+            //                         obj.insert("replacement".to_string(), v);
+            //                     }
+            //                 }
+            //             }
         };
 
         if let Some(arr) = val.as_array_mut() {
@@ -556,13 +555,7 @@ mod tests {
             }]"#,
         );
         match action {
-            AgentAction::ReplaceLines {
-                path,
-                start_line,
-                end_line,
-                replacement,
-                ..
-            } => {
+            AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
                 assert_eq!(path, "bins/ide_backend/src/main.rs");
                 assert_eq!(start_line, 228);
                 assert_eq!(end_line, 228);

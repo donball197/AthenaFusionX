@@ -16,11 +16,9 @@ const SAFE_COMMANDS: &[&str] = &[
     // writes to stdout (or to fd 0 as a formatting hint), not to the
     // filesystem. Neither can mutate a tracked file. `>` is still rejected
     // at the parser level, so `printf ... > file` remains refused.
-    "cd", "printf",
-    // sysinspect: read-only host inspection for runtime/baseline audits.
-    "ps", "free", "ss", "netstat", "uptime", "nproc", "df", "du", "uname", "whoami", "id",
-    "date", "lscpu", "vmstat", "pgrep", "which", "ulimit", "true", "false",
-    "sed", "sqlite3", "cargo",
+    "cd", "printf", // sysinspect: read-only host inspection for runtime/baseline audits.
+    "ps", "free", "ss", "netstat", "uptime", "nproc", "df", "du", "uname", "whoami", "id", "date",
+    "lscpu", "vmstat", "pgrep", "which", "ulimit", "true", "false", "sed", "sqlite3", "cargo",
 ];
 const SAFE_GIT: &[&str] = &[
     "log",
@@ -66,9 +64,7 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
         return false;
     }
     // Metadata-only invocations never touch a database file.
-    if args.iter().all(|a| {
-        matches!(a.as_str(), "--version" | "-version" | "--help" | "-help")
-    }) {
+    if args.iter().all(|a| matches!(a.as_str(), "--version" | "-version" | "--help" | "-help")) {
         return true;
     }
     let mut db_idx: Option<usize> = None;
@@ -78,8 +74,16 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
             has_readonly = true;
         } else if matches!(
             a.as_str(),
-            "-header" | "-noheader" | "-column" | "-line" | "-list" | "-csv" | "-json"
-                | "-table" | "-box" | "-markdown"
+            "-header"
+                | "-noheader"
+                | "-column"
+                | "-line"
+                | "-list"
+                | "-csv"
+                | "-json"
+                | "-table"
+                | "-box"
+                | "-markdown"
         ) {
             // Output-format flags only; they cannot write or run commands.
         } else if a.starts_with('-') {
@@ -88,13 +92,14 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
             db_idx = Some(i);
         }
     }
-    let Some(db_idx) = db_idx else { return false; };
+    let Some(db_idx) = db_idx else {
+        return false;
+    };
     let db = &args[db_idx];
     if !(db.ends_with(".db") || db.ends_with(".sqlite") || db.ends_with(".sqlite3")) {
         return false;
     }
-    let payload_parts: Vec<&str> =
-        args[db_idx + 1..].iter().map(|s| s.as_str()).collect();
+    let payload_parts: Vec<&str> = args[db_idx + 1..].iter().map(|s| s.as_str()).collect();
     if payload_parts.is_empty() {
         return false;
     }
@@ -102,40 +107,35 @@ fn sqlite3_is_safe(args: &[String]) -> bool {
     // Strip surrounding quotes. The shell parser preserves them in `args`,
     // so ".schema plan_runs" arrives with literal quotes and would fail
     // starts_with('.') unless we trim here.
-    let payload = payload
-        .trim()
-        .trim_matches(|c: char| c == '"' || c == '\'')
-        .trim();
+    let payload = payload.trim().trim_matches(|c: char| c == '"' || c == '\'').trim();
     if payload.starts_with('.') {
-        let cmd = payload
-            .trim_start_matches('.')
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let cmd = payload.trim_start_matches('.').split_whitespace().next().unwrap_or("");
         return matches!(cmd, "schema" | "tables" | "indexes" | "databases");
     }
     if !has_readonly {
         return false;
     }
     const WRITE_WORDS: &[&str] = &[
-        "insert", "update", "delete", "drop", "create", "alter",
-        "attach", "detach", "vacuum", "reindex", "replace",
+        "insert", "update", "delete", "drop", "create", "alter", "attach", "detach", "vacuum",
+        "reindex", "replace",
     ];
     const BAD_SUBSTR: &[&str] = &[
-        "load_extension", "writable_schema", "pragma_", "writefile", "readfile",
-        "edit(", "fts3_tokenizer", "zipfile",
+        "load_extension",
+        "writable_schema",
+        "pragma_",
+        "writefile",
+        "readfile",
+        "edit(",
+        "fts3_tokenizer",
+        "zipfile",
     ];
     let has_word = |w: &str| {
-        payload
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .any(|tok| tok == w)
+        payload.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == w)
     };
     if WRITE_WORDS.iter().any(|w| has_word(w)) || BAD_SUBSTR.iter().any(|b| payload.contains(b)) {
         return false;
     }
-    payload.starts_with("select ")
-        || payload.starts_with("pragma ")
-        || payload.starts_with("with ")
+    payload.starts_with("select ") || payload.starts_with("pragma ") || payload.starts_with("with ")
 }
 
 fn cargo_is_safe(args: &[String]) -> bool {
@@ -347,7 +347,9 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
             "date"
                 if args.iter().any(|t| {
                     let s = t.as_str();
-                    s == "-s" || s.starts_with("--set") || !(s.starts_with('-') || s.starts_with('+'))
+                    s == "-s"
+                        || s.starts_with("--set")
+                        || !(s.starts_with('-') || s.starts_with('+'))
                 }) =>
             {
                 return false
@@ -767,7 +769,9 @@ mod sed_sqlite_hardening_tests {
 
     #[test]
     fn sqlite_reads_ok_and_file_functions_refused() {
-        assert!(safe(r#"sqlite3 -readonly nexus_daemon.db "select id, updated_at, created_at from plan_runs""#));
+        assert!(safe(
+            r#"sqlite3 -readonly nexus_daemon.db "select id, updated_at, created_at from plan_runs""#
+        ));
         assert!(safe("sqlite3 nexus_daemon.db .schema"));
         assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select writefile('/tmp/x','y')""#));
         assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select readfile('/etc/passwd')""#));

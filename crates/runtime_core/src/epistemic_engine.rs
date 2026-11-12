@@ -1456,6 +1456,14 @@ EVIDENCE:
 Does this evidence mathematically prove the stated strategy's objective was achieved? A successful action (like [WRITE_OK] or [CMD_OK]) is NOT proof of success on its own UNLESS the ACTION TAKEN itself contains the actual content that was written or patched (write_file/diff_patch/patch_function actions above include the real file content directly in ACTION TAKEN) — in that case, check whether that content satisfies the objective, and treat a confirmed match as proof. Do not reject a successful write or patch merely because the bare EVIDENCE line (e.g. [WRITE_OK]) doesn't repeat the content; the content to check is in ACTION TAKEN.
 For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
 
+EXCEPTION — HALT-ONLY SYNTHESIS: If ACTION TAKEN is a [HALT] and STRATEGY explicitly describes an inline-analysis mission (for example, it contains "the material to analyze is inline in the directive" or "no searches, reads, or commands"), then this is a synthesis task. In this case:
+- Condition (2) does NOT apply — no reads were expected or performed.
+- Accept the halt if and only if it states concrete findings the objective asks for, and those findings are internally consistent with the material shown in the directive.
+- For independent_check_passed, evaluate whether the findings are grounded in the directive material and internally coherent; do not require source-code quote verification.
+- For evidence_confidence, use >= 0.75 if the synthesis is grounded and complete, < 0.75 if partial or if it contains ungrounded claims.
+- For goal_satisfied, return true if the halt delivers substantive findings addressing the objective.
+- If the halt cites a symbol, file, or line that does not appear in the directive material it was given, reject it — that is fabrication, not synthesis.
+
 For a [HALT] action on a MUTATION contract (an objective requiring a specific named file to be written): treat a session [WRITE_OK] <path> marker as sufficient proof that the required artifact exists, provided <path> matches a required artifact in the contract (exact path, basename, or absolute-path suffix). Do NOT require the halt reasoning to re-embed the file content; the content was already validated at write time. Judge the halt's finding-level claims against session markers ([READ_OK], [SEARCH_*_OK], [CMD_OK], source quotes) as usual, and do NOT re-read files from disk. For absence claims ("no X exists", "no duplication found", "no orphaned files"), require a session [SEARCH_*_OK] or [CMD_OK] marker covering the relevant scope; without it the claim is unsupported, so reject the halt and name the missing search. Do not require the strategist to run the same search twice.
 Reply with a single JSON object and nothing else. The first character of your reply must be an opening curly brace.
 OUTPUT ONLY VALID JSON matching this schema:
@@ -1549,6 +1557,11 @@ You are the Adversarial Critic for the CURRENT mission only.
 - IGNORE any prior missions, calibration, video-recording, or buffer-size topics unless they appear in the current directive or evidence.
 - Do NOT invent quantitative claims. If the Strategist makes a quantitative claim that is not backed by a [Measured] line in EVIDENCE, veto it.
 - Prefer constructive vetoes that name the exact next tool call.
+
+CITATION DISCIPLINE (MANDATORY):
+- Assert line numbers or symbol spans ONLY when those exact numbers are visible in a READ_OK or READ_CHUNK_OK body already in evidence. Count from that body; do not estimate from memory.
+- If a span is not visible, write unverified. Never invent lines N-M and never fill a replacement report with guessed ranges.
+- When rejecting a halt or report for bad citations, name the unsupported claim and demand re-derivation from the existing READ_OK body. Do not hand the strategist a full replacement body unless every line number in it appears in evidence.
 "#;
 
 #[cfg(test)]
@@ -1848,7 +1861,8 @@ fn strip_empty_tools(payload: &Value) -> Option<Value> {
         .pointer("/tools/0/functionDeclarations")
         .and_then(|v| v.as_array())
         .map_or(false, |a| a.is_empty());
-    let empty_tools = payload.get("tools").and_then(|v| v.as_array()).map_or(false, |a| a.is_empty());
+    let empty_tools =
+        payload.get("tools").and_then(|v| v.as_array()).map_or(false, |a| a.is_empty());
     if !(empty_decls || empty_tools) {
         return None;
     }
@@ -1886,4 +1900,3 @@ mod empty_tools_tests {
         assert!(strip_empty_tools(&json!({"contents": []})).is_none());
     }
 }
-

@@ -81,7 +81,11 @@ pub fn is_confirmed_absence(failure_tail: &str) -> bool {
     {
         return false;
     }
-    err.contains("enoent") || err.contains("no such file") || err.contains("entity not found") || err.contains("does not exist") || err.contains("path_not_found")
+    err.contains("enoent")
+        || err.contains("no such file")
+        || err.contains("entity not found")
+        || err.contains("does not exist")
+        || err.contains("path_not_found")
 }
 
 /// True for an actual uppercase evidence marker such as `[READ_OK]`,
@@ -217,7 +221,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod tilde_tests {
     use super::{normalize_path, paths_equivalent};
@@ -240,10 +243,7 @@ mod tilde_tests {
     #[test]
     fn tilde_contract_matches_absolute_evidence() {
         let home = std::env::var("HOME").expect("HOME must be set");
-        assert!(paths_equivalent(
-            "~/AthenaFusionX",
-            &format!("{}/AthenaFusionX", home)
-        ));
+        assert!(paths_equivalent("~/AthenaFusionX", &format!("{}/AthenaFusionX", home)));
     }
 
     #[test]

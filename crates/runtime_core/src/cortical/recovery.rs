@@ -19,7 +19,6 @@ impl CorticalLoop {
         session: &mut EpistemicSession,
         active_strategy: &mut String,
     ) {
-
         let patch_function_strategy = active_strategy.starts_with("patch_function:");
         // When PatchFunction fails because the symbol has no Tree-sitter body,
         // demote the dead patch_function hypothesis and pivot to read_file of
@@ -105,15 +104,9 @@ impl CorticalLoop {
         // required artifact. A mission that names an output file is a
         // CREATE, not a mutation of the read files.
         {
-            let names_required_artifact = active_strategy
-                .strip_prefix("write_file:")
-                .map(str::trim)
-                .is_some_and(|target| {
-                    session
-                        .contract
-                        .required_artifact_paths
-                        .iter()
-                        .any(|a| a.path == target)
+            let names_required_artifact =
+                active_strategy.strip_prefix("write_file:").map(str::trim).is_some_and(|target| {
+                    session.contract.required_artifact_paths.iter().any(|a| a.path == target)
                 });
             if names_required_artifact {
                 return;
@@ -156,19 +149,23 @@ impl CorticalLoop {
                 .iter()
                 .filter_map(|c| match c {
                     crate::completion_engine::CompletionCondition::PatchPathAcquired {
-                        path, ..
+                        path,
+                        ..
                     } if !crate::cortical::contract_advance::condition_is_met(
                         c,
                         &session.local_evidence,
                     ) =>
                     {
-                        let has_read = session
-                            .local_evidence
-                            .contains(&format!("[READ_OK] {}", path))
-                            || session
-                                .local_evidence
-                                .contains(&format!("[READ_OK] /root/AthenaFusionX/{}", path));
-                        if has_read { Some(path.clone()) } else { None }
+                        let has_read =
+                            session.local_evidence.contains(&format!("[READ_OK] {}", path))
+                                || session
+                                    .local_evidence
+                                    .contains(&format!("[READ_OK] /root/AthenaFusionX/{}", path));
+                        if has_read {
+                            Some(path.clone())
+                        } else {
+                            None
+                        }
                     }
                     _ => None,
                 })
@@ -186,7 +183,9 @@ impl CorticalLoop {
             {
                 let mut target_path: Option<String> = unmet_patch_targets.first().cloned();
                 for line in session.local_evidence.lines().rev() {
-                    if target_path.is_some() { break; }
+                    if target_path.is_some() {
+                        break;
+                    }
                     let t = line.trim();
                     if let Some(rest) = t.strip_prefix("[READ_OK]") {
                         let p = rest.split_whitespace().next().unwrap_or("").trim();
@@ -316,12 +315,10 @@ impl CorticalLoop {
                             let strat = match kind.as_str() {
                                 "DIFF_PATCH_OK" => format!("diff_patch:{}", path_str),
                                 "REPLACE_LINES_OK" => format!("replace_lines:{}", path_str),
-                                "PATCH_FUNCTION_OK" => {
-                                    match fn_opt.as_ref().or(fn_name.as_ref()) {
-                                        Some(f) => format!("patch_function:{}:{}", path_str, f),
-                                        None => format!("patch_function:{}", path_str),
-                                    }
-                                }
+                                "PATCH_FUNCTION_OK" => match fn_opt.as_ref().or(fn_name.as_ref()) {
+                                    Some(f) => format!("patch_function:{}:{}", path_str, f),
+                                    None => format!("patch_function:{}", path_str),
+                                },
                                 _ => continue,
                             };
                             if !strats.contains(&strat) {
@@ -398,10 +395,7 @@ impl CorticalLoop {
                         // pivot has injected a mutation strategy. 0.20 was
                         // above the floor and let read_file outrank the
                         // mutation on turn boundaries.
-                        session.graph.cap_matching(
-                            |c| c.starts_with("read_file:"),
-                            0.10,
-                        );
+                        session.graph.cap_matching(|c| c.starts_with("read_file:"), 0.10);
                     }
                 }
             }
@@ -491,15 +485,9 @@ impl CorticalLoop {
         // required artifact. A mission that names an output file is a
         // CREATE, not a mutation of the read files.
         {
-            let names_required_artifact = active_strategy
-                .strip_prefix("write_file:")
-                .map(str::trim)
-                .is_some_and(|target| {
-                    session
-                        .contract
-                        .required_artifact_paths
-                        .iter()
-                        .any(|a| a.path == target)
+            let names_required_artifact =
+                active_strategy.strip_prefix("write_file:").map(str::trim).is_some_and(|target| {
+                    session.contract.required_artifact_paths.iter().any(|a| a.path == target)
                 });
             if names_required_artifact {
                 return;
@@ -523,10 +511,7 @@ impl CorticalLoop {
                 crate::completion_engine::CompletionCondition::SearchTermAcquired { .. }
                     | crate::completion_engine::CompletionCondition::SearchCheckedAcquired { .. }
                     | crate::completion_engine::CompletionCondition::SearchMarkerAcquired
-            ) && !crate::cortical::contract_advance::condition_is_met(
-                c,
-                &session.local_evidence,
-            )
+            ) && !crate::cortical::contract_advance::condition_is_met(c, &session.local_evidence)
         });
         if has_unmet_search {
             return;
@@ -742,9 +727,12 @@ impl crate::cortical_loop::CorticalLoop {
         if m.contains("read-only") || m.contains("do not modify") || m.contains("don't modify") {
             return;
         }
-        if !session.contract.conditions.iter().any(|c| {
-            matches!(c, CC::PatchMarkerAcquired | CC::PatchPathAcquired { .. })
-        }) {
+        if !session
+            .contract
+            .conditions
+            .iter()
+            .any(|c| matches!(c, CC::PatchMarkerAcquired | CC::PatchPathAcquired { .. }))
+        {
             return;
         }
         let Some(command) = session.contract.conditions.iter().find_map(|c| match c {
@@ -927,9 +915,11 @@ impl crate::cortical_loop::CorticalLoop {
         // compile remediation own the strategy when they are active.
         if write_phase_ready
             || session.compile_remediation.is_active()
-            || session.contract.conditions.iter().any(|c| {
-                matches!(c, CC::PatchMarkerAcquired | CC::PatchPathAcquired { .. })
-            })
+            || session
+                .contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CC::PatchMarkerAcquired | CC::PatchPathAcquired { .. }))
         {
             return;
         }
@@ -950,9 +940,11 @@ impl crate::cortical_loop::CorticalLoop {
         // the strategist's pivot to a sibling mandated read (observed as
         // telemetry<->thermal thrash across turns 3-13 of the fc32b279 run).
         if let Some(in_flight) = active_strategy.strip_prefix("read_file:") {
-            let mandated = session.contract.conditions.iter().any(|c| {
-                matches!(c, CC::ReadPathAcquired { path } if path == in_flight)
-            });
+            let mandated = session
+                .contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CC::ReadPathAcquired { path } if path == in_flight));
             if mandated {
                 return;
             }

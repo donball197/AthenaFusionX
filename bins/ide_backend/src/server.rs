@@ -51,7 +51,7 @@ pub async fn unified_gateway(
     let s = state.clone();
     tokio::spawn(async move {
         let d = nexus_runtime_core::cli_utils::inject_workspace_dna(&directive_str).await;
-        nexus_runtime_core::task_manager::send_task(
+        let result = nexus_runtime_core::task_manager::send_task(
             s.orchestrator.clone(),
             nexus_runtime_core::task_manager::TaskContext {
                 client: s.client.clone(),
@@ -73,6 +73,13 @@ pub async fn unified_gateway(
             &d,
         )
         .await;
+        let _ = s.tx.send(
+            serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!("[TASK RESULT] {}", result)
+            })
+            .to_string(),
+        );
     });
     (StatusCode::OK, Json(json!({ "status": "QUEUED" }))).into_response()
 }
@@ -189,7 +196,10 @@ async fn auth_guard(request: Request, next: Next) -> Result<impl IntoResponse, S
     }
 }
 
-pub async fn start_server(state: Arc<AppState>) {
+pub async fn start_server(
+    state: Arc<AppState>,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) {
     // ⚡ Secure API Routes behind Auth Guard
     let guarded_api = Router::new()
         .route("/task", post(unified_gateway))
@@ -222,9 +232,15 @@ pub async fn start_server(state: Arc<AppState>) {
         }
     };
     tracing::info!("[BOOT] API listening on {}", addr);
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+    {
         tracing::error!("[SERVER] serve failed: {}", e);
     }
+    tracing::info!("[SERVER] HTTP server stopped.");
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {

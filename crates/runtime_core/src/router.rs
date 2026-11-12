@@ -63,7 +63,6 @@ pub struct AgentProfile {
 
 pub struct IntelligentRouter;
 impl IntelligentRouter {
-
     fn resolve_max_turns() -> u8 {
         std::env::var("NEXUS_MAX_TURNS")
             .ok()
@@ -182,9 +181,7 @@ MANDATORY SCHEMA:
             DirectiveClass::Inquiry => {
                 (nexus_model_hub::factory::get_flash_lite_model(), ContextBudget::minimal())
             }
-            _ => {
-                (nexus_model_hub::factory::get_flash_lite_model(), ContextBudget::standard())
-            }
+            _ => (nexus_model_hub::factory::get_flash_lite_model(), ContextBudget::standard()),
         };
 
         AgentProfile {
