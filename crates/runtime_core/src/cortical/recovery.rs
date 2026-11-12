@@ -939,6 +939,26 @@ impl crate::cortical_loop::CorticalLoop {
         // always returns the first unmet path in contract order and overrides
         // the strategist's pivot to a sibling mandated read (observed as
         // telemetry<->thermal thrash across turns 3-13 of the fc32b279 run).
+        if active_strategy.starts_with("search_code:") {
+            let has_unmet_search = session.contract.conditions.iter().any(|c| match c {
+                CC::SearchCheckedAcquired { target } => {
+                    !crate::evidence_markers::search_checked_satisfied(
+                        &session.local_evidence,
+                        target,
+                    )
+                }
+                CC::SearchTermAcquired { term } => {
+                    !crate::evidence_markers::search_term_satisfied(
+                        &session.local_evidence,
+                        term,
+                    )
+                }
+                _ => false,
+            });
+            if has_unmet_search {
+                return;
+            }
+        }
         if let Some(in_flight) = active_strategy.strip_prefix("read_file:") {
             let mandated = session
                 .contract
@@ -951,6 +971,40 @@ impl crate::cortical_loop::CorticalLoop {
         }
         let Some(path) = next_unmet_read(&session.contract.conditions, &session.local_evidence)
         else {
+            if let Some(target) = session.contract.conditions.iter().find_map(|c| match c {
+                CC::SearchCheckedAcquired { target }
+                    if !crate::evidence_markers::search_checked_satisfied(
+                        &session.local_evidence,
+                        target,
+                    ) =>
+                {
+                    Some(target.clone())
+                }
+                _ => None,
+            }) {
+                let strat = if target.contains(':') {
+                    format!("search_code:{}", target)
+                } else {
+                    format!("search_code:.:{}", target)
+                };
+                let forced = session
+                    .local_evidence
+                    .lines()
+                    .filter(|l| {
+                        l.starts_with("[CONTRACT_FIRST_FORCED]") && l.contains(strat.as_str())
+                    })
+                    .count();
+                if forced < 3 && *active_strategy != strat {
+                    self.log(format!(
+                        ">> [CORTEX CONTRACT-FIRST RECON] Mandatory search outstanding; forcing `{}`.",
+                        strat
+                    ));
+                    session
+                        .local_evidence
+                        .push_str(&format!("\n[CONTRACT_FIRST_FORCED] {}\n", strat));
+                    *active_strategy = strat;
+                }
+            }
             return;
         };
         let strat = format!("read_file:{}", path);

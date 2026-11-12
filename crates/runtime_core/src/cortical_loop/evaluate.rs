@@ -23,8 +23,23 @@ impl CorticalLoop {
         // but the graph hypothesis still reads `read_file:...`. Judge the halt against
         // what it was actually asked to do.
         let graph_h_content = session.graph.content_of(h_id);
+        let is_read_evidence =
+            evidence.contains("[READ_CHUNK_OK]") || evidence.contains("[READ_OK]");
+        let is_search_evidence = evidence.contains("[SEARCH_CODE_OK]");
         let h_content = if is_halt_action && session.contract.read_only {
             "halt: deliver the complete read-only audit findings in the halt reasoning".to_string()
+        } else if !is_halt_action
+            && is_read_evidence
+            && graph_h_content.starts_with("read_file:")
+        {
+            "read_file / read_file_chunk: acquire complete source evidence for the contract targets"
+                .to_string()
+        } else if !is_halt_action
+            && is_search_evidence
+            && (graph_h_content.starts_with("read_file:")
+                || graph_h_content.starts_with("search_code:"))
+        {
+            "search_code: verify contract search targets".to_string()
         } else {
             graph_h_content
         };
@@ -233,6 +248,9 @@ impl CorticalLoop {
                 if is_halt_action && has_unwritten_artifacts {
                     self.log(format!("\x1b[1;33m>> [CORTEX] Terminal HALT rejected: Required deliverable(s) {:?} not yet written.\x1b[0m",
                         session.contract.required_artifact_paths.iter().map(|a| &a.path).collect::<Vec<_>>()));
+                    if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                        session.local_evidence.replace_range(pos..pos + evidence.len(), "");
+                    }
                     session.local_evidence.push_str("\n[HALT_REJECTED] You cannot halt. The required output deliverable has not been written yet. You MUST write the final file now.\n");
                     return Ok(CortexState::Strategize);
                 }
@@ -356,16 +374,40 @@ impl CorticalLoop {
                             .to_string(),
                     );
 
-                    let sanitized_history = session
-                        .local_evidence
-                        .lines()
-                        .filter(|line| {
-                            !line.contains("[HALT_REJECTED")
+                    let sanitized_history = {
+                        let mut kept = Vec::new();
+                        let mut in_halt = false;
+                        for line in session.local_evidence.lines() {
+                            let t = line.trim_start();
+                            if t.starts_with("[HALT]") {
+                                in_halt = true;
+                                continue;
+                            }
+                            if in_halt {
+                                if t.starts_with('[')
+                                    && t.find(']').is_some_and(|i| {
+                                        i >= 3
+                                            && t[1..i].chars().all(|c| {
+                                                c.is_ascii_uppercase()
+                                                    || c.is_ascii_digit()
+                                                    || matches!(c, '_' | ' ' | '-' | ':')
+                                            })
+                                    })
+                                {
+                                    in_halt = false;
+                                } else {
+                                    continue;
+                                }
+                            }
+                            if !line.contains("[HALT_REJECTED")
                                 && !line.contains("[LOOP_VETO]")
                                 && !line.contains("[CRITIC_REPEAT_VETO]")
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                            {
+                                kept.push(line);
+                            }
+                        }
+                        kept.join("\n")
+                    };
 
                     let verification_evidence = format!(
                         "CURRENT-TURN PHYSICAL EVIDENCE:\n{}\n\n                         HISTORICAL TASK EVIDENCE (CONTEXT ONLY):\n{}",
@@ -419,6 +461,9 @@ impl CorticalLoop {
                                 report.independent_check_passed,
                                 report.evidence_confidence
                             ));
+                            if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                                session.local_evidence.replace_range(pos..pos + evidence.len(), "");
+                            }
 
                             session.local_evidence.push_str(&format!(
                                 "\n[HALT_REJECTED] Mission verification failed: {}\n",
@@ -433,6 +478,9 @@ impl CorticalLoop {
                                 "\x1b[1;33m>> [CORTEX] HALT verification unavailable: {}. Continuing mission instead of terminating.\x1b[0m",
                                 e
                             ));
+                            if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                                session.local_evidence.replace_range(pos..pos + evidence.len(), "");
+                            }
 
                             return Ok(CortexState::Strategize);
                         }
@@ -449,6 +497,9 @@ impl CorticalLoop {
                         "\x1b[1;33m>> [CORTEX] HALT rejected: deterministic completion contract is not satisfied. Unmet: {:?}\x1b[0m",
                         unmet
                     ));
+                    if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
+                        session.local_evidence.replace_range(pos..pos + evidence.len(), "");
+                    }
                     session.local_evidence.push_str(&format!(
                         "\n[HALT_REJECTED] Deterministic completion contract not satisfied. Unmet: {:?}\n",
                         unmet

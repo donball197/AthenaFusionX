@@ -237,6 +237,7 @@ async fn send_task_inner(
                 gn.status = crate::orchestrator_v2::task_graph::TaskStatus::Failed;
             }
             mission_had_failures = true;
+            failed_nodes.insert(task_id.clone());
             let _ = ctx.tx.send(serde_json::json!({
                 "type": "LOG_EVENT",
                 "payload": format!("[DAG SKIP] {} blocked by failed dependency '{}'", node.objective, dep)

@@ -176,6 +176,7 @@ impl Verifier {
                 crate::evidence_markers::search_checked_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
                 evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
+                    && crate::halt_gate::halt_range_gate(evidence).is_none()
             } else if criterion == "SEARCH_MEMORY_OK" {
                 evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
@@ -210,17 +211,16 @@ impl Verifier {
                 // bounded by the next bracketed marker so a Status line
                 // belonging to a later, unrelated command block can't be
                 // matched instead.
-                let lines: Vec<&str> = evidence.lines().collect();
-                lines.iter().enumerate().any(|(i, line)| {
-                    // Trimmed: an indented [CMD_OK] counts. Scan bounded by
-                    // is_marker_line so bracketed command output does not
-                    // truncate the scan early.
-                    line.trim_start().starts_with("[CMD_OK]")
-                        && lines[i + 1..]
-                            .iter()
-                            .take_while(|l| !crate::evidence_paths::is_marker_line(l))
-                            .any(|l| l.trim() == "Status: exit status: 0")
-                })
+                let own = evidence
+                    .rfind("[DAG LINEAGE COMPLETE sha256:")
+                    .and_then(|i| evidence[i..].find('\n').map(|j| &evidence[i + j + 1..]))
+                    .unwrap_or(evidence);
+                let reject_after_ok = match (own.rfind("[HALT_REJECTED"), own.rfind("[CMD_OK]")) {
+                    (Some(r), Some(o)) if r > o => true,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                !reject_after_ok && crate::evidence_paths::cmd_ok_binds_command(own)
             } else if criterion == "PATCH_FUNCTION_OK" {
                 evidence.lines().any(|l| {
                     let t = l.trim_start();
@@ -487,6 +487,40 @@ mod tests {
         );
         let failed = Verifier::verify_contract("task_verify", &tampered, &criteria);
         assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn cmd_ok_ignores_inherited_lineage_and_resets_on_halt_rejected() {
+        let criteria = vec!["CMD_OK".to_string()];
+        let inherited_only = concat!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:deadbeef]\n",
+            "[CMD_OK] Command: echo ancestor\nStatus: exit status: 0\n",
+            "[DAG LINEAGE COMPLETE sha256:deadbeef]\n",
+            "[READ_OK] src/lib.rs\n",
+        );
+        assert!(matches!(
+            Verifier::verify_contract("child", inherited_only, &criteria),
+            VerificationResult::Retry(_)
+        ));
+
+        let rejected_after = concat!(
+            "[CMD_OK] Command: echo child\nStatus: exit status: 0\n",
+            "[HALT_REJECTED] missing output\n",
+        );
+        assert!(matches!(
+            Verifier::verify_contract("child", rejected_after, &criteria),
+            VerificationResult::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn analysis_ok_rejects_unread_line_ranges() {
+        let criteria = vec!["ANALYSIS_OK".to_string()];
+        let bad = "[READ_CHUNK_OK] File: x.rs | Lines 1-50 of 200\nCONTENT:\nfn a() {}\n[HALT] see lines 120-180.\n";
+        assert!(matches!(
+            Verifier::verify_contract("audit", bad, &criteria),
+            VerificationResult::Retry(_)
+        ));
     }
 }
 

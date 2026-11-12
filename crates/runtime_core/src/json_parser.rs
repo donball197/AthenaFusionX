@@ -88,27 +88,51 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     extracted = extracted.trim();
 
-    // 3. Strict JSON boundary discovery (Do NOT match pseudo-text like [TOOL]:)
-    let json_str = if let (Some(s), Some(e)) = (
-        extracted
-            .find("[{")
-            .or_else(|| extracted.find("[\n"))
-            .or_else(|| extracted.find("[\""))
-            .or_else(|| extracted.find("[ \"")),
-        extracted.rfind(']'),
-    ) {
-        &extracted[s..=e]
-    } else if let (Some(s), Some(e)) = (extracted.find('['), extracted.rfind(']')) {
-        &extracted[s..=e]
-    } else if let (Some(s), Some(e)) =
-        (extracted.find("{\"").or_else(|| extracted.find("{\n")), extracted.rfind('}'))
-    {
-        &extracted[s..=e]
-    } else {
-        return Err(anyhow::anyhow!("No JSON boundaries found in model output."));
+    // 3. Strict JSON boundary discovery (Do NOT match pseudo-text like [TOOL]:
+    //    or marker brackets like `[READ_OK]` inside a top-level `{...}` object's string fields).
+    let arr_start = extracted
+        .find("[{")
+        .or_else(|| extracted.find("[\n"))
+        .or_else(|| extracted.find("[\""))
+        .or_else(|| extracted.find("[ \""))
+        .or_else(|| extracted.find('['));
+    let obj_start = extracted.find("{\"").or_else(|| extracted.find("{\n"));
+
+    let json_str = match (extracted.starts_with('{'), obj_start, arr_start) {
+        (true, _, _) => match (extracted.find('{'), extracted.rfind('}')) {
+            (Some(s), Some(e)) if e >= s => &extracted[s..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        (false, Some(os), Some(as_)) if os < as_ => match extracted.rfind('}') {
+            Some(e) if e >= os => &extracted[os..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        (false, Some(os), None) => match extracted.rfind('}') {
+            Some(e) if e >= os => &extracted[os..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        (false, _, Some(as_)) => match extracted.rfind(']') {
+            Some(e) if e >= as_ => &extracted[as_..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
     };
 
+    // Models sometimes emit several JSON values back to back (`{..}{..}` or
+    // `[..]\n[..]`). Keep only the first complete value; if it does not parse,
+    // fall back to the unmodified text so existing behavior is unchanged.
+    fn first_json_value(s: &str) -> String {
+        let mut it = serde_json::Deserializer::from_str(s).into_iter::<serde_json::Value>();
+        match it.next() {
+            Some(Ok(_)) => {
+                let end = it.byte_offset();
+                s[..end].to_string()
+            }
+            _ => s.to_string(),
+        }
+    }
     let clean_text = sanitize_json_escapes(json_str);
+    let clean_text: String = first_json_value(&clean_text.to_string());
 
     if clean_text.contains("00000000000000000000") || clean_text.len() > 35_000 {
         tracing::error!("[CORTEX PARSE ABORT] Token Resonance block. Returning safe halt.");
@@ -650,5 +674,43 @@ mod conversational_recovery_tests {
             }
             other => panic!("expected ReadFileChunk, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn bare_object_with_brackets_in_reasoning_parses() {
+        let payload = r#"{"type": "halt", "reasoning": "Verified `[READ_OK]` and `[HALT_REJECTED]` handling across `verifier.rs`."}"#;
+        let actions = extract_actions(payload).expect("bare JSON object with brackets must parse");
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions[0], AgentAction::Halt { .. }), "{:?}", actions);
+    }
+
+    #[test]
+    fn prefixed_object_with_brackets_in_reasoning_parses() {
+        let payload = r#"Final action: {"type": "halt", "reasoning": "Checked `[CMD_OK]` and `[SEARCH_CODE_OK]` paths."}"#;
+        let actions = extract_actions(payload).expect("prefixed JSON object with brackets must parse");
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions[0], AgentAction::Halt { .. }), "{:?}", actions);
+    }
+
+    #[test]
+    fn concatenated_objects_take_first_value() {
+        let payload = r#"{"type": "read_file", "path": "a.rs", "reasoning": "x"}{"type": "read_file", "path": "b.rs", "reasoning": "y"}"#;
+        let actions = extract_actions(payload).expect("first of concatenated objects must parse");
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn newline_separated_arrays_take_first_array() {
+        let payload = "[{\"type\": \"read_file\", \"path\": \"a.rs\", \"reasoning\": \"x\"}]\n[{\"type\": \"read_file\", \"path\": \"b.rs\", \"reasoning\": \"y\"}]";
+        let actions = extract_actions(payload).expect("first of concatenated arrays must parse");
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn long_halt_with_markers_and_escaped_newlines_parses() {
+        let body = "Q1 `[HALT_REJECTED]` and `[DAG NODE COMPLETE]`.\\n".repeat(80);
+        let payload = format!(r#"[{{"type": "halt", "reasoning": "{}"}}]"#, body);
+        let actions = extract_actions(&payload).expect("long bracketed halt must parse");
+        assert!(matches!(actions[0], AgentAction::Halt { .. }));
     }
 }

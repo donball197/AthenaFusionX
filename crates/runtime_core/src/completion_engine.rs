@@ -646,11 +646,33 @@ pub(crate) struct MissionScopes<'a> {
 
 impl<'a> MissionScopes<'a> {
     pub fn parse(raw: &'a str) -> Self {
-        const CRITERIA_HEADER: &str = "MANDATORY NODE SUCCESS CRITERIA:";
+        // Accept planner/human aliases. Live missions often emit "CRITERIA:"
+        // instead of the long mandatory header; without this alias,
+        // declared_criteria_contract never sees READ_OK:/WRITE_OK: and the
+        // node collapses to bare CommandMarkerAcquired.
+        const CRITERIA_HEADERS: &[&str] = &[
+            "MANDATORY NODE SUCCESS CRITERIA:",
+            "CRITERIA:",
+            "SUCCESS CRITERIA:",
+            "NODE SUCCESS CRITERIA:",
+        ];
         const ROOT_HEADER: &str = "ROOT DIRECTIVE CONTEXT:";
         const LINEAGE_HEADER: &str = "LINEAGE CONTEXT:";
 
-        let criteria_start = raw.find(CRITERIA_HEADER);
+        let (criteria_start, criteria_header_len) = {
+            let mut best: Option<(usize, usize)> = None;
+            for h in CRITERIA_HEADERS {
+                if let Some(pos) = raw.find(h) {
+                    if best.map(|(p, _)| pos < p).unwrap_or(true) {
+                        best = Some((pos, h.len()));
+                    }
+                }
+            }
+            match best {
+                Some((p, n)) => (Some(p), n),
+                None => (None, 0),
+            }
+        };
         let root_start = raw.find(ROOT_HEADER);
         let lineage_start = raw.find(LINEAGE_HEADER);
 
@@ -663,7 +685,7 @@ impl<'a> MissionScopes<'a> {
 
         let criteria_end = root_start.or(lineage_start).unwrap_or(raw.len());
         let mut criteria = match criteria_start {
-            Some(s) => &raw[s + CRITERIA_HEADER.len()..criteria_end],
+            Some(s) => &raw[s + criteria_header_len..criteria_end],
             None => "",
         };
         if let Some(rule_start) = criteria.find("NODE COMPLETION RULE") {
@@ -1368,6 +1390,13 @@ impl SubgoalCompletionEngine {
                         // Belief is an outcome of the work, not a prerequisite for
                         // the write phase. Still enforced at halt.
                         | CompletionCondition::MinBeliefScore(_)
+                        // Bare CommandMarkerAcquired must not block write-phase
+                        // entry. READ_OK+WRITE_OK missions can carry a residual
+                        // CommandMarkerAcquired; requiring [CMD_OK] kept
+                        // recon_ready/write_phase_ready false for the full turn
+                        // budget (live audit 2026-11-12). Bound
+                        // CommandExecutionVerified remains a recon gate.
+                        | CompletionCondition::CommandMarkerAcquired
                 )
             })
             .cloned()
@@ -2538,6 +2567,113 @@ mod search_checked_contract_tests {
             )),
             "single-line directives must still mine markers: {:?}",
             contract.conditions
+        );
+    }
+
+    #[test]
+    fn live_criteria_header_alias_produces_read_and_write() {
+        // Regression: live audit missions emit "CRITERIA:" not
+        // "MANDATORY NODE SUCCESS CRITERIA:". Without the alias,
+        // infer_contract collapsed to CommandMarkerAcquired only and
+        // never required the report artifact.
+        let mission = r#"OBJECTIVE:
+Audit the DAG-node verifier and the contract-inference engine across two
+runtime_core files, and write a compact findings report to
+verifier_contract_audit.md.
+
+CRITERIA:
+READ_OK: crates/runtime_core/src/orchestrator_v2/verifier.rs
+READ_OK: crates/runtime_core/src/completion_engine.rs
+WRITE_OK: verifier_contract_audit.md
+
+CONSTRAINTS:
+- No source mutations. Report only.
+"#;
+        let c = SubgoalCompletionEngine::infer_contract("task_1", mission);
+        assert!(
+            c.conditions.iter().any(|x| matches!(
+                x,
+                CompletionCondition::ReadPathAcquired { path }
+                    if path.contains("verifier.rs")
+            )),
+            "READ_OK verifier must become ReadPathAcquired: {:?}",
+            c.conditions
+        );
+        assert!(
+            c.conditions.iter().any(|x| matches!(
+                x,
+                CompletionCondition::ReadPathAcquired { path }
+                    if path.contains("completion_engine.rs")
+            )),
+            "READ_OK completion_engine must become ReadPathAcquired: {:?}",
+            c.conditions
+        );
+        assert!(
+            c.conditions.iter().any(|x| matches!(
+                x,
+                CompletionCondition::WritePathAcquired { path }
+                    if path.contains("verifier_contract_audit.md")
+            )) || c
+                .required_artifact_paths
+                .iter()
+                .any(|a| a.path.contains("verifier_contract_audit.md")),
+            "WRITE_OK must become write condition or artifact: conditions={:?} arts={:?}",
+            c.conditions,
+            c.required_artifact_paths
+        );
+        assert!(
+            !matches!(
+                c.conditions.as_slice(),
+                [CompletionCondition::CommandMarkerAcquired]
+            ),
+            "must not collapse to CommandMarkerAcquired only: {:?}",
+            c.conditions
+        );
+    }
+
+}
+
+#[cfg(test)]
+mod surgical_recon_write_tests {
+    use super::*;
+
+    #[test]
+    fn residual_command_marker_does_not_block_recon_for_write_phase() {
+        use crate::completion_engine::{
+            ArtifactSpec, CompletionCondition, SubgoalContract, SubgoalCompletionEngine,
+        };
+        let contract = SubgoalContract {
+            node_id: "task_1".into(),
+            objective: "audit and write verifier_contract_audit.md".into(),
+            conditions: vec![
+                CompletionCondition::ReadPathAcquired {
+                    path: "crates/runtime_core/src/orchestrator_v2/verifier.rs".into(),
+                },
+                CompletionCondition::ReadPathAcquired {
+                    path: "crates/runtime_core/src/completion_engine.rs".into(),
+                },
+                CompletionCondition::WritePathAcquired {
+                    path: "verifier_contract_audit.md".into(),
+                },
+                CompletionCondition::CommandMarkerAcquired,
+                CompletionCondition::MinBeliefScore(0.75),
+            ],
+            is_mutation_task: true,
+            read_only: false,
+            required_artifact_paths: vec![ArtifactSpec {
+                path: "verifier_contract_audit.md".into(),
+                reason: "output_deliverable".into(),
+            }],
+        };
+        let evidence = concat!(
+            "[READ_OK] crates/runtime_core/src/orchestrator_v2/verifier.rs\n",
+            "FULL FILE CONTENT:\nfn a() {}\n",
+            "[READ_OK] crates/runtime_core/src/completion_engine.rs\n",
+            "FULL FILE CONTENT:\nfn b() {}\n",
+        );
+        assert!(
+            SubgoalCompletionEngine::reconnaissance_complete(&contract, evidence, 1.0),
+            "recon must complete without CMD_OK when residual CommandMarkerAcquired remains"
         );
     }
 }

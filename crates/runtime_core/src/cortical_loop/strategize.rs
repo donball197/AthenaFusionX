@@ -339,6 +339,37 @@ impl CorticalLoop {
                 "\n[NODE PHASE] Your node's read/inspect criteria are satisfied. The required next action is `halt`, and the halt text must summarize THIS node's findings only. Do NOT reference any other node's deliverable; do not say 'the next step is to write X'.\n"
             );
             strategy
+        } else if status == ContractStatus::Satisfied
+            && unwritten_targets.is_empty()
+            && session.coverage.coverage_pct() >= 99.9
+            && session
+                .coverage
+                .largest_interior_gap()
+                .or_else(|| session.coverage.largest_gap())
+                .is_none()
+            && crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
+                &session.contract,
+                &session.local_evidence,
+                1.0,
+            )
+            && session
+                .local_evidence
+                .lines()
+                .rev()
+                .find(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("[HALT_REJECTED_REPORT]")
+                        || t.starts_with("[HALT_REJECTED_SYMBOLS]")
+                })
+                .is_some_and(|l| {
+                    l.contains("cited at lines")
+                        || l.contains("no verified source identifiers")
+                        || l.contains("meta-summary claims")
+                        || l.contains("appears truncated")
+                        || l.contains("symbols not found")
+                })
+        {
+            "halt".to_string()
         } else {
             h_content.clone()
         };

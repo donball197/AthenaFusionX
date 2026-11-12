@@ -375,6 +375,38 @@ impl CorticalLoop {
             return Ok(CortexState::Execute { actions, proposal, belief });
         }
 
+        // VERIFICATION-READ BYPASS: a read_file on a required artifact that
+        // has already been written ([WRITE_OK] in evidence) but not yet
+        // read back ([READ_OK] absent) is the mandatory post-write
+        // verification step. The action is strictly non-destructive, the
+        // artifact exists, and executing it satisfies the pending
+        // ReadPathAcquired for that path. This is deterministic — do not
+        // ask the LLM critic to second-guess it. The critic has been
+        // observed to misread the strategist's stale "write the report"
+        // reasoning text as a write attempt, and to anchor on stale
+        // PATH_NOT_FOUND events that pre-date the successful [WRITE_OK].
+        // Confirmed blocker of plan 40cfaaba (2026-11-12): turns 33-60
+        // exhausted on exactly this veto loop.
+        {
+            let verification_read = actions.iter().any(|a| {
+                if let AgentAction::ReadFile { _thought_process: None, path, .. } = a {
+                    session.contract.required_artifact_paths.iter().any(|art| &art.path == path)
+                        && session.local_evidence.contains(&format!("[WRITE_OK] {}", path))
+                        && !session.local_evidence.contains(&format!("[READ_OK] {}", path))
+                } else {
+                    false
+                }
+            });
+            if verification_read {
+                self.log(
+                    "\x1b[1;36m>> [CRITIC BYPASS] Post-write verification read of required artifact; LLM critic skipped.\x1b[0m"
+                        .to_string(),
+                );
+                session.last_critic_rejected_actions = None;
+                return Ok(CortexState::Execute { actions, proposal, belief });
+            }
+        }
+
         self.log("\x1b[31m>> [RED TEAM] Criticizing proposal...\x1b[0m".to_string());
         session.budget.record_call();
 

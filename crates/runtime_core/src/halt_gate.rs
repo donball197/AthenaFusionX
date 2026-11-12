@@ -57,7 +57,7 @@ fn ranges_in(text: &str) -> Vec<(u32, u32)> {
                 if j > j0 && !(j < chars.len() && chars[j].is_ascii_alphabetic()) {
                     let b: String = chars[j0..j].iter().collect();
                     if let (Ok(a), Ok(b)) = (a.parse::<u32>(), b.parse::<u32>()) {
-                        if a >= 1 && b >= a {
+                        if a >= 1 && b >= a && preceded_by_line_word(&chars, s0) {
                             out.push((a, b));
                         }
                     }
@@ -71,6 +71,25 @@ fn ranges_in(text: &str) -> Vec<(u32, u32)> {
         }
     }
     out
+}
+
+/// True when the number starting at `s0` is introduced by the word "line"/"lines"
+/// (optionally after whitespace, '(' or ':'). `file.rs:15-38` and "149 LINES"
+/// are not line-range claims; the file-aware outline check covers those.
+fn preceded_by_line_word(chars: &[char], s0: usize) -> bool {
+    let mut k = s0;
+    while k > 0 && (chars[k - 1].is_whitespace() || chars[k - 1] == '(' || chars[k - 1] == ':') {
+        k -= 1;
+    }
+    let head: String = chars[..k].iter().collect::<String>().to_lowercase();
+    let w = if head.ends_with("lines") {
+        5
+    } else if head.ends_with("line") {
+        4
+    } else {
+        return false;
+    };
+    head[..head.len() - w].chars().next_back().map_or(true, |c| !c.is_alphanumeric() && c != '_')
 }
 
 /// None when the halt is acceptable; Some(reason) when it must be rejected.
@@ -186,6 +205,20 @@ mod tests {
                   [HALT] summary without ranges\n\
                   [HALT_REJECTED] actually lines 150-190 contain the loop\n";
         assert!(halt_range_gate(ev).is_none());
+    }
+
+    #[test]
+    fn file_colon_ranges_and_uppercase_lines_word_are_not_claims() {
+        let ev = format!(
+            "{}[HALT] FINAL REPORT (149 LINES): `f` (x.rs:430-450) and (y.rs:15-38) ok.\n",
+            read_all(100)
+        );
+        assert!(halt_range_gate(&ev).is_none());
+    }
+
+    #[test]
+    fn inline_and_outline_words_do_not_arm_the_gate() {
+        assert!(ranges_in("inline report 0.65-0.75 and outline 15-38").is_empty());
     }
 
     #[test]

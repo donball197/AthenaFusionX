@@ -101,3 +101,19 @@ audit_out/
 *.prepatch
 audit_cargo.txt
 active_workspace_signatures.txt
+
+# Surgical patch backups — transient rollback targets
+.surgical_backup_*/
+
+# Patch scripts — development tooling, not part of the runtime
+patch_*.sh
+surgical_belief_floor_fix.sh
+apply_cortex_fixes.sh
+
+# Audit artifacts from framework test runs
+full_system_audit*.md
+cognition_core_audit.md
+verifier_audit.md
+worker_shape_audit.md
+completion_boundary_audit.md
+marker_summary.md

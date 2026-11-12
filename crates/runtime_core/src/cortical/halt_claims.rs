@@ -232,6 +232,14 @@ const INTENT_PHRASES: &[&str] = &[
     "before halting",
 ];
 
+const META_STUB_PHRASES: &[&str] = &[
+    "in the halt reasoning",
+    "halt reasoning field",
+    "report has been synthesized",
+    "has been synthesized inline",
+    "mandatory node success criteria have been",
+];
+
 /// Defects that make a halt text a non-report. Empty = acceptable.
 pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -243,19 +251,29 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
     if INTENT_PHRASES.iter().any(|p| lower.contains(p)) {
         out.push("states intent/process instead of findings".to_string());
     }
-    let mut verified: Vec<&str> = Vec::new();
+    let mut verified_any: Vec<&str> = Vec::new();
     for span in report.split('`').skip(1).step_by(2) {
         let name = span.trim().trim_end_matches("()").rsplit("::").next().unwrap_or("");
         if is_ident(name)
-            && name.chars().next().is_some_and(|c| c.is_lowercase() || c == '_')
-            && word_present(corpus, &format!("fn {}", name))
-            && !verified.contains(&name)
+            && !SKIP.contains(&name)
+            && !is_grounding_skip_token(name)
+            && word_present(corpus, name)
+            && !verified_any.contains(&name)
         {
-            verified.push(name);
+            verified_any.push(name);
         }
     }
-    if verified.len() == 0 && corpus.len() > 1000 {
-        // out.push("no verified `fn` names cited; need at least 1 (enclose function name in backticks, e.g. `fn_name`)".to_string());
+    if META_STUB_PHRASES.iter().any(|p| lower.contains(p)) && verified_any.is_empty() {
+        out.push(
+            "meta-summary claims a report exists without delivering inline findings or cited symbols"
+                .to_string(),
+        );
+    }
+    if verified_any.is_empty() && corpus.len() > 1000 && corpus.contains("fn ") {
+        out.push(
+            "no verified source identifiers cited in backticks; deliver concrete findings citing symbols from the read evidence (e.g. `fn_name` or `StructName`)"
+                .to_string(),
+        );
     }
     out
 }
@@ -281,6 +299,15 @@ mod substance_tests {
     #[test]
     fn extracts_reasoning() {
         assert_eq!(report_text(r#"{"type":"halt","reasoning":"abc"}"#), "abc");
+    }
+
+    #[test]
+    fn rejects_empty_meta_stub_on_source_audit() {
+        let big_src = format!("pub struct Verifier;\npub fn verify_contract() {{}}\n{}", "x\n".repeat(600));
+        let stub = "All mandatory node success criteria have been physically evidenced. The final report has been synthesized inline in the halt reasoning field. No further actions are needed.";
+        assert!(!report_defects(stub, &big_src).is_empty());
+        let grounded = "The `Verifier` struct checks contracts in `verify_contract` across all branches and states.";
+        assert!(report_defects(grounded, &big_src).is_empty());
     }
 }
 

@@ -746,6 +746,7 @@ impl EpistemicEngine {
             || problem_lower.contains("diff_patch_ok:")
             || problem_lower.contains("replace_lines_ok:")
             || problem_lower.contains("cmd_ok")
+            || problem_lower.contains("search_checked_ok:")
             || problem_lower.contains("dag_lineage_ok")
             || problem_lower.contains("node_objective_executed_and_verified");
 
@@ -785,8 +786,38 @@ impl EpistemicEngine {
             host_observation,
         };
 
+        let mut search_checked_strategies: Vec<String> =
+            crate::completion_engine::extract_all_named_targets(
+                scoped_problem,
+                "SEARCH_CHECKED_OK:",
+            )
+            .into_iter()
+            .filter_map(|t| {
+                let t = t.trim();
+                if t.is_empty() {
+                    None
+                } else if t.contains(':') {
+                    Some(format!("search_code:{}", t))
+                } else {
+                    Some(format!("search_code:.:{}", t))
+                }
+            })
+            .collect();
+
         if let Some(strategies) = DirectiveStrategyCompiler::compile(&directive_inputs) {
+            if !search_checked_strategies.is_empty() {
+                for s in strategies {
+                    if !search_checked_strategies.contains(&s) {
+                        search_checked_strategies.push(s);
+                    }
+                }
+                return Ok(search_checked_strategies);
+            }
             return Ok(strategies);
+        }
+
+        if !search_checked_strategies.is_empty() {
+            return Ok(search_checked_strategies);
         }
 
         // PROBABILISTIC-PROMPT SCOPING:
@@ -1454,7 +1485,7 @@ ACTION TAKEN: {}
 EVIDENCE:
 {}
 Does this evidence mathematically prove the stated strategy's objective was achieved? A successful action (like [WRITE_OK] or [CMD_OK]) is NOT proof of success on its own UNLESS the ACTION TAKEN itself contains the actual content that was written or patched (write_file/diff_patch/patch_function actions above include the real file content directly in ACTION TAKEN) — in that case, check whether that content satisfies the objective, and treat a confirmed match as proof. Do not reject a successful write or patch merely because the bare EVIDENCE line (e.g. [WRITE_OK]) doesn't repeat the content; the content to check is in ACTION TAKEN.
-For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
+For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done, or claims a report "has been synthesized" without presenting the full findings inline in ACTION TAKEN. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
 
 EXCEPTION — HALT-ONLY SYNTHESIS: If ACTION TAKEN is a [HALT] and STRATEGY explicitly describes an inline-analysis mission (for example, it contains "the material to analyze is inline in the directive" or "no searches, reads, or commands"), then this is a synthesis task. In this case:
 - Condition (2) does NOT apply — no reads were expected or performed.

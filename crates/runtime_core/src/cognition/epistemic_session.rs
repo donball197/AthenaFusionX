@@ -210,11 +210,18 @@ pub struct EpistemicSession {
 
 impl EpistemicSession {
     pub fn new(mission: &str) -> Self {
+        let contract = SubgoalCompletionEngine::infer_contract("session_node", mission);
+        let mut budget = CognitiveBudget::default_for_node();
+        if contract.conditions.len() > 4 {
+            budget.max_turns =
+                budget.max_turns.max(((contract.conditions.len() as u32) * 8 + 16).min(120));
+            budget.max_model_calls = budget.max_model_calls.max(budget.max_turns * 3);
+        }
         Self {
             session_id: Uuid::new_v4(),
             mission: mission.to_string(),
-            contract: SubgoalCompletionEngine::infer_contract("session_node", mission),
-            budget: CognitiveBudget::default_for_node(),
+            contract,
+            budget,
             graph: CognitiveGraph::new(),
             local_evidence: String::new(),
             coverage: crate::coverage::CoverageLedger::default(),

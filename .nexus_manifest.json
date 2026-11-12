@@ -205,6 +205,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-4-hydrogen",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-flash-latest",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
@@ -352,12 +358,6 @@
     "name": "google/deplot",
     "context": "Unknown",
     "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/diffusiongemma-26b-a4b-it",
-    "context": "8K in / 4K out",
-    "category": "GEMMA"
   },
   {
     "provider": "Nvidia",
