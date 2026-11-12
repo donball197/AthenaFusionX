@@ -100,17 +100,18 @@ pub fn halt_range_gate(evidence: &str) -> Option<String> {
         // Cite bare `fn_name` tokens; do not invent line ranges.
         return None;
     }
-    let mut ledger = CoverageLedger::default();
-    ledger.ingest(evidence);
-    let total = ledger.total_lines()?;
+    let ledgers = CoverageLedger::ingest_all_files(evidence);
+    let with_totals: Vec<&CoverageLedger> =
+        ledgers.iter().filter(|l| l.total_lines().is_some()).collect();
+    if with_totals.is_empty() {
+        return None;
+    }
+    let max_total = with_totals.iter().filter_map(|l| l.total_lines()).max().unwrap_or(0);
     for (s, e) in cited {
-        // A range beyond the file is a false claim by definition.
-        if e > total {
-            return Some(format!("halt cites lines {s}-{e} but the file has only {total} lines"));
+        if e > max_total {
+            return Some(format!("halt cites lines {s}-{e} but the file has only {max_total} lines"));
         }
-        // POLICY: only enforce when the author wrote an explicit lines X-Y range.
-        // Bare `fn` names are validated via verification corpus, not spans.
-        if !ledger.covers(s, e) {
+        if !with_totals.iter().any(|l| l.total_lines().is_some_and(|t| e <= t) && l.covers(s, e)) {
             return Some(format!("halt cites lines {s}-{e} that were never fully read"));
         }
     }
@@ -224,5 +225,21 @@ mod tests {
     #[test]
     fn identifiers_with_digits_are_not_ranges() {
         assert!(ranges_in("see v2-3 and utf8-16").is_empty());
+    }
+
+    #[test]
+    fn multifile_audit_accepts_earlier_longer_file_range() {
+        let ev = concat!(
+            "[READ_CHUNK_OK] File: task_manager.rs | Lines 1-300 of 300\nCONTENT:\na\n",
+            "[READ_OK] scheduler.rs\nFULL FILE CONTENT:\nb\nc\n",
+            "[HALT] task_manager.rs lines 150-250 gate completion.\n",
+        );
+        assert!(halt_range_gate(ev).is_none());
+        let bad = concat!(
+            "[READ_CHUNK_OK] File: task_manager.rs | Lines 1-100 of 300\nCONTENT:\na\n",
+            "[READ_OK] scheduler.rs\nFULL FILE CONTENT:\nb\nc\n",
+            "[HALT] task_manager.rs lines 150-250 gate completion.\n",
+        );
+        assert!(halt_range_gate(bad).is_some());
     }
 }

@@ -42,13 +42,42 @@ impl CoverageLedger {
         let Some(target) = target_path else {
             return;
         };
+        self.ingest_target(&lines, &target);
+    }
 
+    pub fn ingest_all_files(evidence: &str) -> Vec<Self> {
+        let lines: Vec<&str> = evidence.lines().collect();
+        let mut seen: Vec<String> = Vec::new();
+        for line in &lines {
+            let raw = if line.starts_with("[READ_CHUNK_OK]") {
+                chunk_line_path(line)
+            } else if line.starts_with("[READ_OK] ") {
+                Some(line.trim_start_matches("[READ_OK] ").trim().to_string())
+            } else {
+                None
+            };
+            if let Some(p) = raw {
+                let norm = normalize_workspace_path(&p);
+                if !norm.is_empty() && !seen.contains(&norm) {
+                    seen.push(norm);
+                }
+            }
+        }
+        seen.into_iter().map(|t| {
+            let mut l = Self::default();
+            l.ingest_target(&lines, &t);
+            l
+        }).collect()
+    }
+
+    fn ingest_target(&mut self, lines: &[&str], target: &str) {
+        let target_norm = normalize_workspace_path(target);
         // 2. Process all events chronologically, accumulating coverage for the target path
         let mut i = 0;
         while i < lines.len() {
             if lines[i].starts_with("[READ_CHUNK_OK]") {
                 if let Some(p) = chunk_line_path(lines[i]) {
-                    if p == target {
+                    if normalize_workspace_path(&p) == target_norm {
                         if let Some((s, e, total)) = parse_chunk_line(lines[i]) {
                             self.switch_to(&p);
                             self.total_lines = Some(total);
@@ -68,7 +97,7 @@ impl CoverageLedger {
                 {
                     j += 1;
                 }
-                if p == target {
+                if normalize_workspace_path(p) == target_norm {
                     let slice = lines[i..j].join(
                         "
 ",
