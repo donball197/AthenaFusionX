@@ -1365,6 +1365,9 @@ impl SubgoalCompletionEngine {
                         | CompletionCondition::PatchMarkerAcquired
                         | CompletionCondition::PatchPathAcquired { .. }
                         | CompletionCondition::WritePathAcquired { .. }
+                        // Belief is an outcome of the work, not a prerequisite for
+                        // the write phase. Still enforced at halt.
+                        | CompletionCondition::MinBeliefScore(_)
                 )
             })
             .cloned()

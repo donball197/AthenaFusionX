@@ -865,7 +865,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             // too thin: more non-mutating reconnaissance is then legitimate even when it
             // is outside the pinned strategy and the (possibly under-specified)
             // contract.
-            let veto_recon_ok = (session.local_evidence.contains("[CRITIC_VETO]")
+            let veto_recon_ok = !write_phase_ready
+                && (session.local_evidence.contains("[CRITIC_VETO]")
                 || (session.local_evidence.contains("[HALT_REJECTED_REPORT]")
                     || session.local_evidence.contains("[HALT_REJECTED]")))
                 && match first_action {

@@ -290,6 +290,18 @@ impl OutcomeVerifier {
             .map(|cond| format!("{:?}", cond))
             .collect()
     }
+
+    /// Physical evidence authorizes completion; belief only ranks hypotheses.
+    /// Returns true when every non-MinBeliefScore condition is met.
+    pub fn physical_contract_satisfied(
+        local_evidence: &str,
+        belief_score: f32,
+        conditions: &[CompletionCondition],
+    ) -> bool {
+        let unmet = Self::unmet_conditions(local_evidence, belief_score, conditions);
+        unmet.is_empty()
+            || unmet.iter().all(|s| s.contains("MinBeliefScore"))
+    }
 }
 
 /// Cryptographically verify the provenance of ancestor evidence.

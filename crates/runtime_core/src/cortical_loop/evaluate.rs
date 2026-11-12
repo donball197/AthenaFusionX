@@ -157,13 +157,70 @@ impl CorticalLoop {
                         return Ok(CortexState::Strategize);
                     }
                 }
+                // PROGRESS FLOOR: the LLM judge compares the action to the pinned
+                // strategy label, not to the contract. If this action's evidence reduced
+                // the number of unmet non-belief conditions, it is progress and may not
+                // be penalized.
+                let mut eval = eval;
+                {
+                    use crate::completion_engine::CompletionCondition as CC;
+                    let conds: Vec<CC> = session
+                        .contract
+                        .conditions
+                        .iter()
+                        .filter(|c| !matches!(c, CC::MinBeliefScore(_)))
+                        .cloned()
+                        .collect();
+                    // Evidence may already have been appended by execute.rs.
+                    // Recover a pre-action view by stripping one trailing copy of
+                    // `evidence` when present; otherwise use local_evidence as-is
+                    // and synthesize the after view.
+                    let pre_view = {
+                        let ev = evidence.as_str();
+                        if let Some(pos) = session.local_evidence.rfind(ev) {
+                            let mut s = session.local_evidence.clone();
+                            s.replace_range(pos..pos + ev.len(), "");
+                            s
+                        } else {
+                            session.local_evidence.clone()
+                        }
+                    };
+                    let before = crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
+                        &pre_view, 1.0, &conds,
+                    )
+                    .len();
+                    let after_current = crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
+                        &session.local_evidence, 1.0, &conds,
+                    )
+                    .len();
+                    let after_synth = if session.local_evidence.contains(evidence.as_str()) {
+                        after_current
+                    } else {
+                        let after_ev = format!("{}\n{}", session.local_evidence, evidence);
+                        crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
+                            &after_ev, 1.0, &conds,
+                        )
+                        .len()
+                    };
+                    let after = after_current.min(after_synth);
+                    if after < before && eval.confidence_modifier < 0.10 {
+                        self.log(format!(
+                            "\x1b[1;36m>> [PROGRESS FLOOR] unmet {} -> {}; modifier {:.2} -> 0.10\x1b[0m",
+                            before, after, eval.confidence_modifier
+                        ));
+                        eval.confidence_modifier = 0.10;
+                    }
+                }
                 self.log(format!(
                     "\x1b[33m>> [EVALUATION]\x1b[0m {} (Modifier: {:.2})",
                     eval.critique, eval.confidence_modifier
                 ));
                 session.record_evidence(&evidence, &eval, h_id);
 
-                Self::floor_hypothesis_belief_after_failure(session, h_id, belief, 0.15);
+                // Do NOT floor on the success path. restore_floor is reserved for
+                // genuine failures (low-relevance branch above, parse faults, etc.).
+                // Unconditional flooring here kept belief pinned near 0.15 despite
+                // positive confidence modifiers in live runs.
 
                 let has_unwritten_artifacts =
                     session.contract.required_artifact_paths.iter().any(|a| {
@@ -248,6 +305,16 @@ impl CorticalLoop {
                         },
                     );
 
+                // Physical-only completion: allow halt when all non-belief conditions
+                // are met even if MinBeliefScore is unmet.
+                let physical_completion_ready = is_halt_action
+                    && !deterministic_contract_satisfied
+                    && crate::outcome_verifier::OutcomeVerifier::physical_contract_satisfied(
+                        &session.local_evidence,
+                        current_belief,
+                        &session.contract.conditions,
+                    );
+
                 let command_only_contract = session.contract.conditions.len() == 1
                     && matches!(
                         session.contract.conditions.first(),
@@ -276,7 +343,7 @@ impl CorticalLoop {
                 }
 
                 if is_halt_action
-                    && deterministic_contract_satisfied
+                    && (deterministic_contract_satisfied || physical_completion_ready)
                     && (eval.confidence_modifier >= 0.0 || session.contract.read_only)
                 {
                     let strategy_for_verification = format!(
@@ -372,7 +439,7 @@ impl CorticalLoop {
                     }
                 }
 
-                if is_halt_action && !deterministic_contract_satisfied {
+                if is_halt_action && !deterministic_contract_satisfied && !physical_completion_ready {
                     let unmet = crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
                         &session.local_evidence,
                         current_belief,

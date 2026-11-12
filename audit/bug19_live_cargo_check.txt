@@ -1,0 +1,1 @@
+cd /root/AthenaFusionX && cargo check -j 1 > audit/bug19_live_cargo_check.txt 2>&1; status=$?; printf 'EXIT_STATUS=%d\n' "$status" >> audit/bug19_live_cargo_check.txt; printf 'EXIT_STATUS=%d\n' "$status"; exit "$status"

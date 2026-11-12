@@ -57,6 +57,18 @@ pub fn classify_duplicate(
             return FilterOutcome::AllowRetry; // earlier write failed
         }
     }
+    // CORTEXFIX: satisfied whole-file read -- never re-admit it.
+    if let AgentAction::ReadFile { path, .. } = action {
+        let already = crate::outcome_verifier::OutcomeVerifier::mission_completion_authorized(
+            evidence,
+            1.0,
+            &[CompletionCondition::ReadPathAcquired { path: path.clone() }],
+        );
+        if already {
+            return FilterOutcome::FilterAndDecay;
+        }
+    }
+
     if matches!(
         action,
         AgentAction::ReadFileChunk { .. }
@@ -72,7 +84,6 @@ pub fn classify_duplicate(
 /// Fingerprint a halt by its reasoning body so a *revised* halt is not treated
 /// as a duplicate of a prior rejected halt. Call this from the anti-loop key
 /// path when the action is Halt { reasoning }.
-#[allow(dead_code)]
 pub fn halt_reasoning_fingerprint(reasoning: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
