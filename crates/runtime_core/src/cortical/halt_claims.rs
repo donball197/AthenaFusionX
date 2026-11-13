@@ -280,6 +280,21 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
                 .to_string(),
         );
     }
+    // Large evidence corpus: a one-symbol, two-paragraph stub is not an audit.
+    if corpus.len() > 20_000 {
+        if verified_any.len() < 3 {
+            out.push(format!(
+                "only {} distinct verified symbol(s) cited; a report over this much read evidence must cite at least 3",
+                verified_any.len()
+            ));
+        }
+        if report.chars().count() < 2000 {
+            out.push(
+                "report is too short for the amount of evidence read; deliver the full structured findings, not a summary"
+                    .to_string(),
+            );
+        }
+    }
     out
 }
 
@@ -313,6 +328,21 @@ mod substance_tests {
         assert!(!report_defects(stub, &big_src).is_empty());
         let grounded = "The `Verifier` struct checks contracts in `verify_contract` across all branches and states.";
         assert!(report_defects(grounded, &big_src).is_empty());
+    }
+
+    #[test]
+    fn large_corpus_rejects_short_or_thin_reports() {
+        let corpus = format!(
+            "pub struct Verifier;\npub struct Gate;\npub fn verify_contract() {{}}\n{}",
+            "x\n".repeat(15_000)
+        );
+        let stub = "The `Verifier` struct checks contracts in `verify_contract`.";
+        assert!(!report_defects(stub, &corpus).is_empty());
+        let full = format!(
+            "`Verifier` calls `verify_contract` and `Gate` blocks. {}",
+            "Detailed finding about the control flow. ".repeat(60)
+        );
+        assert!(report_defects(&full, &corpus).is_empty(), "{:?}", report_defects(&full, &corpus));
     }
 }
 

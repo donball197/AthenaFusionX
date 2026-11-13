@@ -104,31 +104,50 @@ impl Verifier {
         Self::evaluate_contract_criteria(stdout, criteria)
     }
 
-    /// True when evidence holds a successful `[CMD_OK] Command:` record whose
-    /// command contains the required command's first line (workspace-cd prefix
-    /// stripped, whitespace-normalized), followed by `Status: exit status: 0`.
+    /// True only when the current node has a successful command record
+    /// matching the required command. Ancestor lineage is never command proof
+    /// for the current node.
     pub fn command_ok_for(evidence: &str, command: &str) -> bool {
-        let norm = |c: &str| {
-            crate::cmd_match::strip_workspace_cd_prefix(c.trim())
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
-        let want = norm(command.lines().next().unwrap_or(""));
-        if want.is_empty() {
-            return true;
+        if command.trim().is_empty() {
+            return false;
         }
-        let lines: Vec<&str> = evidence.lines().collect();
-        lines.iter().enumerate().any(|(i, l)| {
-            let Some(rest) = l.trim_start().strip_prefix("[CMD_OK] Command:") else {
-                return false;
-            };
-            norm(rest).contains(&want)
-                && lines[i + 1..]
-                    .iter()
-                    .take_while(|l| !crate::evidence_paths::is_marker_line(l))
-                    .any(|l| l.trim() == "Status: exit status: 0")
-        })
+
+        let own = Self::current_node_evidence(evidence);
+        crate::cmd_match::command_condition_met(command, &own)
+    }
+
+    /// Remove inherited DAG evidence before checking node-local requirements.
+    ///
+    /// An unterminated lineage envelope intentionally suppresses the remainder
+    /// of the evidence: malformed inherited data must not become local proof.
+    fn current_node_evidence(evidence: &str) -> String {
+        const START: &str = "[DAG LINEAGE INHERITED EVIDENCE";
+        const END: &str = "[DAG LINEAGE COMPLETE";
+
+        let mut in_lineage = false;
+        let mut own = Vec::new();
+
+        for line in evidence.lines() {
+            let trimmed = line.trim_start();
+
+            if trimmed.starts_with(START) {
+                in_lineage = true;
+                continue;
+            }
+
+            if trimmed.starts_with(END) {
+                if in_lineage {
+                    in_lineage = false;
+                    continue;
+                }
+            }
+
+            if !in_lineage {
+                own.push(line);
+            }
+        }
+
+        own.join("\n")
     }
 
     /// Deterministic contract verification based on explicit node criteria.
@@ -161,8 +180,11 @@ impl Verifier {
         for criterion in criteria {
             let criterion = criterion.trim();
 
+            // This legacy criterion is circular: task_manager emits
+            // [DAG NODE COMPLETE] after Cortex proposes completion. That
+            // wrapper cannot independently verify the node objective.
             let satisfied = if criterion == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED" {
-                evidence.lines().any(|l| l.trim_start().starts_with("[DAG NODE COMPLETE]"))
+                false
             } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
                 read_evidence_matches_path(evidence, path.trim())
             } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
@@ -487,6 +509,45 @@ mod tests {
         );
         let failed = Verifier::verify_contract("task_verify", &tampered, &criteria);
         assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn command_ok_for_ignores_ancestor_lineage_and_requires_exact_command() {
+        let inherited_only = concat!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:deadbeef]\n",
+            "[CMD_OK] Command: echo child\nStatus: exit status: 0\n",
+            "[DAG LINEAGE COMPLETE sha256:deadbeef]\n",
+            "[READ_OK] src/lib.rs\n",
+        );
+
+        assert!(!Verifier::command_ok_for(inherited_only, "echo child"));
+
+        let exact = "[CMD_OK] Command: echo child\nStatus: exit status: 0\n";
+        assert!(Verifier::command_ok_for(exact, "echo child"));
+
+        let partial = "[CMD_OK] Command: echo child-extra\nStatus: exit status: 0\n";
+        assert!(!Verifier::command_ok_for(partial, "echo child"));
+    }
+
+    #[test]
+    fn command_ok_for_fails_closed_on_unterminated_lineage() {
+        let evidence = concat!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:deadbeef]\n",
+            "[CMD_OK] Command: echo child\nStatus: exit status: 0\n",
+        );
+
+        assert!(!Verifier::command_ok_for(evidence, "echo child"));
+    }
+
+    #[test]
+    fn legacy_node_completion_marker_cannot_verify_its_own_criterion() {
+        let criteria = vec!["NODE_OBJECTIVE_EXECUTED_AND_VERIFIED".to_string()];
+        let evidence = "[DAG NODE COMPLETE] Objective: test\nBelief: 1.00\n";
+
+        assert!(matches!(
+            Verifier::verify_contract("child", evidence, &criteria),
+            VerificationResult::Retry(_)
+        ));
     }
 
     #[test]

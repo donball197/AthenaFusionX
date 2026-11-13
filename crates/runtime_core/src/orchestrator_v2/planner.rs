@@ -174,6 +174,64 @@ fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
     }
 }
 
+/// True when the directive says the report is delivered in the response
+/// (not written to disk).
+fn directive_delivers_report_inline(directive: &str) -> bool {
+    let l = directive.to_lowercase();
+    l.contains("report")
+        && (l.contains("inline")
+            || l.contains("in the response")
+            || l.contains("in your response")
+            || l.contains("in your final response"))
+}
+
+fn criterion_is_inspection_only(criterion: &str) -> bool {
+    let t = criterion.trim();
+    t.starts_with("READ_OK:")
+        || t.starts_with("READ_FUNCTION_OK:")
+        || t.starts_with("SEARCH_CODE_OK:")
+        || t.starts_with("SEARCH_CHECKED_OK:")
+}
+
+/// A read-only audit that must deliver its report in the response needs a
+/// deliverable criterion, otherwise the node completes on searches/reads
+/// alone and the report is never required. Adds ANALYSIS_OK to the sink node
+/// when (and only when) that node is pure inspection work and nothing in the
+/// graph already carries ANALYSIS_OK or a mutation criterion.
+fn apply_report_deliverable_criterion(graph: &mut TaskGraph, directive: &str) {
+    if !(directive_is_read_only(directive) || directive_has_audit_intent(directive)) {
+        return;
+    }
+    if !directive_delivers_report_inline(directive) {
+        return;
+    }
+    if graph.nodes.values().any(|n| {
+        n.success_criteria
+            .iter()
+            .any(|c| c.trim() == "ANALYSIS_OK" || criterion_is_any_mutation(c))
+    }) {
+        return;
+    }
+    let depended: std::collections::HashSet<String> =
+        graph.nodes.values().flat_map(|n| n.deps.iter().cloned()).collect();
+    let mut sinks: Vec<String> = graph
+        .nodes
+        .iter()
+        .filter(|(id, n)| {
+            !depended.contains(id.as_str())
+                && !n.success_criteria.is_empty()
+                && n.success_criteria.iter().all(|c| criterion_is_inspection_only(c))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    sinks.sort();
+    if let Some(id) = sinks.pop() {
+        if let Some(n) = graph.nodes.get_mut(&id) {
+            n.success_criteria.push("ANALYSIS_OK".to_string());
+        }
+    }
+}
+
 impl PlannerAgent {
     pub async fn decompose_task(
         client: &Client,
@@ -383,6 +441,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         let result = result.map(|mut graph| {
             apply_read_only_search_rewrite(&mut graph, directive);
             apply_audit_search_rewrite(&mut graph, directive);
+            apply_report_deliverable_criterion(&mut graph, directive);
             graph
         });
 
@@ -515,6 +574,15 @@ OUTPUT ONLY VALID JSON with this exact structure:
             if node.success_criteria.iter().any(|criterion| criterion.trim().is_empty()) {
                 return Err(anyhow::anyhow!(
                     "Planner produced real work node '{}' with an empty success criterion.",
+                    node.id
+                ));
+            }
+
+            if node.success_criteria.iter().any(|criterion| {
+                criterion.trim() == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED"
+            }) {
+                return Err(anyhow::anyhow!(
+                    "Planner produced invalid self-attestation criterion for node '{}': NODE_OBJECTIVE_EXECUTED_AND_VERIFIED is not independent verification evidence.",
                     node.id
                 ));
             }
@@ -1288,6 +1356,28 @@ Tasks:
     }
 
     #[test]
+    fn planner_rejects_legacy_self_attestation_criterion() {
+        let result = parse(
+            r#"{
+                "nodes": {
+                    "task_1": {
+                        "id": "task_1",
+                        "deps": [],
+                        "required_agent": "CodeAnalyzer",
+                        "objective": "Read router.rs",
+                        "success_criteria": ["NODE_OBJECTIVE_EXECUTED_AND_VERIFIED"]
+                    }
+                }
+            }"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "planner must reject a criterion that merely attests to its own completion marker"
+        );
+    }
+
+    #[test]
     fn explicit_success_criteria_are_preserved() {
         let graph = parse(
             r#"{
@@ -1635,6 +1725,53 @@ mod audit_rewrite_tests {
         let mut g = graph_with(&["READ_OK:foo.rs"]);
         apply_audit_search_rewrite(&mut g, "Audit the codebase.");
         assert_eq!(g.nodes["t"].success_criteria, vec!["READ_OK:foo.rs".to_string()]);
+    }
+
+    // ---- report deliverable criterion ----------------------------------
+
+    const INLINE_AUDIT: &str =
+        "READ-ONLY audit. Do not modify files. Return the final report in the response.";
+
+    #[test]
+    fn inline_report_audit_gets_analysis_ok_on_search_only_node() {
+        let mut g = graph_with(&["SEARCH_CHECKED_OK:bins/:main", "SEARCH_CHECKED_OK:apps/:main"]);
+        apply_report_deliverable_criterion(&mut g, INLINE_AUDIT);
+        assert_eq!(g.nodes["t"].success_criteria.last().unwrap(), "ANALYSIS_OK");
+        assert_eq!(g.nodes["t"].success_criteria.len(), 3);
+    }
+
+    #[test]
+    fn report_criterion_is_not_duplicated() {
+        let mut g = graph_with(&["READ_OK:a.rs", "ANALYSIS_OK"]);
+        apply_report_deliverable_criterion(&mut g, INLINE_AUDIT);
+        assert_eq!(g.nodes["t"].success_criteria, vec!["READ_OK:a.rs", "ANALYSIS_OK"]);
+    }
+
+    #[test]
+    fn report_criterion_skips_write_and_command_nodes_and_plain_directives() {
+        let mut w = graph_with(&["READ_OK:a.rs", "WRITE_OK:r.md"]);
+        apply_report_deliverable_criterion(&mut w, INLINE_AUDIT);
+        assert!(!w.nodes["t"].success_criteria.iter().any(|c| c == "ANALYSIS_OK"));
+
+        let mut c = graph_with(&["CMD_OK"]);
+        apply_report_deliverable_criterion(&mut c, INLINE_AUDIT);
+        assert_eq!(c.nodes["t"].success_criteria, vec!["CMD_OK"]);
+
+        let mut p = graph_with(&["READ_OK:a.rs"]);
+        apply_report_deliverable_criterion(&mut p, "Read a.rs and summarize it.");
+        assert_eq!(p.nodes["t"].success_criteria, vec!["READ_OK:a.rs"]);
+    }
+
+    #[test]
+    fn report_criterion_goes_on_the_sink_node_only() {
+        let mut g = graph_with(&["READ_OK:a.rs"]);
+        let mut second = node_with(&["READ_OK:b.rs"]);
+        second.id = "u".to_string();
+        second.deps = vec!["t".to_string()];
+        g.nodes.insert("u".to_string(), second);
+        apply_report_deliverable_criterion(&mut g, INLINE_AUDIT);
+        assert_eq!(g.nodes["t"].success_criteria, vec!["READ_OK:a.rs"]);
+        assert_eq!(g.nodes["u"].success_criteria.last().unwrap(), "ANALYSIS_OK");
     }
 
     // ---- structural guard (call-site presence only, NOT routing) -------

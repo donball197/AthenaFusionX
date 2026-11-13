@@ -129,6 +129,8 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
                 let path_ok = |p: &str| -> bool {
                     let pt = p.trim();
                     pt == expected_path
+                        || (!expected_path_norm.is_empty()
+                            && pt.trim_end_matches('/') == expected_path_norm)
                         || (pt.starts_with(&prefix) && !pt.contains(".."))
                         || pt.ends_with(&format!("/{}", expected_path_norm))
                         || (pt.contains(&format!("/{}/", expected_path_norm)) && !pt.contains(".."))
@@ -354,6 +356,27 @@ mod action_matches_strategy_tests {
         let action =
             act(r#"[{"type":"write_file","path":"out.md","content":"hello","reasoning":"test"}]"#);
         assert!(action_matches_strategy("write_file:out.md", &action));
+    }
+
+    #[test]
+    fn search_scope_with_trailing_slash_matches_bare_and_absolute_paths() {
+        let bare = act(r#"[{"type":"search_code","path":"bins","query":"main","reasoning":"t"}]"#);
+        let slash = act(r#"[{"type":"search_code","path":"bins/","query":"main","reasoning":"t"}]"#);
+        let abs = act(r#"[{"type":"search_code","path":"/root/X/bins","query":"main","reasoning":"t"}]"#);
+        assert!(action_matches_strategy("search_code:bins/:main", &bare));
+        assert!(action_matches_strategy("search_code:bins/:main", &slash));
+        assert!(action_matches_strategy("search_code:bins/:main", &abs));
+        assert!(action_matches_strategy("search_code:bins:main", &bare));
+    }
+
+    #[test]
+    fn search_scope_still_rejects_other_directories_and_queries() {
+        let other = act(r#"[{"type":"search_code","path":"/root/X/apps","query":"main","reasoning":"t"}]"#);
+        let lookalike = act(r#"[{"type":"search_code","path":"binsx","query":"main","reasoning":"t"}]"#);
+        let wrong_q = act(r#"[{"type":"search_code","path":"bins","query":"unrelated","reasoning":"t"}]"#);
+        assert!(!action_matches_strategy("search_code:bins/:main", &other));
+        assert!(!action_matches_strategy("search_code:bins/:main", &lookalike));
+        assert!(!action_matches_strategy("search_code:bins/:main", &wrong_q));
     }
 
     #[test]
