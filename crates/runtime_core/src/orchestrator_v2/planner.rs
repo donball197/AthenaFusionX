@@ -178,11 +178,47 @@ fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
 /// (not written to disk).
 fn directive_delivers_report_inline(directive: &str) -> bool {
     let l = directive.to_lowercase();
-    l.contains("report")
-        && (l.contains("inline")
-            || l.contains("in the response")
-            || l.contains("in your response")
-            || l.contains("in your final response"))
+    let has_report_word = l.contains("report") || l.contains("findings");
+    if !has_report_word {
+        return false;
+    }
+    // Explicit inline markers — always accept.
+    if l.contains("inline")
+        || l.contains("in the response")
+        || l.contains("in your response")
+        || l.contains("in your final response")
+    {
+        return true;
+    }
+    // Implicit: "return a/the/your ... report" — a direct verb applying to
+    // the report as the deliverable. Covers "Return a structured audit
+    // report containing..." which was not caught by the previous version,
+    // and which caused run a4530759 to complete without any report.
+    let has_return_verb = l.contains("return a")
+        || l.contains("return the")
+        || l.contains("return your")
+        || l.contains("deliver a")
+        || l.contains("deliver the")
+        || l.contains("deliver your")
+        || l.contains("produce a")
+        || l.contains("produce the")
+        || l.contains("produce your");
+    if !has_return_verb {
+        return false;
+    }
+    // File-write directives are NOT inline. If the same directive
+    // specifies a destination path or "to disk" / "to a file", the write
+    // is the deliverable, and the write path handles it separately.
+    let writes_to_file = l.contains(".md")
+        || l.contains(".txt")
+        || l.contains(".json")
+        || l.contains(".yaml")
+        || l.contains(".yml")
+        || l.contains("to disk")
+        || l.contains("to a file")
+        || l.contains("to the file")
+        || l.contains("write a file");
+    !writes_to_file
 }
 
 fn criterion_is_inspection_only(criterion: &str) -> bool {
@@ -1772,6 +1808,37 @@ mod audit_rewrite_tests {
         apply_report_deliverable_criterion(&mut g, INLINE_AUDIT);
         assert_eq!(g.nodes["t"].success_criteria, vec!["READ_OK:a.rs"]);
         assert_eq!(g.nodes["u"].success_criteria.last().unwrap(), "ANALYSIS_OK");
+    }
+
+    #[test]
+    fn return_a_report_directive_triggers_inline_criterion() {
+        assert!(directive_delivers_report_inline(
+            "Return a structured audit report containing: 1. Executive summary. 2. Findings."
+        ));
+    }
+
+    #[test]
+    fn deliver_a_report_directive_triggers_inline_criterion() {
+        assert!(directive_delivers_report_inline(
+            "Deliver a comprehensive findings report in the final response."
+        ));
+    }
+
+    #[test]
+    fn write_report_to_disk_does_not_trigger_inline() {
+        assert!(!directive_delivers_report_inline(
+            "Write a report to disk at /tmp/audit_report.md."
+        ));
+        assert!(!directive_delivers_report_inline(
+            "Produce a report file named audit.json."
+        ));
+    }
+
+    #[test]
+    fn return_a_report_to_a_file_does_not_trigger_inline() {
+        assert!(!directive_delivers_report_inline(
+            "Return a report to the file audit_report.md."
+        ));
     }
 
     // ---- structural guard (call-site presence only, NOT routing) -------

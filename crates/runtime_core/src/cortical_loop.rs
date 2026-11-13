@@ -336,8 +336,18 @@ impl CorticalLoop {
                 use sha2::{Digest, Sha256};
                 let trimmed = evidence.trim();
                 // Hash exactly the payload that the verifier will extract.
-                let inherited = inherit_physical_evidence(trimmed);
+                let (inherited, inherit_stats) =
+                    inherit_physical_evidence(trimmed);
                 let inherited = inherited.trim();
+
+                self.log(format!(
+                    "[FUSION] Evidence inheritance: {} blocks, {} truncated, {} dropped, {} chars emitted",
+                    inherit_stats.total_blocks,
+                    inherit_stats.truncated,
+                    inherit_stats.dropped,
+                    inherit_stats.total_chars
+                ));
+
                 let digest = format!("{:x}", Sha256::digest(inherited.as_bytes()));
                 session.local_evidence.push_str(&format!(
                     "\n[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]\n",
@@ -680,7 +690,7 @@ mod tests;
 
 /// Keep physical-evidence blocks (marker line AND the body that follows it);
 /// drop critic/halt/recon chatter. Capped to bound prompt size.
-fn inherit_physical_evidence(evidence: &str) -> String {
+fn inherit_physical_evidence(evidence: &str) -> (String, InheritStats) {
     // Includes the real executor patch markers. The old list carried
     // "[PATCH_OK]" -- a marker the executor never emits -- so
     // [PATCH_FUNCTION_OK], [PATCH_IDEMPOTENT_OK], and [DIFF_PATCH_OK]
@@ -710,20 +720,75 @@ fn inherit_physical_evidence(evidence: &str) -> String {
                     })
             })
     }
-    let mut out: Vec<&str> = Vec::new();
-    let mut keeping = false;
+    // Group lines into blocks: [marker_line, body_lines...].
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    let mut cur: Option<Vec<&str>> = None;
     for line in evidence.lines() {
         let t = line.trim_start();
         if KEEP.iter().any(|p| t.starts_with(p)) {
-            keeping = true;
-            out.push(line);
+            if let Some(b) = cur.take() { blocks.push(b); }
+            cur = Some(vec![line]);
         } else if is_marker(t) {
-            keeping = false;
-        } else if keeping {
-            out.push(line);
+            if let Some(b) = cur.take() { blocks.push(b); }
+        } else if let Some(b) = cur.as_mut() {
+            b.push(line);
         }
     }
-    out.join("\n").chars().take(120_000).collect()
+    if let Some(b) = cur.take() { blocks.push(b); }
+
+    const PER_BLOCK_CAP: usize = 30_000;
+    const AGGREGATE_CAP: usize = 240_000;
+
+    let mut result = String::new();
+    let mut stats = InheritStats { total_blocks: blocks.len(), ..Default::default() };
+
+    for block in &blocks {
+        if block.is_empty() { continue; }
+        let header = block[0];
+        if result.len() + header.len() + 300 > AGGREGATE_CAP {
+            result.push_str(header);
+            result.push('\n');
+            result.push_str(
+                "[INHERITED_EVIDENCE_BODY_OMITTED]\n\
+                 Body omitted (aggregate inheritance cap reached). \
+                 Re-read the file directly if its content is required.\n",
+            );
+            stats.dropped += 1;
+            continue;
+        }
+        result.push_str(header);
+        result.push('\n');
+        let mut used = 0usize;
+        let mut truncated = false;
+        for line in &block[1..] {
+            if used + line.len() + 1 > PER_BLOCK_CAP {
+                truncated = true;
+                break;
+            }
+            result.push_str(line);
+            result.push('\n');
+            used += line.len() + 1;
+        }
+        if truncated {
+            result.push_str(
+                "[INHERITED_EVIDENCE_BODY_CAPPED]\n\
+                 Body exceeded the per-file inheritance cap. \
+                 Re-read the file directly if its full content is required.\n",
+            );
+            stats.truncated += 1;
+        }
+    }
+
+    stats.total_chars = result.len();
+    (result, stats)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct InheritStats {
+    pub total_blocks: usize,
+    pub truncated: usize,
+    pub dropped: usize,
+    pub total_chars: usize,
 }
 
 #[cfg(test)]
@@ -733,7 +798,7 @@ mod inherit_evidence_tests {
     #[test]
     fn keeps_read_body_and_drops_chatter() {
         let ev = "[READ_OK] a.rs\nFULL FILE CONTENT:\nfn main() {}\n[dependencies]\n[CRITIC_VETO] no\nchatter\n[CMD_OK] Command: ls\nSTDOUT:\nx";
-        let out = inherit_physical_evidence(ev);
+        let out = inherit_physical_evidence(ev).0;
         assert!(out.contains("fn main() {}"));
         assert!(out.contains("[dependencies]"));
         assert!(out.contains("STDOUT:"));
@@ -746,7 +811,7 @@ mod inherit_evidence_tests {
         use sha2::{Digest, Sha256};
 
         let ancestor = "[READ_OK] src/main.rs\nFULL FILE CONTENT:\nfn main() {}\n[CRITIC_VETO] discarded chatter\nchatter";
-        let filtered = inherit_physical_evidence(ancestor.trim());
+        let filtered = inherit_physical_evidence(ancestor.trim()).0;
         let payload = filtered.trim();
 
         // Reproduce the former producer behavior: hashing the unfiltered
@@ -792,11 +857,49 @@ mod inherit_evidence_tests {
             "[WRITE_NOOP] out.md -- content identical to existing file\n",
             "[CRITIC_VETO] filtered out\n",
         );
-        let out = inherit_physical_evidence(ev);
+        let out = inherit_physical_evidence(ev).0;
         assert!(out.contains("[PATCH_FUNCTION_OK] src/math.rs:add"));
         assert!(out.contains("[DIFF_PATCH_OK] Applied changes to src/lib.rs"));
         assert!(out.contains("[PATCH_IDEMPOTENT_OK] src/other.rs:noop"));
         assert!(out.contains("[WRITE_NOOP] out.md"));
         assert!(!out.contains("[CRITIC_VETO]"));
+    }
+
+    #[test]
+    fn all_blocks_present_under_per_block_cap() {
+        // Regression for the 2026-11-13 synthesis-node failure: four
+        // files, each ~2K, total well under any cap. Every header MUST
+        // appear. The pre-fix code capped the aggregate at 120K, silently
+        // dropping the fourth file from synthesis nodes' lineage and making
+        // every halt proposal citing it rejected by the pre-gate.
+        let mut ev = String::new();
+        for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            ev.push_str(&format!("[READ_OK] {}\nFULL FILE CONTENT:\n", name));
+            ev.push_str(&"x\n".repeat(1000));
+        }
+        let (out, stats) = inherit_physical_evidence(&ev);
+        for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            assert!(
+                out.contains(&format!("[READ_OK] {}", name)),
+                "block for {} was dropped from inheritance: stats={:?}",
+                name, stats
+            );
+        }
+        assert_eq!(stats.dropped, 0);
+    }
+
+    #[test]
+    fn large_block_truncated_but_visible() {
+        // A block over PER_BLOCK_CAP must retain its header plus a visible
+        // truncation marker. Prior behavior silently dropped content past
+        // the aggregate cap, so downstream synthesis could cite a file it
+        // had no evidence for.
+        let mut ev = String::from("[READ_OK] big.rs\nFULL FILE CONTENT:\n");
+        ev.push_str(&"y\n".repeat(20_000));
+        let (out, stats) = inherit_physical_evidence(&ev);
+        assert!(out.contains("[READ_OK] big.rs"), "header must be present");
+        assert!(out.contains("[INHERITED_EVIDENCE_BODY_CAPPED]"), "truncation marker must be present");
+        assert_eq!(stats.truncated, 1);
+        assert_eq!(stats.dropped, 0);
     }
 }

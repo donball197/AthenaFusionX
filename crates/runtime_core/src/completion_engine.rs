@@ -894,6 +894,48 @@ fn declared_criteria_contract(
         conditions.push(CompletionCondition::MinBeliefScore(threshold));
     }
 
+    // Analysis-intent contract must also require source-code evidence,
+    // even when the criteria block declares only search markers.
+    //
+    // Confirmed defect (2026-11-13): a mission whose criteria were two
+    // SEARCH_CHECKED_OK: targets plus ANALYSIS_OK produced a contract of
+    // [SearchCheckedAcquired, SearchCheckedAcquired] that could be
+    // satisfied without reading any file. Patch G added the same check
+    // in infer_contract's intent-detection path, but that path is
+    // bypassed because declared_criteria_contract returns early when
+    // any recognized criterion is present. The fix must live HERE.
+    //
+    // SEARCH_CHECKED_OK accepts documented no-match as success, so it
+    // cannot establish that source was inspected. SEARCH_CODE_OK
+    // requires matches to be found, which is genuine evidence that
+    // code exists at the target. Only the checked form needs the
+    // additional constraint.
+    let has_analysis_signal =
+        criteria_text.contains("ANALYSIS_OK") || requires_semantic_verification(full_text);
+    let has_checked_search = criteria_text.contains("SEARCH_CHECKED_OK:");
+    if only_search_markers
+        && has_analysis_signal
+        && has_checked_search
+        && !conditions
+            .iter()
+            .any(|c| matches!(c, CompletionCondition::SourceCodeEvidenceRequired))
+    {
+        conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
+    }
+
+    // ANALYSIS_OK means the deliverable is the halt report itself. A
+    // node that declares ANALYSIS_OK must produce one, no matter what
+    // other criteria it carries. Without this, a SEARCH_CHECKED_OK +
+    // ANALYSIS_OK node can satisfy its physical criteria and terminate
+    // without emitting the report its objective asked for.
+    if criteria_text.contains("ANALYSIS_OK")
+        && !conditions
+            .iter()
+            .any(|c| matches!(c, CompletionCondition::HaltDelivered))
+    {
+        conditions.push(CompletionCondition::HaltDelivered);
+    }
+
     Some(SubgoalContract {
         node_id: node_id.to_string(),
         objective: full_text.to_string(),
@@ -2634,6 +2676,38 @@ CONSTRAINTS:
             ),
             "must not collapse to CommandMarkerAcquired only: {:?}",
             c.conditions
+        );
+    }
+
+    #[test]
+    fn checked_search_alone_is_not_analysis_evidence() {
+        // Regression: search-only audit contracts must still require a read.
+        // Without this, run a4530759 (audit mission, all criteria
+        // SEARCH_CHECKED_OK) completed with no file ever read.
+        let contract = SubgoalCompletionEngine::infer_contract(
+            "run_a4530759_shape",
+            "OBJECTIVE: Conduct a comprehensive read-only audit across bins/, apps/, crates/.\n\
+             MANDATORY NODE SUCCESS CRITERIA:\n\
+             SEARCH_CHECKED_OK:crates:router\n\
+             SEARCH_CHECKED_OK:crates:Verifier\n\
+             ANALYSIS_OK",
+        );
+
+        assert!(
+            contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CompletionCondition::SourceCodeEvidenceRequired)),
+            "audit contract must require source-code evidence; got {:?}",
+            contract.conditions
+        );
+        assert!(
+            contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CompletionCondition::HaltDelivered)),
+            "ANALYSIS_OK audit must require the halt deliverable; got {:?}",
+            contract.conditions
         );
     }
 
