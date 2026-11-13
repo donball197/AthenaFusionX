@@ -224,6 +224,43 @@ impl CorticalLoop {
                     "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Fix these defects and re-propose the full audit: {}\n",
                     defects.join("; ")
                 ));
+                // HALT PRE-GATE HINT: name the specific corrective action per
+                // defect class. Without this, the Cortex re-proposes the same
+                // malformed report for many turns, burning budget without
+                // acquiring the evidence it needs.
+                {
+                    let joined = defects.join("; ");
+                    let hint: &str = if joined.contains("symbols not found in the file content read") {
+                        "[HALT_PRE_GATE_HINT] Your report backticked at least one name that does \
+                         not appear as a whole word in any [READ_OK]/[READ_CHUNK_OK] block. Two \
+                         remedies: (a) if the name is real, `read_file` the file that defines it \
+                         and re-cite; (b) if the name is a tool or status marker (e.g. `read_file`, \
+                         `search_code`, `[CMD_OK]`), remove the backticks -- tool names are not \
+                         source symbols.\n"
+                    } else if joined.contains("no verified source identifiers cited in backticks") {
+                        "[HALT_PRE_GATE_HINT] Your report has no backticked symbol that appears \
+                         in your evidence corpus. A single backticked identifier from any search \
+                         result is enough -- e.g. if you searched for `router`, cite `router` or \
+                         `AgentProfile`.\n"
+                    } else if joined.contains("must cite at least") {
+                        "[HALT_PRE_GATE_HINT] The report is thin for the evidence on hand. Read \
+                         at least one file the searches already located before halting.\n"
+                    } else if joined.contains("cited at lines") {
+                        "[HALT_PRE_GATE_HINT] You cited a line range that does not appear in \
+                         the coverage ledger. Use the exact ranges returned by `read_file_chunk`.\n"
+                    } else if joined.contains("report appears truncated") {
+                        "[HALT_PRE_GATE_HINT] The report was cut off mid-sentence. Finish the \
+                         final sentence.\n"
+                    } else if joined.contains("report is only") || joined.contains("report is too short") {
+                        "[HALT_PRE_GATE_HINT] The report is below the minimum length for its \
+                         evidence corpus. Deliver the full findings, not a summary.\n"
+                    } else {
+                        ""
+                    };
+                    if !hint.is_empty() {
+                        session.local_evidence.push_str(hint);
+                    }
+                }
                 return Ok(CortexState::Strategize);
             }
         }

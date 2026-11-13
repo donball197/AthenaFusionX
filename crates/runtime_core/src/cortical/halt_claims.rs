@@ -70,6 +70,23 @@ const SKIP: &[&str] = &[
     "type",
     "extern",
     "super",
+    // Tool / action names. A report that says "no `read_file` was performed"
+    // is describing a tool, not claiming a symbol exists in the codebase.
+    // Without these, `unverified_symbols` rejects any halt that honestly
+    // enumerates which native actions it did and did not use.
+    "read_file",
+    "read_file_chunk",
+    "read_function",
+    "search_code",
+    "search_memory",
+    "write_file",
+    "patch_function",
+    "replace_lines",
+    "diff_patch",
+    "execute_command",
+    "run_tests",
+    "synthesize_report",
+    "halt",
 ];
 
 fn is_word_char(c: char) -> bool {

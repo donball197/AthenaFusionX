@@ -1484,7 +1484,11 @@ OUTPUT ONLY VALID JSON:
         // claim-check below must see the full claims. The old 2000-char cap
         // silently truncated ROOT_CAUSE/TRACE/FIX answers mid-claim, leaving
         // the verifier to judge only their openings.
-        let truncated_action: String = action.chars().take(6000).collect();
+        // The halt IS the deliverable for read-only audit missions; truncating
+        // it to 6000 chars throws away the closing sections of a comprehensive
+        // report. The mission verifier serves from the heavy tier (below)
+        // whose context comfortably fits 40k chars of report.
+        let truncated_action: String = action.chars().take(40_000).collect();
         let prompt = format!(
             r#"You are the Epistemic Verifier.
 STRATEGY: {}
@@ -1492,7 +1496,11 @@ ACTION TAKEN: {}
 EVIDENCE:
 {}
 Does this evidence mathematically prove the stated strategy's objective was achieved? A successful action (like [WRITE_OK] or [CMD_OK]) is NOT proof of success on its own UNLESS the ACTION TAKEN itself contains the actual content that was written or patched (write_file/diff_patch/patch_function actions above include the real file content directly in ACTION TAKEN) — in that case, check whether that content satisfies the objective, and treat a confirmed match as proof. Do not reject a successful write or patch merely because the bare EVIDENCE line (e.g. [WRITE_OK]) doesn't repeat the content; the content to check is in ACTION TAKEN.
-For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done, or claims a report "has been synthesized" without presenting the full findings inline in ACTION TAKEN. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
+For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done, or claims a report "has been synthesized" without presenting the full findings inline in ACTION TAKEN. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale.
+
+HONEST NON-DELIVERY IS NOT COMPLETION: If the objective asks for a comprehensive audit, report, or analysis, a halt that states "I only completed X of the required Y/Z" or "this audit is limited to search evidence" is NOT a successful audit -- it is a partial execution of the objective. Return goal_satisfied=false for such a halt and name the specific objectives the report admits it did not deliver. An honest admission of non-delivery is worth more than a fabricated success, but it is still a FAILED mission, not a completed one. Do not accept "the report states concrete findings" as sufficient when those findings are a subset of the requested deliverable.
+
+PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
 
 EXCEPTION — HALT-ONLY SYNTHESIS: If ACTION TAKEN is a [HALT] and STRATEGY explicitly describes an inline-analysis mission (for example, it contains "the material to analyze is inline in the directive" or "no searches, reads, or commands"), then this is a synthesis task. In this case:
 - Condition (2) does NOT apply — no reads were expected or performed.
@@ -1722,9 +1730,22 @@ NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced."#;
     #[test]
     fn verifier_claim_check_needs_full_claims_and_grounded_quotes() {
         let source = include_str!("epistemic_engine.rs");
+
+        // Both patterns are constructed at runtime from fragments so that
+        // `include_str!("epistemic_engine.rs")` does NOT capture them as
+        // contiguous strings. If the full pattern appeared in this test
+        // body, `source.contains(pattern)` would self-match and both the
+        // positive and negative assertions would pass or fail for the
+        // wrong reason. Fragmenting the literal prevents that.
+        let good_truncation = ["action.chars().take(4", "0_000)"].concat();
+        let bad_truncation = ["take(6", "000", ").collect"].concat();
         assert!(
-            source.contains("action.chars().take(6000)"),
-            "halt claims must not be truncated at 6000 chars"
+            source.contains(&good_truncation),
+            "halt claims must be truncated at 40,000 chars (raised from 6000); a comprehensive audit report exceeds 6000 chars before its findings section even begins"
+        );
+        assert!(
+            !source.contains(&bad_truncation),
+            "6000-char halt truncation is the bug this test guards against; it must not reappear"
         );
         assert!(
             source.contains("quote the exact source lines from EVIDENCE"),

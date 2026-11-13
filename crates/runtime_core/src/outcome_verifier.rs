@@ -240,13 +240,6 @@ impl OutcomeVerifier {
                                     seen_paths.insert(path.to_string());
                                 }
                             }
-                        } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
-                            if let Some(path) = rest.split(" | ").next() {
-                                let path = path.trim();
-                                if !path.is_empty() {
-                                    seen_paths.insert(path.to_string());
-                                }
-                            }
                         }
                     }
                     !seen_paths.is_empty()
@@ -315,9 +308,10 @@ pub fn verify_lineage_provenance(evidence: &str) -> bool {
     let end_prefix = "[DAG LINEAGE COMPLETE sha256:";
 
     let Some(start_pos) = evidence.find(start_prefix) else {
-        // Backward-compatible fallback for unhashed markers
-        return evidence.contains("[DAG LINEAGE INHERITED EVIDENCE]")
-            && evidence.contains("[DAG LINEAGE COMPLETE]");
+        // Fail closed: unhashed lineage is no longer accepted here. Any
+        // replay path that needs the fallback must call
+        // `verify_lineage_provenance_legacy` explicitly.
+        return false;
     };
 
     let hash_start = start_pos + start_prefix.len();
@@ -345,6 +339,17 @@ pub fn verify_lineage_provenance(evidence: &str) -> bool {
 
     let computed_hash = format!("{:x}", Sha256::digest(payload.as_bytes()));
     computed_hash == declared_hash
+}
+
+/// Legacy compatibility: accepts unhashed boundary markers WITHOUT hash
+/// validation. Use ONLY for replaying evidence produced before the sha256
+/// boundary markers landed. New code MUST call `verify_lineage_provenance`.
+pub fn verify_lineage_provenance_legacy(evidence: &str) -> bool {
+    if verify_lineage_provenance(evidence) {
+        return true;
+    }
+    evidence.contains("[DAG LINEAGE INHERITED EVIDENCE]")
+        && evidence.contains("[DAG LINEAGE COMPLETE]")
 }
 
 #[cfg(test)]

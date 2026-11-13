@@ -1258,10 +1258,16 @@ impl SubgoalCompletionEngine {
         // SourceCodeEvidenceRequired is skipped ONLY when path-bound reads
         // exist. Named reads are strictly stronger than "any source file".
         // Skip when a stronger SEARCH_CODE_OK: criterion already exists.
+        //
+        // NOTE: SEARCH_CHECKED_OK does NOT skip this. A checked-search
+        // criterion proves a search ran; it does not prove source was read.
+        // Removing the historical suppression closes the run a4530759
+        // search-only-completion loophole. See also outcome_verifier's
+        // SourceCodeEvidenceRequired arm, which now requires an actual
+        // [READ_OK]/[READ_CHUNK_OK] path.
         if (has_analysis_intent || (has_read_intent && has_search_intent))
             && !has_path_bound_reads
             && !has_search_code_marker
-            && !has_search_checked_marker
             && !structural_search_contract
         {
             conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
