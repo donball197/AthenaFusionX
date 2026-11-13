@@ -336,8 +336,7 @@ impl CorticalLoop {
                 use sha2::{Digest, Sha256};
                 let trimmed = evidence.trim();
                 // Hash exactly the payload that the verifier will extract.
-                let (inherited, inherit_stats) =
-                    inherit_physical_evidence(trimmed);
+                let (inherited, inherit_stats) = inherit_physical_evidence(trimmed);
                 let inherited = inherited.trim();
 
                 self.log(format!(
@@ -467,6 +466,30 @@ impl CorticalLoop {
                         "\x1b[1;36m>> [CORTEX TERMINAL] Physical success contract already satisfied. No additional cognitive turn required.\x1b[0m"
                             .to_string(),
                     );
+
+                    // Journal the terminal-gate completion so replay can reconstruct
+                    // completions that never reached handle_evaluate. The action_type
+                    // marker distinguishes this from evaluator-judged turns; eval_modifier
+                    // is 0.0 because no LLM judgment occurred.
+                    crate::journal::append_global(crate::journal::TurnRecord {
+                        node_id: format!("{:?}", best_node.id),
+                        turn: 0,
+                        strategy: session.graph.content_of(best_node.id).to_string(),
+                        action_type: "terminal_gate".into(),
+                        evidence_hash: crate::journal::hash_bytes(
+                            session.local_evidence.as_bytes(),
+                        ),
+                        evidence_len: session.local_evidence.len(),
+                        belief_before: current_belief,
+                        belief_after: current_belief.max(0.95),
+                        eval_modifier: 0.0,
+                        unmet_before: Vec::new(),
+                        unmet_after: Vec::new(),
+                        provider: None,
+                        latency_ms: None,
+                        prev_hash: String::new(),
+                        record_hash: String::new(),
+                    });
 
                     return Ok(CortexOutcome::CompletionProposed {
                         belief: current_belief.max(0.95),
@@ -726,15 +749,21 @@ fn inherit_physical_evidence(evidence: &str) -> (String, InheritStats) {
     for line in evidence.lines() {
         let t = line.trim_start();
         if KEEP.iter().any(|p| t.starts_with(p)) {
-            if let Some(b) = cur.take() { blocks.push(b); }
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
             cur = Some(vec![line]);
         } else if is_marker(t) {
-            if let Some(b) = cur.take() { blocks.push(b); }
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
         } else if let Some(b) = cur.as_mut() {
             b.push(line);
         }
     }
-    if let Some(b) = cur.take() { blocks.push(b); }
+    if let Some(b) = cur.take() {
+        blocks.push(b);
+    }
 
     const PER_BLOCK_CAP: usize = 30_000;
     const AGGREGATE_CAP: usize = 240_000;
@@ -743,7 +772,9 @@ fn inherit_physical_evidence(evidence: &str) -> (String, InheritStats) {
     let mut stats = InheritStats { total_blocks: blocks.len(), ..Default::default() };
 
     for block in &blocks {
-        if block.is_empty() { continue; }
+        if block.is_empty() {
+            continue;
+        }
         let header = block[0];
         if result.len() + header.len() + 300 > AGGREGATE_CAP {
             result.push_str(header);
@@ -882,7 +913,8 @@ mod inherit_evidence_tests {
             assert!(
                 out.contains(&format!("[READ_OK] {}", name)),
                 "block for {} was dropped from inheritance: stats={:?}",
-                name, stats
+                name,
+                stats
             );
         }
         assert_eq!(stats.dropped, 0);
@@ -898,7 +930,10 @@ mod inherit_evidence_tests {
         ev.push_str(&"y\n".repeat(20_000));
         let (out, stats) = inherit_physical_evidence(&ev);
         assert!(out.contains("[READ_OK] big.rs"), "header must be present");
-        assert!(out.contains("[INHERITED_EVIDENCE_BODY_CAPPED]"), "truncation marker must be present");
+        assert!(
+            out.contains("[INHERITED_EVIDENCE_BODY_CAPPED]"),
+            "truncation marker must be present"
+        );
         assert_eq!(stats.truncated, 1);
         assert_eq!(stats.dropped, 0);
     }

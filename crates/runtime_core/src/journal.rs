@@ -3,6 +3,21 @@
 //! Each record seals a SHA-256 over its own fields plus the previous record's
 //! hash, so tampering with any record invalidates every later record. The
 //! journal is JSONL (one sealed record per line) and never truncates.
+//!
+//! # Replay portability (design note — not yet implemented)
+//!
+//! `paths_equivalent` (evidence_paths.rs) bridges absolute/relative paths
+//! by stripping the *current* working directory at verify time. A journal
+//! written under /root/AthenaFusionX therefore will not verify under
+//! /home/don/AthenaFusionX: recorded `[WRITE_OK] /root/...` fails the
+//! strip_prefix(cwd) bridge and falls back to raw comparison against the
+//! contract's relative path.
+//!
+//! When a replay tool is built, add `workspace_root: String` to TurnRecord
+//! (serde-default to "" for backwards compat with pre-2026-11 records),
+//! populate it in `append_global` from `std::env::current_dir()`, and
+//! rewrite absolute paths under the recorded root to their relative form
+//! in the replay loader before feeding evidence to the verifier.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
