@@ -28,10 +28,7 @@ impl CorticalLoop {
         let is_search_evidence = evidence.contains("[SEARCH_CODE_OK]");
         let h_content = if is_halt_action && session.contract.read_only {
             "halt: deliver the complete read-only audit findings in the halt reasoning".to_string()
-        } else if !is_halt_action
-            && is_read_evidence
-            && graph_h_content.starts_with("read_file:")
-        {
+        } else if !is_halt_action && is_read_evidence && graph_h_content.starts_with("read_file:") {
             "read_file / read_file_chunk: acquire complete source evidence for the contract targets"
                 .to_string()
         } else if !is_halt_action
@@ -205,7 +202,9 @@ impl CorticalLoop {
                     )
                     .len();
                     let after_current = crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
-                        &session.local_evidence, 1.0, &conds,
+                        &session.local_evidence,
+                        1.0,
+                        &conds,
                     )
                     .len();
                     let after_synth = if session.local_evidence.contains(evidence.as_str()) {
@@ -231,6 +230,24 @@ impl CorticalLoop {
                     eval.critique, eval.confidence_modifier
                 ));
                 session.record_evidence(&evidence, &eval, h_id);
+
+                crate::journal::append_global(crate::journal::TurnRecord {
+                    node_id: format!("{:?}", h_id),
+                    turn: 0,
+                    strategy: h_content.clone(),
+                    action_type: executed_action.chars().take(80).collect(),
+                    evidence_hash: crate::journal::hash_bytes(evidence.as_bytes()),
+                    evidence_len: evidence.len(),
+                    belief_before: belief,
+                    belief_after: (belief + eval.confidence_modifier).min(1.0),
+                    eval_modifier: eval.confidence_modifier,
+                    unmet_before: Vec::new(),
+                    unmet_after: Vec::new(),
+                    provider: None,
+                    latency_ms: None,
+                    prev_hash: String::new(),
+                    record_hash: String::new(),
+                });
 
                 // Do NOT floor on the success path. restore_floor is reserved for
                 // genuine failures (low-relevance branch above, parse faults, etc.).
@@ -487,7 +504,8 @@ impl CorticalLoop {
                     }
                 }
 
-                if is_halt_action && !deterministic_contract_satisfied && !physical_completion_ready {
+                if is_halt_action && !deterministic_contract_satisfied && !physical_completion_ready
+                {
                     let unmet = crate::outcome_verifier::OutcomeVerifier::unmet_conditions(
                         &session.local_evidence,
                         current_belief,

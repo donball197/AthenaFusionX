@@ -101,3 +101,7 @@ mod semantic_gate_tests;
 
 #[cfg(test)]
 mod write_noop_tests;
+
+// === athx upgrade: journal/episodic ===
+pub mod episodic;
+pub mod journal;

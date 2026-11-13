@@ -25,14 +25,18 @@ pub fn write_path_satisfied(evidence: &str, path: &str) -> bool {
     evidence.lines().any(|l| {
         if let Some(rest) = l.strip_prefix("[WRITE_OK]") {
             let rest = rest.trim();
-            rest == target || rest == synthesized
+            // Accept exact match OR the shared absolute/relative equivalence,
+            // mirroring ReadPathAcquired so the two cannot diverge again.
+            rest == target
+                || rest == synthesized
+                || crate::evidence_paths::paths_equivalent(rest, target)
         } else if let Some(rest) = l.strip_prefix("[WRITE_NOOP]") {
             let rest = rest.trim();
             let rest = rest
                 .strip_suffix("-- content identical to existing file")
                 .map(str::trim_end)
                 .unwrap_or(rest);
-            rest == target
+            rest == target || crate::evidence_paths::paths_equivalent(rest, target)
         } else {
             false
         }
