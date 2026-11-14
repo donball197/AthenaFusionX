@@ -947,30 +947,22 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     // env var is set, hand off synthesis. On success, synthesize
                     // a normal [WRITE_OK] marker so downstream verification is
                     // unchanged. On failure, fall through to Fail as before.
-                    if std::env::var("NEXUS_MIRROR_DELEGATION").is_ok() {
-                        let bridge = crate::mirror_bridge::MirrorBridge::new(
-                            "http://127.0.0.1:8081",
-                        );
-                        match bridge
-                            .delegate_write(path, mission, &session.local_evidence)
-                            .await
-                        {
+                    if std::env::var("NEXUS_MIRROR_DELEGATION").as_deref() == Ok("1") {
+                        let bridge =
+                            crate::mirror_bridge::MirrorBridge::new("http://127.0.0.1:8081");
+                        match bridge.delegate_write(path, mission, &session.local_evidence).await {
                             Ok(()) => {
                                 self.log(
                                     "\x1b[1;36m>> [MIRROR] Delegated write succeeded.\x1b[0m"
                                         .to_string(),
                                 );
-                                session.local_evidence.push_str(&format!(
-                                    "\n[WRITE_OK] {}\n",
-                                    path
-                                ));
+                                session
+                                    .local_evidence
+                                    .push_str(&format!("\n[WRITE_OK] {}\n", path));
                                 return Ok(CortexState::Strategize);
                             }
                             Err(e) => {
-                                self.log(format!(
-                                    "\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}",
-                                    e
-                                ));
+                                self.log(format!("\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}", e));
                             }
                         }
                     }
