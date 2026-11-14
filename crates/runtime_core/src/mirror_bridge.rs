@@ -7,6 +7,21 @@
 //! `http://127.0.0.1:8081` with the accumulated evidence corpus as
 //! context. A successful delegation is verified against the target
 //! file before the caller may record a synthetic [WRITE_OK] marker.
+//!
+//! # Approval model
+//!
+//! `mirror-agent serve` hardcodes `AgentApprovalMode::Auto` (see
+//! `mirror/mirror-agent/src/http/cli.rs:289`). In Auto mode,
+//! `ToolPermissions { allow_outside_workspace: true }`, so the sidecar
+//! will honor writes to paths outside its `--workspace` root if given
+//! an absolute path.
+//!
+//! Delegations pass workspace-relative `target_path` values from
+//! `session.contract.required_artifact_paths`, so the outside-workspace
+//! capability is not exercised today. If the delegation surface ever
+//! widens to allow absolute paths from user contracts, revisit this:
+//! the sidecar would honor writes the cortical loop's
+//! `artifact_denied_by_policy` gate would have refused.
 
 use anyhow::{anyhow, bail, Result};
 use std::time::Duration;
