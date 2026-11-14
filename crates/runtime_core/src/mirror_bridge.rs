@@ -11,17 +11,25 @@
 //! # Approval model
 //!
 //! `mirror-agent serve` hardcodes `AgentApprovalMode::Auto` (see
-//! `mirror/mirror-agent/src/http/cli.rs:289`). In Auto mode,
-//! `ToolPermissions { allow_outside_workspace: true }`, so the sidecar
-//! will honor writes to paths outside its `--workspace` root if given
-//! an absolute path.
+//! `mirror/mirror-agent/src/http/cli.rs:289`). Approval and workspace
+//! containment are separate controls: serve explicitly calls
+//! `set_allow_outside_workspace(false)` right after startup
+//! (`cli.rs:306`, before the runner is returned), so the file tools
+//! refuse paths outside the `--workspace` root even though every call
+//! is auto-approved.
+//!
+//! Containment applies to the file tools (read, write, edit, find, grep,
+//! ls). A shell cannot be confined by path checks, so the bash tool
+//! refuses to run when approval is Auto and containment is on. The launch
+//! scripts (`nexus.sh`, `scripts/mirror_smoke.sh`) pass `--tools
+//! read,write`, so bash is not enabled for delegations; keep it that way.
 //!
 //! Delegations pass workspace-relative `target_path` values from
-//! `session.contract.required_artifact_paths`, so the outside-workspace
-//! capability is not exercised today. If the delegation surface ever
-//! widens to allow absolute paths from user contracts, revisit this:
-//! the sidecar would honor writes the cortical loop's
-//! `artifact_denied_by_policy` gate would have refused.
+//! `session.contract.required_artifact_paths`. If the delegation surface
+//! ever needs absolute paths, widen containment deliberately with
+//! `set_allow_outside_workspace(true)` rather than relying on approval
+//! mode, and re-check the cortical loop's `artifact_denied_by_policy`
+//! gate.
 
 use anyhow::{anyhow, bail, Result};
 use std::time::Duration;
