@@ -32,6 +32,7 @@ pub mod logic_engine;
 pub mod memory_actor;
 pub mod metrics;
 pub mod model_config;
+pub mod mirror_bridge;
 pub mod orchestrator;
 pub mod orchestrator_v2;
 pub mod podman;

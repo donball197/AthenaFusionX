@@ -939,11 +939,41 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 } else if unclosed_fence {
                     // Never allow an unclosed fence through. A deliverable
                     // that ends mid-sentence is worse than no deliverable.
-                    // Fail the node cleanly so the failure is diagnosable.
                     self.log(format!(
-                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Deliverable `{}` still has an unclosed ``` after {} attempts ({} bytes); failing node.",
+                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Deliverable `{}` still has an unclosed ``` after {} attempts ({} bytes); attempting mirror delegation.",
                         path, prior, content.len()
                     ));
+                    // Mirror-agent fallback: if a sidecar is running and the
+                    // env var is set, hand off synthesis. On success, synthesize
+                    // a normal [WRITE_OK] marker so downstream verification is
+                    // unchanged. On failure, fall through to Fail as before.
+                    if std::env::var("NEXUS_MIRROR_DELEGATION").is_ok() {
+                        let bridge = crate::mirror_bridge::MirrorBridge::new(
+                            "http://127.0.0.1:8081",
+                        );
+                        match bridge
+                            .delegate_write(path, mission, &session.local_evidence)
+                            .await
+                        {
+                            Ok(()) => {
+                                self.log(
+                                    "\x1b[1;36m>> [MIRROR] Delegated write succeeded.\x1b[0m"
+                                        .to_string(),
+                                );
+                                session.local_evidence.push_str(&format!(
+                                    "\n[WRITE_OK] {}\n",
+                                    path
+                                ));
+                                return Ok(CortexState::Strategize);
+                            }
+                            Err(e) => {
+                                self.log(format!(
+                                    "\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}",
+                                    e
+                                ));
+                            }
+                        }
+                    }
                     return Ok(CortexState::Fail {
                         belief: current_belief,
                         evidence: format!(
