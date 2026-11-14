@@ -124,3 +124,4 @@ marker_summary.md
 mission.log
 daemon.*.log
 journal_smoke.txt
+.mirror/
