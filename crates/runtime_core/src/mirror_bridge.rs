@@ -125,6 +125,27 @@ impl MirrorBridge {
             );
         }
 
+        // HALT-report validation is specific to report artifacts. The bridge
+        // can also write source/configuration files, which must not be judged
+        // by a prose-report validator.
+        if crate::cortical::halt_claims::is_report_artifact(target_path) {
+            let text = std::str::from_utf8(&after)
+                .map_err(|error| {
+                    anyhow!("Mirror report artifact {target_path} is not valid UTF-8: {error}")
+                })?;
+
+            let defects =
+                crate::cortical::halt_claims::report_defects(text, evidence_corpus);
+
+            if !defects.is_empty() {
+                bail!(
+                    "Mirror report artifact failed report validation                      ({} defect(s)): {}",
+                    defects.len(),
+                    defects.join("; ")
+                );
+            }
+        }
+
         Ok(())
     }
 }

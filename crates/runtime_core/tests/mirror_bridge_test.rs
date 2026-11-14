@@ -101,9 +101,14 @@ async fn success_204_plus_file_passes() {
     use nexus_runtime_core::mirror_bridge::MirrorBridge;
     let dir = temp_dir();
     // Pre-delegation content: small stub.
-    let target = write_target(&dir, "deliverable.md", 50);
+    let target = write_target(&dir, "lib.rs", 50);
     // Mock writes new content — this is what a real mirror-agent turn does.
-    let new_content = "y".repeat(500);
+    // Substantive prose that passes report_defects: > 50 chars, no intent
+    // phrases (I will / I must), no meta-stub phrases, findings-led.
+    let new_content = "The strategize module dispatches proposals through \
+the cortical loop. Each proposed action is evaluated against the active \
+contract before the critic review. The veto pivot mechanism is the load \
+bearing recovery path when the critic rejects a proposal.".to_string();
     let addr = spawn_http_mock_with_file(
         "204 No Content",
         PathBuf::from(&target),
@@ -207,4 +212,71 @@ async fn connection_refused_is_reported_as_http_error() {
         "got: {msg}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+#[tokio::test]
+async fn report_meta_stub_is_rejected() {
+    use nexus_runtime_core::mirror_bridge::MirrorBridge;
+
+    let dir = temp_dir();
+
+    // This filename is explicitly classified as a report artifact by
+    // halt_claims::is_report_artifact.
+    let target = write_target(&dir, "analysis_report.txt", 50);
+
+    // report_defects specifically rejects this meta-summary language when
+    // it contains no verified source identifiers.
+    let stub = format!(
+        "The final report has been synthesized inline in the halt reasoning field.          No further actions are needed. {}",
+        "Additional summary text without source findings. ".repeat(5)
+    );
+
+    assert!(stub.len() >= 200, "test content must pass the size gate");
+
+    let addr = spawn_http_mock_with_file(
+        "204 No Content",
+        PathBuf::from(&target),
+        stub,
+    )
+    .await;
+
+    let bridge = MirrorBridge::new(&format!("http://{}", addr));
+    let result = bridge.delegate_write(&target, "test", "ev").await;
+
+    assert!(result.is_err(), "meta-stub report must be rejected");
+
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("report validation") || message.contains("defect"),
+        "unexpected error: {message}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+#[tokio::test]
+async fn success_204_but_stub_file_fails() {
+    use nexus_runtime_core::mirror_bridge::MirrorBridge;
+    let dir = temp_dir();
+    // Pre-delegation stub (so the "changed" check passes).
+    let target = write_target(&dir, "report.md", 50);
+    // Post-delegation stub (fails report_defects: filler, not findings).
+    let stub = "y".repeat(500);
+    let addr = spawn_http_mock_with_file(
+        "204 No Content",
+        PathBuf::from(&target),
+        stub,
+    )
+    .await;
+
+    let bridge = MirrorBridge::new(&format!("http://{}", addr));
+    let result = bridge.delegate_write(&target, "test", "ev").await;
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("halt gate") || msg.contains("defect"),
+        "got: {msg}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
 }
