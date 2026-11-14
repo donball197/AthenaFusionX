@@ -21,14 +21,22 @@ pub fn build_enhanced_mission(
             unwritten_targets[0]
         )
     } else if let Some((gap_s, gap_e)) = coverage_gap {
+        let gap_len = (gap_e as i64 - gap_s as i64 + 1).clamp(1, 400);
+        let gap_path = session
+            .coverage
+            .current_path()
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "<the file being read>".to_string());
         format!(
-            "{}\n\n[COVERAGE MANDATE] Unread evidence range {}-{} of {}. Read this range before proposing any summary or halt. Use read_file_chunk with start_line={} and max_lines={}.",
+            "{}\n\n[COVERAGE MANDATE] Unread evidence range {}-{} of {} in `{}`. Read this range before proposing any summary or halt.\nEmit exactly this action (a JSON array, key \"type\"):\n[{{\"type\":\"read_file_chunk\",\"path\":\"{}\",\"start_line\":{},\"max_lines\":{},\"reasoning\":\"Read the unread range to complete coverage.\"}}]",
             mission,
             gap_s,
             gap_e,
             session.coverage.total_lines().unwrap_or(0),
+            gap_path,
+            gap_path,
             gap_s,
-            (gap_e as i64 - gap_s as i64 + 1)
+            gap_len
         )
     } else if session.coverage.coverage_pct() >= 99.9 && session.contract.read_only {
         format!("{}\n\n[PHASE MANDATE: RECONNAISSANCE COMPLETE]\nYou have successfully read 100% of the target files. Do NOT propose any further read actions. You MUST now synthesize your findings and propose the `halt` action.", mission)

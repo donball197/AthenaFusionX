@@ -117,3 +117,10 @@ verifier_audit.md
 worker_shape_audit.md
 completion_boundary_audit.md
 marker_summary.md
+
+# Local edit backups
+*.bak_*
+# Runtime artifacts
+mission.log
+daemon.*.log
+journal_smoke.txt

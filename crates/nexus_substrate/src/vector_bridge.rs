@@ -2,6 +2,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::json;
 use std::env;
+use std::time::Duration;
 
 /// Single source of truth for the embedding space. Must match the gateway model.
 pub const EMBEDDING_DIM: usize = 768;
@@ -19,7 +20,10 @@ pub async fn get_embedding(_api_key: &str, text: &str) -> Result<Vec<f32>> {
     let model =
         env::var("NEXUS_EMBEDDING_MODEL").unwrap_or_else(|_| "granite-311m-edge".to_string());
 
-    let client = Client::new();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_millis(400))
+        .timeout(Duration::from_secs(5))
+        .build()?;
     let payload = json!({
         "input": text,
         "model": model
