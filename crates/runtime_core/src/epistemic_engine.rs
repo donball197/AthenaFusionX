@@ -122,14 +122,20 @@ impl EpistemicEngine {
                             .pointer("/generationConfig/maxOutputTokens")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(4096);
+                        let effective_max_tokens =
+                            if model_endpoint.contains("Beam") && retries >= 1 {
+                                requested_max_tokens.max(8192)
+                            } else {
+                                requested_max_tokens
+                            };
 
                         let mut p = serde_json::json!({
                             "model": model_endpoint,
                             "messages": [{"role": "user", "content": text}],
-                            "max_tokens": requested_max_tokens,
+                            "max_tokens": effective_max_tokens,
                             "temperature": (match retries { 0 => 0.0_f64, 1 => 0.3, 2 => 0.6, _ => 0.8 })
                         });
-                        if model_endpoint.contains("Beam") && retries >= 1 {
+                        if model_endpoint.contains("Beam") {
                             p["reasoning_effort"] = serde_json::json!("low");
                         }
 
@@ -409,13 +415,13 @@ impl EpistemicEngine {
                     );
                     retries += 1;
                     eprintln!(
-                        "[RETRY] {} truncated-response attempt {}/4: {}",
+                        "[RETRY] {} truncated-response attempt {}/2: {}",
                         model_endpoint, retries, last_err
                     );
-                    if retries > 4 {
+                    if retries >= 2 {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32) * 2)).await;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
 
@@ -820,6 +826,25 @@ impl EpistemicEngine {
             return Ok(search_checked_strategies);
         }
 
+        // Episodic recall: strategies that succeeded on similar past objectives.
+        // No-op when the corpus is empty or the embedder is unreachable.
+        let episodic_priors: String = match crate::episodic::suggest(
+            client,
+            "http://127.0.0.1:9380/v1/embeddings",
+            scoped_problem,
+            "",
+            &[],
+            3,
+        )
+        .await
+        {
+            Ok(v) if !v.is_empty() => {
+                let hints: Vec<String> = v.into_iter().map(|(s, _)| format!("  - {s}")).collect();
+                format!("\nEPISODIC PRIORS:\n{}\n", hints.join("\n"))
+            }
+            _ => String::new(),
+        };
+
         // PROBABILISTIC-PROMPT SCOPING:
         //
         // The deterministic compiler above already operates on scoped_problem.
@@ -867,7 +892,7 @@ impl EpistemicEngine {
         let prompt = format!(
             r#"You are AthenaFusionX. Analyze this directive.
 DIRECTIVE: {problem}
-WORLD CONTEXT: {world_context}{audit_guidance}{analysis_guidance}
+WORLD CONTEXT: {world_context}{audit_guidance}{analysis_guidance}{episodic_priors}
 CRITICAL RULE: If the directive explicitly tells you to execute a specific command, at least ONE of your strategies MUST be to simply execute that exact command.
 Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS. No markdown."#
         );
@@ -1161,14 +1186,16 @@ authoritative action representation."#,
         // OpenAI-compatible provider boundary. This prevents the model from
         // silently substituting another native action.
         if !is_halt_strategy {
-          if let Some(expected_tool) = crate::tools::schema::native_tool_name_for_strategy(strategy) {
-            payload["forced_tool_choice"] = serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": expected_tool
-                }
-            });
-          }
+            if let Some(expected_tool) =
+                crate::tools::schema::native_tool_name_for_strategy(strategy)
+            {
+                payload["forced_tool_choice"] = serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": expected_tool
+                    }
+                });
+            }
         }
 
         let models = match nexus_algorithms::Router::select("action_planning") {
@@ -1525,7 +1552,12 @@ OUTPUT ONLY VALID JSON matching this schema:
         // silently drops the cascade to its weakest member.
         // To restore Router routing, replace the line below with the former
         // `match nexus_algorithms::Router::select("verify") { ... }` block.
-        let models = crate::model_config::get_heavy_models();
+        let models: Vec<String> = match std::env::var("NEXUS_VERIFIER_MODEL") {
+            Ok(v) if !v.trim().is_empty() => {
+                v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+            }
+            _ => crate::model_config::get_heavy_models(),
+        };
         eprintln!("[VERIFIER] model cascade: {:?}", models);
         let mut text = Self::safe_api_call(client, api_key, &models, &payload).await?;
         if serde_json::from_str::<serde_json::Value>(extract_json_block(&sanitize_json_escapes(
@@ -1604,10 +1636,16 @@ You are the Adversarial Critic for the CURRENT mission only.
 - Do NOT invent quantitative claims. If the Strategist makes a quantitative claim that is not backed by a [Measured] line in EVIDENCE, veto it.
 - Prefer constructive vetoes that name the exact next tool call.
 
+ACTION IDENTITY (MANDATORY):
+- The PROPOSED ACTION is the JSON object supplied between <STRATEGIST_PROPOSAL> tags. Judge the `type` field of that object.
+- The `reasoning` field is narrative. It may describe what a PRIOR action did, what a NEXT action should do, or the rationale for the CURRENT action. It is not a restatement of the action type.
+- Do NOT infer action type from reasoning. A `read_file` whose reasoning starts "Write the corrected report..." is still a `read_file`, not a `write_file`.
+
 CITATION DISCIPLINE (MANDATORY):
-- Assert line numbers or symbol spans ONLY when those exact numbers are visible in a READ_OK or READ_CHUNK_OK body already in evidence. Count from that body; do not estimate from memory.
-- If a span is not visible, write unverified. Never invent lines N-M and never fill a replacement report with guessed ranges.
-- When rejecting a halt or report for bad citations, name the unsupported claim and demand re-derivation from the existing READ_OK body. Do not hand the strategist a full replacement body unless every line number in it appears in evidence.
+- Assert line numbers or symbol spans ONLY when those exact numbers are visible in one of: (a) a READ_OK / READ_CHUNK_OK body already in evidence; (b) a SEARCH_CODE_OK / SEARCH_CHECKED_OK match list naming the file and line; or (c) a [CMD_OK] stdout block from a `grep -n` or `rg -n` command that names the file and line.
+- READ_OK and READ_CHUNK_OK bodies carry a line-range header (for example "Lines 1130-1379 of 1975") but do NOT number individual body lines, so a specific line number cannot be obtained by counting inside the body. A `grep -n` block in [CMD_OK] IS the authoritative source for source-file line numbers, and its output IS valid pairing evidence. Do NOT reject a citation whose line number appears in a [CMD_OK] `grep -n` block; that is the only way to obtain a line number from an unnumbered READ_OK body.
+- If a span is not visible in any of the sources above, write unverified. Never invent lines N-M and never fill a replacement report with guessed ranges.
+- When rejecting a halt or report for bad citations, name the unsupported claim and demand re-derivation from an existing READ_OK/READ_CHUNK_OK body, a SEARCH_*_OK list, or a [CMD_OK] `grep -n` block. Do not hand the strategist a full replacement body unless every line number in it appears in one of those sources.
 "#;
 
 #[cfg(test)]

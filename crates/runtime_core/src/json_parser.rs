@@ -25,10 +25,71 @@ pub fn sanitize_json_escapes(json_str: &str) -> String {
     sanitized
 }
 
+/// Fix 2: unwrap common "plan then execute" and function-call envelopes
+/// emitted by the strategist model before handing the payload to
+/// `extract_actions`. Fires only when the envelope shape parses AND the
+/// unwrapped `Vec<AgentAction>` deserializes cleanly, so a well-shaped
+/// action array is unaffected.
+///
+/// Handles:
+///   {"reasoning": "...", "actions": [{...}, ...]}     -- plan-then-execute
+///   {"tool": "<name>", "args": {<fields>}}            -- function-call
+///
+/// Both may be bare or wrapped in ```json fences.
+fn try_unwrap_envelope(s: &str) -> Option<Vec<crate::agent_protocol::AgentAction>> {
+    let stripped =
+        s.trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    let candidates: [&str; 2] = [s, stripped];
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(candidate) else {
+            continue;
+        };
+        // Envelope A: {"reasoning": "...", "actions": [...]}
+        if let Some(arr) = val.get("actions").and_then(|v| v.as_array()) {
+            if let Ok(parsed) = serde_json::from_value::<Vec<crate::agent_protocol::AgentAction>>(
+                serde_json::Value::Array(arr.clone()),
+            ) {
+                return Some(parsed);
+            }
+        }
+        // Envelope B: {"tool": "<name>", "args": {<fields>}}
+        if let Some(tool) = val.get("tool").and_then(|v| v.as_str()) {
+            if let Some(args) = val.get("args").and_then(|v| v.as_object()) {
+                let mut action_obj = args.clone();
+                action_obj.insert("type".into(), serde_json::Value::String(tool.to_string()));
+                // Common field-name confusion: models often emit `filepath`
+                // when the schema expects `path`. Alias it here so the
+                // function-call envelope round-trips through AgentAction.
+                if action_obj.contains_key("filepath") && !action_obj.contains_key("path") {
+                    let filepath = action_obj.remove("filepath").unwrap();
+                    action_obj.insert("path".into(), filepath);
+                }
+                let wrapped = serde_json::Value::Array(vec![serde_json::Value::Object(action_obj)]);
+                if let Ok(parsed) =
+                    serde_json::from_value::<Vec<crate::agent_protocol::AgentAction>>(wrapped)
+                {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let text = response.trim();
     if text.is_empty() || text == "[]" {
         return Ok(vec![]);
+    }
+
+    // Fix 2: Envelope unwrap for common "plan then execute" shapes.
+    // Handles {"reasoning": ..., "actions": [...]} and {"tool": ..., "args": {...}}
+    // before any boundary discovery, so a well-shaped action array is untouched.
+    if let Some(actions) = try_unwrap_envelope(text) {
+        return Ok(actions);
     }
 
     // 1. Raw write artifact intercept
@@ -687,7 +748,8 @@ mod conversational_recovery_tests {
     #[test]
     fn prefixed_object_with_brackets_in_reasoning_parses() {
         let payload = r#"Final action: {"type": "halt", "reasoning": "Checked `[CMD_OK]` and `[SEARCH_CODE_OK]` paths."}"#;
-        let actions = extract_actions(payload).expect("prefixed JSON object with brackets must parse");
+        let actions =
+            extract_actions(payload).expect("prefixed JSON object with brackets must parse");
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AgentAction::Halt { .. }), "{:?}", actions);
     }
@@ -712,5 +774,48 @@ mod conversational_recovery_tests {
         let payload = format!(r#"[{{"type": "halt", "reasoning": "{}"}}]"#, body);
         let actions = extract_actions(&payload).expect("long bracketed halt must parse");
         assert!(matches!(actions[0], AgentAction::Halt { .. }));
+    }
+}
+
+#[cfg(test)]
+mod envelope_unwrap_tests {
+    use super::extract_actions;
+    use crate::agent_protocol::AgentAction;
+
+    #[test]
+    fn unwraps_reasoning_actions_envelope() {
+        let raw = r#"{"reasoning": "attempt 1", "actions": [{"type":"write_file","path":"a.md","content":"hi","reasoning":"r"}]}"#;
+        let parsed = extract_actions(raw).expect("plan-then-execute envelope must unwrap");
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0] {
+            AgentAction::WriteFile { path, content, .. } => {
+                assert_eq!(path, "a.md");
+                assert_eq!(content, "hi");
+            }
+            other => panic!("expected WriteFile, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unwraps_tool_args_envelope_and_aliases_filepath() {
+        let raw = r#"{"tool": "read_file_chunk", "args": {"filepath": "src/x.rs", "start_line": 100, "max_lines": 200, "reasoning": "r"}}"#;
+        let parsed = extract_actions(raw).expect("function-call envelope must unwrap");
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0] {
+            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+                assert_eq!(path, "src/x.rs", "filepath must be aliased to path");
+                assert_eq!(*start_line, 100);
+                assert_eq!(*max_lines, 200);
+            }
+            other => panic!("expected ReadFileChunk, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bare_action_array_still_parses() {
+        let raw = r#"[{"type":"read_file","path":"a.rs","reasoning":"r"}]"#;
+        let parsed = extract_actions(raw).expect("bare array must be unaffected");
+        assert_eq!(parsed.len(), 1);
+        assert!(matches!(parsed[0], AgentAction::ReadFile { .. }));
     }
 }

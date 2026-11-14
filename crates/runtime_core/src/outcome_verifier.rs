@@ -40,59 +40,67 @@ impl OutcomeVerifier {
         // proof, when implemented, must be an ADDITIONAL contract condition
         // rather than a substitution for the declared conditions.
 
+        // Untargeted/generic markers must come from this node's own execution,
+        // never from inherited DAG lineage blocks.
+        let own_evidence = strip_inherited_lineage(local_evidence);
+
         // 2. Strictly verify that EVERY condition in the contract is met
         for cond in conditions {
             let met = match cond {
-                CompletionCondition::ReadMarkerAcquired => local_evidence.lines().any(|l| {
+                CompletionCondition::ReadMarkerAcquired => own_evidence.lines().any(|l| {
                     let t = l.trim_start();
                     t.starts_with("[READ_OK]") || t.starts_with("[READ_CHUNK_OK]")
                 }),
                 CompletionCondition::ReadPathAcquired { path } => {
                     let expected = path.trim();
-                    local_evidence.lines().any(|l| {
-                        if let Some(rest) = l.strip_prefix("[READ_OK]") {
-                            crate::evidence_paths::paths_equivalent(rest.trim(), expected)
-                        } else if let Some(rest) = l.strip_prefix("[READ_CHUNK_OK] File: ") {
-                            rest.split(" | ")
-                                .next()
-                                .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
-                                .unwrap_or(false)
-                        } else if let Some(rest) = l.strip_prefix("[ACTION FAILED] path=") {
-                            // CONFIRMED-ABSENCE ONLY. ENOENT proves the target
-                            // was inspected and found absent; sandbox denials
-                            // inspected nothing. See
-                            // evidence_paths::is_confirmed_absence.
-                            rest.split(" OS rejected action")
-                                .next()
-                                .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
-                                .unwrap_or(false)
-                                && crate::evidence_paths::is_confirmed_absence(rest)
-                        } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
-                            // "Inspect this location" is satisfied by a
-                            // documented, path-scoped search attempt even
-                            // when it finds nothing -- e.g. confirming a
-                            // target file does not yet exist before
-                            // creating it. Without this, a ReadPathAcquired
-                            // condition on a not-yet-created path is
-                            // permanently unsatisfiable: every ReadFile
-                            // attempt fails with ENOENT, and no other
-                            // action can ever produce a [READ_OK] for a
-                            // path with nothing there to read. Confirmed
-                            // root cause of the reflection_test.rs
-                            // mission's task_1 stall (0/3 nodes, belief
-                            // decayed to 0.00 across 11 turns). Path
-                            // comparison uses the shared paths_equivalent.
-                            rest.split(" | ")
-                                .next()
-                                .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
-                                .unwrap_or(false)
-                        } else {
-                            false
-                        }
-                    })
+                    let typed_sc =
+                        crate::evidence_adapter::assess_read_path_typed(local_evidence, expected)
+                            == nexus_evidence_requirements::assessment::Assessment::SC;
+                    typed_sc
+                        || local_evidence.lines().any(|l| {
+                            if let Some(rest) = l.strip_prefix("[READ_OK]") {
+                                crate::evidence_paths::paths_equivalent(rest.trim(), expected)
+                            } else if let Some(rest) = l.strip_prefix("[READ_CHUNK_OK] File: ") {
+                                rest.split(" | ")
+                                    .next()
+                                    .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
+                                    .unwrap_or(false)
+                            } else if let Some(rest) = l.strip_prefix("[ACTION FAILED] path=") {
+                                // CONFIRMED-ABSENCE ONLY. ENOENT proves the target
+                                // was inspected and found absent; sandbox denials
+                                // inspected nothing. See
+                                // evidence_paths::is_confirmed_absence.
+                                rest.split(" OS rejected action")
+                                    .next()
+                                    .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
+                                    .unwrap_or(false)
+                                    && crate::evidence_paths::is_confirmed_absence(rest)
+                            } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
+                                // "Inspect this location" is satisfied by a
+                                // documented, path-scoped search attempt even
+                                // when it finds nothing -- e.g. confirming a
+                                // target file does not yet exist before
+                                // creating it. Without this, a ReadPathAcquired
+                                // condition on a not-yet-created path is
+                                // permanently unsatisfiable: every ReadFile
+                                // attempt fails with ENOENT, and no other
+                                // action can ever produce a [READ_OK] for a
+                                // path with nothing there to read. Confirmed
+                                // root cause of the reflection_test.rs
+                                // mission's task_1 stall (0/3 nodes, belief
+                                // decayed to 0.00 across 11 turns). Path
+                                // comparison uses the shared paths_equivalent.
+                                rest.split(" | ")
+                                    .next()
+                                    .map(|p| crate::evidence_paths::paths_equivalent(p, expected))
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        })
                 }
                 CompletionCondition::SearchMarkerAcquired => {
-                    local_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_CODE_OK]"))
+                    own_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_CODE_OK]"))
                 }
                 CompletionCondition::SearchTermAcquired { term } => {
                     // Term matching lives in evidence_markers::search_term_satisfied --
@@ -104,10 +112,10 @@ impl OutcomeVerifier {
                     crate::evidence_markers::search_checked_satisfied(local_evidence, target)
                 }
                 CompletionCondition::SearchMemoryMarkerAcquired => {
-                    local_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
+                    own_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
                 }
                 CompletionCondition::WriteMarkerAcquired => {
-                    local_evidence.lines().any(|l| l.trim_start().starts_with("[WRITE_OK]"))
+                    own_evidence.lines().any(|l| l.trim_start().starts_with("[WRITE_OK]"))
                 }
                 CompletionCondition::WritePathAcquired { path } => {
                     let expected = path.trim();
@@ -121,7 +129,7 @@ impl OutcomeVerifier {
                     crate::evidence_markers::write_path_satisfied(local_evidence, expected)
                 }
                 CompletionCondition::PatchMarkerAcquired => {
-                    crate::evidence_markers::has_patch_satisfied_marker(local_evidence)
+                    crate::evidence_markers::has_patch_satisfied_marker(&own_evidence)
                 }
                 CompletionCondition::PatchPathAcquired { kind, path, function_name } => {
                     crate::evidence_markers::patch_path_satisfied(
@@ -179,8 +187,8 @@ impl OutcomeVerifier {
                     verify_lineage_provenance(local_evidence)
                 }
                 CompletionCondition::HaltDelivered => {
-                    local_evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
-                        && crate::halt_gate::halt_range_gate(local_evidence).is_none()
+                    own_evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
+                        && crate::halt_gate::halt_range_gate(&own_evidence).is_none()
                 }
                 CompletionCondition::ReadFunctionMarkerAcquired { path, function_name } => {
                     crate::evidence_markers::read_function_marker_satisfies(
@@ -227,7 +235,7 @@ impl OutcomeVerifier {
                     // as 1 path, recon_ready stayed false, write_phase_ready
                     // stayed false for all 60 turns.
                     let mut seen_paths = std::collections::HashSet::new();
-                    for l in local_evidence.lines() {
+                    for l in own_evidence.lines() {
                         if let Some(path) = l.strip_prefix("[READ_OK]") {
                             let path = path.trim();
                             if !path.is_empty() {
@@ -325,6 +333,9 @@ pub fn verify_lineage_provenance(evidence: &str) -> bool {
     };
     let payload_end = payload_start + end_marker_rel;
     let payload = evidence[payload_start..payload_end].trim();
+    if payload.is_empty() {
+        return false;
+    }
 
     let end_hash_start = payload_end + end_prefix.len();
     let Some(end_hash_end) = evidence[end_hash_start..].find(']') else {
@@ -338,6 +349,29 @@ pub fn verify_lineage_provenance(evidence: &str) -> bool {
 
     let computed_hash = format!("{:x}", Sha256::digest(payload.as_bytes()));
     computed_hash == declared_hash
+}
+
+fn strip_inherited_lineage(evidence: &str) -> String {
+    const START: &str = "[DAG LINEAGE INHERITED EVIDENCE";
+    const END: &str = "[DAG LINEAGE COMPLETE";
+
+    let mut in_lineage = false;
+    let mut own = Vec::new();
+    for line in evidence.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with(START) {
+            in_lineage = true;
+            continue;
+        }
+        if trimmed.starts_with(END) && in_lineage {
+            in_lineage = false;
+            continue;
+        }
+        if !in_lineage {
+            own.push(line);
+        }
+    }
+    own.join("\n")
 }
 
 /// Legacy compatibility: accepts unhashed boundary markers WITHOUT hash

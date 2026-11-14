@@ -180,6 +180,55 @@ pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
     bad
 }
 
+/// Check a report `write_file` payload's backticked symbol claims against
+/// gathered physical evidence (READ_OK / READ_CHUNK_OK / SEARCH_*_OK / CMD_OK).
+/// When `allow_objective_corpus` is true (zero-recon synthesis tasks with no
+/// read/search/command criteria), symbols named directly in `objective` are
+/// also permitted; fabricated symbols absent from both are still rejected.
+pub fn write_report_unverified_symbols(
+    path: &str,
+    content: &str,
+    local_evidence: &str,
+    objective: &str,
+    allow_objective_corpus: bool,
+) -> Vec<String> {
+    if !is_report_artifact(path) {
+        return Vec::new();
+    }
+    let mut corpus = verification_corpus(local_evidence, "");
+    if allow_objective_corpus {
+        corpus.push('\n');
+        corpus.push_str(strip_lineage(objective));
+    }
+    unverified_symbols(content, &corpus)
+}
+
+#[cfg(test)]
+mod write_consistency_tests {
+    use super::write_report_unverified_symbols;
+
+    #[test]
+    fn flags_fabricated_symbols_in_written_report() {
+        let ev = "[READ_OK] src/lib.rs\nFULL FILE CONTENT:\npub fn real_fn() {}\n";
+        let report = "# Audit\nObserved `real_fn` and fabricated `ghost_helper`.\n";
+        assert_eq!(
+            write_report_unverified_symbols("audit.md", report, ev, "Audit src/lib.rs", false),
+            vec!["ghost_helper"]
+        );
+    }
+
+    #[test]
+    fn accepts_grounded_report_and_non_report_files() {
+        let ev = "[READ_OK] src/lib.rs\nFULL FILE CONTENT:\npub fn real_fn() {}\n";
+        let report = "# Audit\nObserved `real_fn`; `ghost_helper` does not exist.\n";
+        assert!(write_report_unverified_symbols("audit.md", report, ev, "Audit src/lib.rs", false)
+            .is_empty());
+        assert!(write_report_unverified_symbols("src/lib.rs", "`invented_rs`", ev, "Edit", false)
+            .is_empty());
+        assert!(write_report_unverified_symbols("smoke.txt", "ok", "", "Write ok", true).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,8 +336,7 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
             || (verified_any.len() <= 1 && lower.contains("no further actions are needed")))
     {
         out.push(
-            "meta-summary claims a report exists without delivering inline findings"
-                .to_string(),
+            "meta-summary claims a report exists without delivering inline findings".to_string(),
         );
     }
     if verified_any.is_empty() && corpus.len() > 1000 && corpus.contains("fn ") {
@@ -340,7 +388,8 @@ mod substance_tests {
 
     #[test]
     fn rejects_empty_meta_stub_on_source_audit() {
-        let big_src = format!("pub struct Verifier;\npub fn verify_contract() {{}}\n{}", "x\n".repeat(600));
+        let big_src =
+            format!("pub struct Verifier;\npub fn verify_contract() {{}}\n{}", "x\n".repeat(600));
         let stub = "All mandatory node success criteria have been physically evidenced. The final report has been synthesized inline in the halt reasoning field. No further actions are needed.";
         assert!(!report_defects(stub, &big_src).is_empty());
         let grounded = "The `Verifier` struct checks contracts in `verify_contract` across all branches and states.";

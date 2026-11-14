@@ -242,9 +242,7 @@ fn apply_report_deliverable_criterion(graph: &mut TaskGraph, directive: &str) {
         return;
     }
     if graph.nodes.values().any(|n| {
-        n.success_criteria
-            .iter()
-            .any(|c| c.trim() == "ANALYSIS_OK" || criterion_is_any_mutation(c))
+        n.success_criteria.iter().any(|c| c.trim() == "ANALYSIS_OK" || criterion_is_any_mutation(c))
     }) {
         return;
     }
@@ -614,9 +612,11 @@ OUTPUT ONLY VALID JSON with this exact structure:
                 ));
             }
 
-            if node.success_criteria.iter().any(|criterion| {
-                criterion.trim() == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED"
-            }) {
+            if node
+                .success_criteria
+                .iter()
+                .any(|criterion| criterion.trim() == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED")
+            {
                 return Err(anyhow::anyhow!(
                     "Planner produced invalid self-attestation criterion for node '{}': NODE_OBJECTIVE_EXECUTED_AND_VERIFIED is not independent verification evidence.",
                     node.id
@@ -1829,16 +1829,12 @@ mod audit_rewrite_tests {
         assert!(!directive_delivers_report_inline(
             "Write a report to disk at /tmp/audit_report.md."
         ));
-        assert!(!directive_delivers_report_inline(
-            "Produce a report file named audit.json."
-        ));
+        assert!(!directive_delivers_report_inline("Produce a report file named audit.json."));
     }
 
     #[test]
     fn return_a_report_to_a_file_does_not_trigger_inline() {
-        assert!(!directive_delivers_report_inline(
-            "Return a report to the file audit_report.md."
-        ));
+        assert!(!directive_delivers_report_inline("Return a report to the file audit_report.md."));
     }
 
     // ---- structural guard (call-site presence only, NOT routing) -------

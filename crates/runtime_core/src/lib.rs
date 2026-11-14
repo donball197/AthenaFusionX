@@ -65,6 +65,7 @@ pub mod compile_remediation;
 pub mod completion_engine;
 pub mod config;
 pub mod evidence;
+pub mod evidence_adapter;
 pub mod evidence_paths;
 pub mod executive_cortex;
 pub mod goal_adaptation;

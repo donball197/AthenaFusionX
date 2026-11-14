@@ -64,8 +64,11 @@ impl CorticalLoop {
             }
         };
 
-        // NEXUS_FIX_LEDGER_BYPASS: next unread chunk is deterministic pagination; skip the critic
-        if session.contract.read_only && actions.len() == 1 {
+        // NEXUS_FIX_LEDGER_BYPASS: next unread chunk is deterministic pagination; skip the critic.
+        // Applies to both read_only and mutation contracts: a chunk read at the coverage
+        // gap start is deterministic pagination in either case. Without this, mutation
+        // missions call the critic 3-4x per file just to say "yes, read the next chunk".
+        if actions.len() == 1 {
             if let Some((gap_start, _)) =
                 session.coverage.largest_interior_gap().or_else(|| session.coverage.largest_gap())
             {
@@ -136,6 +139,59 @@ impl CorticalLoop {
                         msg
                     ));
                     // No graph edge: content veto must not decay the write_file hypothesis.
+                    return Ok(CortexState::Strategize);
+                }
+            }
+        }
+
+        // REPORT_CONTENT_CONSISTENCY_GATE (Phase 3): before a report write_file
+        // crosses the executor or critic bypass, verify its backticked symbol
+        // claims against READ_OK/evidence. Prevents fabricated reports from
+        // landing and passing WritePathAcquired.
+        if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
+            use crate::completion_engine::CompletionCondition as CC;
+            use crate::cortical::halt_claims as hc;
+            if hc::is_report_artifact(path) {
+                let allow_obj = !session.contract.conditions.iter().any(|c| {
+                    matches!(
+                        c,
+                        CC::ReadMarkerAcquired
+                            | CC::ReadPathAcquired { .. }
+                            | CC::ReadFunctionMarkerAcquired { .. }
+                            | CC::SearchMarkerAcquired
+                            | CC::SearchTermAcquired { .. }
+                            | CC::SearchCheckedAcquired { .. }
+                            | CC::SourceCodeEvidenceRequired
+                            | CC::CommandMarkerAcquired
+                            | CC::CommandExecutionVerified { .. }
+                    )
+                });
+                let bad = hc::write_report_unverified_symbols(
+                    path,
+                    content,
+                    &session.local_evidence,
+                    &session.contract.objective,
+                    allow_obj,
+                );
+                if !bad.is_empty() {
+                    let names =
+                        bad.iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", ");
+                    self.log(format!(
+                        ">> [CONTENT CONSISTENCY GATE] Rejecting report `{}`: unverified symbol(s) {}",
+                        path, names
+                    ));
+                    session.last_critic_rejected_actions = Some(
+                        actions
+                            .iter()
+                            .map(crate::cortical::action_identity::action_key)
+                            .collect::<Vec<_>>(),
+                    );
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
+                    session.local_evidence.push_str(&format!(
+                        "\n[CRITIC_VETO] CONTENT CONSISTENCY GATE: report `{}` cites symbol(s) never seen in READ_OK/evidence: {}. Read the defining source file(s) with read_file/search_code before citing them, or remove unverified claims. [CRITIC_VETO_ACTION] Do not repeat the fabricated write.\n",
+                        path, names
+                    ));
                     return Ok(CortexState::Strategize);
                 }
             }
@@ -230,7 +286,9 @@ impl CorticalLoop {
                 // acquiring the evidence it needs.
                 {
                     let joined = defects.join("; ");
-                    let hint: &str = if joined.contains("symbols not found in the file content read") {
+                    let hint: &str = if joined
+                        .contains("symbols not found in the file content read")
+                    {
                         "[HALT_PRE_GATE_HINT] Your report backticked at least one name that does \
                          not appear as a whole word in any [READ_OK]/[READ_CHUNK_OK] block. Two \
                          remedies: (a) if the name is real, `read_file` the file that defines it \
@@ -251,7 +309,9 @@ impl CorticalLoop {
                     } else if joined.contains("report appears truncated") {
                         "[HALT_PRE_GATE_HINT] The report was cut off mid-sentence. Finish the \
                          final sentence.\n"
-                    } else if joined.contains("report is only") || joined.contains("report is too short") {
+                    } else if joined.contains("report is only")
+                        || joined.contains("report is too short")
+                    {
                         "[HALT_PRE_GATE_HINT] The report is below the minimum length for its \
                          evidence corpus. Deliver the full findings, not a summary.\n"
                     } else {
@@ -522,14 +582,35 @@ impl CorticalLoop {
             .collect();
         let critic_evidence = format!("{}{}", critic_evidence, supersession_note);
         let citation_note = concat!(
+            "\n[CRITIC ACTION IDENTITY] The PROPOSED ACTION is the JSON object below. Judge its `type` field. The `reasoning` field is narrative — it may describe a prior action, a next action, or current rationale; do NOT infer type from reasoning. A `read_file` whose reasoning starts \"Write the report…\" is a read_file, not a write_file.\n",
             "\n[CRITIC CITATION DISCIPLINE] ",
             "Assert line numbers or symbol spans ONLY when those exact numbers ",
-            "are visible in a READ_OK / READ_CHUNK_OK body already in evidence. ",
-            "If a span is not visible, say unverified. Do NOT invent lines N-M ",
+            "are visible in one of: (a) a READ_OK / READ_CHUNK_OK body in evidence; ",
+            "(b) a SEARCH_CODE_OK / SEARCH_CHECKED_OK match list naming the file and line; ",
+            "or (c) a [CMD_OK] stdout block from a `grep -n` or `rg -n` command that names the file and line. ",
+            "READ_OK and READ_CHUNK_OK bodies carry a line-range header but do NOT number ",
+            "individual body lines, so a `grep -n` block in [CMD_OK] IS the authoritative ",
+            "source for source-file line numbers and its output IS valid pairing evidence. ",
+            "Do NOT reject a citation whose line number appears in a [CMD_OK] `grep -n` block; ",
+            "that is the only way to obtain a line number from an unnumbered READ_OK body. ",
+            "If a span is not visible in any of those sources, say unverified. Do NOT invent lines N-M ",
             "and do NOT hand the strategist a full replacement report filled with ",
             "guessed line ranges. Demand re-derivation from the traced source body.\n",
         );
-        let critic_evidence = format!("{}{}", critic_evidence, citation_note);
+        let typed_ledger = if session.typed_evidence.is_empty() {
+            String::new()
+        } else {
+            let lines: Vec<String> = session
+                .typed_evidence
+                .iter()
+                .rev()
+                .take(12)
+                .rev()
+                .map(|r| r.render_ledger_line())
+                .collect();
+            format!("\n[TYPED EVIDENCE LEDGER]\n{}\n", lines.join("\n"))
+        };
+        let critic_evidence = format!("{}{}{}", critic_evidence, citation_note, typed_ledger);
         match EpistemicEngine::criticize_proposal(
             &self.client,
             &self.api_key,

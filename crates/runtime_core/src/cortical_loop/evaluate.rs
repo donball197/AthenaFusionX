@@ -1,6 +1,7 @@
 //! CorticalLoop::handle_evaluate (moved verbatim from cortical_loop.rs).
 
 use super::*;
+use uuid::Uuid;
 
 impl CorticalLoop {
     pub(super) async fn handle_evaluate(
@@ -9,8 +10,14 @@ impl CorticalLoop {
         _mission: &str,
         input: EvaluationInput,
     ) -> Result<CortexState> {
-        let EvaluationInput { evidence, executed_action, belief, is_halt_action, mutation_path } =
-            input;
+        let EvaluationInput {
+            evidence,
+            executed_action,
+            belief,
+            is_halt_action,
+            mutation_path,
+            typed_evidence,
+        } = input;
 
         self.log(
             "\x1b[33m>> [CORTEX] Evaluating physical evidence against strategy...\x1b[0m"
@@ -112,6 +119,39 @@ impl CorticalLoop {
                     session.record_evidence(&evidence, &neutral, h_id);
                 }
 
+                let typed_max_rel =
+                    typed_evidence.iter().map(|r| r.reliability).fold(0.0_f32, f32::max);
+                let (tag, mod_val) = if evidence.contains("[COMPILE_OK]")
+                    || evidence.contains("[PATCH_FUNCTION_OK]")
+                {
+                    ("eval_err_fallback:compile_or_patch", 0.35)
+                } else if ["[READ_CHUNK_OK]", "[READ_OK]", "[READ_FUNCTION_OK]", "[SEARCH_CODE_OK]"]
+                    .iter()
+                    .any(|m| evidence.contains(m))
+                {
+                    ("eval_err_fallback:recon", 0.0)
+                } else if typed_max_rel >= 0.85 {
+                    let fallback_eval = crate::epistemic_engine::CriticResponse {
+                        critique: "Typed physical evidence verified; evaluator fallback applied."
+                            .to_string(),
+                        confidence_modifier: 0.20,
+                    };
+                    session.record_evidence(&evidence, &fallback_eval, h_id);
+                    ("eval_err_fallback:typed_verified", 0.20)
+                } else {
+                    ("eval_err_fallback:unrecorded", 0.0)
+                };
+                let after =
+                    session.graph.nodes.get(&h_id).map(|n| n.belief_score).unwrap_or(belief);
+                append_eval_journal(
+                    session.best_hypothesis_id,
+                    &h_content,
+                    tag.into(),
+                    &evidence,
+                    belief,
+                    after,
+                    mod_val,
+                );
                 Ok(CortexState::Strategize)
             }
             Ok(eval) => {
@@ -128,12 +168,22 @@ impl CorticalLoop {
                     session.local_evidence.push_str(
                         "[HALT_REJECTED] A Python deliverable failed conformance. Correct the file and pass conformance verification before halting.\n",
                     );
+                    append_eval_journal(
+                        session.best_hypothesis_id,
+                        &h_content,
+                        "halt_rejected:write_conformance".into(),
+                        &evidence,
+                        belief,
+                        belief,
+                        eval.confidence_modifier,
+                    );
                     return Ok(CortexState::Strategize);
                 }
 
                 // Search relevance must inspect the action that actually
                 // executed, never the strategist's natural-language proposal.
                 let executed_action_lower = executed_action.to_ascii_lowercase();
+                let mut search_relevance_score: Option<f32> = None;
                 let is_search_like = !executed_action_lower.contains("halt")
                     && (executed_action_lower.contains("search_code")
                         || executed_action_lower.contains("search_memory"));
@@ -155,10 +205,26 @@ impl CorticalLoop {
                                 .to_string(),
                         );
                         session.record_evidence(&evidence, &eval, h_id);
+                        let after = session
+                            .graph
+                            .nodes
+                            .get(&h_id)
+                            .map(|n| n.belief_score)
+                            .unwrap_or(belief);
+                        append_eval_journal(
+                            session.best_hypothesis_id,
+                            &h_content,
+                            "search_empty_query".into(),
+                            &evidence,
+                            belief,
+                            after,
+                            eval.confidence_modifier,
+                        );
                         return Ok(CortexState::Strategize);
                     }
 
                     let rel = score_search_relevance(&query_hint, &evidence);
+                    search_relevance_score = Some(rel);
                     if !should_raise_belief(rel, 0.45) {
                         let mut eval = eval;
                         if eval.confidence_modifier > 0.0 {
@@ -166,14 +232,41 @@ impl CorticalLoop {
                         }
                         session.record_evidence(&evidence, &eval, h_id);
                         Self::floor_hypothesis_belief_after_failure(session, h_id, belief, 0.15);
+                        let after = session
+                            .graph
+                            .nodes
+                            .get(&h_id)
+                            .map(|n| n.belief_score)
+                            .unwrap_or(belief);
+                        append_eval_journal(
+                            session.best_hypothesis_id,
+                            &h_content,
+                            format!("low_relevance:{:.2}", rel),
+                            &evidence,
+                            belief,
+                            after,
+                            eval.confidence_modifier,
+                        );
                         return Ok(CortexState::Strategize);
                     }
                 }
-                // PROGRESS FLOOR: the LLM judge compares the action to the pinned
-                // strategy label, not to the contract. If this action's evidence reduced
-                // the number of unmet non-belief conditions, it is progress and may not
-                // be penalized.
+                // PROGRESS FLOOR & SEARCH RELEVANCE BOOST:
+                // 1) High-relevance search hits raise belief rather than only clamping down.
+                // 2) If this action's evidence reduced unmet non-belief conditions, it is
+                //    progress and may not be penalized.
                 let mut eval = eval;
+                if let Some(rel) = search_relevance_score {
+                    if rel >= 0.70 {
+                        let boosted = ((rel - 0.50) * 0.50).clamp(0.10, 0.25);
+                        if boosted > eval.confidence_modifier {
+                            self.log(format!(
+                                "\x1b[1;36m>> [SEARCH RELEVANCE] High relevance ({:.2}); raising modifier {:.2} -> {:.2}\x1b[0m",
+                                rel, eval.confidence_modifier, boosted
+                            ));
+                            eval.confidence_modifier = boosted;
+                        }
+                    }
+                }
                 {
                     use crate::completion_engine::CompletionCondition as CC;
                     let conds: Vec<CC> = session
@@ -230,24 +323,12 @@ impl CorticalLoop {
                     eval.critique, eval.confidence_modifier
                 ));
                 session.record_evidence(&evidence, &eval, h_id);
-
-                crate::journal::append_global(crate::journal::TurnRecord {
-                    node_id: format!("{:?}", h_id),
-                    turn: 0,
-                    strategy: h_content.clone(),
-                    action_type: executed_action.chars().take(80).collect(),
-                    evidence_hash: crate::journal::hash_bytes(evidence.as_bytes()),
-                    evidence_len: evidence.len(),
-                    belief_before: belief,
-                    belief_after: (belief + eval.confidence_modifier).min(1.0),
-                    eval_modifier: eval.confidence_modifier,
-                    unmet_before: Vec::new(),
-                    unmet_after: Vec::new(),
-                    provider: None,
-                    latency_ms: None,
-                    prev_hash: String::new(),
-                    record_hash: String::new(),
-                });
+                let eval_after = session
+                    .graph
+                    .nodes
+                    .get(&h_id)
+                    .map(|n| n.belief_score)
+                    .unwrap_or((belief + eval.confidence_modifier).clamp(0.0, 1.0));
 
                 // Do NOT floor on the success path. restore_floor is reserved for
                 // genuine failures (low-relevance branch above, parse faults, etc.).
@@ -269,6 +350,15 @@ impl CorticalLoop {
                         session.local_evidence.replace_range(pos..pos + evidence.len(), "");
                     }
                     session.local_evidence.push_str("\n[HALT_REJECTED] You cannot halt. The required output deliverable has not been written yet. You MUST write the final file now.\n");
+                    append_eval_journal(
+                        session.best_hypothesis_id,
+                        &h_content,
+                        "halt_rejected:unwritten_artifacts".into(),
+                        &evidence,
+                        belief,
+                        eval_after,
+                        eval.confidence_modifier,
+                    );
                     return Ok(CortexState::Strategize);
                 }
 
@@ -293,6 +383,15 @@ impl CorticalLoop {
                             "\n[HALT_REJECTED_SYMBOLS] Report named symbols not found in any file content read: {}. Re-read the relevant ranges and cite only functions that appear in the evidence.\n",
                             bad.join(", ")
                         ));
+                        append_eval_journal(
+                            session.best_hypothesis_id,
+                            &h_content,
+                            "halt_rejected:unverified_symbols".into(),
+                            &evidence,
+                            belief,
+                            eval_after,
+                            eval.confidence_modifier,
+                        );
                         return Ok(CortexState::Strategize);
                     }
                 }
@@ -317,6 +416,15 @@ impl CorticalLoop {
                             "\n[HALT_REJECTED_REPORT] The halt `reasoning` field IS the deliverable. Put the full audit there: each large function by name with its line range, plus concrete findings. Defects: {}\n",
                             defects.join("; ")
                         ));
+                        append_eval_journal(
+                            session.best_hypothesis_id,
+                            &h_content,
+                            "halt_rejected:report_defects".into(),
+                            &evidence,
+                            belief,
+                            eval_after,
+                            eval.confidence_modifier,
+                        );
                         return Ok(CortexState::Strategize);
                     }
                 }
@@ -369,6 +477,15 @@ impl CorticalLoop {
                     self.log(
                         "\x1b[1;36m>> [CORTEX TERMINAL] Deterministic command contract satisfied by physical CMD_OK evidence. No additional model verification required. Node complete.\x1b[0m"
                             .to_string(),
+                    );
+                    append_eval_journal(
+                        session.best_hypothesis_id,
+                        &h_content,
+                        executed_action.chars().take(80).collect(),
+                        &evidence,
+                        belief,
+                        current_belief.max(0.95),
+                        eval.confidence_modifier,
                     );
 
                     return Ok(CortexState::Complete {
@@ -464,9 +581,19 @@ impl CorticalLoop {
                                 "\x1b[1;36m>> [CORTEX TERMINAL] DAG node independently verified. Confidence: {:.2}. Node complete.\x1b[0m",
                                 report.evidence_confidence
                             ));
+                            let final_belief = belief.max(report.evidence_confidence).max(0.95);
+                            append_eval_journal(
+                                session.best_hypothesis_id,
+                                &h_content,
+                                executed_action.chars().take(80).collect(),
+                                &evidence,
+                                belief,
+                                final_belief,
+                                eval.confidence_modifier,
+                            );
 
                             return Ok(CortexState::Complete {
-                                belief: belief.max(report.evidence_confidence).max(0.95),
+                                belief: final_belief,
                                 evidence: session.collect_evidence(h_id),
                             });
                         }
@@ -486,6 +613,15 @@ impl CorticalLoop {
                                 "\n[HALT_REJECTED] Mission verification failed: {}\n",
                                 report.rationale
                             ));
+                            append_eval_journal(
+                                session.best_hypothesis_id,
+                                &h_content,
+                                "halt_rejected:verify_outcome".into(),
+                                &evidence,
+                                belief,
+                                eval_after,
+                                eval.confidence_modifier,
+                            );
 
                             return Ok(CortexState::Strategize);
                         }
@@ -498,6 +634,15 @@ impl CorticalLoop {
                             if let Some(pos) = session.local_evidence.rfind(evidence.as_str()) {
                                 session.local_evidence.replace_range(pos..pos + evidence.len(), "");
                             }
+                            append_eval_journal(
+                                session.best_hypothesis_id,
+                                &h_content,
+                                "halt_rejected:verify_err".into(),
+                                &evidence,
+                                belief,
+                                eval_after,
+                                eval.confidence_modifier,
+                            );
 
                             return Ok(CortexState::Strategize);
                         }
@@ -522,6 +667,15 @@ impl CorticalLoop {
                         "\n[HALT_REJECTED] Deterministic completion contract not satisfied. Unmet: {:?}\n",
                         unmet
                     ));
+                    append_eval_journal(
+                        session.best_hypothesis_id,
+                        &h_content,
+                        "halt_rejected:contract_unmet".into(),
+                        &evidence,
+                        belief,
+                        eval_after,
+                        eval.confidence_modifier,
+                    );
                     return Ok(CortexState::Strategize);
                 }
 
@@ -549,6 +703,18 @@ impl CorticalLoop {
                     }
                 }
 
+                let final_after =
+                    session.graph.nodes.get(&h_id).map(|n| n.belief_score).unwrap_or(eval_after);
+                append_eval_journal(
+                    session.best_hypothesis_id,
+                    &h_content,
+                    executed_action.chars().take(80).collect(),
+                    &evidence,
+                    belief,
+                    final_after,
+                    eval.confidence_modifier,
+                );
+
                 if let Some(updated_node) = session.graph.nodes.get(&h_id) {
                     self.log(format!(
                         "\x1b[1;32m>> [CORTEX] Strategy Belief updated to {:.2}\x1b[0m",
@@ -558,5 +724,49 @@ impl CorticalLoop {
                 Ok(CortexState::Strategize)
             }
         }
+    }
+}
+
+fn append_eval_journal(
+    h_id: Option<Uuid>,
+    strategy: &str,
+    action_type: String,
+    evidence: &str,
+    belief_before: f32,
+    belief_after: f32,
+    eval_modifier: f32,
+) {
+    crate::journal::append_global(crate::journal::TurnRecord {
+        node_id: journal_node_id(h_id),
+        turn: 0,
+        strategy: strategy.to_string(),
+        action_type,
+        evidence_hash: crate::journal::hash_bytes(evidence.as_bytes()),
+        evidence_len: evidence.len(),
+        belief_before,
+        belief_after,
+        eval_modifier,
+        unmet_before: Vec::new(),
+        unmet_after: Vec::new(),
+        provider: None,
+        latency_ms: None,
+        prev_hash: String::new(),
+        record_hash: String::new(),
+    });
+}
+
+fn journal_node_id(h_id: Option<Uuid>) -> String {
+    h_id.map(|id| format!("{:?}", id)).unwrap_or_else(|| "none".to_string())
+}
+
+#[cfg(test)]
+mod eval_journal_tests {
+    use super::journal_node_id;
+    use uuid::Uuid;
+
+    #[test]
+    fn none_and_nil_uuid_produce_distinct_journal_node_ids() {
+        assert_ne!(journal_node_id(None), journal_node_id(Some(Uuid::nil())));
+        assert_eq!(journal_node_id(None), "none");
     }
 }

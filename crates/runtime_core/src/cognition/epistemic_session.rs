@@ -176,6 +176,8 @@ pub struct EpistemicSession {
     pub budget: CognitiveBudget,
     pub graph: CognitiveGraph,
     pub local_evidence: String,
+    #[serde(skip)]
+    pub typed_evidence: Vec<crate::evidence_adapter::TypedEvidenceRecord>,
     pub executed_actions: HashMap<String, u32>,
     /// Log of actions executed this session. `executed_actions` keys are
     /// opaque hashes; the code-shift listener needs the original action
@@ -224,6 +226,7 @@ impl EpistemicSession {
             budget,
             graph: CognitiveGraph::new(),
             local_evidence: String::new(),
+            typed_evidence: Vec::new(),
             coverage: crate::coverage::CoverageLedger::default(),
             executed_actions: HashMap::new(),
             executed_action_log: Vec::new(),

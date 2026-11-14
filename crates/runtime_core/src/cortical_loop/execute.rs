@@ -22,8 +22,10 @@ impl CorticalLoop {
         let mut executor = RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
         executor.episode = session_episode;
         let mut latest_evidence = String::new();
+        let mut turn_typed_evidence: Vec<crate::evidence_adapter::TypedEvidenceRecord> = Vec::new();
         let mut executed_actions: Vec<String> = Vec::new();
         let mut mutation_paths: Vec<String> = Vec::new();
+        let pre_write_corpus = session.local_evidence.clone();
         let mut last_is_halt = false;
         let mut rust_files_mutated = false;
         let evidence_checkpoint = session.local_evidence.len();
@@ -174,6 +176,7 @@ impl CorticalLoop {
 
             let executed_action_json = serde_json::to_string(&action)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize executed AgentAction: {}", e))?;
+            let action_snapshot = action.clone();
 
             // Build the canonical action key before MotorCortex::translate()
             // consumes the AgentAction.
@@ -264,6 +267,11 @@ impl CorticalLoop {
                     }
                 }
             };
+
+            let typed_rec =
+                crate::evidence_adapter::from_executed_action(&action_snapshot, &evidence);
+            session.typed_evidence.push(typed_rec.clone());
+            turn_typed_evidence.push(typed_rec);
 
             latest_evidence.push_str(&evidence);
             latest_evidence.push('\n');
@@ -400,6 +408,77 @@ impl CorticalLoop {
                     session.local_evidence.push('\n');
                 }
             }
+
+            // PHASE 3: Content-consistency check for written report artifacts.
+            // Prevents fabricated reports from satisfying WritePathAcquired.
+            let allow_obj = !session.contract.conditions.iter().any(|c| {
+                use crate::completion_engine::CompletionCondition as CC;
+                matches!(
+                    c,
+                    CC::ReadMarkerAcquired
+                        | CC::ReadPathAcquired { .. }
+                        | CC::ReadFunctionMarkerAcquired { .. }
+                        | CC::SearchMarkerAcquired
+                        | CC::SearchTermAcquired { .. }
+                        | CC::SearchCheckedAcquired { .. }
+                        | CC::SourceCodeEvidenceRequired
+                        | CC::CommandMarkerAcquired
+                        | CC::CommandExecutionVerified { .. }
+                )
+            });
+            let mut report_failures: Vec<(String, Vec<String>)> = Vec::new();
+            for p in mutation_paths
+                .iter()
+                .filter(|p| crate::cortical::halt_claims::is_report_artifact(p))
+            {
+                if let Ok(content) = tokio::fs::read_to_string(p).await {
+                    let bad = crate::cortical::halt_claims::write_report_unverified_symbols(
+                        p,
+                        &content,
+                        &pre_write_corpus,
+                        &session.contract.objective,
+                        allow_obj,
+                    );
+                    if !bad.is_empty() {
+                        report_failures.push((p.clone(), bad));
+                    }
+                }
+            }
+            if !report_failures.is_empty() {
+                for (p, bad) in &report_failures {
+                    let msg = format!(
+                        "[WRITE_CONFORMANCE_FAILED] Report `{}` cites symbol(s) never observed in READ_OK/evidence: {}. Read the defining source file(s) before citing those symbols, or remove unverified claims.",
+                        p,
+                        bad.join(", ")
+                    );
+                    self.log(format!("\x1b[1;31m>> [REPORT CONSISTENCY] {}\x1b[0m", msg));
+                    let mut kept = String::new();
+                    for line in session.local_evidence.lines() {
+                        let drop = (line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
+                            && line.contains(p.as_str());
+                        if !drop {
+                            kept.push_str(line);
+                            kept.push('\n');
+                        }
+                    }
+                    session.local_evidence = kept;
+                    session.local_evidence.push_str(&msg);
+                    session.local_evidence.push('\n');
+                    for rec in session.typed_evidence.iter_mut() {
+                        if rec.kind == crate::evidence_adapter::TypedEvidenceKind::Write
+                            && rec
+                                .evidence
+                                .target
+                                .as_ref()
+                                .is_some_and(|t| crate::evidence_paths::paths_equivalent(&t.0, p))
+                        {
+                            rec.evidence.success = false;
+                            rec.reliability = 0.0;
+                        }
+                    }
+                }
+                return Ok(CortexState::Strategize);
+            }
         }
 
         if latest_evidence.trim().is_empty() {
@@ -441,6 +520,7 @@ impl CorticalLoop {
             belief,
             is_halt_action: last_is_halt,
             mutation_path: mutation_paths.last().cloned(),
+            typed_evidence: turn_typed_evidence,
         })
     }
 }

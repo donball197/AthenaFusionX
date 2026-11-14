@@ -1,9 +1,52 @@
 //! Anti-loop subsystem for relevance gating.
 
-pub fn score_search_relevance(_query: &str, _evidence: &str) -> f32 {
-    // ⚡ FIX: Simply return 0.50 for all searches to bypass the overzealous relevance gate
-    // This allows the agent to trust its own search results when finding documentation.
-    0.50
+pub fn score_search_relevance(query: &str, evidence: &str) -> f32 {
+    let ev_lower = evidence.to_ascii_lowercase();
+    if ev_lower.contains("[action failed]")
+        || ev_lower.contains("[search_code_error]")
+        || ev_lower.contains("os rejected action")
+    {
+        return 0.10;
+    }
+
+    if ev_lower.contains("no code matches found")
+        || ev_lower.contains("no matches found")
+        || ev_lower.contains("0 results")
+    {
+        return 0.40;
+    }
+
+    let body_lines: Vec<&str> = evidence
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with("[SEARCH_CODE_OK]")
+                && !l.starts_with("[SEARCH_MEMORY_OK]")
+                && !l.starts_with("[SEARCH_CHECKED_OK]")
+                && *l != "MATCHES:"
+        })
+        .collect();
+
+    if body_lines.is_empty() {
+        return 0.45;
+    }
+
+    let query_terms: Vec<String> = query
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| s.len() >= 2)
+        .collect();
+
+    let overlap_ratio = if query_terms.is_empty() {
+        1.0
+    } else {
+        let hits = query_terms.iter().filter(|t| ev_lower.contains(t.as_str())).count();
+        hits as f32 / query_terms.len() as f32
+    };
+
+    let density_bonus = (body_lines.len().min(6) as f32 / 6.0) * 0.15;
+    (0.55 + 0.25 * overlap_ratio + density_bonus).clamp(0.45, 0.95)
 }
 
 pub fn should_raise_belief(score: f32, threshold: f32) -> bool {
@@ -57,6 +100,20 @@ pub fn classify_duplicate(
             return FilterOutcome::AllowRetry; // earlier write failed
         }
     }
+    // RE-READ-AFTER-WRITE EXEMPTION: if the path was written more
+    // recently than it was read, its content has changed and re-reading
+    // is legitimate verification, not a stale duplicate. Applies to any
+    // path the executor emits a [WRITE_OK] for.
+    if let AgentAction::ReadFile { path, .. } = action {
+        let last_read = evidence.rfind(&format!("[READ_OK] {}", path));
+        let last_write = evidence.rfind(&format!("[WRITE_OK] {}", path));
+        if let Some(w) = last_write {
+            if last_read.map_or(true, |r| w > r) {
+                return FilterOutcome::AllowRetry;
+            }
+        }
+    }
+
     // CORTEXFIX: satisfied whole-file read -- never re-admit it.
     if let AgentAction::ReadFile { path, .. } = action {
         let already = crate::outcome_verifier::OutcomeVerifier::mission_completion_authorized(
@@ -97,4 +154,71 @@ pub fn halt_reasoning_fingerprint(reasoning: &str) -> u64 {
 /// halt bodies are not treated as duplicates of a prior rejected halt.
 pub fn halt_action_key(reasoning: &str) -> String {
     format!("halt:{:x}", halt_reasoning_fingerprint(reasoning))
+}
+
+#[cfg(test)]
+mod relevance_tests {
+    use super::{score_search_relevance, should_raise_belief};
+
+    #[test]
+    fn high_overlap_search_hits_score_above_boost_threshold() {
+        let ev = "[SEARCH_CODE_OK] Path: crates/runtime_core | Query: 'score_search_relevance'
+MATCHES:
+crates/runtime_core/src/anti_loop.rs:3: pub fn score_search_relevance
+crates/runtime_core/src/cortical_loop/evaluate.rs:170: score_search_relevance
+";
+        let score = score_search_relevance("score_search_relevance", ev);
+        assert!(score >= 0.70, "expected >= 0.70, got {}", score);
+        assert!(should_raise_belief(score, 0.45));
+    }
+
+    #[test]
+    fn reread_after_write_is_allowed_not_duplicate() {
+        use crate::agent_protocol::AgentAction;
+        use crate::completion_engine::{CompletionCondition, SubgoalContract};
+
+        let contract = SubgoalContract {
+            node_id: "t".into(),
+            objective: "write report.md".into(),
+            read_only: false,
+            is_mutation_task: true,
+            required_artifact_paths: vec![],
+            conditions: vec![CompletionCondition::ReadPathAcquired { path: "report.md".into() }],
+        };
+
+        let read = AgentAction::ReadFile {
+            _thought_process: None,
+            path: "report.md".into(),
+            reasoning: "verify".into(),
+        };
+
+        // Scenario A: read, then write, then re-read. The re-read must be
+        // allowed because the file changed.
+        let ev = "[READ_OK] report.md\nFULL FILE CONTENT:\nv1\n\
+                  [WRITE_OK] report.md\n";
+        assert!(matches!(
+            super::classify_duplicate(&read, &contract, ev),
+            super::FilterOutcome::AllowRetry,
+        ));
+
+        // Scenario B: read, no subsequent write. The re-read must still
+        // be rejected as a stale duplicate (existing behavior preserved).
+        let ev = "[READ_OK] report.md\nFULL FILE CONTENT:\nv1\n";
+        assert!(matches!(
+            super::classify_duplicate(&read, &contract, ev),
+            super::FilterOutcome::FilterAndDecay,
+        ));
+    }
+
+    #[test]
+    fn no_match_and_failed_searches_do_not_boost() {
+        let empty = "[SEARCH_CODE_OK] Path: crates | Query: 'missing'
+No code matches found in specified path.
+";
+        assert!(score_search_relevance("missing", empty) < 0.70);
+
+        let failed = "[ACTION FAILED] OS rejected action: bad regex";
+        let fail_score = score_search_relevance("(", failed);
+        assert!(!should_raise_belief(fail_score, 0.45));
+    }
 }

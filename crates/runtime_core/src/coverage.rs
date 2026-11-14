@@ -63,11 +63,13 @@ impl CoverageLedger {
                 }
             }
         }
-        seen.into_iter().map(|t| {
-            let mut l = Self::default();
-            l.ingest_target(&lines, &t);
-            l
-        }).collect()
+        seen.into_iter()
+            .map(|t| {
+                let mut l = Self::default();
+                l.ingest_target(&lines, &t);
+                l
+            })
+            .collect()
     }
 
     fn ingest_target(&mut self, lines: &[&str], target: &str) {
@@ -144,9 +146,9 @@ impl CoverageLedger {
                     total = parse_total_lines(l);
                     break;
                 }
-                if l.starts_with('[') && l.contains("] ") {
+                if is_read_block_terminator(l) {
                     break;
-                } // next marker
+                } // next evidence marker
                 shown += 1;
                 k += 1;
             }
@@ -168,7 +170,37 @@ impl CoverageLedger {
             i = k;
         }
     }
+}
 
+fn is_read_block_terminator(line: &str) -> bool {
+    const RECORD_PREFIXES: &[&str] = &[
+        "[READ_OK]",
+        "[READ_CHUNK_OK]",
+        "[READ_FUNCTION_OK]",
+        "[WRITE_OK]",
+        "[WRITE_NOOP]",
+        "[CMD_OK]",
+        "[SEARCH_CODE_OK]",
+        "[SEARCH_CHECKED_OK]",
+        "[SEARCH_MEMORY_OK]",
+        "[PATCH_FUNCTION_OK]",
+        "[PATCH_IDEMPOTENT_OK]",
+        "[DIFF_PATCH_OK]",
+        "[REPLACE_LINES_OK]",
+        "[ACTION FAILED]",
+        "[HALT]",
+        "[HALT_REJECTED",
+        "[DAG LINEAGE",
+        "[PROPOSITION]",
+        "[CRITIC_VETO]",
+        "[AUTO_VERIFY_READ]",
+        "[NODE PHASE]",
+    ];
+    let t = line.trim_start();
+    RECORD_PREFIXES.iter().any(|p| t.starts_with(p))
+}
+
+impl CoverageLedger {
     pub fn coverage_pct(&self) -> f32 {
         match self.total_lines {
             Some(t) if t > 0 => 100.0 * self.covered.len() as f32 / t as f32,
@@ -405,5 +437,31 @@ mod per_file_tests {
         l.ingest("[READ_CHUNK_OK] File: x/y.rs | Lines 1-50 of 100\nCONTENT:\nz\n");
         l.ingest(&format!("[READ_CHUNK_OK] File: {} | Lines 51-100 of 100\nCONTENT:\nz\n", abs));
         assert!((l.coverage_pct() - 100.0).abs() < 0.01, "{}", l.coverage_pct());
+    }
+}
+
+#[cfg(test)]
+mod embedded_tag_truncation_tests {
+    use super::CoverageLedger;
+
+    #[test]
+    fn truncated_read_with_embedded_bracket_tag_still_reports_gap() {
+        let mut ev =
+            String::from("[READ_OK] crates/runtime_core/src/strategize.rs\nFULL FILE CONTENT:\n");
+        for i in 1..=10 {
+            ev.push_str(&format!("// line {}\n", i));
+        }
+        ev.push_str("[PARSE_FAULT_ACTION] embedded string literal inside source file\n");
+        for i in 12..=50 {
+            ev.push_str(&format!("// line {}\n", i));
+        }
+        ev.push_str(
+            "[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: 100. USE THE `read_file_chunk` TOOL]\n",
+        );
+        let mut ledger = CoverageLedger::default();
+        ledger.ingest(&ev);
+        assert_eq!(ledger.total_lines(), Some(100));
+        assert!(ledger.coverage_pct() < 100.0, "got {}", ledger.coverage_pct());
+        assert_eq!(ledger.largest_gap(), Some((51, 100)));
     }
 }

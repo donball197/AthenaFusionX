@@ -177,6 +177,8 @@ impl Verifier {
             );
         }
 
+        let own_evidence = Self::current_node_evidence(evidence);
+
         for criterion in criteria {
             let criterion = criterion.trim();
 
@@ -197,10 +199,10 @@ impl Verifier {
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CHECKED_OK:") {
                 crate::evidence_markers::search_checked_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
-                evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
-                    && crate::halt_gate::halt_range_gate(evidence).is_none()
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
+                    && crate::halt_gate::halt_range_gate(&own_evidence).is_none()
             } else if criterion == "SEARCH_MEMORY_OK" {
-                evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
                 let target = path.trim();
                 crate::evidence_markers::write_path_satisfied(evidence, target)
@@ -244,7 +246,7 @@ impl Verifier {
                 };
                 !reject_after_ok && crate::evidence_paths::cmd_ok_binds_command(own)
             } else if criterion == "PATCH_FUNCTION_OK" {
-                evidence.lines().any(|l| {
+                own_evidence.lines().any(|l| {
                     let t = l.trim_start();
                     t.starts_with("[PATCH_FUNCTION_OK]") || t.starts_with("[PATCH_IDEMPOTENT_OK]")
                 })
@@ -281,11 +283,11 @@ impl Verifier {
                     )
                 }
             } else if criterion == "DIFF_PATCH_OK" {
-                evidence.lines().any(|l| l.trim_start().starts_with("[DIFF_PATCH_OK]"))
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[DIFF_PATCH_OK]"))
             } else if let Some(path) = criterion.strip_prefix("DIFF_PATCH_OK:") {
                 crate::evidence_markers::patch_path_satisfied(evidence, "DIFF_PATCH_OK", path, None)
             } else if criterion == "REPLACE_LINES_OK" {
-                evidence.lines().any(|l| l.trim_start().starts_with("[REPLACE_LINES_OK]"))
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[REPLACE_LINES_OK]"))
             } else if let Some(path) = criterion.strip_prefix("REPLACE_LINES_OK:") {
                 crate::evidence_markers::patch_path_satisfied(
                     evidence,

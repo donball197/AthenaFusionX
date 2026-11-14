@@ -109,7 +109,9 @@ pub fn halt_range_gate(evidence: &str) -> Option<String> {
     let max_total = with_totals.iter().filter_map(|l| l.total_lines()).max().unwrap_or(0);
     for (s, e) in cited {
         if e > max_total {
-            return Some(format!("halt cites lines {s}-{e} but the file has only {max_total} lines"));
+            return Some(format!(
+                "halt cites lines {s}-{e} but the file has only {max_total} lines"
+            ));
         }
         if !with_totals.iter().any(|l| l.total_lines().is_some_and(|t| e <= t) && l.covers(s, e)) {
             return Some(format!("halt cites lines {s}-{e} that were never fully read"));

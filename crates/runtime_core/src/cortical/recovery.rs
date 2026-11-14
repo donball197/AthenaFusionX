@@ -481,6 +481,16 @@ impl CorticalLoop {
         current_belief: f32,
         write_phase_ready: bool,
     ) {
+        // HALT GUARD: the cortex has already decided this node is done
+        // (mutation complete, reconnaissance complete, or an explicit halt
+        // strategy was forced). Post-search expansion must not override a
+        // terminal halt strategy by suggesting unrelated recon actions --
+        // doing so pushes evidence noise into a turn the strategist should
+        // only be synthesizing a halt for.
+        if active_strategy == "halt" || active_strategy.starts_with("halt:") {
+            return;
+        }
+
         // GUARD: Do not override a strategy whose target is the mission's
         // required artifact. A mission that names an output file is a
         // CREATE, not a mutation of the read files.
@@ -948,10 +958,7 @@ impl crate::cortical_loop::CorticalLoop {
                     )
                 }
                 CC::SearchTermAcquired { term } => {
-                    !crate::evidence_markers::search_term_satisfied(
-                        &session.local_evidence,
-                        term,
-                    )
+                    !crate::evidence_markers::search_term_satisfied(&session.local_evidence, term)
                 }
                 _ => false,
             });
@@ -1080,5 +1087,19 @@ mod contract_first_recon_tests {
     fn nothing_is_returned_once_every_read_is_evidenced() {
         let both = format!("{}{}", FIRST, SECOND);
         assert_eq!(next_unmet_read(&reads(), &both), None);
+    }
+}
+
+#[cfg(test)]
+mod halt_guard_tests {
+    #[test]
+    fn post_search_expansion_has_halt_guard() {
+        let source = include_str!("recovery.rs");
+        assert!(
+            source.contains(
+                r#"if active_strategy == "halt" || active_strategy.starts_with("halt:") {"#
+            ),
+            "apply_post_search_expansion must short-circuit on a halt strategy"
+        );
     }
 }

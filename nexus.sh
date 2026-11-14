@@ -80,6 +80,7 @@ BUILD_PID=$!
 
 spinner $BUILD_PID "Verifying & building backend and CLI"
 
+BUILD_STATUS=0
 wait $BUILD_PID || BUILD_STATUS=$?
 if [[ ${BUILD_STATUS:-0} -ne 0 ]]; then
     echo -e "\x1b[31m[✗] Build FAILED. Compiler error log:\x1b[0m"
@@ -96,6 +97,12 @@ fi
 
 # --- 6. Start Background Daemon ---
 echo -e "\x1b[36m[2/3] Initializing Background Daemon (Port 3000)...\x1b[0m"
+if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:3000/api/vitals"; then
+    echo -e "\x1b[31m>> [FATAL] Port 3000 is already responding before launch (stale daemon running). Stop it first.\x1b[0m"
+    exit 1
+fi
+ls -lh --time-style=full-iso "${TARGET_DIR}/nexus-ide-backend" "${TARGET_DIR}/nexus-cli"
+sha256sum "${TARGET_DIR}/nexus-ide-backend" "${TARGET_DIR}/nexus-cli"
 if [ -f daemon.log ]; then mv daemon.log "daemon.$(date +%s).log"; fi
 "${TARGET_DIR}/nexus-ide-backend" 9>&- > daemon.log 2>&1 &
 DAEMON_PID=$!
@@ -114,6 +121,11 @@ trap cleanup SIGINT SIGTERM EXIT
 printf "\x1b[33m[~] Connecting to Daemon vitals\x1b[0m"
 READY=0
 for i in $(seq 1 300); do
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        echo -e "\n\x1b[31m>> [FATAL] Daemon (PID $DAEMON_PID) exited before becoming ready. daemon.log:\x1b[0m"
+        tail -n 30 daemon.log
+        exit 1
+    fi
     if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:3000/api/vitals"; then
         printf "\r\x1b[K\x1b[32m[✓] Daemon online and verified ready after ${i}s.\x1b[0m\n"
         READY=1

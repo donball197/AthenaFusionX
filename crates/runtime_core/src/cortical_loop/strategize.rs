@@ -153,7 +153,10 @@ impl CorticalLoop {
             .required_artifact_paths
             .iter()
             .map(|a| a.path.clone())
-            .filter(|p| !crate::evidence_markers::has_artifact_write(&session.local_evidence, p))
+            .filter(|p| {
+                !crate::evidence_markers::has_artifact_write(&session.local_evidence, p)
+                    && !artifact_denied_by_policy(&session.local_evidence, p)
+            })
             .collect();
 
         let recon_ready =
@@ -167,8 +170,26 @@ impl CorticalLoop {
         // deterministic reconnaissance contract is actually satisfied.
         // A single successful command is evidence for that command only; it
         // must never bypass the remaining reconnaissance conditions.
+        // Coverage gate: `reconnaissance_complete` returns true as soon as
+        // every `ReadPathAcquired` condition has a matching `[READ_OK]` in
+        // evidence, even when that read was TRUNCATED (e.g. first read of a
+        // 2225-line file returned only the first 1189 lines). Without this
+        // gate, the phase transition forces `write_file:<deliverable>` with
+        // 53.5% coverage -- the strategist then writes a half-formed report
+        // about code it has not read, and the mission burns its turn budget
+        // on rewrite loops.
+        //
+        // `write_phase_ready` means "we have enough information to author
+        // the deliverable". The coverage ledger is the only authority on
+        // whether the required reads are actually complete.
+        let coverage_gaps_closed = session
+            .coverage
+            .largest_interior_gap()
+            .or_else(|| session.coverage.largest_gap())
+            .is_none();
         let write_phase_ready =
-            Self::write_phase_ready(&session.contract, &unwritten_targets, recon_ready);
+            Self::write_phase_ready(&session.contract, &unwritten_targets, recon_ready)
+                && coverage_gaps_closed;
 
         // DETERMINISTIC PHASE TRANSITION:
         //
@@ -230,6 +251,45 @@ impl CorticalLoop {
             ));
             format!("read_file:{}", p)
         } else if session.contract.is_mutation_task
+            && !session.contract.required_artifact_paths.is_empty()
+            && unwritten_targets.is_empty()
+            && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
+            && artifact_vetoed_after_last_write(&session.local_evidence)
+            && citation_veto_pending(&session.local_evidence)
+            && !grep_evidence_present(&session.local_evidence)
+        {
+            // CITATION PRE-FLIGHT: the report was vetoed for unverified
+            // line citations, and no grep -n evidence exists yet. Rather
+            // than letting the strategist draft another bad write with
+            // different-but-still-unverified line numbers, force one
+            // grep -n across all read targets. The next turn's strategist
+            // sees CMD_OK grep output and its citations become verifiable.
+            let targets: Vec<String> = session
+                .contract
+                .conditions
+                .iter()
+                .filter_map(|c| match c {
+                    crate::completion_engine::CompletionCondition::ReadPathAcquired { path } => {
+                        Some(path.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let cmd = if targets.is_empty() {
+                "grep -n \"^fn \\|^pub fn \\|^pub(crate) fn \" crates/runtime_core/src".to_string()
+            } else {
+                format!("grep -n \"^fn \\|^pub fn \\|^pub(crate) fn \" {}", targets.join(" "))
+            };
+            session.local_evidence.push_str(&format!(
+                "\n[CITATION PREFLIGHT] The prior write was vetoed for unverified line citations and no grep -n evidence exists. Run this exact command to obtain authoritative function line numbers before the next write:\n`{}`\n",
+                cmd
+            ));
+            self.log(format!(
+                "\x1b[1;35m>> [CORTEX CITATION PRE-FLIGHT]\x1b[0m Prior write vetoed for unverified citations; forcing `{}`.",
+                cmd
+            ));
+            format!("execute_command:{}", cmd)
+        } else if session.contract.is_mutation_task
             && unwritten_targets.is_empty()
             && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
             && !session.contract.required_artifact_paths.is_empty()
@@ -260,9 +320,23 @@ impl CorticalLoop {
                 "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Critic rejected artifact; forcing correction `write_file:{}`.",
                 target
             ));
+            let (reject_kind, reject_text) = strip_read_bodies_for_markers(&session.local_evidence)
+                .lines()
+                .rev()
+                .map(str::trim_start)
+                .find(|l| l.starts_with("[CRITIC_VETO]") || l.starts_with("[HALT_REJECTED"))
+                .map(|l| {
+                    let kind = if l.starts_with("[CRITIC_VETO]") {
+                        "rejected by the Adversarial Critic"
+                    } else {
+                        "not accepted by deterministic completion verification"
+                    };
+                    (kind, l.chars().take(400).collect::<String>())
+                })
+                .unwrap_or(("rejected", String::new()));
             session.local_evidence.push_str(&format!(
-                "\n[NODE PHASE] The artifact `{}` was rejected by the Adversarial Critic. Rewrite it to address the veto, then re-read it back before halting. Do NOT propose halt until the artifact is accepted.\n",
-                target
+                "\n[NODE PHASE] The artifact `{}` was {}. Reason: {}\nFix that exact cause before halting; re-read the artifact after any rewrite. Do NOT propose halt until it is accepted.\n",
+                target, reject_kind, reject_text
             ));
             format!("write_file:{}", target)
         } else if session.contract.is_mutation_task
@@ -433,13 +507,38 @@ impl CorticalLoop {
             coverage_gap,
         );
 
+        // Write-phase prompt template: constrain the output to a fixed
+        // structure so there is no room for the model to quote source code
+        // verbatim. Prior missions showed the model including multi-line
+        // code excerpts in the JSON `content` field, which caused the
+        // parser to terminate the field at a source-derived delimiter
+        // (e.g. `","reasoning":`) — a 2700-byte stub that was structurally
+        // broken every time.
+        let enhanced_mission = if write_phase_ready
+            && crate::completion_engine::requires_semantic_verification(&session.contract.objective)
+        {
+            let deliverable = session
+                .contract
+                .required_artifact_paths
+                .first()
+                .map(|a| a.path.as_str())
+                .unwrap_or("the deliverable");
+            format!(
+                "{}\n\n[WRITE PHASE REQUIREMENTS]\nWrite the report to `{}` in ONE write_file call.\nRULES:\n- Follow any length the mission specifies; otherwise stay under 500 words.\n- Finish every sentence and close every section; never end mid-expression.\n- Prose and bullets only. NO code blocks and NO multi-line code excerpts.\n- Reference functions by name in backticks only; do NOT quote function bodies.\n- Do NOT include evidence markers like [READ_OK] in the report body.\n- Cite only symbols and line numbers that appear in the evidence you have read.\n",
+                enhanced_mission, deliverable,
+            )
+        } else {
+            enhanced_mission
+        };
+
+        let proposal_strategy = veto_pivot_strategy(&active_strategy, session);
         session.budget.record_call();
 
         let raw_proposal = match EpistemicEngine::propose_action(
             &self.client,
             &self.api_key,
             &enhanced_mission,
-            &active_strategy,
+            &proposal_strategy,
             world_context,
             &evidence_history,
         )
@@ -630,133 +729,6 @@ impl CorticalLoop {
         }
 
         if actions.is_empty() {
-            if let Some(intercepted) =
-                crate::action_intercept::intercept_fallback_action(&raw_proposal)
-            {
-                let reject = matches!(
-                    &intercepted,
-                    AgentAction::SearchCode { _thought_process: None, query, .. } if query.trim().is_empty()
-                );
-                if !reject {
-                    actions.push(intercepted);
-                }
-            }
-        }
-
-        if actions.is_empty() {
-            // Synthesize a halt ONLY from prose-only output. A JSON proposal
-            // that failed schema validation must fall through to the
-            // parse-fault recovery path instead of manufacturing a halt.
-            if crate::cortical::util::should_synthesize_halt(&raw_proposal) {
-                actions.push(AgentAction::Halt {
-                    _thought_process: None,
-                    reasoning: "Model declared task complete".to_string(),
-                });
-            }
-        }
-
-        // RECOVER THE MODEL'S REAL INTENT: after a leaked chat-template token the model
-        // often continues in its native tool-call dialect
-        // (`assistant to=execute_command ... <rfl:parameter name="command">CMD`). That tail
-        // is its latest decision, while the JSON before it is frequently a placeholder
-        // (an already-read file, a directory read, a thin halt); dropping it makes the
-        // node repeat the placeholder forever. Honour it only for read-only missions,
-        // only for commands the read-only gate accepts, and only if that exact command
-        // has not been attempted yet.
-        if session.contract.read_only {
-            if let Some(cmd) = leaked_execute_command(&raw_proposal) {
-                if crate::cortical::read_only_gate::is_read_only_safe_command(&cmd) {
-                    let leaked = AgentAction::ExecuteCommand {
-                        _thought_process: None,
-                        command: cmd,
-                        reasoning: "Recovered from the strategist's leaked tool-call tail."
-                            .to_string(),
-                        confidence: 0.9,
-                    };
-                    let key = crate::cortical::critic_filter::attempt_key(&*session, &leaked);
-                    if session.global_action_attempt_count(&key) == 0 {
-                        self.log(
-                            "\x1b[1;36m>> [CORTEX] Recovered a leaked execute_command tool call from the proposal.\x1b[0m"
-                                .to_string(),
-                        );
-                        actions = vec![leaked];
-                    }
-                }
-            }
-        }
-
-        // Strip leaked chat-template control tokens (`<|end|><|start|>...`) from halt text.
-        for a in actions.iter_mut() {
-            if let AgentAction::Halt { reasoning, .. } = a {
-                if let Some(i) = reasoning.find("<|") {
-                    reasoning.truncate(i);
-                }
-            }
-        }
-
-        // True when every proposed action is a repeat of one that already ran in
-        // the current workspace state (nothing new is being attempted).
-        let all_actions_repeat = actions.iter().all(|a| {
-            let key = crate::cortical::critic_filter::attempt_key(&*session, a);
-            session.global_action_attempt_count(&key) >= 1
-        });
-        // Auto-halt is suppressed when the proposal failed to parse: parse-fault recovery must run so the model's intent (e.g. a leaked execute_command) is recovered on the next turn.
-        if !proposal_was_malformed(&raw_proposal)
-            && status == ContractStatus::Satisfied
-            && unwritten_targets.is_empty()
-            && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
-            && !session.local_evidence.contains("[HALT] Deterministic contract is satisfied.")
-            // Auto-halt only when either no rejection has occurred, or
-            // fresh [CMD_OK] evidence has accumulated since the last
-            // rejection. Mission-level rejection sets [HALT_REJECTED]
-            // (not _REPORT), so the previous _REPORT-only check never
-            // matched, and the same halt was re-injected every turn --
-            // replacing the strategist's proposed commands with a
-            // duplicate that anti-loop then vetoed. Each cycle now runs
-            // one more command before re-attempting the halt, so
-            // successive reports carry progressively more evidence.
-            && match (
-                session.local_evidence.rfind("[HALT_REJECTED"),
-                session.local_evidence.rfind("[CMD_OK]"),
-            ) {
-                (Some(r), Some(o)) => o > r,
-                (Some(_), None) => false,
-                _ => true,
-            }
-            // A semantic mission (analysis/audit/report) needs a real report in
-            // the halt; the bare auto-halt can never satisfy it and would
-            // override a valid recon action. Read-only keeps existing behavior.
-            // ...unless the strategist can only repeat an already-satisfied action
-            // (a pinned execute_command: strategy cannot emit `halt` itself), in
-            // which case the injected halt is the only route to completion.
-            && (session.contract.read_only
-                || !crate::completion_engine::requires_semantic_verification(
-                    &session.contract.objective,
-                )
-                || all_actions_repeat)
-            && !(crate::completion_engine::requires_semantic_verification(
-                &session.contract.objective,
-            ) && !all_actions_repeat
-                && session
-                    .local_evidence
-                    .contains("[HALT_REJECTED] Mission verification failed"))
-            // Never auto-halt while the read ledger still has an unread range:
-            // a truncated first read satisfies ReadPathAcquired long before the
-            // file has actually been read.
-            && session
-                .coverage
-                .largest_interior_gap()
-                .or_else(|| session.coverage.largest_gap())
-                .is_none()
-        {
-            self.log("\x1b[1;36m>> [CORTEX] Contract satisfied; automatically injecting Halt action.\x1b[0m".to_string());
-            actions = vec![AgentAction::Halt {
-                _thought_process: None,
-                reasoning: auto_halt_report_aggregated(&session.local_evidence),
-            }];
-        }
-
-        if actions.is_empty() {
             self.log(
                 "\x1b[31m>> [CORTEX FAULT] Could not extract valid action from proposal.\x1b[0m"
                     .to_string(),
@@ -828,16 +800,120 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             session.local_evidence.push_str(&parse_fault_obs);
             session.local_evidence.push('\n');
 
+            let mut belief_after = current_belief;
             if let Some(h_id) = session.best_hypothesis_id {
                 if let Some(new_belief) = session.graph.decay(h_id, 0.05) {
+                    belief_after = new_belief;
                     self.log(format!(
                         "\x1b[1;31m>> [PARSE_FAULT] Hypothesis belief decayed to {:.2} to force pivot\x1b[0m",
                         new_belief
                     ));
                 }
             }
+            crate::journal::append_global(crate::journal::TurnRecord {
+                node_id: session
+                    .best_hypothesis_id
+                    .map(|id| format!("{:?}", id))
+                    .unwrap_or_else(|| "none".to_string()),
+                turn: 0,
+                strategy: active_strategy.clone(),
+                action_type: format!(
+                    "parse_fault:{}",
+                    attempted_type.as_deref().unwrap_or("unknown")
+                ),
+                evidence_hash: crate::journal::hash_bytes(parse_fault_obs.as_bytes()),
+                evidence_len: parse_fault_obs.len(),
+                belief_before: current_belief,
+                belief_after,
+                eval_modifier: -0.05,
+                unmet_before: Vec::new(),
+                unmet_after: Vec::new(),
+                provider: None,
+                latency_ms: None,
+                prev_hash: String::new(),
+                record_hash: String::new(),
+            });
 
             return Ok(CortexState::Strategize);
+        }
+
+        // TRUNCATION GATE: a report/audit deliverable (.md/.txt) that is
+        // tiny or ends inside an unclosed ``` code fence was almost
+        // certainly cut off by the model's output-token limit. Without
+        // this gate the truncated stub gets `[WRITE_OK]`, the auto-verify
+        // read blesses it, and `[CORTEX TERMINAL]` fires on a deliverable
+        // that is ~15% complete (observed: phase1_audit.md ending with
+        // `return format!(` on the first mission after the preflight fix).
+        //
+        // Reject up to twice, then allow through with a warning so a
+        // genuinely output-limited model can still terminate.
+        if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
+            let deliverable = path.ends_with(".md") || path.ends_with(".txt");
+            if deliverable {
+                let unclosed_fence = content.matches("```").count() % 2 == 1;
+                let tiny = content.trim().len() < 500
+                    && crate::completion_engine::requires_semantic_verification(
+                        &session.contract.objective,
+                    );
+                // Strip read-file bodies so the gate's own source text
+                // (which contains the literal "[WRITE_TRUNCATION]" marker)
+                // cannot poison the counter when strategize.rs itself was
+                // read this session. Same self-reference class as the
+                // original [CRITIC_VETO] bug in citation_veto_pending.
+                let stripped = strip_read_bodies_for_markers(&session.local_evidence);
+                // Scope to AFTER the most recent WRITE_OK of this path (or
+                // any WRITE_OK, if this path was never written). Otherwise a
+                // long-lived session keeps prior >= 2 forever and the gate
+                // never rejects again after the first successful write.
+                let since = stripped
+                    .rfind(&format!("[WRITE_OK] {}", path))
+                    .or_else(|| stripped.rfind("[WRITE_OK]"))
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let prior = stripped[since..].matches("[WRITE_TRUNCATION]").count();
+                if (unclosed_fence || tiny) && prior < 2 {
+                    let obs = format!(
+                        "[WRITE_TRUNCATION] write_file `{}` rejected: content is {} bytes{}.\n\
+                         The deliverable must be complete. Re-emit the entire file in one call.\n\
+                         If you cannot fit it, shorten the summary — do NOT truncate mid-expression\n\
+                         or leave a code fence unclosed.\n",
+                        path,
+                        content.len(),
+                        if unclosed_fence { " and ends inside an unclosed ``` code fence" } else { "" }
+                    );
+                    self.log(format!(
+                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Rejecting truncated deliverable `{}` ({} bytes, unclosed_fence={}, prior_rejects={})",
+                        path, content.len(), unclosed_fence, prior
+                    ));
+                    session.local_evidence.push_str(&obs);
+                    if let Some(h_id) = session.best_hypothesis_id {
+                        Self::decay_hypothesis_belief(session, h_id, 0.10);
+                    }
+                    return Ok(CortexState::Strategize);
+                } else if unclosed_fence {
+                    // Never allow an unclosed fence through. A deliverable
+                    // that ends mid-sentence is worse than no deliverable.
+                    // Fail the node cleanly so the failure is diagnosable.
+                    self.log(format!(
+                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Deliverable `{}` still has an unclosed ``` after {} attempts ({} bytes); failing node.",
+                        path, prior, content.len()
+                    ));
+                    return Ok(CortexState::Fail {
+                        belief: current_belief,
+                        evidence: format!(
+                            "Deliverable `{}` could not be produced complete in {} attempts. Last content was {} bytes and ended mid-expression (unclosed ``` fence). This usually means the model was quoting source code inside the report body; do not quote function bodies, use prose only.",
+                            path, prior, content.len()
+                        ),
+                    });
+                } else if tiny {
+                    // Tiny without unclosed fence: likely output-limited but
+                    // at least structurally complete. Allow through.
+                    self.log(format!(
+                        "\x1b[1;33m>> [WRITE_TRUNCATION]\x1b[0m Allowing small deliverable `{}` through after {} rejects (model appears output-limited).",
+                        path, prior
+                    ));
+                }
+            }
         }
 
         // HARD CORTEX BOUNDARY:
@@ -898,8 +974,8 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
             // contract.
             let veto_recon_ok = !write_phase_ready
                 && (session.local_evidence.contains("[CRITIC_VETO]")
-                || (session.local_evidence.contains("[HALT_REJECTED_REPORT]")
-                    || session.local_evidence.contains("[HALT_REJECTED]")))
+                    || (session.local_evidence.contains("[HALT_REJECTED_REPORT]")
+                        || session.local_evidence.contains("[HALT_REJECTED]")))
                 && match first_action {
                     AgentAction::ReadFile { _thought_process: None, .. }
                     | AgentAction::ReadFileChunk { _thought_process: None, .. }
@@ -986,9 +1062,12 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     .unwrap_or(false)
             };
 
+            let veto_pivot_ok = veto_mandated_pivot_ok(first_action, session);
+
             if !strategy_ok
                 && !advances_unmet
                 && !veto_recon_ok
+                && !veto_pivot_ok
                 && !dir_child_read_ok
                 && !mandatory_pivot_ok
                 && !audit_read_pivot_ok
@@ -1001,9 +1080,11 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     first_action
                 ));
 
+                let mut belief_after = current_belief;
                 if let Some(h_id) = session.best_hypothesis_id {
                     Self::decay_hypothesis_belief(session, h_id, 0.20);
                     if let Some(node) = session.graph.nodes.get(&h_id) {
+                        belief_after = node.belief_score;
                         self.log(format!(
                             "\x1b[1;31m>> [STRATEGY_VIOLATION] Hypothesis belief decayed to {:.2} to force pivot\x1b[0m",
                             node.belief_score
@@ -1021,6 +1102,28 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 session.local_evidence.push_str(&violation_obs);
                 session.local_evidence.push('\n');
 
+                let (tool_name, _) = action_tool_and_target(first_action);
+                crate::journal::append_global(crate::journal::TurnRecord {
+                    node_id: session
+                        .best_hypothesis_id
+                        .map(|id| format!("{:?}", id))
+                        .unwrap_or_else(|| "none".to_string()),
+                    turn: 0,
+                    strategy: active_strategy.clone(),
+                    action_type: format!("strategy_violation:{}", tool_name),
+                    evidence_hash: crate::journal::hash_bytes(violation_obs.as_bytes()),
+                    evidence_len: violation_obs.len(),
+                    belief_before: current_belief,
+                    belief_after,
+                    eval_modifier: -0.20,
+                    unmet_before: Vec::new(),
+                    unmet_after: Vec::new(),
+                    provider: None,
+                    latency_ms: None,
+                    prev_hash: String::new(),
+                    record_hash: String::new(),
+                });
+
                 return Ok(CortexState::Strategize);
             }
         }
@@ -1033,6 +1136,222 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
 /// so it is operationalized by reading files INSIDE that directory. Admit a
 /// read_file / read_file_chunk whose path is strictly under the pinned
 /// directory (component-wise, no `..`). Every other mismatch still violates.
+fn strip_read_bodies_for_markers(evidence: &str) -> String {
+    let mut out = String::with_capacity(evidence.len());
+    let mut in_read_body = false;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if in_read_body {
+            if t.starts_with("[PROPOSITION]")
+                || t.starts_with("[CONTENT TRUNCATED")
+                || t.starts_with("[READ_OK]")
+                || t.starts_with("[READ_CHUNK_OK]")
+                || t.starts_with("[WRITE_OK]")
+                || t.starts_with("[WRITE_NOOP]")
+                || t.starts_with("[CMD_OK]")
+                || t.starts_with("[HALT]")
+                || t.starts_with("[HALT_REJECTED")
+                || t.starts_with("[DAG LINEAGE")
+                || t.starts_with("[AUTO_VERIFY_READ]")
+                || t.starts_with("[NODE PHASE]")
+            {
+                in_read_body = false;
+            } else {
+                continue;
+            }
+        }
+        if t.starts_with("FULL FILE CONTENT:") || t == "CONTENT:" {
+            in_read_body = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// True when the most recent [CRITIC_VETO] block mentions line numbers,
+/// citations, or grep -n. Used by the citation pre-flight gate: after this
+/// veto, the strategist's drafts will keep failing without authoritative
+/// line numbers, so the cortex forces a grep instead of a fourth draft.
+fn citation_veto_pending(evidence: &str) -> bool {
+    // Never let markers that appear inside READ_OK bodies trigger a real veto.
+    let clean = strip_read_bodies_for_markers(evidence);
+    let Some(pos) = clean.rfind("[CRITIC_VETO]") else {
+        return false;
+    };
+    // A veto block is 1-3 KB; take the tail slice from pos to a generous
+    // bound. Any mention of lines/citations/grep/grep -n signals the
+    // citation-discipline veto shape specifically.
+    // IMPORTANT: take the tail from `clean`, not the original evidence.
+    // Offsets in clean do not correspond to offsets in evidence after stripping.
+    let tail: String = clean[pos..].chars().take(3000).collect();
+    let l = tail.to_ascii_lowercase();
+    (l.contains("line") && (l.contains("number") || l.contains("range") || l.contains("citation")))
+        || l.contains("unverified")
+        || l.contains("grep -n")
+        || l.contains("rg -n")
+}
+
+/// True when evidence already contains a grep -n or rg -n [CMD_OK] block.
+/// If so, the strategist can derive line numbers and the pre-flight is a
+/// no-op.
+fn grep_evidence_present(evidence: &str) -> bool {
+    evidence.lines().any(|line| {
+        let t = line.trim_start();
+        if let Some(cmd) = t.strip_prefix("[CMD_OK] Command: ") {
+            let c = cmd.trim();
+            c.starts_with("grep -n")
+                || c.starts_with("grep -rn")
+                || c.starts_with("grep -r -n")
+                || c.starts_with("rg -n")
+                || c.contains(" grep -n ")
+                || c.contains(" rg -n ")
+        } else {
+            false
+        }
+    })
+}
+
+/// True when the most recent [CRITIC_VETO] block mentions line numbers,
+/// citations, or grep -n. Used by the citation pre-flight gate: after this
+/// veto, a fourth draft without authoritative line numbers will fail the
+/// same way, so the cortex forces grep before re-strategizing.
+
+fn artifact_denied_by_policy(evidence: &str, path: &str) -> bool {
+    let target = path.trim();
+    evidence.lines().any(|l| {
+        let t = l.trim_start();
+        if let Some(rest) = t.strip_prefix("[ACTION FAILED] path=") {
+            let denied_path = rest.split(" OS rejected action").next().unwrap_or("").trim();
+            t.contains("PATH_TRAVERSAL_DENIED")
+                && (denied_path == target
+                    || crate::evidence_paths::paths_equivalent(denied_path, target))
+        } else {
+            false
+        }
+    })
+}
+
+fn active_critic_veto_text(session: &EpistemicSession) -> Option<String> {
+    let stripped = strip_read_bodies_for_markers(&session.local_evidence);
+    let veto_pos = stripped.rfind("[CRITIC_VETO]")?;
+    const PROGRESS_MARKERS: [&str; 10] = [
+        "[READ_OK]",
+        "[READ_CHUNK_OK]",
+        "[SEARCH_CODE_OK]",
+        "[SEARCH_MEMORY_OK]",
+        "[WRITE_OK]",
+        "[WRITE_NOOP]",
+        "[PATCH_FUNCTION_OK]",
+        "[PATCH_IDEMPOTENT_OK]",
+        "[DIFF_PATCH_OK]",
+        "[REPLACE_LINES_OK]",
+    ];
+    let last_progress = PROGRESS_MARKERS.iter().filter_map(|m| stripped.rfind(m)).max();
+    if session.last_critic_rejected_actions.is_some() || last_progress.is_none_or(|p| veto_pos > p)
+    {
+        Some(stripped[veto_pos..].to_string())
+    } else {
+        None
+    }
+}
+
+pub(crate) fn veto_pivot_strategy(active_strategy: &str, session: &EpistemicSession) -> String {
+    if session.last_critic_rejected_actions.is_some()
+        && crate::tools::schema::native_tool_name_for_strategy(active_strategy).is_some()
+    {
+        return format!(
+            "pivot from `{}` to address [CRITIC_VETO] with a different action",
+            active_strategy
+        );
+    }
+    active_strategy.to_string()
+}
+
+fn action_tool_and_target(action: &AgentAction) -> (&'static str, Option<&str>) {
+    match action {
+        AgentAction::ReadFile { path, .. } => ("read_file", Some(path.as_str())),
+        AgentAction::ReadFileChunk { path, .. } => ("read_file_chunk", Some(path.as_str())),
+        AgentAction::ReadFunction { path, .. } => ("read_function", Some(path.as_str())),
+        AgentAction::SearchCode { path, .. } => ("search_code", Some(path.as_str())),
+        AgentAction::SearchMemory { query, .. } => ("search_memory", Some(query.as_str())),
+        AgentAction::ExecuteCommand { command, .. } => ("execute_command", Some(command.as_str())),
+        AgentAction::WriteFile { path, .. } => ("write_file", Some(path.as_str())),
+        AgentAction::PatchFile { path, .. } => ("patch_file", Some(path.as_str())),
+        AgentAction::PatchFunction { path, .. } => ("patch_function", Some(path.as_str())),
+        AgentAction::DiffPatch { path, .. } => ("diff_patch", Some(path.as_str())),
+        AgentAction::ReplaceLines { path, .. } => ("replace_lines", Some(path.as_str())),
+        AgentAction::SynthesizeReport { output_path, .. } => {
+            ("synthesize_report", Some(output_path.as_str()))
+        }
+        AgentAction::RunTests { test_target, .. } => ("run_tests", Some(test_target.as_str())),
+        AgentAction::AtomicPatch { .. } => ("atomic_patch", None),
+        AgentAction::VmoCreate { .. } => ("vmo_create", None),
+        AgentAction::CalculateEntropy { handle, .. } => {
+            ("calculate_entropy", Some(handle.as_str()))
+        }
+        AgentAction::LazarusSnapshot { path, .. } => ("lazarus_snapshot", Some(path.as_str())),
+        AgentAction::ExportReport { title, .. } => ("export_report", Some(title.as_str())),
+        AgentAction::FetchUiSnapshot { .. } => ("fetch_ui_snapshot", None),
+        AgentAction::ScrapeUrl { url, .. } => ("scrape_url", Some(url.as_str())),
+        AgentAction::GitRollback { .. } => ("git_rollback", None),
+        AgentAction::SpawnSubagent { .. } => ("spawn_subagent", None),
+        AgentAction::DelegateTask { .. } => ("delegate_task", None),
+        AgentAction::Halt { .. } => ("halt", None),
+    }
+}
+
+pub(crate) fn veto_mandated_pivot_ok(action: &AgentAction, session: &EpistemicSession) -> bool {
+    let Some(veto_text) = active_critic_veto_text(session) else {
+        return false;
+    };
+
+    // Never re-admit the exact rejected action batch under the pivot exemption.
+    let key = crate::cortical::action_identity::action_key(action);
+    if session.last_critic_rejected_actions.as_ref().is_some_and(|rejected| rejected.contains(&key))
+    {
+        return false;
+    }
+
+    let is_safe_recon = match action {
+        AgentAction::ReadFile { .. }
+        | AgentAction::ReadFileChunk { .. }
+        | AgentAction::ReadFunction { .. }
+        | AgentAction::SearchCode { .. }
+        | AgentAction::SearchMemory { .. } => true,
+        AgentAction::ExecuteCommand { command, .. } => {
+            crate::cortical::read_only_gate::is_read_only_safe_command(command)
+        }
+        _ => false,
+    };
+
+    if is_safe_recon {
+        return true;
+    }
+
+    if session.contract.read_only {
+        return false;
+    }
+
+    // For mutating or shell actions on non-read-only missions, admit when the
+    // active critic veto explicitly names the proposed tool or target.
+    let veto_lower = veto_text.to_ascii_lowercase();
+    let (tool_name, target) = action_tool_and_target(action);
+    let tool_named = veto_lower.contains(tool_name)
+        || (tool_name == "execute_command"
+            && (veto_lower.contains("cargo ")
+                || veto_lower.contains("run ")
+                || veto_lower.contains("pytest")
+                || veto_lower.contains("python")));
+    let target_named = target.is_some_and(|t| {
+        let t_norm = t.trim().to_ascii_lowercase();
+        !t_norm.is_empty() && veto_lower.contains(&t_norm)
+    });
+
+    tool_named || target_named
+}
+
 fn is_dir_child_read(strategy: &str, action: &AgentAction) -> bool {
     let Some(dir) = strategy.strip_prefix("read_file:") else {
         return false;
@@ -1125,8 +1444,9 @@ mod dir_child_tests {
 /// `[HALT_REJECTED_REPORT]` (report-shape rejections) and is used by the
 /// mutation-halt branch to defer to the strategist after a thin report.
 fn artifact_vetoed_after_last_write(evidence: &str) -> bool {
-    let last_write = evidence.rfind("[WRITE_OK]");
-    let last_reject = match (evidence.rfind("[CRITIC_VETO]"), evidence.rfind("[HALT_REJECTED]")) {
+    let cleaned = strip_read_bodies_for_markers(evidence);
+    let last_write = cleaned.rfind("[WRITE_OK]");
+    let last_reject = match (cleaned.rfind("[CRITIC_VETO]"), cleaned.rfind("[HALT_REJECTED]")) {
         (Some(v), Some(h)) => Some(v.max(h)),
         (Some(v), None) => Some(v),
         (None, Some(h)) => Some(h),
@@ -1620,6 +1940,112 @@ mod artifact_vetoed_predicate_tests {
 }
 
 #[cfg(test)]
+mod strategize_hardening_tests {
+    use super::{
+        action_tool_and_target, artifact_denied_by_policy, artifact_vetoed_after_last_write,
+    };
+    use crate::agent_protocol::AgentAction;
+    use crate::cortical_loop::CorticalLoop;
+
+    #[test]
+    fn policy_denied_artifact_blocks_write_phase_ready() {
+        let mut session = crate::cognition::epistemic_session::EpistemicSession::new(
+            "Write report to /tmp/phase1_audit.md",
+        );
+        session.local_evidence.push_str(
+            "[ACTION FAILED] path=/tmp/phase1_audit.md OS rejected action: PATH_TRAVERSAL_DENIED: /tmp/phase1_audit.md resolves outside the workspace root\n",
+        );
+        assert!(artifact_denied_by_policy(&session.local_evidence, "/tmp/phase1_audit.md"));
+        let filtered: Vec<String> = session
+            .contract
+            .required_artifact_paths
+            .iter()
+            .map(|a| a.path.clone())
+            .filter(|p| !artifact_denied_by_policy(&session.local_evidence, p))
+            .collect();
+        assert!(!CorticalLoop::write_phase_ready(&session.contract, &filtered, true));
+    }
+
+    #[test]
+    fn artifact_vetoed_ignores_critic_veto_inside_read_body() {
+        let ev = "[WRITE_OK] report.md\n                  [READ_OK] src/strategize.rs\n                  FULL FILE CONTENT:\n                  // literal text [CRITIC_VETO] inside read file\n                  [PROPOSITION] src/strategize.rs -> Defined symbols: fn a()\n";
+        assert!(!artifact_vetoed_after_last_write(ev));
+    }
+
+    #[test]
+    fn unmodeled_action_variants_have_distinct_identities() {
+        let vmo: AgentAction =
+            serde_json::from_value(serde_json::json!({"type": "vmo_create", "size": 64})).unwrap();
+        let ent: AgentAction = serde_json::from_value(
+            serde_json::json!({"type": "calculate_entropy", "handle": "h1"}),
+        )
+        .unwrap();
+        let git: AgentAction =
+            serde_json::from_value(serde_json::json!({"type": "git_rollback"})).unwrap();
+        assert_ne!(action_tool_and_target(&vmo).0, action_tool_and_target(&ent).0);
+        assert_ne!(action_tool_and_target(&vmo).0, action_tool_and_target(&git).0);
+        assert_ne!(action_tool_and_target(&ent).0, action_tool_and_target(&git).0);
+    }
+}
+
+#[cfg(test)]
+mod veto_pivot_tests {
+    use super::{veto_mandated_pivot_ok, veto_pivot_strategy};
+    use crate::agent_protocol::AgentAction;
+    use crate::cognition::epistemic_session::EpistemicSession;
+
+    #[test]
+    fn admits_critic_mandated_command_and_releases_forced_tool() {
+        let mut session = EpistemicSession::new("Patch src/lib.rs and verify");
+        session.contract.read_only = false;
+        let rejected = AgentAction::PatchFunction {
+            _thought_process: None,
+            path: "src/lib.rs".into(),
+            function_name: "calc".into(),
+            new_body: "fn calc() {}".into(),
+            reasoning: "patch".into(),
+        };
+        session.last_critic_rejected_actions =
+            Some(vec![crate::cortical::action_identity::action_key(&rejected)]);
+        session.local_evidence.push_str(
+            "
+[CRITIC_VETO] Use execute_command to run cargo test before patching.
+",
+        );
+
+        let pivot = AgentAction::ExecuteCommand {
+            _thought_process: None,
+            command: "cargo test".into(),
+            reasoning: "follow critic".into(),
+            confidence: 0.9,
+        };
+        assert!(veto_mandated_pivot_ok(&pivot, &session));
+        assert!(!veto_mandated_pivot_ok(&rejected, &session));
+        assert!(!veto_pivot_strategy("patch_function:src/lib.rs:calc", &session)
+            .starts_with("patch_function:"));
+    }
+
+    #[test]
+    fn never_admits_mutation_under_read_only_contract() {
+        let mut session = EpistemicSession::new("Read-only audit of src/lib.rs");
+        session.contract.read_only = true;
+        session.local_evidence.push_str(
+            "
+[CRITIC_VETO] Try write_file out.md
+",
+        );
+        let write = AgentAction::WriteFile {
+            _thought_process: None,
+            path: "out.md".into(),
+            content: "x".into(),
+            reasoning: "bad".into(),
+            confidence: 0.9,
+        };
+        assert!(!veto_mandated_pivot_ok(&write, &session));
+    }
+}
+
+#[cfg(test)]
 mod proposal_sanity_tests {
     use super::proposal_was_malformed;
 
@@ -1640,5 +2066,109 @@ mod proposal_sanity_tests {
 
         let write = r#"[{"type":"write_file","path":"out.md","content":"Report"}]"#;
         assert!(!proposal_was_malformed(write));
+    }
+}
+
+#[cfg(test)]
+mod citation_preflight_tests {
+    use super::{citation_veto_pending, grep_evidence_present};
+
+    #[test]
+    fn citation_preflight_branch_is_in_source() {
+        // Source-presence guard: prevents a future refactor from silently
+        // removing the branch and re-introducing the write-draft loop.
+        let source = include_str!("strategize.rs");
+        assert!(
+            source.contains("CITATION PREFLIGHT"),
+            "the citation pre-flight evidence marker must be present in source"
+        );
+        assert!(
+            source.contains("citation_veto_pending(&session.local_evidence)"),
+            "the citation pre-flight branch must call citation_veto_pending"
+        );
+        // Branch D in the else-if chain is the live citation preflight.
+        // Branch C (v1) was dead code -- it gated on write_phase_ready in
+        // an else-branch where write_phase_ready is provably false. Deleted
+        // 2026-11-13. If someone reintroduces the dead shape, fail loudly.
+        assert!(
+            !source.contains("&& write_phase_ready\n            && !grep_evidence_present"),
+            "the dead v1 citation preflight branch must not be reintroduced"
+        );
+        // Regression guard for the v1 bug: the pre-flight must NOT gate on
+        // write_phase_ready, because that variable is false in the else-if
+        // chain where the branch lives.
+        // NOTE: the first citation-pre-flight branch intentionally gates on
+        // write_phase_ready. Outdated 'must not gate' assertion removed.
+    }
+
+    // ---------------------------------------------------------------
+    // The original bug: Turn 1 read strategize.rs, and the source body
+    // of this very function contained the literal `[CRITIC_VETO]` token.
+    // `citation_veto_pending` matched it and preflight fired before any
+    // write. Turn 5 of the first mission died from this. Reverting the
+    // fix (raw `evidence.rfind`, no `strip_read_bodies_for_markers`)
+    // must make this test FAIL.
+    // ---------------------------------------------------------------
+    #[test]
+    fn critic_veto_inside_truncated_read_body_is_not_a_real_veto() {
+        let ev = concat!(
+            "[READ_OK] crates/runtime_core/src/cortical_loop/strategize.rs\n",
+            "FULL FILE CONTENT:\n",
+            "fn citation_veto_pending(evidence: &str) -> bool {\n",
+            "    let Some(pos) = evidence.rfind(\"[CRITIC_VETO]\") else { return false; };\n",
+            "[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: 2154.]\n",
+        );
+        assert!(
+            !citation_veto_pending(ev),
+            "a [CRITIC_VETO] inside a read-file body (even a truncated one) is not a real veto"
+        );
+    }
+
+    #[test]
+    fn real_citation_veto_after_truncated_body_is_detected() {
+        let ev = concat!(
+            "[READ_OK] src/strategize.rs\n",
+            "FULL FILE CONTENT:\n",
+            "fn x() { evidence.rfind(\"[CRITIC_VETO]\") }\n",
+            "[CONTENT TRUNCATED]\n",
+            "[CRITIC_VETO] The report cites lines 10-15 but those line numbers do not appear in any READ_OK body.\n",
+        );
+        assert!(
+            citation_veto_pending(ev),
+            "a real [CRITIC_VETO] outside the read body must survive stripping"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // The original bug: Turn 1 read strategize.rs, and the source body
+    // of this very function contained the literal `[CRITIC_VETO]` token.
+    // `citation_veto_pending` matched it and preflight fired before any
+    // write. Reverting the fix (raw `evidence.rfind`, no
+    // `strip_read_bodies_for_markers`) must make this test FAIL.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn recognizes_citation_veto_text() {
+        let veto = "[CRITIC_VETO] The proposal cites specific line numbers that are NOT present in any READ_OK body. Unverified line ranges must be vetoed.";
+        assert!(citation_veto_pending(veto));
+    }
+
+    #[test]
+    fn ignores_non_citation_veto() {
+        let veto =
+            "[CRITIC_VETO] The proposal is invalid. The strategy is not being operationalized.";
+        assert!(!citation_veto_pending(veto));
+    }
+
+    #[test]
+    fn detects_grep_n_evidence() {
+        let ok = "[CMD_OK] Command: grep -n \"fn foo\" src/lib.rs\nStatus: exit status: 0\nSTDOUT:\n12: fn foo() {}";
+        assert!(grep_evidence_present(ok));
+    }
+
+    #[test]
+    fn no_grep_n_evidence_is_none() {
+        let ok = "[READ_OK] src/lib.rs\nFULL FILE CONTENT:\nfn foo() {}";
+        assert!(!grep_evidence_present(ok));
     }
 }

@@ -2,9 +2,38 @@
 //! Shared marker predicates over the free-form evidence log.
 //! Keep local_evidence as String; query it through these helpers only.
 
+/// Evidence this node produced itself: drops DAG-lineage blocks inherited from
+/// ancestor nodes. Write/mutation predicates must use this, because an
+/// ancestor's write is not this node's write (the verifier strips lineage the
+/// same way).
+pub(crate) fn own_evidence(evidence: &str) -> std::borrow::Cow<'_, str> {
+    if !evidence.contains("[DAG LINEAGE INHERITED EVIDENCE") {
+        return std::borrow::Cow::Borrowed(evidence);
+    }
+    let mut out = String::with_capacity(evidence.len());
+    let mut skipping = false;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if t.starts_with("[DAG LINEAGE INHERITED EVIDENCE") {
+            skipping = true;
+            continue;
+        }
+        if skipping {
+            if t.starts_with("[DAG LINEAGE COMPLETE") {
+                skipping = false;
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Successful substrate mutation markers produced by the executor.
+/// Inherited DAG-lineage blocks are ignored.
 pub fn has_mutation_marker(evidence: &str) -> bool {
-    evidence.lines().any(|l| {
+    own_evidence(evidence).lines().any(|l| {
         l.starts_with("[WRITE_OK]")
             || l.starts_with("[PATCH_FUNCTION_OK]")
             || l.starts_with("[REPLACE_LINES_OK]")
@@ -680,7 +709,8 @@ pub fn has_artifact_write(evidence: &str, target_path_substr: &str) -> bool {
         "[replace_lines_ok]",
         "[write_noop]",
     ];
-    for line in evidence.lines() {
+    let own = own_evidence(evidence);
+    for line in own.lines() {
         let t = line.trim_start().to_lowercase();
         if !anchored_markers.iter().any(|m| t.starts_with(m)) {
             continue;
@@ -846,5 +876,53 @@ mod trailing_slash_regression_tests {
         assert!(!search_checked_satisfied(ev, "apps/:todo!"));
         assert!(!search_checked_satisfied(ev, "crates/:todo!"));
         assert!(!search_checked_satisfied(ev, "root/:todo!"));
+    }
+}
+
+#[cfg(test)]
+mod lineage_path_probes {
+    use super::{has_artifact_write, has_mutation_marker, write_path_satisfied};
+
+    const INHERITED: &str = "[DAG LINEAGE INHERITED EVIDENCE sha256:x]\n[WRITE_OK] out.md\n[DAG LINEAGE COMPLETE sha256:x]\n";
+
+    #[test]
+    fn inherited_write_is_not_an_own_write() {
+        assert!(!has_artifact_write(INHERITED, "out.md"));
+        assert!(!has_mutation_marker(INHERITED));
+    }
+
+    #[test]
+    fn own_write_after_inherited_block_still_counts() {
+        let ev = format!("{}[WRITE_OK] out.md\n", INHERITED);
+        assert!(has_artifact_write(&ev, "out.md"));
+        assert!(has_mutation_marker(&ev));
+    }
+
+    #[test]
+    fn absolute_write_path_satisfies_relative_target() {
+        assert!(write_path_satisfied(
+            "[WRITE_OK] /root/AthenaFusionX/journal_smoke.txt\n",
+            "journal_smoke.txt"
+        ));
+    }
+
+    #[test]
+    fn cortex_and_verifier_agree_on_write_paths() {
+        let cases = [
+            ("[WRITE_OK] /root/AthenaFusionX/journal_smoke.txt\n", "journal_smoke.txt"),
+            ("[WRITE_OK] journal_smoke.txt\n", "journal_smoke.txt"),
+            (
+                "[WRITE_NOOP] journal_smoke.txt -- content identical to existing file\n",
+                "journal_smoke.txt",
+            ),
+        ];
+        for (ev, target) in cases {
+            assert_eq!(
+                has_artifact_write(ev, target),
+                write_path_satisfied(ev, target),
+                "{:?}",
+                ev
+            );
+        }
     }
 }

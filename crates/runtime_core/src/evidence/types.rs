@@ -84,7 +84,14 @@ impl Evidence {
     ) -> Self {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
-        let provenance = if obs.raw.contains("[READ_OK]") || obs.raw.contains("[CMD_OK]") {
+        let provenance = if crate::evidence_markers::has_mutation_marker(&obs.raw)
+            || crate::evidence_markers::has_patch_satisfied_marker(&obs.raw)
+            || crate::evidence_markers::has_recon_marker(&obs.raw)
+            || obs.raw.contains("[WRITE_NOOP]")
+            || obs.raw.contains("[READ_FUNCTION_OK]")
+            || obs.raw.contains("[SEARCH_CHECKED_OK]")
+            || obs.raw.contains("[SEARCH_MEMORY_OK]")
+        {
             ProvenanceLevel::Observed { byte_count: obs.raw.len() }
         } else {
             ProvenanceLevel::Hypothesized { rationale: "Derived from executor stdout".to_string() }
@@ -140,8 +147,43 @@ impl Evidence {
             );
         }
 
-        if lower.contains("[cmd_ok]") || lower.contains("[read_ok]") || lower.contains("[write_ok]")
+        if lower.contains("[write_ok]")
+            || lower.contains("[write_noop]")
+            || lower.contains("[patch_function_ok]")
+            || lower.contains("[patch_idempotent_ok]")
+            || lower.contains("[diff_patch_ok]")
+            || lower.contains("[replace_lines_ok]")
         {
+            return if success {
+                (EvidenceKind::FileWrite, None)
+            } else {
+                (EvidenceKind::CommandFailure, None)
+            };
+        }
+
+        if lower.contains("[read_ok]")
+            || lower.contains("[read_chunk_ok]")
+            || lower.contains("[read_function_ok]")
+        {
+            return if success {
+                (EvidenceKind::FileRead, None)
+            } else {
+                (EvidenceKind::CommandFailure, None)
+            };
+        }
+
+        if lower.contains("[search_code_ok]")
+            || lower.contains("[search_checked_ok]")
+            || lower.contains("[search_memory_ok]")
+        {
+            return if success {
+                (EvidenceKind::PatternMatch, None)
+            } else {
+                (EvidenceKind::CommandFailure, None)
+            };
+        }
+
+        if lower.contains("[cmd_ok]") {
             return if success {
                 (EvidenceKind::CommandSuccess, None)
             } else {
@@ -157,6 +199,45 @@ impl Evidence {
             (EvidenceKind::PositiveSignal, None)
         } else {
             (EvidenceKind::Neutral, None)
+        }
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_all_executor_markers_as_observed() {
+        for marker in [
+            "[READ_CHUNK_OK] File: a.rs | Lines 1-5 of 5",
+            "[WRITE_OK] out.md",
+            "[WRITE_NOOP] out.md -- content identical to existing file",
+            "[PATCH_FUNCTION_OK] a.rs:f",
+            "[PATCH_IDEMPOTENT_OK] a.rs:f",
+            "[DIFF_PATCH_OK] a.rs",
+            "[REPLACE_LINES_OK] a.rs",
+            "[SEARCH_CODE_OK] Path: src | Query: 'x'",
+            "[SEARCH_MEMORY_OK] query",
+        ] {
+            let (kind, _) = Evidence::classify(marker, true);
+            let ev = Evidence::from_observation(
+                Observation {
+                    raw: marker.to_string(),
+                    source: "test".into(),
+                    success: true,
+                    latency_ms: 0,
+                    failure_kind: None,
+                },
+                kind,
+                BeliefVector::ZERO,
+                None,
+            );
+            assert!(
+                matches!(ev.provenance, ProvenanceLevel::Observed { .. }),
+                "expected Observed for {}",
+                marker
+            );
         }
     }
 }

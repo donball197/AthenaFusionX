@@ -916,9 +916,7 @@ fn declared_criteria_contract(
     if only_search_markers
         && has_analysis_signal
         && has_checked_search
-        && !conditions
-            .iter()
-            .any(|c| matches!(c, CompletionCondition::SourceCodeEvidenceRequired))
+        && !conditions.iter().any(|c| matches!(c, CompletionCondition::SourceCodeEvidenceRequired))
     {
         conditions.push(CompletionCondition::SourceCodeEvidenceRequired);
     }
@@ -929,9 +927,7 @@ fn declared_criteria_contract(
     // ANALYSIS_OK node can satisfy its physical criteria and terminate
     // without emitting the report its objective asked for.
     if criteria_text.contains("ANALYSIS_OK")
-        && !conditions
-            .iter()
-            .any(|c| matches!(c, CompletionCondition::HaltDelivered))
+        && !conditions.iter().any(|c| matches!(c, CompletionCondition::HaltDelivered))
     {
         conditions.push(CompletionCondition::HaltDelivered);
     }
@@ -2670,10 +2666,7 @@ CONSTRAINTS:
             c.required_artifact_paths
         );
         assert!(
-            !matches!(
-                c.conditions.as_slice(),
-                [CompletionCondition::CommandMarkerAcquired]
-            ),
+            !matches!(c.conditions.as_slice(), [CompletionCondition::CommandMarkerAcquired]),
             "must not collapse to CommandMarkerAcquired only: {:?}",
             c.conditions
         );
@@ -2702,15 +2695,11 @@ CONSTRAINTS:
             contract.conditions
         );
         assert!(
-            contract
-                .conditions
-                .iter()
-                .any(|c| matches!(c, CompletionCondition::HaltDelivered)),
+            contract.conditions.iter().any(|c| matches!(c, CompletionCondition::HaltDelivered)),
             "ANALYSIS_OK audit must require the halt deliverable; got {:?}",
             contract.conditions
         );
     }
-
 }
 
 #[cfg(test)]
@@ -2719,7 +2708,7 @@ mod surgical_recon_write_tests {
     #[test]
     fn residual_command_marker_does_not_block_recon_for_write_phase() {
         use crate::completion_engine::{
-            ArtifactSpec, CompletionCondition, SubgoalContract, SubgoalCompletionEngine,
+            ArtifactSpec, CompletionCondition, SubgoalCompletionEngine, SubgoalContract,
         };
         let contract = SubgoalContract {
             node_id: "task_1".into(),
