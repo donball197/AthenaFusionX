@@ -233,6 +233,12 @@ impl CorticalLoop {
                 // must not pass on length alone.
                 if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
                     let tail = reasoning.trim_end();
+                    // A trailing criterion token the report must carry is not prose.
+                    let tail = tail
+                        .strip_suffix("ANALYSIS_OK")
+                        .map(str::trim_end)
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or(tail);
                     let unclosed_backtick = reasoning.matches('`').count() % 2 != 0;
                     if unclosed_backtick || !tail.ends_with(['.', ')', '!', '`', '"']) {
                         defects.push(format!(

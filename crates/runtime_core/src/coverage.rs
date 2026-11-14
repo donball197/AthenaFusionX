@@ -22,6 +22,11 @@ pub struct CoverageLedger {
 }
 
 impl CoverageLedger {
+    /// The file this ledger currently describes, if a read has been ingested.
+    pub fn current_path(&self) -> Option<&str> {
+        self.current_path.as_deref()
+    }
+
     /// Idempotent: replayed evidence (reflection blocks repeat markers) is safe.
     pub fn ingest(&mut self, evidence: &str) {
         let lines: Vec<&str> = evidence.lines().collect();

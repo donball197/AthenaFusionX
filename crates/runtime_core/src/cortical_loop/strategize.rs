@@ -22,6 +22,26 @@ fn proposal_was_malformed(raw: &str) -> bool {
         || raw.contains("tool to=")
 }
 
+/// Strategist parse faults recorded since the last successful `[..._OK]` evidence.
+fn consecutive_parse_faults(evidence: &str) -> usize {
+    let clean = strip_read_bodies_for_markers(evidence);
+    let mut n = 0usize;
+    for l in clean.lines() {
+        let t = l.trim_start();
+        if t.starts_with("[PARSE_FAULT]") {
+            n += 1;
+        } else if t
+            .strip_prefix('[')
+            .and_then(|r| r.split(']').next())
+            .map(|m| m.ends_with("_OK"))
+            .unwrap_or(false)
+        {
+            n = 0;
+        }
+    }
+    n
+}
+
 impl CorticalLoop {
     pub(super) async fn handle_strategize(
         &mut self,
@@ -606,7 +626,9 @@ impl CorticalLoop {
             // Synthesize a halt ONLY from prose-only output. A JSON proposal
             // that failed schema validation must fall through to the
             // parse-fault recovery path instead of manufacturing a halt.
-            if crate::cortical::util::should_synthesize_halt(&raw_proposal) {
+            if status == ContractStatus::Satisfied
+                && crate::cortical::util::should_synthesize_halt(&raw_proposal)
+            {
                 actions.push(AgentAction::Halt {
                     _thought_process: None,
                     reasoning: "Model declared task complete".to_string(),
@@ -726,6 +748,30 @@ impl CorticalLoop {
                 _thought_process: None,
                 reasoning: auto_halt_report_aggregated(&session.local_evidence),
             }];
+        }
+
+        // DETERMINISTIC COVERAGE FALLBACK: after two consecutive parse faults, when
+        // the ledger already dictates the next action, issue it directly instead of
+        // burning more LLM calls and decaying a healthy hypothesis.
+        if actions.is_empty() && consecutive_parse_faults(&session.local_evidence) >= 2 {
+            if let (Some((gap_s, gap_e)), Some(gap_path)) =
+                (coverage_gap, session.coverage.current_path().map(|p| p.to_string()))
+            {
+                let gap_len = (gap_e as i64 - gap_s as i64 + 1).clamp(1, 400);
+                if let Ok(fallback) = serde_json::from_value::<AgentAction>(serde_json::json!({
+                    "type": "read_file_chunk",
+                    "path": gap_path,
+                    "start_line": gap_s,
+                    "max_lines": gap_len,
+                    "reasoning": "Deterministic coverage fallback after repeated strategist parse faults."
+                })) {
+                    self.log(format!(
+                        "\x1b[1;36m>> [CORTEX] Strategist failed to emit a parsable action twice; issuing the ledger-mandated read_file_chunk {}-{} of `{}` directly.\x1b[0m",
+                        gap_s, gap_e, gap_path
+                    ));
+                    actions.push(fallback);
+                }
+            }
         }
 
         if actions.is_empty() {
@@ -2170,5 +2216,21 @@ mod citation_preflight_tests {
     fn no_grep_n_evidence_is_none() {
         let ok = "[READ_OK] src/lib.rs\nFULL FILE CONTENT:\nfn foo() {}";
         assert!(!grep_evidence_present(ok));
+    }
+}
+
+#[cfg(test)]
+mod parse_fault_count_tests {
+    use super::consecutive_parse_faults;
+
+    #[test]
+    fn counts_faults_since_the_last_ok_marker() {
+        let ev = "[READ_OK] a.rs\nFULL FILE CONTENT:\nx\n[PROPOSITION] a.rs -> y\n[PARSE_FAULT] one\n[PARSE_FAULT_ACTION] hint\n[PARSE_FAULT] two\n";
+        assert_eq!(consecutive_parse_faults(ev), 2);
+        let ev2 = format!(
+            "{}[READ_CHUNK_OK] File: a.rs | Lines 1-2 of 9\nCONTENT:\ny\n[PROPOSITION] File: -> z\n",
+            ev
+        );
+        assert_eq!(consecutive_parse_faults(&ev2), 0);
     }
 }

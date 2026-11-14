@@ -3,6 +3,8 @@ set -e
 
 # --- 1. Target & Profile Configuration ---
 BUILD_PROFILE="debug"
+BUILD_PID=""
+DAEMON_PID=""
 CARGO_TOOLCHAIN="+nightly"
 RELEASE_FLAG=""
 TARGET_DIR="./target/debug"
@@ -75,7 +77,7 @@ spinner() {
 # --- 5. Quiet Compilation with Live Animation ---
 echo -e "\x1b[36m[1/3] Compiling binaries (${BUILD_PROFILE})...\x1b[0m"
 
-cargo ${CARGO_TOOLCHAIN} build ${RELEASE_FLAG} --bin nexus-ide-backend --bin nexus-cli > /tmp/nexus_build.log 2>&1 &
+cargo ${CARGO_TOOLCHAIN} build ${RELEASE_FLAG} --bin nexus-ide-backend --bin nexus-cli > /tmp/nexus_build.log 2>&1 9>&- &
 BUILD_PID=$!
 
 spinner $BUILD_PID "Verifying & building backend and CLI"
@@ -104,12 +106,16 @@ fi
 ls -lh --time-style=full-iso "${TARGET_DIR}/nexus-ide-backend" "${TARGET_DIR}/nexus-cli"
 sha256sum "${TARGET_DIR}/nexus-ide-backend" "${TARGET_DIR}/nexus-cli"
 if [ -f daemon.log ]; then mv daemon.log "daemon.$(date +%s).log"; fi
-"${TARGET_DIR}/nexus-ide-backend" 9>&- > daemon.log 2>&1 &
+stdbuf -oL -eL "${TARGET_DIR}/nexus-ide-backend" 9>&- > daemon.log 2>&1 &
 DAEMON_PID=$!
 
 cleanup() {
     tput cnorm 2>/dev/null || true
     echo -e "\n\x1b[31m>> Shutting down Background Daemon (PID: $DAEMON_PID)...\x1b[0m"
+    pkill -f "${TARGET_DIR}/nexus-cli" 2>/dev/null || true
+    if [ -n "${BUILD_PID:-}" ] && kill -0 "$BUILD_PID" 2>/dev/null; then
+        kill -TERM "$BUILD_PID" 2>/dev/null || true
+    fi
     if kill -0 "$DAEMON_PID" 2>/dev/null; then
         kill -TERM "$DAEMON_PID" 2>/dev/null || true
         wait "$DAEMON_PID" 2>/dev/null || true
@@ -143,4 +149,4 @@ fi
 
 # --- 8. Launch Interactive CLI Client ---
 echo -e "\x1b[36m[3/3] Launching Interactive CLI Client...\x1b[0m"
-"${TARGET_DIR}/nexus-cli" 9>&-
+"${TARGET_DIR}/nexus-cli" 9>&- | tee -a mission.log
