@@ -32,11 +32,13 @@
 //! gate.
 
 use anyhow::{anyhow, bail, Result};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub struct MirrorBridge {
     endpoint: String,
     timeout: Duration,
+    workspace_root: Option<PathBuf>,
 }
 
 impl MirrorBridge {
@@ -44,7 +46,16 @@ impl MirrorBridge {
         Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             timeout: Duration::from_secs(900),
+            workspace_root: None,
         }
+    }
+
+    pub fn with_workspace_root(mut self, root: impl AsRef<Path>) -> Result<Self> {
+        let canonical = std::fs::canonicalize(root.as_ref()).map_err(|error| {
+            anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({error})")
+        })?;
+        self.workspace_root = Some(canonical);
+        Ok(self)
     }
 
     /// Ask the sidecar to produce the deliverable at `target_path`.
@@ -58,9 +69,22 @@ impl MirrorBridge {
         mission: &str,
         evidence_corpus: &str,
     ) -> Result<()> {
+        let (fs_target, prompt_target) = match &self.workspace_root {
+            Some(root) => {
+                let resolved = crate::executor::resolve_write_path_in(root, target_path)?;
+                let rel = resolved
+                    .strip_prefix(root)
+                    .unwrap_or(&resolved)
+                    .to_string_lossy()
+                    .into_owned();
+                (resolved, rel)
+            }
+            None => (PathBuf::from(target_path), target_path.to_string()),
+        };
+
         // Capture the original contents so a stale file cannot be
         // mistaken for a successful delegated write.
-        let before = match tokio::fs::read(target_path).await {
+        let before = match tokio::fs::read(&fs_target).await {
             Ok(contents) => Some(contents),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
@@ -74,12 +98,12 @@ impl MirrorBridge {
             "You are a subagent in the AthenaFusionX audit pipeline.\n\
              Your ONLY task: write the deliverable file.\n\n\
              MISSION:\n{mission}\n\n\
-             TARGET FILE: {target_path}\n\
+             TARGET FILE: {prompt_target}\n\
              (relative to workspace root)\n\n\
              EVIDENCE GATHERED BY THE PARENT AGENT:\n\
              ---\n{evidence_corpus}\n---\n\n\
              INSTRUCTIONS:\n\
-             - Use the `write` tool to create {target_path}.\n\
+             - Use the `write` tool to create {prompt_target}.\n\
              - Content must be complete prose. No code blocks.\n\
              - Reference functions by name only (backticks ok).\n\
              - Do NOT cite line numbers.\n\
@@ -116,7 +140,7 @@ impl MirrorBridge {
 
         // HTTP 204 means the agent turn completed, not that the requested
         // file was correctly written. Verify the actual target independently.
-        let after = tokio::fs::read(target_path).await.map_err(|error| {
+        let after = tokio::fs::read(&fs_target).await.map_err(|error| {
             anyhow!("Mirror turn completed but target {target_path} is unreadable: {error}")
         })?;
 
@@ -260,5 +284,21 @@ mod tests {
             .expect_err("non-204 response must fail");
 
         assert!(error.to_string().contains("HTTP 502"));
+    }
+
+    #[tokio::test]
+    async fn rejects_outside_workspace_when_contained() {
+        let directory = tempfile::tempdir().expect("temporary workspace");
+        let bridge = MirrorBridge::new("http://127.0.0.1:1")
+            .with_workspace_root(directory.path())
+            .expect("canonical workspace");
+
+        for outside in ["/tmp/outside.md", "../outside.md"] {
+            let error = bridge
+                .delegate_write(outside, "write a report", "test evidence")
+                .await
+                .expect_err("outside path must be rejected before HTTP");
+            assert!(error.to_string().contains("PATH_TRAVERSAL_DENIED"), "got: {error}");
+        }
     }
 }

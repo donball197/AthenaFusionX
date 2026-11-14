@@ -30,97 +30,155 @@ pub struct RoboticExecutor {
     pub episode: EpisodeContext,
 }
 
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component),
+        }
+    }
+    normalized
+}
+
+fn canonicalize_existing_ancestor(p: &Path) -> Result<PathBuf> {
+    let mut curr = p;
+    loop {
+        match std::fs::symlink_metadata(curr) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                curr = curr.parent().ok_or_else(|| {
+                    anyhow!("PATH_TRAVERSAL_DENIED: {} has no existing ancestor", p.display())
+                })?;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let ancestor_canon = std::fs::canonicalize(curr)?;
+    let suffix = p.strip_prefix(curr)?;
+    Ok(normalize_lexically(&ancestor_canon.join(suffix)))
+}
+
 fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
     if let Ok(c) = std::fs::canonicalize(p) {
         return Ok(c);
     }
-    let mut curr = p.to_path_buf();
-    let mut components = Vec::new();
-    while !curr.exists() {
-        if let Some(file_name) = curr.file_name() {
-            components.push(file_name.to_os_string());
-        }
-        if let Some(parent) = curr.parent() {
-            curr = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-    let ancestor_canon = std::fs::canonicalize(&curr)?;
-    let mut safe_path = ancestor_canon;
-    for part in components.into_iter().rev() {
-        safe_path.push(part);
+    let first_pass = canonicalize_existing_ancestor(p)?;
+    canonicalize_existing_ancestor(&first_pass)
+}
+
+fn resolve_workspace_root() -> Result<PathBuf> {
+    std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))
+}
+
+pub(crate) fn resolve_write_path_in(workspace_root: &Path, path: &str) -> Result<PathBuf> {
+    let raw_path = Path::new(path);
+    let target = if raw_path.is_absolute() {
+        raw_path.to_path_buf()
+    } else {
+        workspace_root.join(raw_path)
+    };
+    let safe_path = canonicalize_or_parent(&target)
+        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+    if !safe_path.starts_with(workspace_root) {
+        return Err(anyhow!(
+            "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
+            path
+        ));
     }
     Ok(safe_path)
 }
 
 pub fn sanitize(path: &str) -> Result<PathBuf> {
-    if path.starts_with("/tmp/") {
-        return Ok(Path::new(path).to_path_buf());
-    }
+    let workspace_root = resolve_workspace_root()?;
+    sanitize_in(&workspace_root, path)
+}
 
-    let workspace_root = std::env::current_dir()
-        .and_then(std::fs::canonicalize)
-        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
+pub(crate) fn sanitize_in(workspace_root: &Path, path: &str) -> Result<PathBuf> {
+    let mut normalized_path = match Path::new(path).strip_prefix(workspace_root) {
+        Ok(rel) => rel.to_string_lossy().into_owned(),
+        Err(_) => path.to_string(),
+    };
 
-    let mut normalized_path = path.to_string();
-
-    if let Some(ws_str) = workspace_root.to_str() {
-        if normalized_path.starts_with(ws_str) {
-            normalized_path =
-                normalized_path.trim_start_matches(ws_str).trim_start_matches('/').to_string();
+    if !Path::new(&normalized_path).is_absolute() {
+        if normalized_path.starts_with("src/") {
+            normalized_path = format!("crates/runtime_core/{}", normalized_path);
+        } else if normalized_path.starts_with("runtime_core/")
+            || normalized_path.starts_with("nexus_substrate/")
+            || normalized_path.starts_with("nexus_model_hub/")
+            || normalized_path.starts_with("nexus_search/")
+            || normalized_path.starts_with("memory_graph/")
+            || normalized_path.starts_with("protocol/")
+            || normalized_path.starts_with("executive_cortex/")
+        {
+            normalized_path = format!("crates/{}", normalized_path);
+        } else if normalized_path.starts_with("ide_backend/")
+            || normalized_path.starts_with("cli/")
+            || normalized_path.starts_with("node/")
+        {
+            normalized_path = format!("bins/{}", normalized_path);
         }
-    }
-
-    if normalized_path.starts_with("src/") {
-        normalized_path = format!("crates/runtime_core/{}", normalized_path);
-    } else if normalized_path.starts_with("runtime_core/")
-        || normalized_path.starts_with("nexus_substrate/")
-        || normalized_path.starts_with("nexus_model_hub/")
-        || normalized_path.starts_with("nexus_search/")
-        || normalized_path.starts_with("memory_graph/")
-        || normalized_path.starts_with("protocol/")
-        || normalized_path.starts_with("executive_cortex/")
-    {
-        normalized_path = format!("crates/{}", normalized_path);
-    } else if normalized_path.starts_with("ide_backend/")
-        || normalized_path.starts_with("cli/")
-        || normalized_path.starts_with("node/")
-    {
-        normalized_path = format!("bins/{}", normalized_path);
     }
 
     let p = Path::new(&normalized_path);
     let target = if p.is_absolute() { p.to_path_buf() } else { workspace_root.join(p) };
 
-    if !target.exists() {
+    let resolved_target = canonicalize_or_parent(&target)
+        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+    if !resolved_target.starts_with(workspace_root) {
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
+    }
+
+    let chosen = if target.exists() {
+        target
+    } else if !p.is_absolute() {
         let crate_fallback = workspace_root.join("crates/runtime_core/src").join(p);
         if crate_fallback.exists() {
-            return Ok(crate_fallback);
-        }
-
-        if let Some(filename) = p.file_name().and_then(|f| f.to_str()) {
+            crate_fallback
+        } else if let Some(filename) = p.file_name().and_then(|f| f.to_str()) {
             let lower = filename.to_lowercase();
-            if let Ok(entries) = std::fs::read_dir(&workspace_root) {
+            let mut matched = None;
+            if let Ok(entries) = std::fs::read_dir(workspace_root) {
                 for entry in entries.flatten() {
                     if entry.file_name().to_string_lossy().to_lowercase() == lower {
-                        return Ok(entry.path());
+                        matched = Some(entry.path());
+                        break;
                     }
                 }
             }
+            match matched {
+                Some(m) => m,
+                None => {
+                    return Err(anyhow!(
+                        "PATH_NOT_FOUND: {} does not exist in the workspace (tried {}, crate-relative, and filename search)",
+                        path,
+                        target.display()
+                    ));
+                }
+            }
+        } else {
+            return Err(anyhow!(
+                "PATH_NOT_FOUND: {} does not exist in the workspace (tried {})",
+                path,
+                target.display()
+            ));
         }
-
+    } else {
         return Err(anyhow!(
-            "PATH_NOT_FOUND: {} does not exist in the workspace (tried {}, crate-relative, and filename search)",
-            path,
-            target.display()
+            "PATH_NOT_FOUND: {} does not exist in the workspace",
+            path
         ));
-    }
+    };
 
     let canonical =
-        canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+        std::fs::canonicalize(&chosen).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
 
-    if !canonical.starts_with(&workspace_root) {
+    if !canonical.starts_with(workspace_root) {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
     }
 
@@ -409,28 +467,8 @@ impl RoboticExecutor {
                 Ok(res)
             }
             MotorAction::WriteFile { path, content } => {
-                let raw_path = Path::new(&path);
-
-                let workspace_root =
-                    std::env::current_dir().and_then(std::fs::canonicalize).map_err(|e| {
-                        anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e)
-                    })?;
-
-                let target = if raw_path.is_absolute() {
-                    raw_path.to_path_buf()
-                } else {
-                    workspace_root.join(raw_path)
-                };
-
-                let safe_path = canonicalize_or_parent(&target)
-                    .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
-
-                if !safe_path.starts_with(&workspace_root) {
-                    return Err(anyhow!(
-                        "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
-                        path
-                    ));
-                }
+                let workspace_root = resolve_workspace_root()?;
+                let safe_path = resolve_write_path_in(&workspace_root, &path)?;
 
                 if let Ok(existing) = tokio::fs::read_to_string(&safe_path).await {
                     if existing == content {
@@ -441,7 +479,7 @@ impl RoboticExecutor {
                     }
                 }
                 if let Some(parent) = safe_path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
+                    tokio::fs::create_dir_all(parent).await?;
                 }
                 tokio::fs::write(&safe_path, &content).await?;
                 _dist.broadcast_file_shift(&path, "write_file");
@@ -1152,31 +1190,11 @@ impl RoboticExecutor {
                 .await
                 {
                     Ok(markdown) => {
-                        let raw_output_path = Path::new(&output_path);
-                        let workspace_root = std::env::current_dir()
-                            .and_then(std::fs::canonicalize)
-                            .map_err(|e| {
-                                anyhow!(
-                                    "PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})",
-                                    e
-                                )
-                            })?;
-                        let output_target = if raw_output_path.is_absolute() {
-                            raw_output_path.to_path_buf()
-                        } else {
-                            workspace_root.join(raw_output_path)
-                        };
-                        let safe_path = canonicalize_or_parent(&output_target)
-                            .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", output_path))?;
-                        if !safe_path.starts_with(&workspace_root) {
-                            return Err(anyhow!(
-                                "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
-                                output_path
-                            ));
-                        }
+                        let workspace_root = resolve_workspace_root()?;
+                        let safe_path = resolve_write_path_in(&workspace_root, &output_path)?;
 
                         if let Some(parent) = safe_path.parent() {
-                            let _ = tokio::fs::create_dir_all(parent).await;
+                            tokio::fs::create_dir_all(parent).await?;
                         }
                         tokio::fs::write(&safe_path, markdown).await?;
                         _dist.broadcast_file_shift(&output_path, "synthesize_report");
@@ -1225,5 +1243,67 @@ mod search_query_validator_tests {
     fn normal_query_is_ok() {
         assert!(validate_search_query("unimplemented!").is_ok());
         assert!(validate_search_query("fn main").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod path_containment_tests {
+    use super::{resolve_write_path_in, sanitize_in};
+
+    #[test]
+    fn sanitize_rejects_tmp_traversal_and_absolute_outside() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        let outside = tempfile::NamedTempFile::new().expect("outside file");
+
+        assert!(sanitize_in(&root, "/tmp/../etc/passwd").is_err());
+        assert!(sanitize_in(&root, outside.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn sanitize_rejects_crate_fallback_traversal() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        std::fs::create_dir_all(root.join("crates/runtime_core/src/cortical")).unwrap();
+
+        let err = sanitize_in(&root, "cortical/../../../../../../etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("PATH_TRAVERSAL_DENIED"), "got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sanitize_rejects_root_symlink_filename_fallback() {
+        let parent = tempfile::tempdir().expect("parent");
+        let workspace = parent.path().join("ws");
+        std::fs::create_dir(&workspace).unwrap();
+        let root = std::fs::canonicalize(&workspace).unwrap();
+        let outside = parent.path().join("secret.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("secret.txt")).unwrap();
+
+        let err = sanitize_in(&root, "nested/secret.txt").unwrap_err();
+        assert!(err.to_string().contains("PATH_TRAVERSAL_DENIED"), "got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_write_rejects_dangling_symlink_and_missing_parent_symlink_escape() {
+        let parent = tempfile::tempdir().expect("parent");
+        let workspace = parent.path().join("ws");
+        let outside = parent.path().join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let root = std::fs::canonicalize(&workspace).unwrap();
+
+        let dangling_target = outside.join("dangling.txt");
+        std::os::unix::fs::symlink(&dangling_target, root.join("dangling.txt")).unwrap();
+        assert!(resolve_write_path_in(&root, "dangling.txt").is_err());
+
+        std::os::unix::fs::symlink(&outside, root.join("escape_dir")).unwrap();
+        assert!(resolve_write_path_in(&root, "missing/../escape_dir/pwn.txt").is_err());
+        assert!(resolve_write_path_in(&root, "missing/../../escape.txt").is_err());
+
+        let ok = resolve_write_path_in(&root, "nested/deliverable.md").unwrap();
+        assert_eq!(ok, root.join("nested/deliverable.md"));
     }
 }
