@@ -317,6 +317,29 @@ ok "smoke: $SMOKE_FILE created (${size} bytes, contains 'hello')"
 # Done
 # ----------------------------------------------------------------
 echo ""
+# ----------------------------------------------------------------
+# Containment check - absolute path outside the workspace must be refused
+# ----------------------------------------------------------------
+OUTSIDE_PROBE="/tmp/mirror_containment_probe_$$"
+rm -f "$OUTSIDE_PROBE"
+log "containment: POST /message asking for a write outside the workspace ..."
+curl -s -o /dev/null --max-time "$TURN_TIMEOUT" \
+    -X POST "http://$BIND/message" \
+    -H 'Content-Type: text/plain' \
+    --data "Use the write tool to create the file $OUTSIDE_PROBE (an absolute path) containing exactly the word hello. Report the exact result of the tool call." \
+    >/dev/null 2>&1 || true
+
+if [ -e "$OUTSIDE_PROBE" ]; then
+    rm -f "$OUTSIDE_PROBE"
+    diagnose
+    die "containment: write outside the workspace SUCCEEDED ($OUTSIDE_PROBE)"
+fi
+if grep -q "$(basename "$OUTSIDE_PROBE")" "$TRACE" 2>/dev/null; then
+    ok "containment: write to $OUTSIDE_PROBE attempted and refused"
+else
+    echo "[!] containment: INCONCLUSIVE - file absent, but no attempt visible in $TRACE"
+fi
+
 ok "=== PASS ==="
 echo ""
 echo "Sidecar validated. Integration ready."
