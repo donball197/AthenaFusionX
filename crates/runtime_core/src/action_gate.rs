@@ -2,6 +2,56 @@ use crate::motor_cortex::{MotorAction, MotorCommand};
 use crate::policy::ExecutionSandbox;
 use anyhow::{anyhow, Result};
 
+/// Parse the most recent `[CONTRACT_FIRST_FORCED] search_code:<path>:<query>`
+/// line from evidence. Returns `None` when no such line exists or when
+/// either component is empty after trimming.
+pub fn forced_search_from_evidence(evidence: &str) -> Option<(String, String)> {
+    evidence.lines().rev().find_map(|line| {
+        let stripped = line
+            .trim_start()
+            .strip_prefix("[CONTRACT_FIRST_FORCED] search_code:")?;
+        let (path, query) = stripped.split_once(':')?;
+        let path = path.trim();
+        let query = query.trim();
+        if path.is_empty() || query.is_empty() {
+            return None;
+        }
+        Some((path.to_string(), query.to_string()))
+    })
+}
+
+/// Enforce that a `SearchCode` action matches the currently-forced
+/// `search_code` strategy in evidence.
+///
+/// Skipped when:
+/// * no forced `search_code` line exists in evidence,
+/// * the forced target is already satisfied by a `[SEARCH_CODE_OK]`
+///   block in evidence (so the cortex can move on to other work), or
+/// * the action is not a `SearchCode`.
+///
+/// Returns `ACTION_GATE_STRATEGY_MISMATCH` on path or query divergence.
+pub fn check_forced_search(evidence: &str, action: &MotorAction) -> Result<()> {
+    let Some((expected_path, expected_query)) = forced_search_from_evidence(evidence) else {
+        return Ok(());
+    };
+    let target = format!("{}:{}", expected_path, expected_query);
+    if crate::evidence_markers::search_checked_satisfied(evidence, &target) {
+        return Ok(());
+    }
+    if let MotorAction::SearchCode { path, query } = action {
+        if path != &expected_path || query != &expected_query {
+            return Err(anyhow!(
+                "ACTION_GATE_STRATEGY_MISMATCH: forced strategy requires search_code:{}:{}; got search_code:{}:{}",
+                expected_path,
+                expected_query,
+                path,
+                query
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub struct ActionGate {
     sandbox: ExecutionSandbox,
 }
@@ -176,10 +226,119 @@ impl ActionGate {
         }
         Ok(())
     }
+
+    /// Approve a motor command, additionally enforcing that a forced
+    /// `search_code` strategy is followed exactly.
+    ///
+    /// Delegates to `approve` for every check other than the forced-search
+    /// match, so non-search actions and non-forced searches behave
+    /// identically to the plain `approve` path.
+    ///
+    /// Rejection travels through the same `Result<()>` channel as every
+    /// other `approve` failure. Both current call sites
+    /// (`sovereign_core::execute_action` and
+    /// `CorticalLoop::execute_actions`) handle `Err` by logging,
+    /// adding an observation node, and continuing — no new termination
+    /// behavior is introduced.
+    pub fn approve_with_forced_search(
+        &self,
+        command: &MotorCommand,
+        evidence: &str,
+    ) -> Result<()> {
+        check_forced_search(evidence, &command.action)?;
+        self.approve(command)
+    }
 }
 
 impl Default for ActionGate {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod forced_search_gate_tests {
+    use super::{check_forced_search, forced_search_from_evidence};
+    use crate::motor_cortex::MotorAction;
+
+    fn search(path: &str, query: &str) -> MotorAction {
+        MotorAction::SearchCode {
+            path: path.to_string(),
+            query: query.to_string(),
+        }
+    }
+
+    #[test]
+    fn matching_path_and_query_are_accepted() {
+        let evidence = "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n";
+        let action = search("Cargo.toml", "workspace");
+        assert!(check_forced_search(evidence, &action).is_ok());
+    }
+
+    #[test]
+    fn path_mismatch_is_rejected() {
+        let evidence = "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n";
+        let action = search("vendor/external_repo", "workspace");
+        let err = check_forced_search(evidence, &action).unwrap_err();
+        assert!(err.to_string().contains("ACTION_GATE_STRATEGY_MISMATCH"));
+    }
+
+    #[test]
+    fn query_mismatch_is_rejected() {
+        let evidence = "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n";
+        let action = search("Cargo.toml", "HAND.toml");
+        let err = check_forced_search(evidence, &action).unwrap_err();
+        assert!(err.to_string().contains("ACTION_GATE_STRATEGY_MISMATCH"));
+    }
+
+    #[test]
+    fn satisfied_target_does_not_block_a_different_search() {
+        let evidence = concat!(
+            "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n",
+            "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/Cargo.toml | Query: 'workspace'\nMATCHES:\n1:[workspace]\n",
+        );
+        let action = search("src", "todo!");
+        assert!(check_forced_search(evidence, &action).is_ok());
+    }
+
+    #[test]
+    fn no_forced_line_leaves_action_unchanged() {
+        let action = search("vendor/external_repo", "anything");
+        assert!(check_forced_search("ordinary evidence\n", &action).is_ok());
+    }
+
+    #[test]
+    fn non_search_action_with_forced_line_is_unaffected() {
+        let evidence = "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n";
+        let action = MotorAction::ReadFile { path: "Cargo.toml".to_string() };
+        assert!(check_forced_search(evidence, &action).is_ok());
+    }
+
+    #[test]
+    fn extraction_reads_most_recent_forced_line() {
+        let evidence = concat!(
+            "[CONTRACT_FIRST_FORCED] search_code:old/path:oldterm\n",
+            "some other evidence\n",
+            "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n",
+            "more evidence\n",
+        );
+        assert_eq!(
+            forced_search_from_evidence(evidence),
+            Some(("Cargo.toml".to_string(), "workspace".to_string()))
+        );
+    }
+
+    #[test]
+    fn extraction_handles_dot_root_form() {
+        let evidence = "[CONTRACT_FIRST_FORCED] search_code:.:todo!\n";
+        assert_eq!(
+            forced_search_from_evidence(evidence),
+            Some((".".to_string(), "todo!".to_string()))
+        );
+    }
+
+    #[test]
+    fn extraction_returns_none_without_forced_line() {
+        assert_eq!(forced_search_from_evidence("ordinary evidence\n"), None);
     }
 }

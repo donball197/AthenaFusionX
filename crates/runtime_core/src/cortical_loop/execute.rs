@@ -205,7 +205,10 @@ impl CorticalLoop {
             let motor_cmd =
                 MotorCortex::translate(&intent, None, action.clone(), capability, proposal.clone());
 
-            if let Err(gate_err) = self.action_gate.approve(&motor_cmd) {
+            if let Err(gate_err) = self
+                .action_gate
+                .approve_with_forced_search(&motor_cmd, &session.local_evidence)
+            {
                 mutation_paths.truncate(mutation_paths_checkpoint);
                 rust_files_mutated = rust_files_mutated_checkpoint;
                 self.log(format!("\x1b[1;31m>> [ACTION GATE REJECTED]: {}\x1b[0m", gate_err));

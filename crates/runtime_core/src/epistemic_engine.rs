@@ -1107,16 +1107,16 @@ Examples:
 - search_code:<path>:<query> -> emit search_code with `path` EXACTLY equal to <path> and `query` EXACTLY equal to <query>.
   IMPORTANT: <path> is the search scope (directory or file) and <query> is the text/pattern to search for.
   NEVER append <query> to <path>. NEVER convert `search_code:<path>:<query>` into `<path>/<query>`.
-  Example: `search_code:vendor/external_repo:HAND.toml` MUST become
-  `[{{"type":"search_code","path":"vendor/external_repo","query":"HAND.toml","reasoning":"scope search for the criterion term"}}]`.
+  Example: `search_code:<target-path>:<term>` MUST become
+  `[{{"type":"search_code","path":"<target-path>","query":"<term>","reasoning":"scope search for the criterion term"}}]`.
   IMPORTANT: for a `search_code:<dir>:<query>` strategy, `path` MUST be
   exactly `<dir>` and MUST NOT be extended with a filename, subdirectory,
   or file extension. The `query` is the substring to search for and MAY
   itself look like a filename or path -- when it does, search the whole
   scope and let the pattern match any file recursively. Example: for the
-  strategy `search_code:vendor/external_repo:HAND.toml`, the correct action is
-  {{"type":"search_code","path":"vendor/external_repo","query":"HAND.toml"}}.
-  Wrong: {{"type":"search_code","path":"vendor/external_repo/HAND.toml","query":"HAND.toml"}}.
+  strategy `search_code:<target-path>:<term>`, the correct action is
+  {{"type":"search_code","path":"<target-path>","query":"<term>"}}.
+  Wrong: {{"type":"search_code","path":"<target-path>/<term>","query":"<term>"}}.
 - read_file_chunk:<path> -> emit read_file_chunk for that exact path.
 - read_file:<path> -> emit read_file for that exact path.
 - execute_command:<command> -> emit execute_command with that exact command.

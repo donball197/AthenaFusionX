@@ -91,6 +91,35 @@ pub(crate) fn looks_like_workspace_path(s: &str) -> bool {
         || s.starts_with('/')
         || s.contains('/')
         || matches!(s, "crates" | "bins" | "src" | "vendor" | "apps" | "drones")
+        || looks_like_file_name(s)
+}
+
+/// True when `s` is a bare file name of the form `<stem>.<ext>`.
+///
+/// Search criteria may name a specific file as the search root, e.g.
+/// `SEARCH_CHECKED_OK:Cargo.toml:workspace`. That form must be split
+/// into path = "Cargo.toml" and term = "workspace"; without this arm,
+/// `looks_like_workspace_path("Cargo.toml")` returns false and the
+/// entire `"Cargo.toml:workspace"` string is treated as the search
+/// term, which no evidence block can ever contain.
+///
+/// Conservative by design: rejects empty strings and strings
+/// containing `:` or whitespace; requires non-empty stem and
+/// extension; caps the extension at 8 characters and requires it to
+/// be alphanumeric.
+fn looks_like_file_name(s: &str) -> bool {
+    if s.is_empty() || s.contains(':') || s.chars().any(char::is_whitespace) {
+        return false;
+    }
+    match s.rsplit_once('.') {
+        Some((stem, ext)) => {
+            !stem.is_empty()
+                && !ext.is_empty()
+                && ext.len() <= 8
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        }
+        None => false,
+    }
 }
 
 /// True when evidence records a successful, path/query-bound search.
@@ -924,5 +953,71 @@ mod lineage_path_probes {
                 ev
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod workspace_path_classification_tests {
+    use super::{looks_like_file_name, looks_like_workspace_path};
+
+    #[test]
+    fn bare_file_names_are_classified_as_paths() {
+        assert!(looks_like_workspace_path("Cargo.toml"));
+        assert!(looks_like_workspace_path("Cargo.lock"));
+        assert!(looks_like_workspace_path("README.md"));
+        assert!(looks_like_workspace_path("strategize.rs"));
+    }
+
+    #[test]
+    fn bare_words_are_not_classified_as_paths() {
+        assert!(!looks_like_workspace_path("Cargo"));
+        assert!(!looks_like_workspace_path("unimplemented"));
+        assert!(!looks_like_workspace_path(""));
+    }
+
+    #[test]
+    fn colon_and_whitespace_bearing_strings_are_not_file_names() {
+        assert!(!looks_like_file_name("Cargo.toml:workspace"));
+        assert!(!looks_like_file_name("std::io"));
+        assert!(!looks_like_file_name("Cargo .toml"));
+        assert!(!looks_like_file_name("Cargo.toml "));
+    }
+
+    #[test]
+    fn directory_arms_still_pass() {
+        assert!(looks_like_workspace_path("crates"));
+        assert!(looks_like_workspace_path("bins"));
+        assert!(looks_like_workspace_path("src"));
+        assert!(looks_like_workspace_path("vendor"));
+        assert!(looks_like_workspace_path("apps"));
+        assert!(looks_like_workspace_path("drones"));
+        assert!(looks_like_workspace_path("."));
+        assert!(looks_like_workspace_path("./"));
+        assert!(looks_like_workspace_path("/abs/path"));
+        assert!(looks_like_workspace_path("crates/runtime_core"));
+    }
+}
+
+#[cfg(test)]
+mod search_bare_filename_regression_tests {
+    use super::{search_checked_satisfied, search_term_satisfied};
+
+    const EVIDENCE: &str =
+        "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/Cargo.toml | Query: 'workspace'\nMATCHES:\n1:[workspace]\n";
+
+    #[test]
+    fn search_checked_satisfied_accepts_bare_filename_target() {
+        assert!(search_checked_satisfied(EVIDENCE, "Cargo.toml:workspace"));
+    }
+
+    #[test]
+    fn search_term_satisfied_accepts_bare_filename_target() {
+        assert!(search_term_satisfied(EVIDENCE, "Cargo.toml:workspace"));
+    }
+
+    #[test]
+    fn no_match_evidence_also_satisfies_checked_form() {
+        let no_match = "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/Cargo.toml | Query: 'workspace'\nNo code matches found in specified path.\n";
+        assert!(search_checked_satisfied(no_match, "Cargo.toml:workspace"));
     }
 }
