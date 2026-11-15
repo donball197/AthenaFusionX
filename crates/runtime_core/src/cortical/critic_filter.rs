@@ -69,7 +69,8 @@ impl CorticalLoop {
             // A repeated WriteFile is not a duplicate if its previous effect is
             // gone (reverted, or never landed): the target is physically absent.
             // Capped so an identical write that keeps failing still trips the veto.
-            let write_target_absent = is_retryable_absent_write(&action, attempt_count);
+            let write_target_absent = is_retryable_absent_write(&action, attempt_count)
+                || is_retryable_rejected_halt(&action, attempt_count as usize, &session.local_evidence);
 
             if attempt_count >= 1 && !bypass_antiloop_for_retention && !write_target_absent {
                 match crate::anti_loop::classify_duplicate(
@@ -416,5 +417,70 @@ mod attempt_key_tests {
         let ev = "[CMD_OK] x\n[WRITE_OK] a\n[READ_OK] b\n[PATCH_FUNCTION_OK] c\n[WRITE_NOOP] d\n";
         assert_eq!(mutation_epoch(ev), 2);
         assert_eq!(mutation_epoch(""), 0);
+    }
+}
+
+/// A repeated HALT is not a duplicate when its earlier rejection was for a
+/// cause the mission has since addressed: a `[HALT_REJECTED]` marker exists and
+/// new physical evidence landed after it. Capped so an unsatisfiable mission
+/// still trips the stuck-node veto.
+fn is_retryable_rejected_halt(
+    action: &crate::agent_protocol::AgentAction,
+    attempt_count: usize,
+    evidence: &str,
+) -> bool {
+    if !matches!(action, crate::agent_protocol::AgentAction::Halt { .. }) || attempt_count > 3 {
+        return false;
+    }
+    let Some(rej) = evidence.rfind("[HALT_REJECTED]") else {
+        return false;
+    };
+    // Skip the rejection line itself so its text cannot count as new evidence.
+    let after = evidence[rej..].split_once('\n').map(|(_, rest)| rest).unwrap_or("");
+    ["[CMD_OK]", "[WRITE_OK]", "[READ_OK]", "[SEARCH_CODE_OK]", "[TEST_OK]"]
+        .iter()
+        .any(|m| after.contains(m))
+}
+
+#[cfg(test)]
+mod halt_retry_tests {
+    use super::is_retryable_rejected_halt;
+    use crate::agent_protocol::AgentAction;
+
+    fn halt() -> AgentAction {
+        AgentAction::Halt { _thought_process: None, reasoning: "done".to_string() }
+    }
+
+    const REJ: &str =
+        "[HALT_REJECTED] Deterministic completion contract not satisfied. Unmet: [\"CommandMarkerAcquired\"]\n";
+
+    #[test]
+    fn no_rejection_means_not_retryable() {
+        assert!(!is_retryable_rejected_halt(&halt(), 1, "[WRITE_OK] a.md\n"));
+    }
+
+    #[test]
+    fn rejection_without_new_evidence_is_not_retryable() {
+        let ev = format!("[WRITE_OK] a.md\n{REJ}\n[NODE PHASE] fix it\n");
+        assert!(!is_retryable_rejected_halt(&halt(), 1, &ev));
+    }
+
+    #[test]
+    fn new_evidence_after_rejection_allows_retry() {
+        let ev = format!("{REJ}[CMD_OK] Command: cargo metadata --no-deps\n");
+        assert!(is_retryable_rejected_halt(&halt(), 1, &ev));
+    }
+
+    #[test]
+    fn evidence_before_the_rejection_does_not_count() {
+        let ev = format!("[CMD_OK] Command: ls\n{REJ}");
+        assert!(!is_retryable_rejected_halt(&halt(), 1, &ev));
+    }
+
+    #[test]
+    fn retry_is_capped() {
+        let ev = format!("{REJ}[CMD_OK] Command: ls\n");
+        assert!(is_retryable_rejected_halt(&halt(), 3, &ev));
+        assert!(!is_retryable_rejected_halt(&halt(), 4, &ev));
     }
 }
