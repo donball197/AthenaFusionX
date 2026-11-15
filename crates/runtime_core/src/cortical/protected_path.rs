@@ -311,3 +311,32 @@ mod protected_path_tests {
         assert!(violation_in_json(&cmd("echo hi > /tmp/out.txt"), &[], redirect_shell).is_none());
     }
 }
+
+#[cfg(test)]
+mod removal_wiring_tests {
+    use super::*;
+
+    fn run(cmd: &str, allowed: &[String]) -> Option<String> {
+        let v = serde_json::json!({ "type": "execute_command", "command": cmd });
+        violation_in_json(&v, allowed, crate::executor::detect_shell_write_target)
+    }
+
+    #[test]
+    fn execute_command_removal_of_a_root_is_refused_through_the_gate() {
+        let msg = run("rm -rf lib/", &[]).expect("must be refused");
+        assert!(msg.contains("PROTECTED PATH GATE"), "{msg}");
+        assert!(run("cd x && git rm -r config", &[]).is_some());
+    }
+
+    #[test]
+    fn execute_command_ordinary_deletes_pass_the_gate() {
+        assert!(run("rm -rf target", &[]).is_none());
+        assert!(run("rm tests/tmp.txt", &[]).is_none());
+        assert!(run("cargo test", &[]).is_none());
+    }
+
+    #[test]
+    fn contract_named_path_is_allowed() {
+        assert!(run("rm -rf lib", &["lib".to_string()]).is_none());
+    }
+}
