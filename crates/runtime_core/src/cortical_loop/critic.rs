@@ -197,6 +197,60 @@ impl CorticalLoop {
             }
         }
 
+        // FORBIDDEN REMOVAL GATE (report artifacts): a report that recommends
+        // deleting protected source, CI, vendored, config or test trees is
+        // rejected deterministically, before the critic LLM and before any
+        // CRITIC FACT OVERRIDE branch can preserve the write.
+        if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
+            if crate::cortical::halt_claims::is_report_artifact(path) {
+                if let Some(removal) =
+                    crate::cortical::forbidden_removal::halt_recommends_forbidden_removal(content)
+                {
+                    session.last_critic_rejected_actions = Some(
+                        actions
+                            .iter()
+                            .map(crate::cortical::action_identity::action_key)
+                            .collect::<Vec<_>>(),
+                    );
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
+                    session.local_evidence.push_str(&format!(
+                        "\n[CRITIC_VETO] Forbidden removal check: the report proposes deleting a protected path ({removal}). Remove every recommendation to delete source, CI, vendored, config or test trees and rewrite from evidence.\n"
+                    ));
+                    return Ok(CortexState::Strategize);
+                }
+            }
+        }
+
+        // SEMANTIC SUPPORT GATE:
+        // Run after deterministic report checks and before required-command bypass.
+        if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
+            if crate::cortical::halt_claims::is_report_artifact(path) {
+                let defects = crate::cortical::semantic_support::semantic_support_defects(
+                    content,
+                    &session.local_evidence,
+                )
+                .await;
+
+                if !defects.is_empty() {
+                    let joined = defects.join("; ");
+                    session.last_critic_rejected_actions = Some(
+                        actions
+                            .iter()
+                            .map(crate::cortical::action_identity::action_key)
+                            .collect::<Vec<_>>(),
+                    );
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
+                    session.local_evidence.push_str(&format!(
+                        "\n[CRITIC_VETO] Semantic report support check: {}\n",
+                        joined
+                    ));
+                    return Ok(CortexState::Strategize);
+                }
+            }
+        }
+
         // REQUIRED-COMMAND BYPASS: the exact command the directive requires is
         // mission-authoritative. Once every other condition is met (e.g. the patch
         // landed) the LLM critic has nothing left to judge, and it has been observed
@@ -273,6 +327,35 @@ impl CorticalLoop {
                     }
                 }
 
+                // FORBIDDEN REMOVAL GATE: a halt report that recommends
+                // deleting protected source, CI, or vendored trees is
+                // structurally unsafe regardless of how well the prose
+                // matches the evidence. This runs before the semantic check
+                // so a report can never trade "grounded prose" for
+                // "catastrophic action plan."
+                if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
+                    if let Some(removal_msg) =
+                        crate::cortical::forbidden_removal::halt_recommends_forbidden_removal(reasoning)
+                    {
+                        defects.push(format!("Forbidden removal recommendation: the report proposes deleting a protected path ({removal_msg}); remove that recommendation"));
+                    }
+                }
+
+                // Tier 2 semantic support check for the Halt reasoning field.
+                // Avoid an embedding request when deterministic checks already
+                // require the report to be rewritten.
+                if defects.is_empty() {
+                    if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
+                        let semantic_defects =
+                            crate::cortical::semantic_support::semantic_support_defects(
+                                reasoning,
+                                &session.local_evidence,
+                            )
+                            .await;
+                        defects.extend(semantic_defects);
+                    }
+                }
+
                 if defects.is_empty() {
                     self.log("\x1b[1;36m>> [CRITIC BYPASS] Halt report passed deterministic symbol, substance and line-range checks; LLM critic skipped.\x1b[0m".to_string());
                     session.last_critic_rejected_actions = None;
@@ -306,6 +389,10 @@ impl CorticalLoop {
                          in your evidence corpus. A single backticked identifier from any search \
                          result is enough -- e.g. if you searched for `router`, cite `router` or \
                          `AgentProfile`.\n"
+                    } else if joined.contains("Forbidden removal") {
+                    "[HALT_PRE_GATE_HINT] The report recommends deleting protected source, CI, vendored, config or test trees. Remove every deletion recommendation; this audit must not propose removing repository structure.\n"
+                    } else if joined.contains("Semantic support below threshold") {
+                    "[HALT_PRE_GATE_HINT] The report prose is not semantically supported by your evidence corpus. Read the file(s) the report discusses with `read_file` and rewrite from that body, or remove claims that are not grounded in evidence you have actually acquired.\n"
                     } else if joined.contains("must cite at least") {
                         "[HALT_PRE_GATE_HINT] The report is thin for the evidence on hand. Read \
                          at least one file the searches already located before halting.\n"
