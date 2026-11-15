@@ -70,7 +70,6 @@
 /tmp/
 /ui/.svelte-kit/
 /ui/dist/
-Cargo.lock
 GEMINI_API_KEY
 Thumbs.db
 __pycache__/
