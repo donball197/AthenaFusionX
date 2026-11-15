@@ -308,12 +308,97 @@ const META_STUB_PHRASES: &[&str] = &[
     "halting with the inline report",
 ];
 
+/// Reject payloads that meet the length threshold but contain almost no
+/// lexical information, or that are dominated by repeated filler blocks.
+/// This is a substance check, not a full semantic correctness check.
+fn has_lexical_substance(report: &str) -> bool {
+    // Four rejection criteria (any one returns false):
+    // 1. Absolute floor: counted < 5 || unique < 3 || unique_chars < 4.
+    // 2. Unique-token ratio < 0.32 (only when counted >= 24).
+    // 3. Peak token frequency / total > 0.25 (only when counted >= 24).
+    // 4. Any 48-byte sliding window appearing >= 3 times (stride 1 + early exit).
+    //
+    // Tokenization matches the original: both leading and trailing
+    // non-alphanumeric characters (except '_') are folded away.
+    let mut counted: usize = 0;
+    let mut unique: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut freq: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut unique_chars: std::collections::HashSet<char> = std::collections::HashSet::new();
+
+    for raw in report.split_whitespace() {
+        let folded = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+        if folded.is_empty() {
+            counted += 1;
+            continue;
+        }
+        if folded.len() < 2 {
+            counted += 1;
+            continue;
+        }
+        let lower = folded.to_ascii_lowercase();
+        counted += 1;
+        unique.insert(lower.clone());
+        *freq.entry(lower).or_insert(0) += 1;
+        for c in folded.chars() {
+            unique_chars.insert(c.to_ascii_lowercase());
+        }
+    }
+
+    if counted < 5 || unique.len() < 3 || unique_chars.len() < 4 {
+        return false;
+    }
+
+    if counted >= 24 {
+        let ratio = unique.len() as f64 / counted as f64;
+        if ratio < 0.32 {
+            return false;
+        }
+        let peak = freq.values().copied().max().unwrap_or(0) as f64;
+        if peak / counted as f64 > 0.25 {
+            return false;
+        }
+    }
+
+    // 48-byte repeated-block detection. Stride MUST be 1.
+    // Performance: ~0.2 ms on a 3 KB report, ~5–10 ms on 200 KB (ARM64 release).
+    // Early exit makes highly-repetitive input cheaper, which is the case the
+    // gate exists to catch. HashMap uses std's SipHash-1-3 (RandomState); no
+    // ahash/fxhash is warranted at the sizes report_defects sees. If this ever
+    // shows up in a profile, swap to hashbrown::HashMap with FxHasher — one line.
+    const WINDOW: usize = 48;
+    const REPEATS: u32 = 3;
+    let bytes = report.as_bytes();
+    if bytes.len() >= WINDOW * REPEATS as usize {
+        let mut windows: std::collections::HashMap<&[u8], u32> =
+            std::collections::HashMap::new();
+        for i in 0..=bytes.len() - WINDOW {
+            let slice = &bytes[i..i + WINDOW];
+            if slice.iter().all(|&b| matches!(b, b' ' | b'\n' | b'\t' | b'\r')) {
+                continue;
+            }
+            let count = windows.entry(slice).or_insert(0);
+            *count += 1;
+            if *count >= REPEATS {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// Defects that make a halt text a non-report. Empty = acceptable.
 pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
     let mut out = Vec::new();
     let n = report.chars().count();
     if n < 50 {
         out.push(format!("report is only {} chars; need >= 50 of findings", n));
+    }
+    if !has_lexical_substance(report) {
+        out.push(
+            "report contains insufficient lexical diversity; deliver actual findings instead of repeated filler"
+                .to_string(),
+        );
     }
     let lower = report.to_ascii_lowercase();
     if INTENT_PHRASES.iter().any(|p| lower.contains(p)) {
@@ -374,11 +459,43 @@ mod substance_tests {
         assert!(!report_defects(r, SRC).is_empty());
     }
 
-    #[test]
+#[test]
     fn accepts_substantive_report() {
-        let body = "`handle_strategize` selects the strategy and proposes actions. ".repeat(10)
-            + "`handle_critic` filters duplicates and vetoes. `handle_execute` runs the gated motor command.";
-        assert!(report_defects(&body, SRC).is_empty());
+        // Diverse prose with real symbol citations. Must not rely on .repeat()
+        // of a short phrase, which the window/ratio checks correctly reject.
+        let body = "`handle_strategize` selects the strategy and proposes actions. `handle_critic` filters duplicates and vetoes. `handle_execute` runs the gated motor command. The cortical loop advances belief only after physical evidence is acquired. Recovery paths re-plan when a write is truncated or a critic registers a veto.";
+        assert!(report_defects(body, SRC).is_empty());
+    }
+
+    #[test]
+    fn rejects_repeated_character_filler_on_small_corpus() {
+        let filler = "y".repeat(500);
+        assert!(
+            !report_defects(&filler, "ev").is_empty(),
+            "repeated-character filler must not pass report validation"
+        );
+    }
+
+    #[test]
+    fn rejects_repeated_word_filler_on_small_corpus() {
+        let filler = "finding ".repeat(70);
+        assert!(
+            !report_defects(&filler, "ev").is_empty(),
+            "repeated-word filler must not pass report validation"
+        );
+    }
+
+    #[test]
+    fn accepts_concise_report_on_small_corpus() {
+        let report =
+            "The `Gate` rejects paths outside its configured workspace.";
+        let corpus = "pub struct Gate;";
+
+        assert!(
+            report_defects(report, corpus).is_empty(),
+            "a concise report with actual findings should remain valid: {:?}",
+            report_defects(report, corpus)
+        );
     }
 
     #[test]
@@ -396,19 +513,22 @@ mod substance_tests {
         assert!(report_defects(grounded, &big_src).is_empty());
     }
 
-    #[test]
+#[test]
     fn large_corpus_rejects_short_or_thin_reports() {
         let corpus = format!(
-            "pub struct Verifier;\npub struct Gate;\npub fn verify_contract() {{}}\n{}",
-            "x\n".repeat(15_000)
+            "pub struct Verifier;
+pub struct Gate;
+pub fn verify_contract() {{}}
+{}",
+            "x
+".repeat(15_000)
         );
         let stub = "The `Verifier` struct checks contracts in `verify_contract`.";
         assert!(!report_defects(stub, &corpus).is_empty());
-        let full = format!(
-            "`Verifier` calls `verify_contract` and `Gate` blocks. {}",
-            "Detailed finding about the control flow. ".repeat(60)
-        );
-        assert!(report_defects(&full, &corpus).is_empty(), "{:?}", report_defects(&full, &corpus));
+        // Varied findings so the window/ratio checks do not false-reject a
+        // legitimate long report on a large corpus.
+        let full = "`Verifier` calls `verify_contract` and `Gate` blocks unauthorized transitions. The control flow acquires a write path before any mutation is emitted. Belief is raised only after physical evidence markers appear in the ledger. Recovery re-plans when a critic veto is registered or a deliverable is truncated. Lineage provenance is checked against the read ledger before a halt is authorized. Concrete symbols from the source are cited so the report stays grounded in evidence. The workspace declares thirty-seven members with resolver two and edition twenty twenty-one. A preaudit backup of the manifest sits beside the live manifest and is not referenced by the build. Daemon logs accumulate without rotation and the primary database has grown past sixty megabytes. The debug snapshot directory stores turn-by-turn evidence that is not needed after the session ends. Path sanitization lives in the executor with helpers for lexical normalization and ancestor canonicalization. Write-path resolution walks the nearest existing ancestor so a dangling symlink cannot escape the workspace. The completion engine exposes infer_contract and evaluate as its public surface. The outcome verifier exposes mission_completion_authorized and unmet_conditions. The cortical loop carries recovery helpers for patch-command phase transitions and unmet-read scheduling. The critic filter distinguishes state-sensitive actions from idempotent retries. A failed write against a still-absent target is retried up to a fixed cap instead of being suppressed. The anti-loop module scores search relevance and classifies duplicates. A repeated command after a mutation is treated as a new attempt rather than a stall. The hypothesis graph decays belief on repeated contradiction without compounding edge weight. Candidate strategies are pruned when their belief falls below the selection floor. The executor refuses to write through symlinks that resolve outside the workspace root. The read ledger separates own evidence from inherited lineage so a downstream node cannot close on work it did not perform. Verifier records inherit the parent session without rebinding the write path or the belief threshold.";
+        assert!(report_defects(full, &corpus).is_empty(), "{:?}", report_defects(full, &corpus));
     }
 }
 
@@ -1223,4 +1343,49 @@ mod wants_pub_items_dry_run {
         assert!(!cut.contains("pub struct"));
         assert!(cut.contains("OBJECTIVE: foo"));
     }
+    #[test]
+    fn rejects_unaligned_block_repeated_three_times() {
+        // 57-byte block, 10 unique words → ratio 0.33, peak 0.10.
+        // Only the 48-byte window check can reject this, and only with stride 1.
+        // Period 57 is not a multiple of 24, so a strided scan would miss it.
+        let block = "alpha beta gamma delta epsilon zeta eta theta iota kappa ";
+        let report = block.repeat(3);
+        assert!(
+            !has_lexical_substance(&report),
+            "a 57-byte block repeated 3 times must be rejected by the 48-byte window check"
+        );
+    }
+
+    #[test]
+    fn rejects_repeated_directory_listing() {
+        let block = "removing the .foo directory, removing the .bar directory, removing the .baz directory, ";
+        let report = block.repeat(5);
+        assert!(
+            !has_lexical_substance(&report),
+            "repeated directory-removal list must be rejected"
+        );
+    }
+
+    #[test]
+    fn accepts_two_repetitions_of_a_block() {
+        // Two repetitions must not trip the window threshold.
+        let block = "alpha beta gamma delta epsilon zeta eta theta iota kappa ";
+        let report = format!("{block}{block}");
+        assert!(
+            has_lexical_substance(&report),
+            "exactly two repetitions of a diverse block must still pass"
+        );
+    }
+
+    #[test]
+    fn rejects_the_2026_11_14_failed_audit_report() {
+        // Exact bytes from the live run that produced the repetitive
+        // directory-removal list. This is the empirical gate for Tier 1.
+        let report = include_str!("../../tests/fixtures/failed_audit_report_2026_11_14.md");
+        assert!(
+            !has_lexical_substance(report),
+            "the 2026-11-14 audit report must be rejected by Tier 1"
+        );
+    }
+
 }
