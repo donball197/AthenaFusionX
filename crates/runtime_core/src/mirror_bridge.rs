@@ -72,11 +72,8 @@ impl MirrorBridge {
         let (fs_target, prompt_target) = match &self.workspace_root {
             Some(root) => {
                 let resolved = crate::executor::resolve_write_path_in(root, target_path)?;
-                let rel = resolved
-                    .strip_prefix(root)
-                    .unwrap_or(&resolved)
-                    .to_string_lossy()
-                    .into_owned();
+                let rel =
+                    resolved.strip_prefix(root).unwrap_or(&resolved).to_string_lossy().into_owned();
                 (resolved, rel)
             }
             None => (PathBuf::from(target_path), target_path.to_string()),
@@ -130,7 +127,7 @@ impl MirrorBridge {
                 504 => " (turn timed out — increase --turn-timeout-seconds)",
                 502 => " (model request failed — check API key/quota)",
                 503 => " (service unavailable)",
-                _   => "",
+                _ => "",
             };
             bail!(
                 "mirror-agent returned HTTP {status}{hint}; response: {}",
@@ -161,13 +158,11 @@ impl MirrorBridge {
         // can also write source/configuration files, which must not be judged
         // by a prose-report validator.
         if crate::cortical::halt_claims::is_report_artifact(target_path) {
-            let text = std::str::from_utf8(&after)
-                .map_err(|error| {
-                    anyhow!("Mirror report artifact {target_path} is not valid UTF-8: {error}")
-                })?;
+            let text = std::str::from_utf8(&after).map_err(|error| {
+                anyhow!("Mirror report artifact {target_path} is not valid UTF-8: {error}")
+            })?;
 
-            let defects =
-                crate::cortical::halt_claims::report_defects(text, evidence_corpus);
+            let defects = crate::cortical::halt_claims::report_defects(text, evidence_corpus);
 
             if !defects.is_empty() {
                 bail!(
@@ -199,7 +194,15 @@ mod tests {
             let _ = stream.read(&mut request).await;
 
             if let Some(path) = write_target {
-                tokio::fs::write(path, vec![b'x'; 256]).await.expect("write mock deliverable");
+                // Must satisfy report_defects / has_lexical_substance for *.md.
+                // Repeated single-character filler is intentionally rejected.
+                let body = "Mirror bridge delivered the artifact successfully.\n\
+Target path was created with the expected byte length.\n\
+HTTP 204 was returned by the sidecar with no residual differences.\n\
+The report contains concrete findings rather than repeated filler.\n\
+Additional varied prose ensures the lexical diversity gate is satisfied.\n\
+This body is longer than two hundred bytes and contains many unique words.";
+                tokio::fs::write(path, body.as_bytes()).await.expect("write mock deliverable");
             }
 
             let reason = if status == 204 { "No Content" } else { "Bad Gateway" };
@@ -227,7 +230,8 @@ mod tests {
             .await
             .expect("changed deliverable should be accepted");
 
-        assert_eq!(tokio::fs::metadata(target).await.expect("deliverable exists").len(), 256);
+        let len = tokio::fs::metadata(&target).await.expect("deliverable exists").len();
+        assert!(len >= 200, "deliverable must be at least 200 bytes, got {len}");
     }
 
     #[tokio::test]

@@ -253,6 +253,7 @@ async fn report_meta_stub_is_rejected() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
 
 #[tokio::test]
 async fn success_204_but_stub_file_fails() {
@@ -278,5 +279,4 @@ async fn success_204_but_stub_file_fails() {
         "got: {msg}"
     );
     let _ = std::fs::remove_dir_all(&dir);
-}
 }
