@@ -156,6 +156,71 @@ pub fn append_global(rec: TurnRecord) {
     }
 }
 
+/// Build a journal record for a critic-side event (an override or a deterministic
+/// gate rejection). `action_type` is the event label, e.g. "critic_override:write_file".
+/// The first 200 chars of `detail` ride in `unmet_before` so the audit trail is readable.
+pub fn critic_event_record(
+    action_type: &str,
+    strategy: &str,
+    action_key: &str,
+    modifier: f32,
+    detail: &str,
+) -> TurnRecord {
+    let excerpt: String = detail.replace('\n', " ").chars().take(200).collect();
+    TurnRecord {
+        node_id: "critic".to_string(),
+        turn: 0,
+        strategy: strategy.to_string(),
+        action_type: action_type.to_string(),
+        evidence_hash: hash_bytes(excerpt.as_bytes()),
+        evidence_len: excerpt.len(),
+        belief_before: 0.0,
+        belief_after: 0.0,
+        eval_modifier: modifier,
+        unmet_before: vec![format!("detail: {excerpt}")],
+        unmet_after: vec![format!("action: {action_key}")],
+        provider: None,
+        latency_ms: None,
+        prev_hash: String::new(),
+        record_hash: String::new(),
+    }
+}
+
+/// Fire-and-forget journal entry for a critic override or gate rejection.
+pub fn append_critic_event(
+    action_type: &str,
+    strategy: &str,
+    action_key: &str,
+    modifier: f32,
+    detail: &str,
+) {
+    append_global(critic_event_record(action_type, strategy, action_key, modifier, detail));
+}
+
+#[cfg(test)]
+mod critic_event_tests {
+    use super::*;
+
+    #[test]
+    fn builds_a_sealable_record_with_truncated_detail() {
+        let long = "x".repeat(500);
+        let mut r = critic_event_record("critic_override:write_file", "write_file:a.md", "k1", -0.4, &long);
+        assert_eq!(r.action_type, "critic_override:write_file");
+        assert_eq!(r.eval_modifier, -0.4);
+        assert_eq!(r.evidence_len, 200);
+        assert!(r.unmet_before[0].starts_with("detail: "));
+        assert_eq!(r.unmet_after[0], "action: k1");
+        r.seal();
+        assert_eq!(r.record_hash.len(), 64);
+    }
+
+    #[test]
+    fn newlines_in_detail_are_flattened() {
+        let r = critic_event_record("critic_gate:forbidden_removal", "s", "k", 0.0, "a\nb");
+        assert_eq!(r.unmet_before[0], "detail: a b");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -217,6 +217,16 @@ impl CorticalLoop {
                     session.local_evidence.push_str(&format!(
                         "\n[CRITIC_VETO] Forbidden removal check: the report proposes deleting a protected path ({removal}). Remove every recommendation to delete source, CI, vendored, config or test trees and rewrite from evidence.\n"
                     ));
+                    crate::journal::append_critic_event(
+                        "critic_gate:forbidden_removal",
+                        path,
+                        &actions
+                            .first()
+                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .unwrap_or_default(),
+                        0.0,
+                        &removal,
+                    );
                     return Ok(CortexState::Strategize);
                 }
             }
@@ -787,6 +797,16 @@ impl CorticalLoop {
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] search_code preserved; anti-redundant-READ rule does not apply to search actions.\n",
                     );
+                    crate::journal::append_critic_event(
+                        "critic_override:search_code",
+                        &h_content.to_string(),
+                        &actions
+                            .first()
+                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .unwrap_or_default(),
+                        critic.confidence_modifier as f32,
+                        &critic.critique,
+                    );
                     session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier <= -0.25
@@ -801,6 +821,16 @@ impl CorticalLoop {
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] write_file action preserved against pre-recon veto; active strategy is authoritative.\n",
                     );
+                    crate::journal::append_critic_event(
+                        "critic_override:write_file",
+                        &h_content.to_string(),
+                        &actions
+                            .first()
+                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .unwrap_or_default(),
+                        critic.confidence_modifier as f32,
+                        &critic.critique,
+                    );
                     session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
                 } else if critic.confidence_modifier <= -0.25
@@ -813,6 +843,16 @@ impl CorticalLoop {
                     );
                     session.local_evidence.push_str(
                         "[CRITIC_FACT_OVERRIDE] PATCH_FUNCTION mutation verified by ReplaceFunctionBody; critic no-op classification rejected.\n",
+                    );
+                    crate::journal::append_critic_event(
+                        "critic_override:ast_noop",
+                        &h_content.to_string(),
+                        &actions
+                            .first()
+                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .unwrap_or_default(),
+                        critic.confidence_modifier as f32,
+                        &critic.critique,
                     );
                     session.last_critic_rejected_actions = None;
                     Ok(CortexState::Execute { actions, proposal, belief })
