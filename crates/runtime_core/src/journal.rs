@@ -267,3 +267,18 @@ mod tests {
         assert_eq!(Journal::verify_chain(&body), Some(0));
     }
 }
+
+#[cfg(test)]
+mod live_journal_check {
+    /// Manual check: JOURNAL_PATH=/root/AthenaFusionX/.nexus_debug/journal.jsonl \
+    ///   cargo test -p nexus_runtime_core --lib verify_live_journal -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn verify_live_journal() {
+        let path = std::env::var("JOURNAL_PATH").expect("set JOURNAL_PATH");
+        let body = std::fs::read_to_string(&path).expect("read journal");
+        let bad = super::Journal::verify_chain(&body);
+        println!("records: {}, first bad index: {:?}", body.lines().count(), bad);
+        assert!(bad.is_none(), "hash chain broken at record {:?}", bad);
+    }
+}
