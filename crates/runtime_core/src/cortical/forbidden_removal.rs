@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 const VERBS: &str = r"(?:remov(?:e|es|ing)|delet(?:e|es|ing)|wip(?:e|es|ing)|purg(?:e|es|ing)|drop(?:s|ping)?|eras(?:e|es|ing)|destroy(?:s|ing)?|eliminat(?:e|es|ing)|nuk(?:e|es|ing)|rm(?:\s+-rf?)?)";
 
-const FORBIDDEN_REMOVAL_DIRS: &[&str] = &[
+pub const FORBIDDEN_REMOVAL_DIRS: &[&str] = &[
     "crates", "bins", "apps", "algorithms", "mirror", "drones", "scripts",
     "lib", "substrate", "ui", "zig_muscle",
     "comparison_workspace", "fuzz", "genesis_lab", "target_dummy",

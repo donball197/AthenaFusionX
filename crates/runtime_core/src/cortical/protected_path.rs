@@ -54,6 +54,20 @@ fn violation_in_json(
     } else {
         None
     };
+    if kind == "execute_command" {
+        if let Some(target) = body
+            .get("command")
+            .and_then(|c| c.as_str())
+            .and_then(removal_violation_target)
+        {
+            if !allowed.iter().any(|a| normalize_path(a) == normalize_path(&target)) {
+                return Some(format!(
+                    "PROTECTED PATH GATE: `execute_command` that deletes or moves `{}` is refused. Whole protected directories (source, CI, config, tests, vendored trees) must never be removed or relocated; delete individual files inside them only when the task requires it.",
+                    target
+                ));
+            }
+        }
+    }
     let path = path?;
     let n = normalize_path(&path);
     if !is_protected_path(&n) {
@@ -73,6 +87,142 @@ fn violation_in_json(
 pub fn protected_violation(action: &AgentAction, allowed: &[String]) -> Option<String> {
     let v = serde_json::to_value(action).ok()?;
     violation_in_json(&v, allowed, crate::executor::detect_shell_write_target)
+}
+
+// ---- Whole-tree removal gate ------------------------------------------------
+// Deleting or relocating a protected ROOT (lib, config, tests, .github, ...) is
+// refused for shell commands. Deleting individual files inside them is not.
+// Directory list is shared with the report scan (single source of truth).
+
+fn rel_to_cwd(n: &str) -> String {
+    if n.starts_with('/') {
+        if let Ok(cwd) = std::env::current_dir() {
+            let c = cwd.to_string_lossy().replace('\\', "/");
+            if n == c {
+                return ".".to_string();
+            }
+            if let Some(r) = n.strip_prefix(&format!("{c}/")) {
+                return r.to_string();
+            }
+        }
+    }
+    n.to_string()
+}
+
+fn is_removal_root(path: &str) -> bool {
+    let unquoted = path.trim_matches(|c| c == '"' || c == '\'');
+    let mut n = rel_to_cwd(&normalize_path(unquoted));
+    for suffix in ["/*", "/."] {
+        if let Some(r) = n.strip_suffix(suffix) {
+            n = r.to_string();
+        }
+    }
+    while n.len() > 1 && n.ends_with('/') {
+        n.pop();
+    }
+    let lower = n.to_ascii_lowercase();
+    if matches!(lower.as_str(), "." | ".." | "*" | "/" | "~" | "$home" | "${home}") {
+        return true;
+    }
+    super::forbidden_removal::FORBIDDEN_REMOVAL_DIRS.iter().any(|d| n == *d)
+}
+
+fn non_flags(a: &[&str]) -> Vec<String> {
+    a.iter().filter(|t| !t.starts_with('-')).map(|t| t.to_string()).collect()
+}
+
+fn removal_targets(segment: &str) -> Vec<String> {
+    let mut toks: Vec<&str> = segment.split_whitespace().collect();
+    while let Some(t) = toks.first() {
+        if matches!(*t, "sudo" | "env" | "time" | "nohup" | "command" | "exec")
+            || (t.contains('=') && !t.starts_with('-'))
+        {
+            toks.remove(0);
+        } else {
+            break;
+        }
+    }
+    if toks.is_empty() {
+        return vec![];
+    }
+    let cmd = toks[0].rsplit('/').next().unwrap_or("");
+    let args = &toks[1..];
+    match cmd {
+        "rm" | "rmdir" | "unlink" | "shred" => non_flags(args),
+        "git" => match args.first().copied() {
+            Some("rm") => non_flags(&args[1..]),
+            Some("clean") => {
+                let t = non_flags(&args[1..]);
+                if t.is_empty() { vec![".".to_string()] } else { t }
+            }
+            _ => vec![],
+        },
+        "mv" => {
+            let t = non_flags(args);
+            if t.len() > 1 { t[..t.len() - 1].to_vec() } else { vec![] }
+        }
+        "find" => {
+            let destructive = args.iter().any(|t| *t == "-delete")
+                || args
+                    .windows(2)
+                    .any(|w| w[0] == "-exec" && (w[1] == "rm" || w[1].ends_with("/rm")));
+            if !destructive {
+                return vec![];
+            }
+            let paths: Vec<String> = args
+                .iter()
+                .take_while(|t| !t.starts_with('-') && !t.starts_with('(') && !t.starts_with('!'))
+                .map(|t| t.to_string())
+                .collect();
+            if paths.is_empty() { vec![".".to_string()] } else { paths }
+        }
+        "sh" | "bash" | "zsh" => {
+            if let Some(i) = args.iter().position(|t| *t == "-c") {
+                let inner = args[i + 1..].join(" ");
+                let inner = inner.trim_matches(|c| c == '"' || c == '\'').to_string();
+                return removal_violation_target(&inner).into_iter().collect();
+            }
+            vec![]
+        }
+        _ => vec![],
+    }
+}
+
+/// First protected root that `command` would delete or move away, if any.
+pub fn removal_violation_target(command: &str) -> Option<String> {
+    let flat = command
+        .replace("&&", "\n")
+        .replace("||", "\n")
+        .replace(|c: char| c == '|' || c == ';', "\n");
+    flat.lines().flat_map(removal_targets).find(|t| is_removal_root(t))
+}
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+
+    #[test]
+    fn refuses_removal_of_protected_roots() {
+        for cmd in [
+            "rm -rf lib/", "rm -rf ./vendor", "cd x && rm -rf crates", "git rm -r config",
+            "git clean -fdx", "mv lib /tmp/lib", "/bin/rm -rf lib", "sudo rm -rf data/",
+            "rm -rf *", "find . -delete", "bash -c \"rm -rf tests\"", "FOO=1 rm -rf docs",
+            "rm -rf lib/*",
+        ] {
+            assert!(removal_violation_target(cmd).is_some(), "should refuse: {cmd}");
+        }
+    }
+
+    #[test]
+    fn allows_ordinary_commands() {
+        for cmd in [
+            "rm -rf target", "rm tests/tmp.txt", "mv /tmp/a lib", "ls lib",
+            "echo rm -rf lib", "find tests/tmp -delete", "rm -rf crates/runtime_core/tmp",
+            "git status", "cargo test",
+        ] {
+            assert!(removal_violation_target(cmd).is_none(), "should allow: {cmd}");
+        }
+    }
 }
 
 #[cfg(test)]
