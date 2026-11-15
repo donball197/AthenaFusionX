@@ -203,9 +203,20 @@ impl CorticalLoop {
         // CRITIC FACT OVERRIDE branch can preserve the write.
         if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
             if crate::cortical::halt_claims::is_report_artifact(path) {
-                if let Some(removal) =
-                    crate::cortical::forbidden_removal::halt_recommends_forbidden_removal(content)
-                {
+                let removal_vetoes =
+                    session.local_evidence.matches("[CRITIC_VETO] Forbidden removal check").count();
+                let removal_hit =
+                    crate::cortical::forbidden_removal::halt_recommends_forbidden_removal(content);
+                if removal_hit.is_some() && removal_vetoes >= 2 {
+                    crate::journal::append_critic_event(
+                        "critic_gate:forbidden_removal_released",
+                        path,
+                        "",
+                        0.0,
+                        removal_hit.as_deref().unwrap_or(""),
+                    );
+                }
+                if let Some(removal) = removal_hit.filter(|_| removal_vetoes < 2) {
                     session.last_critic_rejected_actions = Some(
                         actions
                             .iter()
@@ -222,12 +233,62 @@ impl CorticalLoop {
                         path,
                         &actions
                             .first()
-                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .map(|a| {
+                                format!("{:?}", crate::cortical::action_identity::action_key(a))
+                            })
                             .unwrap_or_default(),
                         0.0,
                         &removal,
                     );
                     return Ok(CortexState::Strategize);
+                }
+            }
+        }
+
+        // PATH GROUNDING GATE (report artifacts): every workspace path a report
+        // cites must exist on disk. Vetoes hallucinated crate/dir names. After two
+        // vetoes it releases, so a report about a not-yet-created path cannot loop.
+        if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
+            if crate::cortical::halt_claims::is_report_artifact(path) {
+                let missing = crate::cortical::path_grounding::ungrounded_paths_on_disk(content);
+                if !missing.is_empty() {
+                    let prior = session
+                        .local_evidence
+                        .matches("[CRITIC_VETO] Path grounding check")
+                        .count();
+                    let listed = missing.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
+                    let action_key = actions
+                        .first()
+                        .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                        .unwrap_or_default();
+                    if prior < 2 {
+                        session.last_critic_rejected_actions = Some(
+                            actions
+                                .iter()
+                                .map(crate::cortical::action_identity::action_key)
+                                .collect::<Vec<_>>(),
+                        );
+                        session.last_critic_rejected_at_evidence_len =
+                            Some(session.local_evidence.len());
+                        session.local_evidence.push_str(&format!(
+                            "\n[CRITIC_VETO] Path grounding check: the report cites paths that do not exist in the workspace ({listed}). List the real directory contents with read_file on the directory, then cite only paths you observed.\n"
+                        ));
+                        crate::journal::append_critic_event(
+                            "critic_gate:ungrounded_paths",
+                            path,
+                            &action_key,
+                            0.0,
+                            &listed,
+                        );
+                        return Ok(CortexState::Strategize);
+                    }
+                    crate::journal::append_critic_event(
+                        "critic_gate:ungrounded_paths_released",
+                        path,
+                        &action_key,
+                        0.0,
+                        &listed,
+                    );
                 }
             }
         }
@@ -345,7 +406,9 @@ impl CorticalLoop {
                 // "catastrophic action plan."
                 if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
                     if let Some(removal_msg) =
-                        crate::cortical::forbidden_removal::halt_recommends_forbidden_removal(reasoning)
+                        crate::cortical::forbidden_removal::halt_recommends_forbidden_removal(
+                            reasoning,
+                        )
                     {
                         defects.push(format!("Forbidden removal recommendation: the report proposes deleting a protected path ({removal_msg}); remove that recommendation"));
                     }
@@ -400,9 +463,9 @@ impl CorticalLoop {
                          result is enough -- e.g. if you searched for `router`, cite `router` or \
                          `AgentProfile`.\n"
                     } else if joined.contains("Forbidden removal") {
-                    "[HALT_PRE_GATE_HINT] The report recommends deleting protected source, CI, vendored, config or test trees. Remove every deletion recommendation; this audit must not propose removing repository structure.\n"
+                        "[HALT_PRE_GATE_HINT] The report recommends deleting protected source, CI, vendored, config or test trees. Remove every deletion recommendation; this audit must not propose removing repository structure.\n"
                     } else if joined.contains("Semantic support below threshold") {
-                    "[HALT_PRE_GATE_HINT] The report prose is not semantically supported by your evidence corpus. Read the file(s) the report discusses with `read_file` and rewrite from that body, or remove claims that are not grounded in evidence you have actually acquired.\n"
+                        "[HALT_PRE_GATE_HINT] The report prose is not semantically supported by your evidence corpus. Read the file(s) the report discusses with `read_file` and rewrite from that body, or remove claims that are not grounded in evidence you have actually acquired.\n"
                     } else if joined.contains("must cite at least") {
                         "[HALT_PRE_GATE_HINT] The report is thin for the evidence on hand. Read \
                          at least one file the searches already located before halting.\n"
@@ -592,8 +655,7 @@ impl CorticalLoop {
             let verification_read = actions.iter().any(|a| {
                 if let AgentAction::ReadFile { _thought_process: None, path, .. } = a {
                     session.contract.required_artifact_paths.iter().any(|art| &art.path == path)
-                        && session.local_evidence.contains(&format!("[WRITE_OK] {}", path))
-                        && !session.local_evidence.contains(&format!("[READ_OK] {}", path))
+                        && verification_read_pending(&session.local_evidence, path)
                 } else {
                     false
                 }
@@ -612,6 +674,7 @@ impl CorticalLoop {
         session.budget.record_call();
 
         // NEXUS_FIX_LEDGER_NOTE: deterministic read ledger as authoritative fact for the critic
+        let condensed_evidence = condense_critic_evidence(&session.local_evidence);
         let critic_evidence = match session
             .coverage
             .largest_interior_gap()
@@ -619,7 +682,7 @@ impl CorticalLoop {
         {
             Some((gap_s, gap_e)) => format!(
                 "{}\n\n[COVERAGE LEDGER - AUTHORITATIVE] Deterministic read ledger: unread range {}-{} of {} (coverage {:.1}%). A read_file_chunk starting at line {} is the correct next step and MUST NOT be vetoed as skipping lines.",
-                session.local_evidence,
+                condensed_evidence,
                 gap_s,
                 gap_e,
                 session.coverage.total_lines().unwrap_or(0),
@@ -629,9 +692,9 @@ impl CorticalLoop {
             None => match session.coverage.total_lines() {
                 Some(total) => format!(
                     "[COVERAGE LEDGER - AUTHORITATIVE] 100% of {} lines have been read; no unread range exists. Do NOT veto for unread lines.\n{}\n[COVERAGE LEDGER - AUTHORITATIVE] 100% of {} lines read.",
-                    total, session.local_evidence, total
+                    total, condensed_evidence, total
                 ),
-                None => session.local_evidence.clone(),
+                None => condensed_evidence.clone(),
             },
         };
         // NEXUS_FIX_PATH_FACTS: filesystem ground truth for read-path vetoes
@@ -778,12 +841,7 @@ impl CorticalLoop {
                     Some(AgentAction::WriteFile { _thought_process: None, .. })
                 );
                 let strategy_is_write = h_content.starts_with("write_file:");
-                let critic_veto_is_pre_recon = critic_text.contains("prior evidence")
-                    || critic_text.contains("search_code")
-                    || critic_text.contains("read_file")
-                    || critic_text.contains("before writing")
-                    || critic_text.contains("information gathering")
-                    || critic_text.contains("without prior evidence");
+                let critic_veto_is_pre_recon = is_pre_recon_override(&critic_text);
 
                 if critic.confidence_modifier <= -0.25
                     && action_is_search
@@ -802,7 +860,9 @@ impl CorticalLoop {
                         &h_content.to_string(),
                         &actions
                             .first()
-                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .map(|a| {
+                                format!("{:?}", crate::cortical::action_identity::action_key(a))
+                            })
                             .unwrap_or_default(),
                         critic.confidence_modifier as f32,
                         &critic.critique,
@@ -826,7 +886,9 @@ impl CorticalLoop {
                         &h_content.to_string(),
                         &actions
                             .first()
-                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .map(|a| {
+                                format!("{:?}", crate::cortical::action_identity::action_key(a))
+                            })
                             .unwrap_or_default(),
                         critic.confidence_modifier as f32,
                         &critic.critique,
@@ -849,7 +911,9 @@ impl CorticalLoop {
                         &h_content.to_string(),
                         &actions
                             .first()
-                            .map(|a| format!("{:?}", crate::cortical::action_identity::action_key(a)))
+                            .map(|a| {
+                                format!("{:?}", crate::cortical::action_identity::action_key(a))
+                            })
                             .unwrap_or_default(),
                         critic.confidence_modifier as f32,
                         &critic.critique,
@@ -1054,6 +1118,141 @@ mod patch_needle_tests {
 //  gate agrees with the strategy-match gate on the same command.)
 use crate::cmd_match::normalize_cmd;
 
+/// True when a required artifact was written and not read back since that write.
+/// Epoch-aware: an older `[READ_OK]` does not count once a later `[WRITE_OK]`
+/// replaced the file, so every rewrite gets its own verification read without
+/// asking the LLM critic (which vetoed these as anti-redundant reads).
+fn verification_read_pending(evidence: &str, path: &str) -> bool {
+    let last_write = evidence.rfind(&format!("[WRITE_OK] {}", path));
+    let last_read = evidence.rfind(&format!("[READ_OK] {}", path));
+    match (last_write, last_read) {
+        (Some(_), None) => true,
+        (Some(w), Some(r)) => w > r,
+        _ => false,
+    }
+}
+
+/// Harness marker line: column 0, `[` + UPPERCASE/digit/underscore/space + `]`.
+fn critic_marker_line(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('[') else {
+        return false;
+    };
+    let Some(end) = rest.find(']') else {
+        return false;
+    };
+    let tag = &rest[..end];
+    tag.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+        && tag.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == ' ')
+}
+
+/// Condense evidence for the LLM critic so it cannot anchor on stale text:
+///  * a `[READ_OK] <path>` block is cut to one line when the same path was read
+///    again later or written later (the newest read is kept);
+///  * every `[CRITIC_VETO]` block except the newest is cut to one line;
+///  * every adversarial-rejection `[NODE PHASE]` notice except the newest is cut.
+/// Evidence the critic needs about other files is untouched.
+pub(crate) fn condense_critic_evidence(evidence: &str) -> String {
+    struct Span {
+        start: usize,
+        end: usize,
+        key: String,
+    }
+
+    let lines: Vec<&str> = evidence.lines().collect();
+    let mut reads: Vec<Span> = Vec::new();
+    let mut vetoes: Vec<Span> = Vec::new();
+    let mut notices: Vec<usize> = Vec::new();
+    let mut last_write: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some(rest) = line.strip_prefix("[WRITE_OK] ") {
+            last_write.insert(rest.trim().to_string(), i);
+        }
+        if line.starts_with("[NODE PHASE] The artifact `")
+            && line.contains("rejected by the Adversarial Critic")
+        {
+            notices.push(i);
+        }
+        let is_read = line.starts_with("[READ_OK] ");
+        let is_veto = line.starts_with("[CRITIC_VETO]");
+        if is_read || is_veto {
+            let mut j = i + 1;
+            while j < lines.len() && !critic_marker_line(lines[j]) {
+                j += 1;
+            }
+            let key = line.trim_start_matches("[READ_OK] ").trim().to_string();
+            let span = Span { start: i, end: j, key };
+            if is_read {
+                reads.push(span);
+            } else {
+                vetoes.push(span);
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+
+    let mut elide: std::collections::HashMap<usize, (usize, String)> =
+        std::collections::HashMap::new();
+
+    for (idx, span) in reads.iter().enumerate() {
+        let re_read = reads[idx + 1..].iter().any(|later| later.key == span.key);
+        let rewritten = last_write.get(&span.key).map_or(false, |w| *w > span.start);
+        if re_read || rewritten {
+            elide.insert(
+                span.start,
+                (
+                    span.end,
+                    format!(
+                        "[READ_OK] {} (older read elided: that file was re-read or rewritten later; judge the newest evidence)",
+                        span.key
+                    ),
+                ),
+            );
+            if span.end < lines.len()
+                && lines[span.end].starts_with(&format!("[PROPOSITION] {} ->", span.key))
+            {
+                elide.insert(
+                    span.end,
+                    (span.end + 1, "[PROPOSITION] (older read elided)".to_string()),
+                );
+            }
+        }
+    }
+    for (idx, span) in vetoes.iter().enumerate() {
+        if idx + 1 < vetoes.len() {
+            let first: String = lines[span.start].chars().take(160).collect();
+            elide.insert(span.start, (span.end, format!("{} ...(older veto elided)", first)));
+        }
+    }
+    for (idx, line_no) in notices.iter().enumerate() {
+        if idx + 1 < notices.len() {
+            elide.insert(
+                *line_no,
+                (*line_no + 1, "[NODE PHASE] (older rejection notice elided)".to_string()),
+            );
+        }
+    }
+
+    let mut out = String::with_capacity(evidence.len());
+    let mut k = 0usize;
+    while k < lines.len() {
+        if let Some((end, stub)) = elide.get(&k) {
+            out.push_str(stub);
+            out.push('\n');
+            k = *end;
+        } else {
+            out.push_str(lines[k]);
+            out.push('\n');
+            k += 1;
+        }
+    }
+    out
+}
+
 /// True when `action` is exactly the command the contract requires, the
 /// requirement is still unmet, and every other (non-belief) condition is already
 /// met. Pure over (conditions, evidence, action) so it is unit-testable.
@@ -1112,6 +1311,64 @@ fn contract_facts(
         "\n[CONTRACT FACT - AUTHORITATIVE] Deterministic contract status. MET: {:?}. UNMET: {:?}. Do not claim a MET condition is missing from the evidence, and do not require a marker that is not listed here (for example ANALYSIS_OK) unless it appears in UNMET.",
         met, unmet
     )
+}
+
+/// The pre-recon veto override must fire only when a critique makes BOTH
+/// a state claim (the evidence already contains what the write needs) AND
+/// a sufficiency claim (no further recon is required). Either alone is
+/// insufficient: a critique that prescribes `read_file X before writing Y`
+/// is a directive for MORE work, not a false claim that work is done.
+///
+/// Pre-fix, any mention of `read_file`, `search_code`, `prior evidence`,
+/// `before writing`, `information gathering`, or `without prior evidence`
+/// was sufficient to fire the override. Every observed firing across two
+/// runs was a false positive.
+fn is_pre_recon_override(critic_text: &str) -> bool {
+    (critic_text.contains("already read")
+        || critic_text.contains("already gathered")
+        || critic_text.contains("already present")
+        || critic_text.contains("evidence already contains"))
+        && (critic_text.contains("no further")
+            || critic_text.contains("not needed")
+            || critic_text.contains("sufficient"))
+}
+
+#[cfg(test)]
+mod pre_recon_override_tests {
+    use super::is_pre_recon_override;
+
+    #[test]
+    fn prescription_for_more_reads_does_not_fire_override() {
+        let critique = "without a complete grep -n output or read_file of \
+                        those specific files, these citations are unverified.";
+        assert!(!is_pre_recon_override(critique));
+    }
+
+    #[test]
+    fn state_claim_alone_does_not_fire_override() {
+        let critique = "the proposed write lacks prior evidence for its claims.";
+        assert!(!is_pre_recon_override(critique));
+    }
+
+    #[test]
+    fn sufficiency_claim_alone_does_not_fire_override() {
+        let critique = "the report should be longer; it is not sufficient yet.";
+        assert!(!is_pre_recon_override(critique));
+    }
+
+    #[test]
+    fn contradictory_sufficiency_claim_fires_override() {
+        let critique = "you have already read all the source files; \
+                        no further evidence is needed.";
+        assert!(is_pre_recon_override(critique));
+    }
+
+    #[test]
+    fn both_claims_in_any_order_fire() {
+        assert!(is_pre_recon_override(
+            "sufficient evidence is present; you have already gathered it"
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -1261,5 +1518,57 @@ mod citation_sanitizer_tests {
             "sanitizer introduced \"lines\" where input had none: {}",
             output
         );
+    }
+}
+
+#[cfg(test)]
+mod critic_condense_tests {
+    use super::{condense_critic_evidence, verification_read_pending};
+
+    #[test]
+    fn verification_read_is_pending_after_each_rewrite() {
+        let p = "r.md";
+        assert!(!verification_read_pending("", p));
+        assert!(verification_read_pending("[WRITE_OK] r.md\n", p));
+        assert!(!verification_read_pending("[WRITE_OK] r.md\n[READ_OK] r.md\n", p));
+        // The last-run bug: rewrite after a read-back must need a new read.
+        assert!(verification_read_pending("[WRITE_OK] r.md\n[READ_OK] r.md\n[WRITE_OK] r.md\n", p));
+        assert!(!verification_read_pending("[READ_OK] r.md\n", p));
+    }
+
+    #[test]
+    fn newest_read_of_a_path_survives_and_older_is_elided() {
+        let ev = "[READ_OK] a.md\nFULL FILE CONTENT:\nold body\n[PROPOSITION] a.md -> File read (36 lines)\n[CMD_OK] Command: ls\n[READ_OK] a.md\nFULL FILE CONTENT:\nnew body\n";
+        let out = condense_critic_evidence(ev);
+        assert!(!out.contains("old body"), "{out}");
+        assert!(!out.contains("36 lines"), "{out}");
+        assert!(out.contains("new body"), "{out}");
+        assert!(out.contains("[CMD_OK] Command: ls"), "{out}");
+    }
+
+    #[test]
+    fn read_before_a_later_write_is_elided() {
+        let ev = "[READ_OK] a.md\nFULL FILE CONTENT:\nstale draft\n[WRITE_OK] a.md\n";
+        let out = condense_critic_evidence(ev);
+        assert!(!out.contains("stale draft"), "{out}");
+        assert!(out.contains("[WRITE_OK] a.md"), "{out}");
+    }
+
+    #[test]
+    fn only_the_newest_veto_keeps_its_body() {
+        let ev = "[CRITIC_VETO] first veto\nold detail\n[CMD_OK] Command: ls\n[CRITIC_VETO] second veto\nnew detail\n";
+        let out = condense_critic_evidence(ev);
+        assert!(!out.contains("old detail"), "{out}");
+        assert!(out.contains("older veto elided"), "{out}");
+        assert!(out.contains("new detail"), "{out}");
+    }
+
+    #[test]
+    fn other_paths_and_lowercase_brackets_are_untouched() {
+        let ev = "[READ_OK] a.md\nbody a\n[READ_OK] b.md\n[workspace]\nmembers = []\n";
+        let out = condense_critic_evidence(ev);
+        assert!(out.contains("body a"), "{out}");
+        assert!(out.contains("[workspace]"), "{out}");
+        assert!(out.contains("members = []"), "{out}");
     }
 }
