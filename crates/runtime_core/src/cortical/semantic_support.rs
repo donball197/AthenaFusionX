@@ -639,19 +639,6 @@ mod tests {
         assert_eq!(served, 2, "expected corpus and report embedding requests");
     }
 
-    fn resolve_cal_path(path: &str) -> std::path::PathBuf {
-        let p = std::path::Path::new(path);
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .and_then(|x| x.parent())
-                .expect("workspace root")
-                .join(p)
-        }
-    }
-
     #[tokio::test]
     #[ignore = "manual calibration against explicitly supplied report and evidence files"]
     async fn calibrate_against_corpus() {
