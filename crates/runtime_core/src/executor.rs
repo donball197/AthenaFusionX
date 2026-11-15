@@ -688,12 +688,12 @@ impl RoboticExecutor {
                 };
 
                 let rg_args: Vec<&str> = if is_workspace_root {
-                    vec!["--type", "rust", "-n", "-C", "2", "-i", "-e", query.as_str(), p_str]
+                    vec!["--type", "rust", "-n", "-H", "-C", "2", "-i", "-e", query.as_str(), p_str]
                 } else {
-                    vec!["-n", "-C", "2", "-i", "-e", query.as_str(), p_str]
+                    vec!["-n", "-H", "-C", "2", "-i", "-e", query.as_str(), p_str]
                 };
 
-                let mut grep_args: Vec<&str> = vec!["-rn", "-C", "2"];
+                let mut grep_args: Vec<&str> = vec!["-rnH", "-C", "2"];
                 if is_workspace_root {
                     grep_args.push("--include=*.rs");
                 }
