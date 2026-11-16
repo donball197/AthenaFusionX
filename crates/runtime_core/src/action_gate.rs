@@ -146,7 +146,13 @@ impl ActionGate {
                     .validate_intent("write_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-            MotorAction::ReadFile { .. } => {
+            MotorAction::ReadFile { path } => {
+                if crate::secrets_guard::is_secret_path(path) {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: secret material read blocked: '{}'",
+                        path
+                    ));
+                }
                 self.sandbox
                     .validate_intent("read_file")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
@@ -156,7 +162,13 @@ impl ActionGate {
                     .validate_intent("read_function")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
             }
-            MotorAction::ReadFileChunk { .. } => {
+            MotorAction::ReadFileChunk { path, .. } => {
+                if crate::secrets_guard::is_secret_path(path) {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: secret material read blocked: '{}'",
+                        path
+                    ));
+                }
                 self.sandbox
                     .validate_intent("read_file_chunk")
                     .map_err(|e| anyhow!("ACTION_GATE_POLICY_FAULT: {}", e))?;
@@ -223,10 +235,20 @@ impl ActionGate {
                     ));
                 }
 
-                let host = if lower.starts_with("https://") { &url[8..] } else { &url[7..] };
+                let after_scheme = if lower.starts_with("https://") { &url[8..] } else { &url[7..] };
+                let host_only = after_scheme.split(['/', '?', '#']).next().unwrap_or(after_scheme);
 
-                if host.trim().is_empty() {
+                if host_only.trim().is_empty() {
                     return Err(anyhow!("ACTION_GATE_SECURITY_VIOLATION: Scrape URL has no host."));
+                }
+
+                if crate::secrets_guard::host_is_private(host_only) {
+                    return Err(anyhow!(
+                        "ACTION_GATE_SECURITY_VIOLATION: Scrape URL targets a private host: '{}'. \
+                         NOTE: string-only check; does NOT resolve DNS or follow redirects. \
+                         A public host that 302s to a private address is still allowed through.",
+                        host_only
+                    ));
                 }
 
                 if prompt.trim().is_empty() {

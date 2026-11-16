@@ -1,3 +1,4 @@
+pub mod secrets_guard;
 pub mod agent_protocol;
 pub mod arbiter_agent;
 pub mod cli_utils;
@@ -83,6 +84,8 @@ pub mod tools;
 pub use client::ApiClient;
 pub use config::NexusConfig;
 pub mod anti_loop;
+#[cfg(test)]
+mod forever_fix_dryrun;
 pub mod contract_status;
 pub mod epistemic_tuple;
 pub mod probabilistic_memory;
@@ -107,3 +110,6 @@ mod write_noop_tests;
 // === athx upgrade: journal/episodic ===
 pub mod episodic;
 pub mod journal;
+
+#[cfg(test)]
+mod report_readonly_dryrun;
