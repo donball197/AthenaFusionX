@@ -1162,9 +1162,14 @@ authoritative action representation."#,
             mission, strategy, world_context, bounded_evidence
         );
 
-        let is_halt_strategy = strategy == "halt" || strategy.starts_with("halt:");
-        let strategy_tools = if is_halt_strategy {
+        let is_open_halt_strategy = strategy.starts_with("halt:");
+        let strategy_tools = if is_open_halt_strategy {
             Vec::new()
+        } else if strategy == "halt" {
+            crate::tools::schema::tool_declarations_for_strategy(
+                crate::tools::schema::CognitivePhase::Verification,
+                "halt",
+            )
         } else {
             crate::tools::schema::tool_declarations_for_strategy(phase, strategy)
         };
@@ -1185,7 +1190,7 @@ authoritative action representation."#,
         // resolves to exactly one native tool, force that tool at the
         // OpenAI-compatible provider boundary. This prevents the model from
         // silently substituting another native action.
-        if !is_halt_strategy {
+        if !is_open_halt_strategy {
             if let Some(expected_tool) =
                 crate::tools::schema::native_tool_name_for_strategy(strategy)
             {

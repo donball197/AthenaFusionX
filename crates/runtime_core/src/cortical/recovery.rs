@@ -495,9 +495,16 @@ impl CorticalLoop {
         // required artifact. A mission that names an output file is a
         // CREATE, not a mutation of the read files.
         {
-            let names_required_artifact =
-                active_strategy.strip_prefix("write_file:").map(str::trim).is_some_and(|target| {
-                    session.contract.required_artifact_paths.iter().any(|a| a.path == target)
+            let names_required_artifact = active_strategy
+                .strip_prefix("write_file:")
+                .or_else(|| active_strategy.strip_prefix("read_file:"))
+                .map(str::trim)
+                .is_some_and(|target| {
+                    session
+                        .contract
+                        .required_artifact_paths
+                        .iter()
+                        .any(|a| crate::evidence_paths::paths_equivalent(&a.path, target))
                 });
             if names_required_artifact {
                 return;

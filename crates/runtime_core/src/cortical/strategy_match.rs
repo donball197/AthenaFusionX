@@ -58,6 +58,10 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         return true;
     }
 
+    if strategy == "halt" {
+        return matches!(action, AgentAction::Halt { .. });
+    }
+
     if strategy.starts_with("halt:") {
         return matches!(
             action,

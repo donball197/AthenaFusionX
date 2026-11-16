@@ -261,7 +261,7 @@ impl CorticalLoop {
                     .unwrap_or(0);
                 let since_write = &session.local_evidence[since_write_start..];
                 !since_write.contains(&format!("[READ_OK] {}", p))
-                    && !since_write.contains(&format!("[AUTO_VERIFY_READ] {}", p))
+                    && !since_write.contains(&format!("[VERIFY_READ_PENDING] {}", p))
             });
 
         let mut active_strategy = if write_phase_ready {
@@ -285,7 +285,7 @@ impl CorticalLoop {
                 p
             ));
             session.local_evidence.push_str(&format!(
-                "\n[AUTO_VERIFY_READ] {}\n[NODE PHASE] The artifact was written. Read it back now so its claims can be paired with READ_OK evidence; halt only after that.\n",
+                "\n[VERIFY_READ_PENDING] {}\n[NODE PHASE] The artifact was written. Read it back now so its claims can be paired with READ_OK evidence; halt only after that.\n",
                 p
             ));
             format!("read_file:{}", p)
@@ -424,14 +424,24 @@ impl CorticalLoop {
                 // contract because there are no recon conditions to satisfy.
                 // Otherwise, require the same recon_complete guard the
                 // read-halt branch below uses.
-                let only_write_conditions = session.contract.conditions.iter().all(|c| {
+                let has_write_condition = session.contract.conditions.iter().any(|c| {
                     matches!(
                         c,
                         crate::completion_engine::CompletionCondition::WritePathAcquired { .. }
                             | crate::completion_engine::CompletionCondition::WriteMarkerAcquired
                     )
                 });
-                only_write_conditions
+                let no_recon_conditions = session.contract.conditions.iter().all(|c| {
+                    matches!(
+                        c,
+                        crate::completion_engine::CompletionCondition::WritePathAcquired { .. }
+                            | crate::completion_engine::CompletionCondition::WriteMarkerAcquired
+                            | crate::completion_engine::CompletionCondition::HaltDelivered
+                            | crate::completion_engine::CompletionCondition::MinBeliefScore(_)
+                            | crate::completion_engine::CompletionCondition::LineageEvidenceAcquired
+                    )
+                });
+                (has_write_condition && no_recon_conditions)
                     || crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
                         &session.contract,
                         &session.local_evidence,

@@ -670,8 +670,10 @@ impl CorticalLoop {
         {
             let verification_read = actions.iter().any(|a| {
                 if let AgentAction::ReadFile { _thought_process: None, path, .. } = a {
-                    session.contract.required_artifact_paths.iter().any(|art| &art.path == path)
-                        && verification_read_pending(&session.local_evidence, path)
+                    session.contract.required_artifact_paths.iter().any(|art| {
+                        crate::evidence_paths::paths_equivalent(&art.path, path)
+                            && verification_read_pending(&session.local_evidence, &art.path)
+                    })
                 } else {
                     false
                 }
@@ -1139,8 +1141,25 @@ use crate::cmd_match::normalize_cmd;
 /// replaced the file, so every rewrite gets its own verification read without
 /// asking the LLM critic (which vetoed these as anti-redundant reads).
 fn verification_read_pending(evidence: &str, path: &str) -> bool {
-    let last_write = evidence.rfind(&format!("[WRITE_OK] {}", path));
-    let last_read = evidence.rfind(&format!("[READ_OK] {}", path));
+    let mut last_write: Option<usize> = None;
+    let mut last_read: Option<usize> = None;
+    for (idx, line) in evidence.lines().enumerate() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("[WRITE_OK]") {
+            let p = rest.trim();
+            let p = p
+                .strip_prefix("Successfully synthesized and wrote report to ")
+                .unwrap_or(p)
+                .trim();
+            if crate::evidence_paths::paths_equivalent(p, path) {
+                last_write = Some(idx);
+            }
+        } else if let Some(rest) = t.strip_prefix("[READ_OK]") {
+            if crate::evidence_paths::paths_equivalent(rest.trim(), path) {
+                last_read = Some(idx);
+            }
+        }
+    }
     match (last_write, last_read) {
         (Some(_), None) => true,
         (Some(w), Some(r)) => w > r,
