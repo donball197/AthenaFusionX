@@ -678,11 +678,46 @@ impl RoboticExecutor {
                     }
                 };
 
-                let rg_args: Vec<&str> = if is_workspace_root {
-                    vec!["--type", "rust", "-n", "-H", "-C", "2", "-i", "-e", query.as_str(), p_str]
-                } else {
-                    vec!["-n", "-H", "-C", "2", "-i", "-e", query.as_str(), p_str]
-                };
+                let workspace_root =
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let searching_vendor = p_str == "vendor"
+                    || p_str.starts_with("vendor/")
+                    || p_str.contains("/vendor/")
+                    || p_str.ends_with("/vendor");
+                let searching_root =
+                    safe_path == workspace_root || path.trim() == "." || path.trim() == "./";
+
+                let mut rg_args: Vec<&str> = Vec::new();
+                if is_workspace_root {
+                    rg_args.extend_from_slice(&["--type", "rust"]);
+                }
+                rg_args.extend_from_slice(&[
+                    "--glob=!.git/**",
+                    "--glob=!**/target/**",
+                    "--glob=!.venv/**",
+                    "--glob=!.nexus_venv/**",
+                    "--glob=!.patch_backups/**",
+                    "--glob=!**/.zig-cache/**",
+                    "--glob=!.surgical_backup/**",
+                    "--glob=!.nexus/**",
+                    "--glob=!.lazarus/**",
+                    "--glob=!node_modules/**",
+                    "--glob=!.fastembed_cache/**",
+                    "--glob=!.nexus_ast/**",
+                    "--glob=!audit_out/**",
+                    "--glob=!repository_analysis/**",
+                    "--glob=!.nexus_snapshots.json",
+                    "--glob=!*.log",
+                    "--glob=!*.bak*",
+                ]);
+                if searching_root && !searching_vendor {
+                    rg_args.extend_from_slice(&[
+                        "--glob=!vendor/**",
+                        "--glob=!nexus_audit_target/**",
+                        "--glob=!**/tests/fixtures/**",
+                    ]);
+                }
+                rg_args.extend_from_slice(&["-n", "-H", "-C", "2", "-i", "-e", query.as_str(), p_str]);
 
                 let mut grep_args: Vec<&str> = vec!["-rnH", "-C", "2"];
                 if is_workspace_root {
@@ -691,21 +726,30 @@ impl RoboticExecutor {
                 grep_args.extend_from_slice(&[
                     "--exclude-dir=.git",
                     "--exclude-dir=target",
+                    "--exclude-dir=.venv",
+                    "--exclude-dir=.nexus_venv",
+                    "--exclude-dir=.patch_backups",
+                    "--exclude-dir=.zig-cache",
                     "--exclude-dir=.surgical_backup",
                     "--exclude-dir=.nexus",
                     "--exclude-dir=.lazarus",
                     "--exclude-dir=node_modules",
-                    "--exclude-dir=.nexus_venv",
                     "--exclude-dir=.fastembed_cache",
                     "--exclude-dir=.nexus_ast",
                     "--exclude-dir=audit_out",
                     "--exclude-dir=repository_analysis",
+                    "--exclude=.nexus_snapshots.json",
                     "--exclude=*.log",
-                    "-iE",
-                    "-e",
-                    query.as_str(),
-                    p_str,
+                    "--exclude=*.bak*",
                 ]);
+                if searching_root && !searching_vendor {
+                    grep_args.extend_from_slice(&[
+                        "--exclude-dir=vendor",
+                        "--exclude-dir=nexus_audit_target",
+                        "--exclude-dir=fixtures",
+                    ]);
+                }
+                grep_args.extend_from_slice(&["-iE", "-e", query.as_str(), p_str]);
 
                 // rg first. Any rg failure (binary missing, exit>=2) or
                 // empty output falls through to grep. grep's failure is

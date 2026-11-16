@@ -85,8 +85,8 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
             "Search for a pattern in source code files.",
             &["path", "query", "reasoning"],
             json!({
-                "path": { "type": "string" },
-                "query": { "type": "string", "description": "Search pattern or keyword." },
+                "path": { "type": "string", "description": "Directory or file scope relative to workspace root (e.g. 'crates/runtime_core/src' or 'Cargo.toml'). Do NOT append ':query' or search terms here." },
+                "query": { "type": "string", "description": "Non-empty search pattern or keyword (e.g. 'workspace', 'verify')." },
                 "reasoning": { "type": "string" },
             }),
         ),

@@ -211,6 +211,7 @@ impl CorticalLoop {
                 mutation_paths.truncate(mutation_paths_checkpoint);
                 rust_files_mutated = rust_files_mutated_checkpoint;
                 self.log(format!("\x1b[1;31m>> [ACTION GATE REJECTED]: {}\x1b[0m", gate_err));
+                session.local_evidence.push_str(&format!("[ACTION_GATE_BLOCKED] {}\n", gate_err));
                 if let Some(h_id) = session.best_hypothesis_id {
                     let obs_id = session.graph.add_node(
                         NodeKind::Observation,

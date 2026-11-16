@@ -347,7 +347,27 @@ impl CorticalLoop {
             && unwritten_targets.is_empty()
             && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
             && !session.contract.required_artifact_paths.is_empty()
+            && critic_veto_demands_halt(&session.local_evidence)
+            && crate::completion_engine::SubgoalCompletionEngine::reconnaissance_complete(
+                &session.contract,
+                &session.local_evidence,
+                1.0,
+            )
+        {
+            self.log(
+                "\x1b[1;35m>> [CORTEX PHASE TRANSITION]\x1b[0m Critic demanded halt after anti-redundant-read veto; forcing `halt`."
+                    .to_string(),
+            );
+            session.local_evidence.push_str(
+                "\n[NODE PHASE] All required reads and writes are already evidenced. The required next action is `halt` with a complete summary of THIS node's findings.\n",
+            );
+            "halt".to_string()
+        } else if session.contract.is_mutation_task
+            && unwritten_targets.is_empty()
+            && crate::evidence_markers::has_mutation_marker(&session.local_evidence)
+            && !session.contract.required_artifact_paths.is_empty()
             && artifact_vetoed_after_last_write(&session.local_evidence)
+            && !critic_veto_demands_halt(&session.local_evidence)
             && {
                 let target = session
                     .contract
@@ -568,7 +588,7 @@ impl CorticalLoop {
         // parser to terminate the field at a source-derived delimiter
         // (e.g. `","reasoning":`) — a 2700-byte stub that was structurally
         // broken every time.
-        let enhanced_mission = if write_phase_ready
+        let enhanced_mission = if (write_phase_ready || active_strategy.starts_with("write_file:"))
             && crate::completion_engine::requires_semantic_verification(&session.contract.objective)
         {
             let deliverable = session
@@ -578,7 +598,7 @@ impl CorticalLoop {
                 .map(|a| a.path.as_str())
                 .unwrap_or("the deliverable");
             format!(
-                "{}\n\n[WRITE PHASE REQUIREMENTS]\nWrite the report to `{}` in ONE write_file call.\nRULES:\n- Follow any length the mission specifies; otherwise stay under 500 words.\n- Finish every sentence and close every section; never end mid-expression.\n- Prose and bullets only. NO code blocks and NO multi-line code excerpts.\n- Reference functions by name in backticks only; do NOT quote function bodies.\n- Do NOT include evidence markers like [READ_OK] in the report body.\n- Cite only symbols and line numbers that appear in the evidence you have read.\n",
+                "{}\n\n[WRITE PHASE REQUIREMENTS]\nWrite the report to `{}` in ONE write_file call.\nRULES:\n- Follow any length the mission specifies; otherwise stay under 500 words.\n- Finish every sentence and close every section; never end mid-expression.\n- Prose and bullets only. NO code blocks and NO multi-line code excerpts.\n- Avoid copying raw TOML/code quote syntax (e.g. write `resolver version 2` instead of `resolver = \"2\"`).\n- Reference functions by name in backticks only; do NOT quote function bodies.\n- Do NOT include evidence markers like [READ_OK] in the report body.\n- Cite only symbols and line numbers that appear in the evidence you have read.\n",
                 enhanced_mission, deliverable,
             )
         } else {
@@ -628,16 +648,17 @@ impl CorticalLoop {
             let stripped: String = crate::proposal_sanitize::strip_control_tokens(&raw_proposal);
             crate::json_parser::sanitize_json_escapes(&stripped)
         };
-        let mut actions = match crate::json_parser::extract_actions(&raw_proposal) {
-            Ok(parsed) => parsed,
-            Err(parse_err) => {
-                self.log(format!(
-                    "\x1b[31m>> [CORTEX PARSE] extract_actions rejected proposal: {}\x1b[0m",
-                    parse_err
-                ));
-                Vec::new()
-            }
-        };
+        let (mut actions, extract_failed) =
+            match crate::json_parser::extract_actions(&raw_proposal) {
+                Ok(parsed) => (parsed, false),
+                Err(parse_err) => {
+                    self.log(format!(
+                        "\x1b[31m>> [CORTEX PARSE] extract_actions rejected proposal: {}\x1b[0m",
+                        parse_err
+                    ));
+                    (Vec::new(), true)
+                }
+            };
         // Reject interceptor results that are structurally incomplete.
         // A SearchCode with an empty query would fail at the executor
         // anyway; rejecting here forces the parse-fault recovery path
@@ -728,7 +749,8 @@ impl CorticalLoop {
             && !session.local_evidence.contains("[READ_");
 
         // Auto-halt is suppressed when the proposal failed to parse: parse-fault recovery must run so the model's intent (e.g. a leaked execute_command) is recovered on the next turn.
-        if !proposal_was_malformed(&raw_proposal)
+        if !extract_failed
+            && !proposal_was_malformed(&raw_proposal)
             && status == ContractStatus::Satisfied
             && unwritten_targets.is_empty()
             && !actions.iter().any(|a| matches!(a, AgentAction::Halt { _thought_process: None, .. }))
@@ -1087,6 +1109,47 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     ));
                 }
             }
+        }
+
+        if let Some(AgentAction::SearchCode { path, query, .. }) = actions
+            .iter()
+            .find(|a| matches!(a, AgentAction::SearchCode { query, .. } if query.trim().is_empty()))
+        {
+            let example_hint = if let Some(rest) = active_strategy.strip_prefix("search_code:") {
+                if let Some((exp_p, exp_q)) = rest.split_once(':') {
+                    format!(
+                        " For strategy `{}`, emit {{\"type\":\"search_code\",\"path\":\"{}\",\"query\":\"{}\",\"reasoning\":\"...\"}}.",
+                        active_strategy,
+                        exp_p.trim(),
+                        exp_q.trim()
+                    )
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            let msg = format!(
+                "[PARSE_FAULT] `search_code` rejected: `query` must be non-empty (got path=`{}` query=`{}`). Put the directory/file scope in `path` and the search term in `query`.{}\n",
+                path, query, example_hint
+            );
+            self.log(format!("\x1b[1;31m>> [SEARCH SCHEMA FAULT]\x1b[0m {}", msg.trim()));
+            let snippet: String = raw_proposal.chars().take(500).collect();
+            let repeats = session.local_evidence.matches(snippet.as_str()).count();
+            if repeats >= 2 {
+                return Ok(CortexState::Fail {
+                    belief: current_belief,
+                    evidence: format!(
+                        "[PARSE_LOOP_TERMINAL] Repeated empty-query search_code {} times.",
+                        repeats + 1
+                    ),
+                });
+            }
+            session.local_evidence.push_str(&msg);
+            if let Some(h_id) = session.best_hypothesis_id {
+                Self::decay_hypothesis_belief(session, h_id, 0.02);
+            }
+            return Ok(CortexState::Strategize);
         }
 
         // HARD CORTEX BOUNDARY:
@@ -1625,6 +1688,18 @@ mod dir_child_tests {
 /// Distinct from `halt_rejected_since_last_evidence`, which only tracks
 /// `[HALT_REJECTED_REPORT]` (report-shape rejections) and is used by the
 /// mutation-halt branch to defer to the strategist after a thin report.
+fn critic_veto_demands_halt(evidence: &str) -> bool {
+    let clean = strip_read_bodies_for_markers(evidence);
+    let Some(pos) = clean.rfind("[CRITIC_VETO]") else {
+        return false;
+    };
+    let tail = clean[pos..].to_ascii_lowercase();
+    tail.contains("anti-redundant-read")
+        || tail.contains("proceed directly to halt")
+        || tail.contains("next action is `halt`")
+        || tail.contains("next action is to halt")
+}
+
 fn artifact_vetoed_after_last_write(evidence: &str) -> bool {
     let cleaned = strip_read_bodies_for_markers(evidence);
     let last_write = cleaned.rfind("[WRITE_OK]");

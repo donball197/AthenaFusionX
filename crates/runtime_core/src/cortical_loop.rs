@@ -736,9 +736,10 @@ fn inherit_physical_evidence(evidence: &str) -> (String, InheritStats) {
     // were silently filtered out of inherited lineage evidence.
     // [WRITE_NOOP] is included for symmetry with [WRITE_OK]: both
     // prove the requested end-state exists on disk.
-    const KEEP: [&str; 9] = [
+    const KEEP: [&str; 10] = [
         "[READ_OK]",
         "[READ_CHUNK_OK]",
+        "[SEARCH_CODE_OK]",
         "[CMD_OK]",
         "[WRITE_OK]",
         "[WRITE_NOOP]",
@@ -880,9 +881,10 @@ pub(crate) fn filter_claim_bound_lineage(
         }
     }
 
-    const HEADERS: [&str; 9] = [
+    const HEADERS: [&str; 10] = [
         "[READ_OK]",
         "[READ_CHUNK_OK]",
+        "[SEARCH_CODE_OK]",
         "[CMD_OK]",
         "[WRITE_OK]",
         "[WRITE_NOOP]",
@@ -941,6 +943,25 @@ pub(crate) fn filter_claim_bound_lineage(
                 return true;
             }
             return pure_synthesis_node;
+        }
+        if let Some(rest) = h.strip_prefix("[SEARCH_CODE_OK]") {
+            if pure_synthesis_node {
+                return true;
+            }
+            let search_path = rest
+                .split("| Query:")
+                .next()
+                .and_then(|p| p.trim().strip_prefix("Path:"))
+                .map(str::trim)
+                .unwrap_or("");
+            if search_path.is_empty() {
+                return false;
+            }
+            return claimed_paths.iter().any(|cp| {
+                crate::evidence_paths::paths_equivalent(search_path, cp)
+                    || crate::evidence_paths::normalize_path(search_path)
+                        == crate::evidence_paths::normalize_path(cp)
+            }) || local_lower.contains(&search_path.to_ascii_lowercase());
         }
 
         let block_path = if let Some(r) = h.strip_prefix("[READ_OK]") {

@@ -325,18 +325,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "meta/llama-3.2-90b-vision-instruct",
-    "context": "128K in / 4K out",
-    "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/llama-guard-4-12b",
-    "context": "8K in / 4K out",
-    "category": "SAFETY"
-  },
-  {
-    "provider": "Nvidia",
     "name": "meta/muse-glimmer-30b",
     "context": "Unknown",
     "category": "GENERAL"
@@ -379,12 +367,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemoguard-8b-content-safety",
-    "context": "128K in / 4K out",
-    "category": "SAFETY"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/llama-3.1-nemoguard-8b-topic-control",
     "context": "128K in / 4K out",
     "category": "SAFETY"
@@ -405,12 +387,6 @@
     "provider": "Nvidia",
     "name": "nvidia/llama-3.2-nv-embedqa-1b-v1",
     "context": "128K in / 4K out",
-    "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-nemotron-embed-vl-1b-v2",
-    "context": "8K in / 4K out",
     "category": "EMBEDDING"
   },
   {
@@ -466,18 +442,6 @@
     "name": "nvidia/nemotron-3.5-super-vl-120b-a12b",
     "context": "4K in / 4K out",
     "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-parse",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-parse-2.0",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
   },
   {
     "provider": "Nvidia",

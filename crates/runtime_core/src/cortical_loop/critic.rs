@@ -503,14 +503,30 @@ impl CorticalLoop {
         let current_action_keys =
             actions.iter().map(crate::cortical::action_identity::action_key).collect::<Vec<_>>();
 
-        // Evidence-growth gate: a retried action batch is only repeat-vetoed
-        // while evidence has not meaningfully grown since the last rejection.
-        // 500 bytes is larger than any single [CRITIC_VETO] + [CRITIC_REPEAT_VETO]
-        // message pair, so ordinary veto churn does not trip the gate; any real
-        // tool result (read, search, command) does.
-        const REPEAT_VETO_EVIDENCE_GROWTH_FLOOR: usize = 500;
+        // Evidence-growth gate: a retried action batch is repeat-vetoed until
+        // a physical tool execution marker arrives in local_evidence. Using a
+        // raw byte floor breaks when [CRITIC_VETO] + [NODE PHASE] chatter
+        // exceeds 500 bytes.
         let evidence_unchanged = session.last_critic_rejected_at_evidence_len.map_or(true, |len| {
-            session.local_evidence.len().saturating_sub(len) < REPEAT_VETO_EVIDENCE_GROWTH_FLOOR
+            let start = len.min(session.local_evidence.len());
+            let tail = &session.local_evidence[start..];
+            !tail.lines().any(|l| {
+                let t = l.trim_start();
+                t.starts_with("[READ_OK]")
+                    || t.starts_with("[READ_CHUNK_OK]")
+                    || t.starts_with("[READ_FUNCTION_OK]")
+                    || t.starts_with("[SEARCH_CODE_OK]")
+                    || t.starts_with("[SEARCH_MEMORY_OK]")
+                    || t.starts_with("[CMD_OK]")
+                    || t.starts_with("[WRITE_OK]")
+                    || t.starts_with("[WRITE_NOOP]")
+                    || t.starts_with("[PATCH_FUNCTION_OK]")
+                    || t.starts_with("[PATCH_IDEMPOTENT_OK]")
+                    || t.starts_with("[DIFF_PATCH_OK]")
+                    || t.starts_with("[REPLACE_LINES_OK]")
+                    || t.starts_with("[RUN_TESTS_OK]")
+                    || t.starts_with("[ACTION FAILED]")
+            })
         });
         if session.last_critic_rejected_actions.as_ref() == Some(&current_action_keys)
             && evidence_unchanged

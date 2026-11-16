@@ -234,7 +234,14 @@ pub fn search_checked_satisfied(evidence: &str, expected: &str) -> bool {
                             || recorded_path == path_part
                             || recorded_path.ends_with(&format!("/{}", path_part));
 
-                        if path_ok && recorded_query.contains(&term_part) {
+                        let query_ok = if has_matches {
+                            recorded_query.contains(&term_part)
+                        } else {
+                            recorded_query == term_part
+                                || recorded_query.split('|').any(|alt| alt.trim() == term_part)
+                        };
+
+                        if path_ok && query_ok {
                             return true;
                         }
                     }
@@ -874,6 +881,16 @@ mod search_checked_tests {
         // Accepted because MATCHES exists (a real hit was found),
         // not because the trailing phrase proves absence.
         assert!(search_checked_satisfied(evidence, "bins:x"));
+    }
+
+    #[test]
+    fn multi_word_no_match_does_not_satisfy_single_word_target() {
+        let evidence = concat!(
+            "[SEARCH_CODE_OK] Path: crates/runtime_core/src | Query: 'verify complete'\n",
+            "No code matches found in specified path.\n"
+        );
+        assert!(!search_checked_satisfied(evidence, "crates/runtime_core/src:verify"));
+        assert!(!search_checked_satisfied(evidence, "crates/runtime_core/src:complete"));
     }
 }
 

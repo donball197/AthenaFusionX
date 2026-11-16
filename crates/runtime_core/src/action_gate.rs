@@ -28,6 +28,32 @@ pub fn forced_search_from_evidence(evidence: &str) -> Option<(String, String)> {
 /// * the action is not a `SearchCode`.
 ///
 /// Returns `ACTION_GATE_STRATEGY_MISMATCH` on path or query divergence.
+fn forced_search_paths_match(actual: &str, expected: &str) -> bool {
+    let a = actual.trim();
+    let e = expected.trim();
+    if a == e {
+        return true;
+    }
+    if a.split('/').any(|c| c == "..") || e.split('/').any(|c| c == "..") {
+        return false;
+    }
+    let norm = |p: &str| -> String {
+        let mut s = p.trim_start_matches("./").trim_end_matches('/').to_string();
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_s = cwd.to_string_lossy().trim_end_matches('/').to_string();
+            if s == cwd_s {
+                return ".".to_string();
+            }
+            if let Some(rest) = s.strip_prefix(&format!("{}/", cwd_s)) {
+                s = rest.to_string();
+            }
+        }
+        let s = s.trim_start_matches("./").trim_end_matches('/');
+        if s.is_empty() { ".".to_string() } else { s.to_string() }
+    };
+    norm(a) == norm(e)
+}
+
 pub fn check_forced_search(evidence: &str, action: &MotorAction) -> Result<()> {
     let Some((expected_path, expected_query)) = forced_search_from_evidence(evidence) else {
         return Ok(());
@@ -37,7 +63,9 @@ pub fn check_forced_search(evidence: &str, action: &MotorAction) -> Result<()> {
         return Ok(());
     }
     if let MotorAction::SearchCode { path, query } = action {
-        if path != &expected_path || query != &expected_query {
+        if !forced_search_paths_match(path, &expected_path)
+            || !query.trim().eq_ignore_ascii_case(expected_query.trim())
+        {
             return Err(anyhow!(
                 "ACTION_GATE_STRATEGY_MISMATCH: forced strategy requires search_code:{}:{}; got search_code:{}:{}",
                 expected_path,
@@ -331,5 +359,16 @@ mod forced_search_gate_tests {
     #[test]
     fn extraction_returns_none_without_forced_line() {
         assert_eq!(forced_search_from_evidence("ordinary evidence\n"), None);
+    }
+
+    #[test]
+    fn abs_cwd_path_and_trailing_slash_are_accepted() {
+        let cwd = std::env::current_dir().unwrap();
+        let abs = cwd.join("Cargo.toml").to_string_lossy().to_string();
+        let evidence = "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n";
+        assert!(check_forced_search(evidence, &search(&abs, "workspace")).is_ok());
+
+        let slash_ev = "[CONTRACT_FIRST_FORCED] search_code:bins/:main\n";
+        assert!(check_forced_search(slash_ev, &search("bins", "main")).is_ok());
     }
 }

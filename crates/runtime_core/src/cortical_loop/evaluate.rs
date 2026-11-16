@@ -310,7 +310,9 @@ impl CorticalLoop {
                         .len()
                     };
                     let after = after_current.min(after_synth);
-                    if after < before && eval.confidence_modifier < 0.10 {
+                    let is_no_match_search =
+                        evidence.contains("No code matches found in specified path.");
+                    if after < before && eval.confidence_modifier < 0.10 && !is_no_match_search {
                         self.log(format!(
                             "\x1b[1;36m>> [PROGRESS FLOOR] unmet {} -> {}; modifier {:.2} -> 0.10\x1b[0m",
                             before, after, eval.confidence_modifier
