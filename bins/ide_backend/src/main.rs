@@ -3,8 +3,7 @@ pub async fn supervise_worker<F, Fut>(
     name: &'static str,
     mut worker_fn: F,
     mut shutdown: broadcast::Receiver<()>,
-)
-where
+) where
     F: FnMut() -> Fut + Send,
     Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
 {
@@ -24,8 +23,7 @@ async fn supervise_worker_with_backoff<F, Fut>(
     shutdown: &mut broadcast::Receiver<()>,
     initial_backoff: std::time::Duration,
     max_backoff: std::time::Duration,
-)
-where
+) where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
 {
@@ -86,8 +84,7 @@ fn spawn_supervised_worker<F, Fut>(
     shutdown_tx: &broadcast::Sender<()>,
     name: &'static str,
     worker_fn: F,
-)
-where
+) where
     F: FnMut() -> Fut + Send + 'static,
     Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
 {
@@ -232,69 +229,51 @@ async fn main() -> anyhow::Result<()> {
     let worker_client = req_client.clone();
     let worker_api_key = api_key_str.clone();
     let worker_orchestrator = orchestrator.clone();
-    spawn_supervised_worker(
-        &mut worker_tasks,
-        &shutdown_tx,
-        "dream_cycle",
-        move || dream_cycle::run(
+    spawn_supervised_worker(&mut worker_tasks, &shutdown_tx, "dream_cycle", move || {
+        dream_cycle::run(
             worker_palace.clone(),
             worker_tx.clone(),
             worker_client.clone(),
             worker_api_key.clone(),
             worker_orchestrator.clone(),
             worker_shutdown.subscribe(),
-        ),
-    );
+        )
+    });
 
     let worker_tx = tx.clone();
     let worker_monitor = monitor.clone();
     let self_healing_shutdown = shutdown_tx.clone();
-    spawn_supervised_worker(
-        &mut worker_tasks,
-        &shutdown_tx,
-        "self_healing_engine",
-        move || self_healing_engine::run(
+    spawn_supervised_worker(&mut worker_tasks, &shutdown_tx, "self_healing_engine", move || {
+        self_healing_engine::run(
             worker_tx.clone(),
             worker_monitor.clone(),
             self_healing_shutdown.subscribe(),
-        ),
-    );
+        )
+    });
 
     let worker_tx = tx.clone();
     let worker_monitor = monitor.clone();
     let worker_resonance = resonance.clone();
     let telemetry_shutdown = shutdown_tx.clone();
-    spawn_supervised_worker(
-        &mut worker_tasks,
-        &shutdown_tx,
-        "telemetry_bridge",
-        move || telemetry_bridge::run(
+    spawn_supervised_worker(&mut worker_tasks, &shutdown_tx, "telemetry_bridge", move || {
+        telemetry_bridge::run(
             worker_tx.clone(),
             worker_monitor.clone(),
             worker_resonance.clone(),
             telemetry_shutdown.subscribe(),
-        ),
-    );
+        )
+    });
 
     let thermal_shutdown = shutdown_tx.clone();
-    spawn_supervised_worker(
-        &mut worker_tasks,
-        &shutdown_tx,
-        "thermal_governor",
-        move || thermal_governor::run(thermal_shutdown.subscribe()),
-    );
+    spawn_supervised_worker(&mut worker_tasks, &shutdown_tx, "thermal_governor", move || {
+        thermal_governor::run(thermal_shutdown.subscribe())
+    });
 
     let heartbeat_tx = tx.clone();
     let heartbeat_shutdown = shutdown_tx.clone();
-    spawn_supervised_worker(
-        &mut worker_tasks,
-        &shutdown_tx,
-        "heartbeat",
-        move || heartbeat::run(
-            heartbeat_tx.clone(),
-            heartbeat_shutdown.subscribe(),
-        ),
-    );
+    spawn_supervised_worker(&mut worker_tasks, &shutdown_tx, "heartbeat", move || {
+        heartbeat::run(heartbeat_tx.clone(), heartbeat_shutdown.subscribe())
+    });
 
     let state = Arc::new(server::AppState {
         client: req_client,
@@ -350,7 +329,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-
 
     {
         let palace = palace.clone();

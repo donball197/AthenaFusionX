@@ -42,6 +42,25 @@ fn consecutive_parse_faults(evidence: &str) -> usize {
     n
 }
 
+/// Index, action type and serde error of the first batch item that fails
+/// to deserialize as an AgentAction. None if raw isn't parseable JSON.
+fn first_failing_item(raw: &str) -> Option<(usize, String, String)> {
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    let items = match v {
+        serde_json::Value::Array(a) => a,
+        other => vec![other],
+    };
+    for (i, item) in items.into_iter().enumerate() {
+        if let Err(e) =
+            serde_json::from_value::<crate::agent_protocol::AgentAction>(item.clone())
+        {
+            let t = item.get("type").and_then(|t| t.as_str()).unwrap_or("?").to_string();
+            return Some((i, t, e.to_string()));
+        }
+    }
+    None
+}
+
 impl CorticalLoop {
     pub(super) async fn handle_strategize(
         &mut self,
@@ -277,6 +296,13 @@ impl CorticalLoop {
             && artifact_vetoed_after_last_write(&session.local_evidence)
             && citation_veto_pending(&session.local_evidence)
             && !grep_evidence_present(&session.local_evidence)
+            && session.local_evidence.matches("[CITATION PREFLIGHT]").count() < 2
+            && session.contract.conditions.iter().all(|c| match c {
+                crate::completion_engine::CompletionCondition::ReadPathAcquired { path } => {
+                    path.ends_with(".rs") || std::path::Path::new(path).is_dir()
+                }
+                _ => true,
+            })
         {
             // CITATION PRE-FLIGHT: the report was vetoed for unverified
             // line citations, and no grep -n evidence exists yet. Rather
@@ -295,8 +321,16 @@ impl CorticalLoop {
                     _ => None,
                 })
                 .collect();
+            let has_dir =
+                targets.is_empty() || targets.iter().any(|t| std::path::Path::new(t).is_dir());
             let cmd = if targets.is_empty() {
-                "grep -n \"^fn \\|^pub fn \\|^pub(crate) fn \" crates/runtime_core/src".to_string()
+                "grep -rn --include=\"*.rs\" \"^fn \\|^pub fn \\|^pub(crate) fn \" crates/runtime_core/src"
+                    .to_string()
+            } else if has_dir {
+                format!(
+                    "grep -rn --include=\"*.rs\" \"^fn \\|^pub fn \\|^pub(crate) fn \" {}",
+                    targets.join(" ")
+                )
             } else {
                 format!("grep -n \"^fn \\|^pub fn \\|^pub(crate) fn \" {}", targets.join(" "))
             };
@@ -820,6 +854,8 @@ impl CorticalLoop {
 
             let attempted_type = attempted_type
                 .or_else(|| crate::cortical::util::fallback_action_type(&raw_proposal));
+            let failing = first_failing_item(&raw_proposal);
+            let attempted_type = failing.as_ref().map(|(_, t, _)| t.clone()).or(attempted_type);
             let schema_hint = attempted_type.as_deref().and_then(|t| {
                 crate::tools::schema::all_tool_declarations()
                     .into_iter()
@@ -835,6 +871,12 @@ impl CorticalLoop {
                     })
             }).unwrap_or_default();
 
+            let item_hint = failing
+                .as_ref()
+                .map(|(i, t, e)| format!(
+                    "\n[PARSE_FAULT_ITEM] Item {} (`{}`) is the invalid one: {}. The other items were not the problem.",
+                    i, t, e))
+                .unwrap_or_default();
             let parse_fault_obs = format!(
                 "[PARSE_FAULT] Proposal could not be deserialized as a valid AgentAction. \
 Raw proposal (truncated to 500 chars): {}\n\
@@ -843,7 +885,20 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                 raw_proposal.chars().take(500).collect::<String>(),
                 schema_hint
             );
+            let snippet: String = raw_proposal.chars().take(500).collect();
+            let repeats = session.local_evidence.matches(snippet.as_str()).count();
+            if repeats >= 2 {
+                tracing::error!("[PARSE_LOOP] identical proposal rejected {} times; failing node", repeats + 1);
+                return Ok(CortexState::Fail {
+                    belief: current_belief,
+                    evidence: format!(
+                        "[PARSE_LOOP_TERMINAL] Identical unparseable proposal repeated {} times.",
+                        repeats + 1
+                    ),
+                });
+            }
             session.local_evidence.push_str(&parse_fault_obs);
+            session.local_evidence.push_str(&item_hint);
             session.local_evidence.push('\n');
 
             let mut belief_after = current_belief;
@@ -917,6 +972,32 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     .map(|i| i + 1)
                     .unwrap_or(0);
                 let prior = stripped[since..].matches("[WRITE_TRUNCATION]").count();
+
+                // Retry exhaustion is not evidence of deliverable completeness.
+                // Never allow a known-small report through merely because the model
+                // has already failed twice.
+                if tiny && !unclosed_fence && prior >= 2 {
+                    tracing::error!(
+        "[WRITE_TRUNCATION] Refusing incomplete deliverable '{}' after {} rejections; retry exhaustion does not establish report completeness.",
+        path,
+        prior
+    );
+
+                    session.local_evidence.push_str(&format!(
+        "\n[WRITE_TRUNCATION_TERMINAL] Refused incomplete deliverable '{}' after {} rejections. No WRITE_OK or completion claim is authorized.\n",
+        path,
+        prior
+    ));
+
+                    return Ok(CortexState::Fail {
+                        belief: current_belief,
+                        evidence: format!(
+            "[WRITE_TRUNCATION_TERMINAL] Refused incomplete deliverable `{}` after {} rejections.",
+            path,
+            prior
+        ),
+                    });
+                }
                 if (unclosed_fence || tiny) && prior < 2 {
                     let obs = format!(
                         "[WRITE_TRUNCATION] write_file `{}` rejected: content is {} bytes{}.\n\
@@ -962,7 +1043,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                                 });
                             match bridge_res {
                                 Ok(bridge) => {
-                                    match bridge.delegate_write(path, mission, &session.local_evidence).await {
+                                    match bridge
+                                        .delegate_write(path, mission, &session.local_evidence)
+                                        .await
+                                    {
                                         Ok(()) => {
                                             self.log(
                                                 "\x1b[1;36m>> [MIRROR] Delegated write succeeded.\x1b[0m"
@@ -974,7 +1058,10 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                                             return Ok(CortexState::Strategize);
                                         }
                                         Err(e) => {
-                                            self.log(format!("\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}", e));
+                                            self.log(format!(
+                                                "\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}",
+                                                e
+                                            ));
                                         }
                                     }
                                 }
@@ -1273,8 +1360,13 @@ fn citation_veto_pending(evidence: &str) -> bool {
     // Offsets in clean do not correspond to offsets in evidence after stripping.
     let tail: String = clean[pos..].chars().take(3000).collect();
     let l = tail.to_ascii_lowercase();
-    (l.contains("line") && (l.contains("number") || l.contains("range") || l.contains("citation")))
-        || l.contains("unverified")
+    l.contains("line number")
+        || l.contains("line-number")
+        || l.contains("line range")
+        || l.contains("line citation")
+        || l.contains("unverified line")
+        || l.contains("unverified span")
+        || l.contains("unverified-span")
         || l.contains("grep -n")
         || l.contains("rg -n")
 }
@@ -1283,19 +1375,23 @@ fn citation_veto_pending(evidence: &str) -> bool {
 /// If so, the strategist can derive line numbers and the pre-flight is a
 /// no-op.
 fn grep_evidence_present(evidence: &str) -> bool {
-    evidence.lines().any(|line| {
-        let t = line.trim_start();
-        if let Some(cmd) = t.strip_prefix("[CMD_OK] Command: ") {
-            let c = cmd.trim();
-            c.starts_with("grep -n")
-                || c.starts_with("grep -rn")
-                || c.starts_with("grep -r -n")
-                || c.starts_with("rg -n")
-                || c.contains(" grep -n ")
-                || c.contains(" rg -n ")
-        } else {
-            false
-        }
+    // Strip read bodies so source text that merely quotes a
+    // `[CMD_OK] Command: grep -n` line cannot satisfy the check.
+    let clean = strip_read_bodies_for_markers(evidence);
+    clean.lines().any(|line| {
+        let Some(cmd) = line.trim_start().strip_prefix("[CMD_OK] Command: ") else {
+            return false;
+        };
+        // The executor logs `cd <workspace> && <cmd>`; judge each pipeline
+        // segment on its own so the cd prefix and pipes cannot hide the grep.
+        cmd.split(|c: char| matches!(c, '|' | '&' | ';')).any(|segment| {
+            let mut tokens = segment.split_whitespace();
+            matches!(tokens.next(), Some("grep") | Some("rg"))
+                && tokens.any(|t| {
+                    t == "--line-number"
+                        || (t.starts_with('-') && !t.starts_with("--") && t.contains('n'))
+                })
+        })
     })
 }
 
@@ -2272,5 +2368,83 @@ mod parse_fault_count_tests {
             ev
         );
         assert_eq!(consecutive_parse_faults(&ev2), 0);
+    }
+}
+
+#[cfg(test)]
+mod grep_evidence_presence_tests {
+    use super::grep_evidence_present;
+
+    #[test]
+    fn cd_prefixed_grep_rn_counts_as_line_number_evidence() {
+        // Exact command from the failed system_audit run: the preflight
+        // demanded it, it succeeded, and the old check still said "absent".
+        let ev = concat!(
+            "[CMD_OK] Command: cd /root/AthenaFusionX && grep -rn --include=\"*.rs\" ",
+            "\"^fn \\|^pub fn \" crates/runtime_core/src\n",
+            "Status: exit status: 0\n",
+        );
+        assert!(grep_evidence_present(ev));
+    }
+
+    #[test]
+    fn plain_grep_n_and_rg_n_count() {
+        assert!(grep_evidence_present("[CMD_OK] Command: grep -n foo a.rs\n"));
+        assert!(grep_evidence_present("[CMD_OK] Command: rg -n foo crates\n"));
+    }
+
+    #[test]
+    fn grep_without_line_numbers_does_not_count() {
+        assert!(!grep_evidence_present("[CMD_OK] Command: grep foo a.rs\n"));
+        assert!(!grep_evidence_present("[CMD_OK] Command: cat a.rs | grep -c foo\n"));
+        assert!(!grep_evidence_present("[CMD_OK] Command: ls -n\n"));
+    }
+}
+
+#[cfg(test)]
+mod citation_veto_scope_tests {
+    use super::citation_veto_pending;
+
+    #[test]
+    fn missing_command_veto_is_not_a_citation_veto() {
+        // Real veto text from the build_hygiene mission: about commands not yet
+        // run, mentioning "verified citations" and "100 lines" only in passing.
+        let v = "[CRITIC_VETO] The find and git status commands have not been run. The report makes claims about those commands' outputs that are currently unverified. Regenerate the report with verified citations (cargo tree was truncated to 100 lines).";
+        assert!(!citation_veto_pending(v));
+    }
+
+    #[test]
+    fn real_line_number_vetoes_are_still_detected() {
+        assert!(citation_veto_pending(
+            "[CRITIC_VETO] The report cites line numbers 10-15 that do not appear in any READ_OK body."
+        ));
+        assert!(citation_veto_pending(
+            "[CRITIC_VETO] Run grep -n to obtain authoritative line evidence first."
+        ));
+        assert!(citation_veto_pending(
+            "[CRITIC_VETO] The proposal cites an unverified line range for the function."
+        ));
+    }
+}
+
+#[cfg(test)]
+mod parse_fault_tests {
+    use super::first_failing_item;
+
+    #[test]
+    fn first_failing_item_names_execute_command() {
+        let raw = r#"[{"type":"read_file","path":"Cargo.toml","reasoning":"r"},
+          {"type":"execute_command","path":"cargo metadata --no-deps","reasoning":"r"},
+          {"type":"execute_command","path":"cargo tree --duplicates","reasoning":"r"}]"#;
+        let (i, t, e) = first_failing_item(raw).expect("should find failing item");
+        assert_eq!(i, 1);
+        assert_eq!(t, "execute_command");
+        assert!(e.contains("command"), "{e}");
+    }
+
+    #[test]
+    fn first_failing_item_none_when_all_valid() {
+        let raw = r#"[{"type":"read_file","path":"Cargo.toml","reasoning":"r"}]"#;
+        assert!(first_failing_item(raw).is_none());
     }
 }

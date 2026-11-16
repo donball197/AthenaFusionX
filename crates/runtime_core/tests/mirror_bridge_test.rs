@@ -32,7 +32,9 @@ async fn spawn_http_mock_impl(
                 let mut content_length = 0usize;
                 loop {
                     let n = socket.read(&mut buf[header_end..]).await.unwrap_or(0);
-                    if n == 0 { return; }
+                    if n == 0 {
+                        return;
+                    }
                     header_end += n;
                     let s = String::from_utf8_lossy(&buf[..header_end]);
                     if let Some(pos) = s.find("\r\n\r\n") {
@@ -43,7 +45,9 @@ async fn spawn_http_mock_impl(
                             }
                         }
                         let already_read = header_end - (pos + 4);
-                        if already_read >= content_length { break; }
+                        if already_read >= content_length {
+                            break;
+                        }
                     }
                 }
 
@@ -86,11 +90,7 @@ fn temp_dir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "mirror_bridge_test_{}_{}",
-        std::process::id(),
-        n
-    ));
+    let dir = std::env::temp_dir().join(format!("mirror_bridge_test_{}_{}", std::process::id(), n));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -108,13 +108,10 @@ async fn success_204_plus_file_passes() {
     let new_content = "The strategize module dispatches proposals through \
 the cortical loop. Each proposed action is evaluated against the active \
 contract before the critic review. The veto pivot mechanism is the load \
-bearing recovery path when the critic rejects a proposal.".to_string();
-    let addr = spawn_http_mock_with_file(
-        "204 No Content",
-        PathBuf::from(&target),
-        new_content,
-    )
-    .await;
+bearing recovery path when the critic rejects a proposal."
+        .to_string();
+    let addr =
+        spawn_http_mock_with_file("204 No Content", PathBuf::from(&target), new_content).await;
 
     let bridge = MirrorBridge::new(&format!("http://{}", addr));
     let result = bridge.delegate_write(&target, "test", "ev").await;
@@ -133,10 +130,7 @@ async fn success_204_but_missing_file_fails() {
     let result = bridge.delegate_write(&target, "test", "ev").await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("unreadable") || msg.contains("No such file"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("unreadable") || msg.contains("No such file"), "got: {msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -152,10 +146,7 @@ async fn success_204_but_tiny_file_fails() {
     let result = bridge.delegate_write(&target, "test", "ev").await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("50") || msg.contains("< 200"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("50") || msg.contains("< 200"), "got: {msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -171,10 +162,7 @@ async fn http_409_is_reported_as_busy() {
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("409"), "got: {msg}");
-    assert!(
-        msg.contains("busy") || msg.contains("another turn already running"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("busy") || msg.contains("another turn already running"), "got: {msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -190,10 +178,7 @@ async fn http_502_is_reported_as_model_failure() {
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(msg.contains("502"), "got: {msg}");
-    assert!(
-        msg.contains("model request failed") || msg.contains("API key"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("model request failed") || msg.contains("API key"), "got: {msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -207,13 +192,9 @@ async fn connection_refused_is_reported_as_http_error() {
     let result = bridge.delegate_write(&target, "test", "ev").await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("HTTP") || msg.contains("connect"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("HTTP") || msg.contains("connect"), "got: {msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
-
 
 #[tokio::test]
 async fn report_meta_stub_is_rejected() {
@@ -234,12 +215,7 @@ async fn report_meta_stub_is_rejected() {
 
     assert!(stub.len() >= 200, "test content must pass the size gate");
 
-    let addr = spawn_http_mock_with_file(
-        "204 No Content",
-        PathBuf::from(&target),
-        stub,
-    )
-    .await;
+    let addr = spawn_http_mock_with_file("204 No Content", PathBuf::from(&target), stub).await;
 
     let bridge = MirrorBridge::new(&format!("http://{}", addr));
     let result = bridge.delegate_write(&target, "test", "ev").await;
@@ -263,20 +239,12 @@ async fn success_204_but_stub_file_fails() {
     let target = write_target(&dir, "report.md", 50);
     // Post-delegation stub (fails report_defects: filler, not findings).
     let stub = "y".repeat(500);
-    let addr = spawn_http_mock_with_file(
-        "204 No Content",
-        PathBuf::from(&target),
-        stub,
-    )
-    .await;
+    let addr = spawn_http_mock_with_file("204 No Content", PathBuf::from(&target), stub).await;
 
     let bridge = MirrorBridge::new(&format!("http://{}", addr));
     let result = bridge.delegate_write(&target, "test", "ev").await;
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("halt gate") || msg.contains("defect"),
-        "got: {msg}"
-    );
+    assert!(msg.contains("halt gate") || msg.contains("defect"), "got: {msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -90,7 +90,22 @@ pub(crate) fn looks_like_workspace_path(s: &str) -> bool {
         || s == "./"
         || s.starts_with('/')
         || s.contains('/')
-        || matches!(s, "crates" | "bins" | "src" | "vendor" | "apps" | "drones")
+        || matches!(
+            s,
+            "crates"
+                | "bins"
+                | "src"
+                | "vendor"
+                | "apps"
+                | "drones"
+                | "scripts"
+                | "mirror"
+                | "algorithms"
+                | "docs"
+                | "tests"
+                | "examples"
+                | "benches"
+        )
         || looks_like_file_name(s)
 }
 
@@ -1019,5 +1034,35 @@ mod search_bare_filename_regression_tests {
     fn no_match_evidence_also_satisfies_checked_form() {
         let no_match = "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/Cargo.toml | Query: 'workspace'\nNo code matches found in specified path.\n";
         assert!(search_checked_satisfied(no_match, "Cargo.toml:workspace"));
+    }
+}
+
+#[cfg(test)]
+mod scripts_mirror_root_tests {
+    use super::*;
+
+    #[test]
+    fn scripts_and_mirror_are_workspace_roots() {
+        assert!(looks_like_workspace_path("scripts"));
+        assert!(looks_like_workspace_path("mirror"));
+        assert!(looks_like_workspace_path("algorithms"));
+        assert!(!looks_like_workspace_path("unimplemented"));
+        assert!(!looks_like_workspace_path("std"));
+    }
+
+    #[test]
+    fn run2_mirror_and_scripts_src_satisfied_by_real_markers() {
+        let ev = concat!(
+            "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/mirror | Query: 'src'\n",
+            "MATCHES:\n",
+            "x\n",
+            "[SEARCH_CODE_OK] Path: /root/AthenaFusionX/scripts | Query: 'src'\n",
+            "MATCHES:\n",
+            "y\n",
+        );
+        assert!(search_checked_satisfied(ev, "mirror:src"));
+        assert!(search_checked_satisfied(ev, "scripts:src"));
+        assert!(search_term_satisfied(ev, "mirror:src"));
+        assert!(!search_checked_satisfied(ev, "bins:src"));
     }
 }

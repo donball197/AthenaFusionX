@@ -369,8 +369,7 @@ fn has_lexical_substance(report: &str) -> bool {
     const REPEATS: u32 = 3;
     let bytes = report.as_bytes();
     if bytes.len() >= WINDOW * REPEATS as usize {
-        let mut windows: std::collections::HashMap<&[u8], u32> =
-            std::collections::HashMap::new();
+        let mut windows: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
         for i in 0..=bytes.len() - WINDOW {
             let slice = &bytes[i..i + WINDOW];
             if slice.iter().all(|&b| matches!(b, b' ' | b'\n' | b'\t' | b'\r')) {
@@ -459,7 +458,7 @@ mod substance_tests {
         assert!(!report_defects(r, SRC).is_empty());
     }
 
-#[test]
+    #[test]
     fn accepts_substantive_report() {
         // Diverse prose with real symbol citations. Must not rely on .repeat()
         // of a short phrase, which the window/ratio checks correctly reject.
@@ -487,8 +486,7 @@ mod substance_tests {
 
     #[test]
     fn accepts_concise_report_on_small_corpus() {
-        let report =
-            "The `Gate` rejects paths outside its configured workspace.";
+        let report = "The `Gate` rejects paths outside its configured workspace.";
         let corpus = "pub struct Gate;";
 
         assert!(
@@ -513,7 +511,7 @@ mod substance_tests {
         assert!(report_defects(grounded, &big_src).is_empty());
     }
 
-#[test]
+    #[test]
     fn large_corpus_rejects_short_or_thin_reports() {
         let corpus = format!(
             "pub struct Verifier;
@@ -521,7 +519,8 @@ pub struct Gate;
 pub fn verify_contract() {{}}
 {}",
             "x
-".repeat(15_000)
+"
+            .repeat(15_000)
         );
         let stub = "The `Verifier` struct checks contracts in `verify_contract`.";
         assert!(!report_defects(stub, &corpus).is_empty());
@@ -1387,5 +1386,4 @@ mod wants_pub_items_dry_run {
             "the 2026-11-14 audit report must be rejected by Tier 1"
         );
     }
-
 }

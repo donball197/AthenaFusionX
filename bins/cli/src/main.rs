@@ -56,7 +56,9 @@ fn split_heredoc_delimiter(line: &str) -> Option<String> {
                 let delim = String::from_utf8_lossy(&bytes[start..j]).into_owned();
                 let has_letter = delim.chars().any(|c| c.is_ascii_alphabetic());
                 let upper_ok = quote.is_some()
-                    || delim.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                    || delim
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
                 if delim.len() >= 2 && has_letter && upper_ok {
                     return Some(delim);
                 }

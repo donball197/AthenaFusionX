@@ -55,10 +55,8 @@ fn violation_in_json(
         None
     };
     if kind == "execute_command" {
-        if let Some(target) = body
-            .get("command")
-            .and_then(|c| c.as_str())
-            .and_then(removal_violation_target)
+        if let Some(target) =
+            body.get("command").and_then(|c| c.as_str()).and_then(removal_violation_target)
         {
             if !allowed.iter().any(|a| normalize_path(a) == normalize_path(&target)) {
                 return Some(format!(
@@ -153,13 +151,21 @@ fn removal_targets(segment: &str) -> Vec<String> {
             Some("rm") => non_flags(&args[1..]),
             Some("clean") => {
                 let t = non_flags(&args[1..]);
-                if t.is_empty() { vec![".".to_string()] } else { t }
+                if t.is_empty() {
+                    vec![".".to_string()]
+                } else {
+                    t
+                }
             }
             _ => vec![],
         },
         "mv" => {
             let t = non_flags(args);
-            if t.len() > 1 { t[..t.len() - 1].to_vec() } else { vec![] }
+            if t.len() > 1 {
+                t[..t.len() - 1].to_vec()
+            } else {
+                vec![]
+            }
         }
         "find" => {
             let destructive = args.iter().any(|t| *t == "-delete")
@@ -174,7 +180,11 @@ fn removal_targets(segment: &str) -> Vec<String> {
                 .take_while(|t| !t.starts_with('-') && !t.starts_with('(') && !t.starts_with('!'))
                 .map(|t| t.to_string())
                 .collect();
-            if paths.is_empty() { vec![".".to_string()] } else { paths }
+            if paths.is_empty() {
+                vec![".".to_string()]
+            } else {
+                paths
+            }
         }
         "sh" | "bash" | "zsh" => {
             if let Some(i) = args.iter().position(|t| *t == "-c") {
@@ -204,9 +214,18 @@ mod removal_tests {
     #[test]
     fn refuses_removal_of_protected_roots() {
         for cmd in [
-            "rm -rf lib/", "rm -rf ./vendor", "cd x && rm -rf crates", "git rm -r config",
-            "git clean -fdx", "mv lib /tmp/lib", "/bin/rm -rf lib", "sudo rm -rf data/",
-            "rm -rf *", "find . -delete", "bash -c \"rm -rf tests\"", "FOO=1 rm -rf docs",
+            "rm -rf lib/",
+            "rm -rf ./vendor",
+            "cd x && rm -rf crates",
+            "git rm -r config",
+            "git clean -fdx",
+            "mv lib /tmp/lib",
+            "/bin/rm -rf lib",
+            "sudo rm -rf data/",
+            "rm -rf *",
+            "find . -delete",
+            "bash -c \"rm -rf tests\"",
+            "FOO=1 rm -rf docs",
             "rm -rf lib/*",
         ] {
             assert!(removal_violation_target(cmd).is_some(), "should refuse: {cmd}");
@@ -216,9 +235,15 @@ mod removal_tests {
     #[test]
     fn allows_ordinary_commands() {
         for cmd in [
-            "rm -rf target", "rm tests/tmp.txt", "mv /tmp/a lib", "ls lib",
-            "echo rm -rf lib", "find tests/tmp -delete", "rm -rf crates/runtime_core/tmp",
-            "git status", "cargo test",
+            "rm -rf target",
+            "rm tests/tmp.txt",
+            "mv /tmp/a lib",
+            "ls lib",
+            "echo rm -rf lib",
+            "find tests/tmp -delete",
+            "rm -rf crates/runtime_core/tmp",
+            "git status",
+            "cargo test",
         ] {
             assert!(removal_violation_target(cmd).is_none(), "should allow: {cmd}");
         }

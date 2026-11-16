@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # --- 1. Target & Profile Configuration ---
 BUILD_PROFILE="debug"
 BUILD_PID=""
 DAEMON_PID=""
+_CLEANUP_DONE=0
 CARGO_TOOLCHAIN="+nightly"
 RELEASE_FLAG=""
 TARGET_DIR="./target/debug"
@@ -110,6 +114,8 @@ stdbuf -oL -eL "${TARGET_DIR}/nexus-ide-backend" 9>&- > daemon.log 2>&1 &
 DAEMON_PID=$!
 
 cleanup() {
+    [ "${_CLEANUP_DONE:-}" = "1" ] && return
+    _CLEANUP_DONE=1
     tput cnorm 2>/dev/null || true
     echo -e "\n\x1b[31m>> Shutting down Background Daemon (PID: $DAEMON_PID)...\x1b[0m"
     pkill -f "${TARGET_DIR}/nexus-cli" 2>/dev/null || true

@@ -24,10 +24,7 @@ pub async fn run(
         };
 
         if vitals.total_ram_gb > 0.0 && (vitals.ram_gb / vitals.total_ram_gb) > 0.85 {
-            tracing::warn!(
-                "[SELF_HEALING] High RAM usage: {:.2}GB. Throttling.",
-                vitals.ram_gb
-            );
+            tracing::warn!("[SELF_HEALING] High RAM usage: {:.2}GB. Throttling.", vitals.ram_gb);
             let _ = tx.send(
                 serde_json::json!({"type":"LOG_EVENT","payload":"[SYS] High RAM usage. Self-healing throttled."}).to_string()
             );

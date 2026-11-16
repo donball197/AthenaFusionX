@@ -295,44 +295,8 @@
   },
   {
     "provider": "Nvidia",
-    "name": "01-ai/yi-large",
-    "context": "32K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "adept/fuyu-8b",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ai21labs/jamba-1.5-large-instruct",
-    "context": "256K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "aisingapore/sea-lion-7b-instruct",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "bigcode/starcoder2-15b",
     "context": "16K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "databricks/dbrx-instruct",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-coder-6.7b-instruct",
-    "context": "128K in / 4K out",
     "category": "GENERAL"
   },
   {
@@ -340,30 +304,6 @@
     "name": "deepseek-ai/deepseek-v4.1-flash",
     "context": "128K in / 4K out",
     "category": "FLASH"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/codegemma-1.1-7b",
-    "context": "8K in / 4K out",
-    "category": "GEMMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/codegemma-7b",
-    "context": "8K in / 4K out",
-    "category": "GEMMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/deplot",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "google/gemma-2b",
-    "context": "8K in / 4K out",
-    "category": "GEMMA"
   },
   {
     "provider": "Nvidia",
@@ -385,42 +325,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "google/recurrentgemma-2b",
-    "context": "8K in / 4K out",
-    "category": "GEMMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-3.0-3b-a800m-instruct",
-    "context": "128K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-3.0-8b-instruct",
-    "context": "128K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-34b-code-instruct",
-    "context": "128K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "ibm/granite-8b-code-instruct",
-    "context": "128K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/codellama-70b",
-    "context": "8K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
     "name": "meta/llama-3.2-90b-vision-instruct",
     "context": "128K in / 4K out",
     "category": "VISION"
@@ -433,32 +337,8 @@
   },
   {
     "provider": "Nvidia",
-    "name": "meta/llama2-70b",
-    "context": "8K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
     "name": "meta/muse-glimmer-30b",
     "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "microsoft/kosmos-2",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "microsoft/phi-3-vision-128k-instruct",
-    "context": "128K in / 4K out",
-    "category": "VISION"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "microsoft/phi-3.5-moe-instruct",
-    "context": "128K in / 4K out",
     "category": "GENERAL"
   },
   {
@@ -469,50 +349,8 @@
   },
   {
     "provider": "Nvidia",
-    "name": "mistralai/codestral-22b-instruct-v0.1",
-    "context": "32K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-7b-instruct-v0.3",
-    "context": "32K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-large",
-    "context": "128K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mistral-large-2-instruct",
-    "context": "128K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "mistralai/mistral-large-4-1t-a52b",
     "context": "128K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "mistralai/mixtral-8x22b-v0.1",
-    "context": "32K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "moonshotai/kimi-k2.6",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nv-mistralai/mistral-nemo-12b-instruct",
-    "context": "32K in / 4K out",
     "category": "MISTRAL"
   },
   {
@@ -553,27 +391,9 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-51b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-70b-instruct",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
     "context": "128K in / 4K out",
     "category": "SAFETY"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-    "context": "128K in / 4K out",
-    "category": "LLAMA"
   },
   {
     "provider": "Nvidia",
@@ -595,18 +415,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/llama3-chatqa-1.5-70b",
-    "context": "8K in / 4K out",
-    "category": "LLAMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
-    "context": "32K in / 4K out",
-    "category": "MISTRAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/nemotron-3-embed-1b",
     "context": "4K in / 4K out",
     "category": "EMBEDDING"
@@ -614,12 +422,6 @@
   {
     "provider": "Nvidia",
     "name": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-super-120b-a12b",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
   },
@@ -667,24 +469,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/nemotron-4-340b-instruct",
-    "context": "128K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-4-340b-reward",
-    "context": "128K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-nano-3-30b-a3b",
-    "context": "4K in / 4K out",
-    "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/nemotron-parse",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
@@ -694,12 +478,6 @@
     "name": "nvidia/nemotron-parse-2.0",
     "context": "4K in / 4K out",
     "category": "NEMOTRON"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/neva-22b",
-    "context": "Unknown",
-    "category": "GENERAL"
   },
   {
     "provider": "Nvidia",
@@ -715,19 +493,7 @@
   },
   {
     "provider": "Nvidia",
-    "name": "nvidia/riva-translate-4b-instruct",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "nvidia/riva-translate-4b-instruct-v2",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/vila",
     "context": "Unknown",
     "category": "GENERAL"
   },
@@ -757,38 +523,8 @@
   },
   {
     "provider": "Nvidia",
-    "name": "writer/palmyra-creative-122b",
-    "context": "32K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-fin-70b-32k",
-    "context": "32K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-med-70b",
-    "context": "32K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "writer/palmyra-med-70b-32k",
-    "context": "32K in / 4K out",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "z-ai/glm-5.3-flash",
     "context": "128K in / 4K out",
     "category": "FLASH"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "zyphra/zamba2-7b-instruct",
-    "context": "Unknown",
-    "category": "GENERAL"
   }
 ]

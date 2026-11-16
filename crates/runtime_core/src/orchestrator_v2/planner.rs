@@ -174,6 +174,68 @@ fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
     }
 }
 
+/// Files the directive names that exist in the workspace and are small enough to
+/// read whole. Relative paths only; reports, logs and lockfiles are skipped.
+fn named_workspace_files(directive: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in directive.split_whitespace() {
+        let t = raw.trim_matches(|c: char| {
+            !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'))
+        });
+        if t.is_empty()
+            || !t.contains('.')
+            || t.starts_with('/')
+            || t.contains("..")
+            || t.ends_with(".md")
+            || t.ends_with(".log")
+            || t.ends_with(".lock")
+        {
+            continue;
+        }
+        let path = std::path::Path::new(t);
+        let small =
+            std::fs::metadata(path).map(|m| m.is_file() && m.len() <= 65_536).unwrap_or(false);
+        if !small {
+            continue;
+        }
+        if !out.iter().any(|e| e == t) {
+            out.push(t.to_string());
+        }
+        if out.len() >= 6 {
+            break;
+        }
+    }
+    out
+}
+
+/// Audit missions that write a report file must carry an inspection criterion.
+/// The decomposer LLM is nondeterministic: the same prompt once produced
+/// per-directory search criteria and once produced none, which let a template
+/// report be written before any evidence existed. Floor: read the files the
+/// directive names (see `named_workspace_files`) before the report is written.
+fn apply_audit_recon_floor(graph: &mut TaskGraph, directive: &str) {
+    if !directive_has_audit_intent(directive) {
+        return;
+    }
+    let named = named_workspace_files(directive);
+    if named.is_empty() {
+        return;
+    }
+    for node in graph.nodes.values_mut() {
+        let writes_report = node.success_criteria.iter().any(|c| {
+            let t = c.trim();
+            t.starts_with("WRITE_OK:") && !criterion_is_source_mutation(t)
+        });
+        let has_inspection = node.success_criteria.iter().any(|c| criterion_is_inspection_only(c));
+        if !writes_report || has_inspection {
+            continue;
+        }
+        for file in &named {
+            node.success_criteria.push(format!("READ_OK:{}", file));
+        }
+    }
+}
+
 /// True when the directive says the report is delivered in the response
 /// (not written to disk).
 fn directive_delivers_report_inline(directive: &str) -> bool {
@@ -475,6 +537,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         let result = result.map(|mut graph| {
             apply_read_only_search_rewrite(&mut graph, directive);
             apply_audit_search_rewrite(&mut graph, directive);
+            apply_audit_recon_floor(&mut graph, directive);
             apply_report_deliverable_criterion(&mut graph, directive);
             graph
         });
@@ -1974,5 +2037,29 @@ mod audit_rewrite_tests {
             g.nodes["a"].success_criteria.iter().any(|c| c.starts_with("SEARCH_CODE_OK:")),
             "combined wrapper must preserve strict when graph has source mutation"
         );
+    }
+}
+
+#[cfg(test)]
+mod audit_recon_floor_tests {
+    use super::named_workspace_files;
+
+    // cargo test runs with cwd = crates/runtime_core, which has a small Cargo.toml.
+    #[test]
+    fn names_existing_small_files_only() {
+        let d = "Audit the repo: inspect Cargo.toml, write system_audit_report.md, find *.bak* files, see /etc/passwd and nope_missing.toml.";
+        assert_eq!(named_workspace_files(d), vec!["Cargo.toml".to_string()]);
+    }
+
+    #[test]
+    fn skips_reports_logs_locks_and_traversal() {
+        let d = "Read report.md daemon.log Cargo.lock ../Cargo.toml and e.g. nothing.";
+        assert!(named_workspace_files(d).is_empty());
+    }
+
+    #[test]
+    fn deduplicates_repeated_mentions() {
+        let d = "Audit: Cargo.toml, then Cargo.toml again (Cargo.toml).";
+        assert_eq!(named_workspace_files(d), vec!["Cargo.toml".to_string()]);
     }
 }

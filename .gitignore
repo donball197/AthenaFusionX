@@ -124,3 +124,4 @@ mission.log
 daemon.*.log
 journal_smoke.txt
 .mirror/
+*.bak.*

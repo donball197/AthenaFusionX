@@ -70,7 +70,11 @@ impl CorticalLoop {
             // gone (reverted, or never landed): the target is physically absent.
             // Capped so an identical write that keeps failing still trips the veto.
             let write_target_absent = is_retryable_absent_write(&action, attempt_count)
-                || is_retryable_rejected_halt(&action, attempt_count as usize, &session.local_evidence);
+                || is_retryable_rejected_halt(
+                    &action,
+                    attempt_count as usize,
+                    &session.local_evidence,
+                );
 
             if attempt_count >= 1 && !bypass_antiloop_for_retention && !write_target_absent {
                 match crate::anti_loop::classify_duplicate(

@@ -204,7 +204,8 @@ mod critic_event_tests {
     #[test]
     fn builds_a_sealable_record_with_truncated_detail() {
         let long = "x".repeat(500);
-        let mut r = critic_event_record("critic_override:write_file", "write_file:a.md", "k1", -0.4, &long);
+        let mut r =
+            critic_event_record("critic_override:write_file", "write_file:a.md", "k1", -0.4, &long);
         assert_eq!(r.action_type, "critic_override:write_file");
         assert_eq!(r.eval_modifier, -0.4);
         assert_eq!(r.evidence_len, 200);

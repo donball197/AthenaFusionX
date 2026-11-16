@@ -282,22 +282,20 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
             // The native ReadFileChunk contract uses `max_lines`, but some
             // models emit an inclusive `end_line`. Normalize that model-side
             // alias before strict AgentAction deserialization.
+            // filepath is a common model-side alias for `path`. Normalize when
+            // explicit `path` is absent.
+            if !obj.contains_key("path") {
+                if let Some(filepath) = obj.remove("filepath") {
+                    obj.insert("path".to_string(), filepath);
+                }
+            }
+
             let is_read_file_chunk = obj
                 .get("type")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|action_type| action_type == "read_file_chunk");
 
             if is_read_file_chunk {
-                // filepath is a model-side alias for the native `path`
-                // field. Normalize it only for read_file_chunk so unrelated
-                // action schemas are not changed. Explicit `path` wins.
-                // filepath alias normalization
-                if !obj.contains_key("path") {
-                    if let Some(filepath) = obj.remove("filepath") {
-                        obj.insert("path".to_string(), filepath);
-                    }
-                }
-
                 if !obj.contains_key("start_line") {
                     if let Some(offset) = obj.remove("offset") {
                         obj.insert("start_line".to_string(), offset);
@@ -448,10 +446,15 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
         Ok(actions) => Ok(actions),
-        Err(_) => match serde_json::from_str::<AgentAction>(&clean_text) {
-            Ok(single) => Ok(vec![single]),
-            Err(e) => Err(anyhow::anyhow!("JSON serialization failed: {}", e)),
-        },
+        Err(vec_err) => {
+            if clean_text.trim_start().starts_with('[') {
+                return Err(anyhow::anyhow!("JSON serialization failed: {}", vec_err));
+            }
+            match serde_json::from_str::<AgentAction>(&clean_text) {
+                Ok(single) => Ok(vec![single]),
+                Err(e) => Err(anyhow::anyhow!("JSON serialization failed: {}", e)),
+            }
+        }
     }
 }
 

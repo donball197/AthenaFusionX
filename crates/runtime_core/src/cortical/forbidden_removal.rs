@@ -12,12 +12,32 @@ use std::sync::OnceLock;
 const VERBS: &str = r"(?:remov(?:e|es|ing)|delet(?:e|es|ing)|wip(?:e|es|ing)|purg(?:e|es|ing)|drop(?:s|ping)?|eras(?:e|es|ing)|destroy(?:s|ing)?|eliminat(?:e|es|ing)|nuk(?:e|es|ing)|rm(?:\s+-rf?)?)";
 
 pub const FORBIDDEN_REMOVAL_DIRS: &[&str] = &[
-    "crates", "bins", "apps", "algorithms", "mirror", "drones", "scripts",
-    "lib", "substrate", "ui", "zig_muscle",
-    "comparison_workspace", "fuzz", "genesis_lab", "target_dummy",
-    ".github", ".cargo", "config", "docs", "tests",
-    "vault", "data", "assets", "contrib",
-    "vendor", "third_party",
+    "crates",
+    "bins",
+    "apps",
+    "algorithms",
+    "mirror",
+    "drones",
+    "scripts",
+    "lib",
+    "substrate",
+    "ui",
+    "zig_muscle",
+    "comparison_workspace",
+    "fuzz",
+    "genesis_lab",
+    "target_dummy",
+    ".github",
+    ".cargo",
+    "config",
+    "docs",
+    "tests",
+    "vault",
+    "data",
+    "assets",
+    "contrib",
+    "vendor",
+    "third_party",
 ];
 
 struct ScanRegexes {
@@ -89,10 +109,7 @@ fn has_unclosed_open_quote(prefix: &str) -> bool {
         if i > 0 && is_word(chars[i - 1]) {
             continue; // apostrophe inside a word, e.g. "donald's"
         }
-        if chars[i + 1..]
-            .iter()
-            .all(|c| !matches!(c, '\'' | '"' | '\u{2019}' | '\u{201D}'))
-        {
+        if chars[i + 1..].iter().all(|c| !matches!(c, '\'' | '"' | '\u{2019}' | '\u{201D}')) {
             return true;
         }
     }
@@ -114,16 +131,12 @@ pub fn halt_recommends_forbidden_removal(reasoning: &str) -> Option<String> {
             }
             // Boundary after the dir (replaces the lookahead)
             if let Some(a) = sent[m.end()..].chars().next() {
-                if !(a.is_whitespace()
-                    || matches!(a, '/' | ',' | '.' | ';' | ':' | ')' | '`'))
-                {
+                if !(a.is_whitespace() || matches!(a, '/' | ',' | '.' | ';' | ':' | ')' | '`')) {
                     continue;
                 }
             }
             let prefix = &sent[..m.start()];
-            if s.neg.is_match(prefix)
-                || s.hist.is_match(prefix)
-                || has_unclosed_open_quote(prefix)
+            if s.neg.is_match(prefix) || s.hist.is_match(prefix) || has_unclosed_open_quote(prefix)
             {
                 continue;
             }
@@ -140,23 +153,68 @@ mod tests {
     // (class, label, text, should_flag)
     fn cases() -> Vec<(&'static str, &'static str, &'static str, bool)> {
         vec![
-            ("1", "recommendation: two dirs", "Recommendation: removing the config directory and the tests directory", true),
+            (
+                "1",
+                "recommendation: two dirs",
+                "Recommendation: removing the config directory and the tests directory",
+                true,
+            ),
             ("1", "should delete vendor", "We should delete the vendor/ tree", true),
             ("1", "cleanup plan .github", "Cleanup plan: remove the .github directory", true),
             ("1", "rm -rf form", "Next step: rm -rf vendor/", true),
-            ("1", "negation then imperative", "Do not touch crates; delete the tests directory", true),
+            (
+                "1",
+                "negation then imperative",
+                "Do not touch crates; delete the tests directory",
+                true,
+            ),
             ("1", "multi-sentence", "The audit is done. Remove the substrate directory.", true),
             ("2", "description: config", "The config directory has 3 subdirectories.", false),
-            ("2", "description: tests", "The tests directory was examined and found healthy.", false),
+            (
+                "2",
+                "description: tests",
+                "The tests directory was examined and found healthy.",
+                false,
+            ),
             ("2", "description: vendor", "The vendor/ tree was inspected for licenses.", false),
             ("3", "short negation", "Do not delete the tests directory", false),
-            ("3", "long negation", "Under no circumstances should anyone remove the crates directory", false),
-            ("3", "long negation 2", "We should never under any circumstance consider removing the config directory", false),
+            (
+                "3",
+                "long negation",
+                "Under no circumstances should anyone remove the crates directory",
+                false,
+            ),
+            (
+                "3",
+                "long negation 2",
+                "We should never under any circumstance consider removing the config directory",
+                false,
+            ),
             ("3", "avoid", "Avoid removing the vault directory at all costs", false),
-            ("4", "quoted prior audit", "The prior audit said 'removing the lib directory is a good idea'", false),
-            ("4", "double-quoted", r#"He wrote "remove the docs directory" in the old report"#, false),
-            ("4", "past tense recommended", "A previous report recommended removing the config directory", false),
-            ("4", "historical discussion", "Last week we discussed removing the tests directory", false),
+            (
+                "4",
+                "quoted prior audit",
+                "The prior audit said 'removing the lib directory is a good idea'",
+                false,
+            ),
+            (
+                "4",
+                "double-quoted",
+                r#"He wrote "remove the docs directory" in the old report"#,
+                false,
+            ),
+            (
+                "4",
+                "past tense recommended",
+                "A previous report recommended removing the config directory",
+                false,
+            ),
+            (
+                "4",
+                "historical discussion",
+                "Last week we discussed removing the tests directory",
+                false,
+            ),
             ("5", "substring: perform", "We perform the tests every night", false),
             ("5", "substring: confirm", "Please confirm the docs are current", false),
             ("5", "substring: backdrop", "A backdrop the config page uses", false),

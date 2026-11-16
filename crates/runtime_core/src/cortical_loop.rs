@@ -909,11 +909,27 @@ pub(crate) fn filter_claim_bound_lineage(
         blocks.push(b);
     }
 
+    let pure_synthesis_node = conditions
+        .iter()
+        .any(|c| matches!(c, CC::WritePathAcquired { .. } | CC::WriteMarkerAcquired))
+        && !conditions.iter().any(|c| {
+            matches!(
+                c,
+                CC::ReadPathAcquired { .. }
+                    | CC::ReadFunctionMarkerAcquired { .. }
+                    | CC::CommandExecutionVerified { .. }
+                    | CC::MathematicalExecutionVerified { .. }
+                    | CC::SearchTermAcquired { .. }
+                    | CC::SearchCheckedAcquired { .. }
+            )
+        });
+
     let block_overlaps = |header: &str| -> bool {
         let h = header.trim_start();
         if let Some(rest) = h.strip_prefix("[CMD_OK]") {
             let cmd = rest.trim().strip_prefix("Command:").unwrap_or(rest).trim();
-            let norm = crate::cmd_match::normalize_cmd(cmd);
+            let stripped_cd = crate::cmd_match::strip_workspace_cd_prefix(cmd);
+            let norm = crate::cmd_match::normalize_cmd(stripped_cd);
             if norm.is_empty() {
                 return false;
             }
@@ -921,7 +937,10 @@ pub(crate) fn filter_claim_bound_lineage(
                 return true;
             }
             let first_tok = norm.split_whitespace().next().unwrap_or("");
-            return !first_tok.is_empty() && local_lower.contains(first_tok);
+            if !first_tok.is_empty() && local_lower.contains(first_tok) {
+                return true;
+            }
+            return pure_synthesis_node;
         }
 
         let block_path = if let Some(r) = h.strip_prefix("[READ_OK]") {
@@ -950,11 +969,23 @@ pub(crate) fn filter_claim_bound_lineage(
         if block_path.is_empty() {
             return false;
         }
+        let basename_matches = std::path::Path::new(block_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(|fname| {
+                let fname_lower = fname.to_ascii_lowercase();
+                claimed_paths.iter().any(|cp| !cp.contains('/') && cp.eq_ignore_ascii_case(fname))
+                    || local_lower.contains(&fname_lower)
+            })
+            .unwrap_or(false);
+        let is_read_evidence = h.starts_with("[READ_OK]") || h.starts_with("[READ_CHUNK_OK]");
         claimed_paths.iter().any(|cp| {
             crate::evidence_paths::paths_equivalent(block_path, cp)
                 || crate::evidence_paths::normalize_path(block_path)
                     == crate::evidence_paths::normalize_path(cp)
         }) || local_lower.contains(&block_path.to_ascii_lowercase())
+            || basename_matches
+            || (pure_synthesis_node && is_read_evidence)
     };
 
     let mut out = String::new();
@@ -1012,6 +1043,19 @@ Read src/unrelated.rs and run cargo test";
         assert!(out.contains("git status"));
         assert!(!out.contains("src/unrelated.rs"));
         assert!(!out.contains("cargo test"));
+    }
+
+    #[test]
+    fn pure_synthesis_node_retains_predecessor_read_and_cd_cmd_evidence() {
+        let inherited = "[READ_OK] crates/runtime_core/src/podman.rs\nfn execute() {}\n[CMD_OK] Command: cd /root/AthenaFusionX && cargo tree --duplicates\nStatus: exit status: 0\n";
+        let mission =
+            "Write a concise report to build_hygiene_report.md summarizing the inspection outputs.";
+        let conds = vec![CC::WritePathAcquired { path: "build_hygiene_report.md".into() }];
+        let (out, kept, pruned) = filter_claim_bound_lineage(inherited, mission, &conds);
+        assert_eq!(kept, 2);
+        assert_eq!(pruned, 0);
+        assert!(out.contains("podman.rs"));
+        assert!(out.contains("cargo tree --duplicates"));
     }
 }
 

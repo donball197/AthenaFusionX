@@ -78,18 +78,12 @@ fn resolve_workspace_root() -> Result<PathBuf> {
 
 pub(crate) fn resolve_write_path_in(workspace_root: &Path, path: &str) -> Result<PathBuf> {
     let raw_path = Path::new(path);
-    let target = if raw_path.is_absolute() {
-        raw_path.to_path_buf()
-    } else {
-        workspace_root.join(raw_path)
-    };
-    let safe_path = canonicalize_or_parent(&target)
-        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+    let target =
+        if raw_path.is_absolute() { raw_path.to_path_buf() } else { workspace_root.join(raw_path) };
+    let safe_path =
+        canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
     if !safe_path.starts_with(workspace_root) {
-        return Err(anyhow!(
-            "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
-            path
-        ));
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
     }
     Ok(safe_path)
 }
@@ -128,8 +122,8 @@ pub(crate) fn sanitize_in(workspace_root: &Path, path: &str) -> Result<PathBuf> 
     let p = Path::new(&normalized_path);
     let target = if p.is_absolute() { p.to_path_buf() } else { workspace_root.join(p) };
 
-    let resolved_target = canonicalize_or_parent(&target)
-        .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+    let resolved_target =
+        canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
     if !resolved_target.starts_with(workspace_root) {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
     }
@@ -169,10 +163,7 @@ pub(crate) fn sanitize_in(workspace_root: &Path, path: &str) -> Result<PathBuf> 
             ));
         }
     } else {
-        return Err(anyhow!(
-            "PATH_NOT_FOUND: {} does not exist in the workspace",
-            path
-        ));
+        return Err(anyhow!("PATH_NOT_FOUND: {} does not exist in the workspace", path));
     };
 
     let canonical =
@@ -704,6 +695,12 @@ impl RoboticExecutor {
                     "--exclude-dir=.nexus",
                     "--exclude-dir=.lazarus",
                     "--exclude-dir=node_modules",
+                    "--exclude-dir=.nexus_venv",
+                    "--exclude-dir=.fastembed_cache",
+                    "--exclude-dir=.nexus_ast",
+                    "--exclude-dir=audit_out",
+                    "--exclude-dir=repository_analysis",
+                    "--exclude=*.log",
                     "-iE",
                     "-e",
                     query.as_str(),

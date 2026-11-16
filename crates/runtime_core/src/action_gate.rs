@@ -7,9 +7,7 @@ use anyhow::{anyhow, Result};
 /// either component is empty after trimming.
 pub fn forced_search_from_evidence(evidence: &str) -> Option<(String, String)> {
     evidence.lines().rev().find_map(|line| {
-        let stripped = line
-            .trim_start()
-            .strip_prefix("[CONTRACT_FIRST_FORCED] search_code:")?;
+        let stripped = line.trim_start().strip_prefix("[CONTRACT_FIRST_FORCED] search_code:")?;
         let (path, query) = stripped.split_once(':')?;
         let path = path.trim();
         let query = query.trim();
@@ -240,11 +238,7 @@ impl ActionGate {
     /// `CorticalLoop::execute_actions`) handle `Err` by logging,
     /// adding an observation node, and continuing — no new termination
     /// behavior is introduced.
-    pub fn approve_with_forced_search(
-        &self,
-        command: &MotorCommand,
-        evidence: &str,
-    ) -> Result<()> {
+    pub fn approve_with_forced_search(&self, command: &MotorCommand, evidence: &str) -> Result<()> {
         check_forced_search(evidence, &command.action)?;
         self.approve(command)
     }
@@ -262,10 +256,7 @@ mod forced_search_gate_tests {
     use crate::motor_cortex::MotorAction;
 
     fn search(path: &str, query: &str) -> MotorAction {
-        MotorAction::SearchCode {
-            path: path.to_string(),
-            query: query.to_string(),
-        }
+        MotorAction::SearchCode { path: path.to_string(), query: query.to_string() }
     }
 
     #[test]
