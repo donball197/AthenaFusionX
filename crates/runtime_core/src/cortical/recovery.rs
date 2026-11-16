@@ -100,6 +100,15 @@ impl CorticalLoop {
         mission: &str,
         write_phase_ready: bool,
     ) {
+        // HALT GUARD: once the cortex has transitioned to halt synthesis,
+        // a mutation pivot must not override it. Observed on live runs:
+        // phase transition sets active_strategy=halt, then this function
+        // replaces it with patch_function:..., sending the strategist to
+        // propose an out-of-scope patch that the critic then vetoed.
+        // Same guard as apply_post_search_expansion.
+        if active_strategy == "halt" || active_strategy.starts_with("halt:") {
+            return;
+        }
         // GUARD: Do not override a strategy whose target is the mission's
         // required artifact. A mission that names an output file is a
         // CREATE, not a mutation of the read files.
@@ -120,19 +129,23 @@ impl CorticalLoop {
             let read_ok_done = session.local_evidence.contains("[READ_OK]")
                 || session.local_evidence.contains("[READ_FUNCTION_OK]")
                 || session.local_evidence.contains("[READ_CHUNK_OK]");
-            let patch_marker_needed = session.contract.is_mutation_task
-                || session.contract.conditions.iter().any(|c| {
-                    let s = format!("{:?}", c);
-                    s.contains("PatchMarker")
-                        || s.contains("PatchPath")
-                        || s.contains("MutationMarker")
-                })
-                || {
-                    let m = mission.to_lowercase();
-                    crate::cortical::read_only_gate::contains_word_start(&m, "patch")
-                        || m.contains("modify ")
-                        || m.contains("remove the unconditional")
-                };
+            // FOREVER FIX: only real source-patch conditions arm the pivot.
+            // Report-only WritePathAcquired must never inject replace_lines.
+            let has_source_patch_condition = session.contract.conditions.iter().any(|c| {
+                matches!(
+                    c,
+                    crate::completion_engine::CompletionCondition::PatchMarkerAcquired
+                        | crate::completion_engine::CompletionCondition::PatchPathAcquired { .. }
+                )
+            });
+            let mission_asks_source_mutation = {
+                let m = mission.to_lowercase();
+                crate::cortical::read_only_gate::contains_word_start(&m, "patch")
+                    || m.contains("modify ")
+                    || m.contains("remove the unconditional")
+            };
+            let patch_marker_needed = has_source_patch_condition
+                || (mission_asks_source_mutation && !session.contract.read_only);
             let already_mutated = session.local_evidence.contains("[PATCH_FUNCTION_OK]")
                 || session.local_evidence.contains("[DIFF_PATCH_OK]")
                 || session.local_evidence.contains("[REPLACE_LINES_OK]")
@@ -403,6 +416,13 @@ impl CorticalLoop {
     }
 }
 
+/// Reconnaissance strategy injected after a critic veto on a HaltDelivered-only
+/// contract. Must be `search_code:<path>:<query>` so `action_matches_strategy`
+/// can be satisfied by a real SearchCode action (the old space-separated
+/// "... OR ..." form parsed as a bare query and could never match).
+pub(crate) const HALT_VETO_RECON: &str =
+    "search_code:crates/runtime_core/src:mission_completion_authorized";
+
 impl CorticalLoop {
     /// HALT-VETO RECOVERY (HaltDelivered strategy-prefix lock fix).
     ///
@@ -447,7 +467,7 @@ impl CorticalLoop {
                         session.graph.demote_hypothesis(h_id, 0.05);
                     }
                 }
-                let recon = "search_code:crates/runtime_core/src evaluate_contract OR mission_completion_authorized OR HaltDelivered";
+                let recon = HALT_VETO_RECON;
                 let already = session.graph.find_by_content(recon).is_some();
                 if !already {
                     let hid = session.graph.add_node(
@@ -1094,6 +1114,25 @@ mod contract_first_recon_tests {
     fn nothing_is_returned_once_every_read_is_evidenced() {
         let both = format!("{}{}", FIRST, SECOND);
         assert_eq!(next_unmet_read(&reads(), &both), None);
+    }
+}
+
+#[cfg(test)]
+mod halt_veto_recon_tests {
+    use super::HALT_VETO_RECON;
+    use crate::cortical::strategy_match::action_matches_strategy;
+    use crate::json_parser::extract_actions;
+
+    #[test]
+    fn recon_strategy_is_satisfiable_by_a_matching_search() {
+        let rest = HALT_VETO_RECON.strip_prefix("search_code:").expect("search_code prefix");
+        let (path, query) = rest.split_once(':').expect("path:query form");
+        let json = format!(
+            r#"[{{"type":"search_code","path":"{}","query":"{}","reasoning":"t"}}]"#,
+            path, query
+        );
+        let action = extract_actions(&json).unwrap().into_iter().next().unwrap();
+        assert!(action_matches_strategy(HALT_VETO_RECON, &action));
     }
 }
 
