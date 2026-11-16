@@ -296,6 +296,138 @@ fn criterion_is_inspection_only(criterion: &str) -> bool {
 /// alone and the report is never required. Adds ANALYSIS_OK to the sink node
 /// when (and only when) that node is pure inspection work and nothing in the
 /// graph already carries ANALYSIS_OK or a mutation criterion.
+/// Extract write-deliverable paths from the directive text.
+///
+/// Consumes a fixed verb allowlist and returns the first non-absolute
+/// path token after each verb that has a reportable extension. Longest
+/// verb wins ("write the result to X.md" matches before "write ").
+///
+/// Deliberately conservative:
+///   * only `.md`, `.txt`, `.json`, `.yaml`, `.yml` extensions
+///   * only relative or bare paths (rejects absolute and `..`)
+///   * no wildcards, no globs, no directory names
+fn extract_write_targets_from_directive(directive: &str) -> Vec<String> {
+    const VERBS: &[&str] = &[
+        "write the result to ",
+        "write the findings to ",
+        "write findings to ",
+        "write the report to ",
+        "write to ",
+        "write ",
+        "save the result to ",
+        "save the findings to ",
+        "save to ",
+        "save ",
+        "export to ",
+        "export ",
+        "output a report to ",
+        "output a document to ",
+        "output a file to ",
+        "output to ",
+        "produce a report named ",
+        "produce a report at ",
+        "synthesize the report to ",
+        "synthesize ",
+        "deliver a report to ",
+        "deliver ",
+        "create the file ",
+        "create file ",
+        "create ",
+    ];
+
+    let lower = directive.to_lowercase();
+    let mut sorted: Vec<&str> = VERBS.iter().copied().collect();
+    sorted.sort_by_key(|v| std::cmp::Reverse(v.len()));
+
+    let mut out: Vec<String> = Vec::new();
+    for verb in sorted {
+        let mut search_from = 0;
+        while let Some(pos) = lower[search_from..].find(verb) {
+            let abs = search_from + pos + verb.len();
+            let rest = &directive[abs..];
+            let raw_tok = rest.split_whitespace().next().unwrap_or("");
+
+            // Directives are prose, not raw identifiers. Trim SENTENCE
+            // punctuation from both ends, keep interior dots so
+            // `file.v1.2.md` stays intact. This is what fixes the
+            // `mission_04_worker_recovery.md.` (trailing period) case.
+            let t = raw_tok
+                .trim_end_matches(|c: char| {
+                    matches!(
+                        c,
+                        '.' | '!' | '?' | ',' | ';' | ')' | ':' | '"' | '\'' | '`'
+                    )
+                })
+                .trim_start_matches(|c: char| matches!(c, '(' | '"' | '\'' | '`'));
+
+            let is_report = t.ends_with(".md")
+                || t.ends_with(".txt")
+                || t.ends_with(".json")
+                || t.ends_with(".yaml")
+                || t.ends_with(".yml");
+            let is_ok_path =
+                !t.is_empty() && !t.starts_with('/') && !t.contains("..");
+            if is_report && is_ok_path && !out.iter().any(|e| e == t) {
+                out.push(t.to_string());
+            }
+            search_from = abs;
+        }
+    }
+    out
+}
+
+/// Ensure every write deliverable named in the directive has a
+/// corresponding `WRITE_OK:` criterion on some node.
+///
+/// If the graph already covers a target, no change. If not, the sink
+/// node (nothing depends on it, most criteria) receives the criterion.
+/// If there are no sinks (all nodes have dependents -- a cycle), do
+/// nothing and let validation fail elsewhere.
+///
+/// This is the load-bearing fix for planner under-decomposition when
+/// a multi-part directive combines investigation with a written
+/// deliverable: the model frequently keeps the investigation and
+/// silently drops the write.
+fn apply_write_deliverable_criterion(graph: &mut TaskGraph, directive: &str) {
+    let targets = extract_write_targets_from_directive(directive);
+    if targets.is_empty() {
+        return;
+    }
+    for target in targets {
+        let covered = graph.nodes.values().any(|n| {
+            n.success_criteria.iter().any(|c| {
+                let t = c.trim();
+                t.starts_with("WRITE_OK:") && t.ends_with(&target)
+            })
+        });
+        if covered {
+            continue;
+        }
+        let mut sinks: Vec<String> = graph
+            .nodes
+            .iter()
+            .filter(|(id, _)| {
+                !graph
+                    .nodes
+                    .values()
+                    .any(|n| n.deps.iter().any(|d| d == *id))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        sinks.sort_by_key(|id| std::cmp::Reverse(graph.nodes[id].success_criteria.len()));
+        if let Some(id) = sinks.first() {
+            if let Some(n) = graph.nodes.get_mut(id) {
+                n.success_criteria.push(format!("WRITE_OK:{}", target));
+                tracing::warn!(
+                    "PLANNER_DELIVERABLE_ENFORCEMENT: added WRITE_OK:{} to node '{}' \
+                     (directive names this deliverable but graph had no matching criterion)",
+                    target, id
+                );
+            }
+        }
+    }
+}
+
 fn apply_report_deliverable_criterion(graph: &mut TaskGraph, directive: &str) {
     if !(directive_is_read_only(directive) || directive_has_audit_intent(directive)) {
         return;
@@ -538,6 +670,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
             apply_read_only_search_rewrite(&mut graph, directive);
             apply_audit_search_rewrite(&mut graph, directive);
             apply_audit_recon_floor(&mut graph, directive);
+            apply_write_deliverable_criterion(&mut graph, directive);
             apply_report_deliverable_criterion(&mut graph, directive);
             graph
         });
@@ -1174,15 +1307,24 @@ print("VERIFICATION_COMPLETE True")
         )
         .read_only;
 
+        let trim_tok = |token: &str| -> String {
+            token
+                .trim_matches(|c: char| {
+                    matches!(c, '`' | '"' | '\'' | ',' | ';' | ':' | ')' | '(' | '.')
+                })
+                .to_string()
+        };
+
         if !read_only {
             for marker in ["write ", "save ", "export ", "create "] {
                 if let Some(pos) = lower.find(marker) {
                     let remainder = directive[pos + marker.len()..].trim();
                     if let Some(path) = remainder
                         .split_whitespace()
+                        .map(trim_tok)
                         .find(|token| token.contains('.') && !token.starts_with("the"))
                     {
-                        return Ok(vec![format!("WRITE_OK:{}", path.trim_matches('`'))]);
+                        return Ok(vec![format!("WRITE_OK:{}", path)]);
                     }
                 }
             }
@@ -1193,9 +1335,10 @@ print("VERIFICATION_COMPLETE True")
                 let remainder = directive[pos + marker.len()..].trim();
                 if let Some(path) = remainder
                     .split_whitespace()
+                    .map(trim_tok)
                     .find(|token| token.contains('/') || token.ends_with(".rs"))
                 {
-                    return Ok(vec![format!("READ_OK:{}", path.trim_matches('`'))]);
+                    return Ok(vec![format!("READ_OK:{}", path)]);
                 }
             }
         }
@@ -1605,6 +1748,10 @@ Tasks:
             .expect("write fallback should produce a contract");
 
         assert_eq!(criteria, vec!["WRITE_OK:model_routing_analysis.md"]);
+
+        let dotted = PlannerAgent::fallback_success_criteria("Write mission_04_worker_recovery.md.")
+            .expect("write fallback should trim trailing sentence period");
+        assert_eq!(dotted, vec!["WRITE_OK:mission_04_worker_recovery.md"]);
     }
 
     #[test]
@@ -2061,5 +2208,58 @@ mod audit_recon_floor_tests {
     fn deduplicates_repeated_mentions() {
         let d = "Audit: Cargo.toml, then Cargo.toml again (Cargo.toml).";
         assert_eq!(named_workspace_files(d), vec!["Cargo.toml".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod write_deliverable_tests {
+    use super::extract_write_targets_from_directive;
+
+    #[test]
+    fn simple_write_is_extracted() {
+        assert_eq!(
+            extract_write_targets_from_directive("Write mission_04_worker_recovery.md."),
+            vec!["mission_04_worker_recovery.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn write_result_to_is_extracted() {
+        assert_eq!(
+            extract_write_targets_from_directive(
+                "Write the result to mission_01_completion_audit.md."
+            ),
+            vec!["mission_01_completion_audit.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn source_extension_is_not_a_report() {
+        assert!(extract_write_targets_from_directive(
+            "Write the implementation to crates/foo/src/lib.rs"
+        ).is_empty());
+    }
+
+    #[test]
+    fn absolute_path_is_rejected() {
+        assert!(extract_write_targets_from_directive(
+            "Write the report to /etc/passwd.md"
+        ).is_empty());
+    }
+
+    #[test]
+    fn traversal_is_rejected() {
+        assert!(extract_write_targets_from_directive(
+            "Write the report to ../etc/report.md"
+        ).is_empty());
+    }
+
+    #[test]
+    fn multiple_deliverables_are_extracted() {
+        let out = extract_write_targets_from_directive(
+            "Write findings to a.md. Then save the result to b.json."
+        );
+        assert!(out.contains(&"a.md".to_string()));
+        assert!(out.contains(&"b.json".to_string()));
     }
 }
