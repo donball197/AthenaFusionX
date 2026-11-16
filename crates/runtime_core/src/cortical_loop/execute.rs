@@ -71,7 +71,22 @@ impl CorticalLoop {
                     AgentAction::ExecuteCommand { _thought_process: None, command, .. }
                         if crate::cortical::read_only_gate::is_read_only_safe_command(command)
                 );
-                if !exec_is_provably_safe {
+                // FOREVER FIX: a required report write (non-.rs, in
+                // required_artifact_paths) is not a read-only violation.
+                // The read-only guard protects source; it does not forbid
+                // producing the audit deliverable the contract itself demands.
+                let is_required_report_write = match &action {
+                    AgentAction::WriteFile { _thought_process: None, path, .. }
+                    | AgentAction::SynthesizeReport { _thought_process: None, output_path: path, .. } => {
+                        let p = path.trim();
+                        !p.ends_with(".rs")
+                            && session.contract.required_artifact_paths.iter().any(|a| {
+                                crate::evidence_paths::paths_equivalent(&a.path, p)
+                            })
+                    }
+                    _ => false,
+                };
+                if !exec_is_provably_safe && !is_required_report_write {
                     self.log(format!(
                         "\x1b[1;31m>> [READ-ONLY VIOLATION]\x1b[0m Mission declares read-only intent; refusing mutation action: {:?}",
                         action

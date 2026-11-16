@@ -913,7 +913,20 @@ fn declared_criteria_contract(
     let has_analysis_signal =
         criteria_text.contains("ANALYSIS_OK") || requires_semantic_verification(full_text);
     let has_checked_search = criteria_text.contains("SEARCH_CHECKED_OK:");
-    if only_search_markers
+    let has_explicit_read_or_positive_search = conditions.iter().any(|c| {
+        matches!(
+            c,
+            CompletionCondition::ReadPathAcquired { .. }
+                | CompletionCondition::ReadMarkerAcquired
+                | CompletionCondition::ReadFunctionMarkerAcquired { .. }
+                | CompletionCondition::SearchTermAcquired { .. }
+        )
+    });
+    let is_inherit_only = criteria_text.contains("DAG_LINEAGE_OK")
+        || criteria_text.contains("LINEAGE MODE: INHERIT_ONLY");
+    if (only_search_markers || has_output)
+        && !has_explicit_read_or_positive_search
+        && !is_inherit_only
         && has_analysis_signal
         && has_checked_search
         && !conditions.iter().any(|c| matches!(c, CompletionCondition::SourceCodeEvidenceRequired))
@@ -974,11 +987,19 @@ impl SubgoalCompletionEngine {
         // the whole mission text. A mission that merely *discusses* a
         // marker (e.g. an audit documenting the executor) must not be
         // treated as declaring that marker as a requirement.
-        let declared_mutation_criteria = scopes.criteria.contains("WRITE_OK:")
-            || scopes.criteria.contains("PATCH_FUNCTION_OK:")
+        // FOREVER FIX: only *source* mutation criteria force read_only=false.
+        // A report WRITE_OK of a non-.rs path must not disarm read-only intent.
+        let declared_source_mutation = scopes.criteria.contains("PATCH_FUNCTION_OK:")
             || scopes.criteria.contains("DIFF_PATCH_OK:")
-            || scopes.criteria.contains("REPLACE_LINES_OK:");
-        let read_only = !declared_mutation_criteria
+            || scopes.criteria.contains("REPLACE_LINES_OK:")
+            || scopes.criteria.lines().any(|l| {
+                let t = l.trim_start();
+                t.starts_with("WRITE_OK:")
+                    && t.strip_prefix("WRITE_OK:")
+                        .map(|p| p.trim().ends_with(".rs"))
+                        .unwrap_or(false)
+            });
+        let read_only = !declared_source_mutation
             && (detect_read_only(objective)
                 || detect_read_only(scopes.root_directive)
                 || crate::cortical::read_only_gate::mission_read_only_intent(objective)
@@ -1242,8 +1263,14 @@ impl SubgoalCompletionEngine {
             conditions.push(CompletionCondition::PatchMarkerAcquired);
         }
 
+        // FOREVER FIX: report writes (non-.rs) must not set is_mutation_task.
+        // That flag arms the POST-READ MUTATION PIVOT; only real source
+        // mutation may set it.
         if (has_write || has_path_bound_writes) && !read_only {
-            is_mutation_task = true;
+            let any_source_write = write_targets.iter().any(|p| p.trim().ends_with(".rs"));
+            if any_source_write {
+                is_mutation_task = true;
+            }
             if has_path_bound_writes {
                 for path in &write_targets {
                     conditions.push(CompletionCondition::WritePathAcquired { path: path.clone() });
@@ -1372,7 +1399,32 @@ impl SubgoalCompletionEngine {
         // ContractEvaluator would demand a [WRITE_OK] marker for a path
         // that can never be written, and the node would never satisfy its
         // contract.
-        let arts = if read_only { Vec::new() } else { extract_required_artifact_paths(objective) };
+        // REPORT-UNDER-READONLY: read-only protects source, not report deliverables.
+        // Non-.rs WRITE_OK / required artifacts remain; .rs writes stay blocked.
+        let mut arts = extract_required_artifact_paths(objective);
+        if read_only {
+            arts.retain(|a| !a.path.trim().ends_with(".rs"));
+        }
+        if read_only {
+            // Emit path-bound report writes from criteria (non-.rs only).
+            for path in extract_all_named_targets(scopes.criteria, "WRITE_OK:") {
+                if path.trim().ends_with(".rs") {
+                    continue;
+                }
+                if !conditions.iter().any(|c| matches!(
+                    c,
+                    CompletionCondition::WritePathAcquired { path: p } if p == &path
+                )) {
+                    conditions.push(CompletionCondition::WritePathAcquired { path: path.clone() });
+                }
+                if !arts.iter().any(|a| a.path == path) {
+                    arts.push(crate::completion_engine::ArtifactSpec {
+                        path: path.clone(),
+                        reason: "report deliverable under read-only audit".into(),
+                    });
+                }
+            }
+        }
         if !read_only
             && !arts.is_empty()
             && !conditions.iter().any(|c| {
@@ -1381,6 +1433,7 @@ impl SubgoalCompletionEngine {
                     CompletionCondition::PatchMarkerAcquired
                         | CompletionCondition::PatchPathAcquired { .. }
                         | CompletionCondition::WriteMarkerAcquired
+                        | CompletionCondition::WritePathAcquired { .. }
                 )
             })
         {
@@ -1465,9 +1518,11 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
         // Completion criteria such as `WRITE_OK:host_report.md` are
         // evidence tokens, not artifact paths. Never allow a marker prefix
         // to contaminate ArtifactSpec.path.
-        let trimmed = tok.trim_matches(|c: char| {
-            !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-'
-        });
+        let trimmed = tok
+            .trim_matches(|c: char| {
+                !c.is_alphanumeric() && c != '.' && c != '/' && c != '_' && c != '-'
+            })
+            .trim_end_matches('.');
         // A token that carried a WRITE_OK: / DIFF_PATCH_OK: prefix is
         // itself a write declaration. The prefix is authoritative; the
         // scan-back for a write verb is only needed for unmarked file
@@ -2005,7 +2060,7 @@ WRITE_OK:out.md"#;
     }
 
     #[test]
-    fn declared_write_criterion_wins_over_root_read_only_restriction() {
+    fn report_write_under_readonly_keeps_protection_but_is_a_required_artifact() {
         let mission = r#"OBJECTIVE: Produce the summary artifact.
 
 MANDATORY NODE SUCCESS CRITERIA:
@@ -2017,11 +2072,38 @@ LINEAGE CONTEXT:
 "#;
         let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
 
-        assert!(!contract.read_only);
-        assert!(contract.conditions.iter().any(|c| matches!(
-            c,
-            CompletionCondition::WritePathAcquired { path } if path == "summary.md"
-        )));
+        assert!(contract.read_only, "root read-only protection must hold for source");
+        assert!(!contract.is_mutation_task, "report write must not arm the mutation pivot");
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::WritePathAcquired { path } if path == "summary.md"
+            )),
+            "report write must remain a required condition: {:?}",
+            contract.conditions
+        );
+        assert!(
+            contract.required_artifact_paths.iter().any(|a| a.path == "summary.md"),
+            "report write must be an artifact so write_phase_ready can fire: {:?}",
+            contract.required_artifact_paths
+        );
+    }
+
+    #[test]
+    fn declared_source_write_still_disarms_readonly() {
+        let mission = r#"OBJECTIVE: Add a helper to lib.rs.
+
+MANDATORY NODE SUCCESS CRITERIA:
+WRITE_OK:crates/foo/src/lib.rs
+
+ROOT DIRECTIVE CONTEXT:
+Do not modify any files.
+LINEAGE CONTEXT:
+"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(!contract.read_only, "a .rs write must disarm root read-only");
+        assert!(contract.is_mutation_task, "a .rs write must arm the mutation pivot");
     }
 
     #[test]

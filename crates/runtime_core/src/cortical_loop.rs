@@ -707,7 +707,17 @@ impl CorticalLoop {
         unwritten_targets: &[String],
         recon_ready: bool,
     ) -> bool {
-        !unwritten_targets.is_empty() && recon_ready && !contract.read_only
+        if unwritten_targets.is_empty() || !recon_ready {
+            return false;
+        }
+        if !contract.read_only {
+            return true;
+        }
+        // FOREVER FIX: under read_only, only non-.rs report artifacts can
+        // enter the write phase. A .rs write under read_only is a contract
+        // violation and must not reach execute.rs. A .md/.txt/.json report
+        // is the audit deliverable and must.
+        unwritten_targets.iter().all(|p| !p.trim().ends_with(".rs"))
     }
 }
 
