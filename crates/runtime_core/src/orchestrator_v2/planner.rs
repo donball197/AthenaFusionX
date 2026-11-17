@@ -679,6 +679,7 @@ OUTPUT ONLY VALID JSON with this exact structure:
         let result = result.map(|mut graph| {
             apply_read_only_search_rewrite(&mut graph, directive);
             apply_audit_search_rewrite(&mut graph, directive);
+            drop_abstract_checked_criteria(&mut graph);
             apply_audit_recon_floor(&mut graph, directive);
             apply_write_deliverable_criterion(&mut graph, directive);
             apply_report_deliverable_criterion(&mut graph, directive);
@@ -2305,6 +2306,35 @@ mod directive_deliverable_presence_tests {
 /// prompt noun.  Enforces CRITICAL RULE [AUDIT SEARCH USES CHECKED FORM]
 /// at minting time.  Parsing mirrors search_checked_satisfied
 /// (evidence_markers.rs) so the two agree on what the "term" is.
+/// Enforce the planner-prompt rule "do not turn abstract nouns into mandatory
+/// SEARCH_CHECKED_OK criteria" in code. Drops non-concrete SEARCH_CHECKED_OK
+/// criteria, but never empties a node: if every criterion would be dropped,
+/// the node is left untouched (an empty contract fails closed).
+fn filter_abstract_checked(criteria: &mut Vec<String>) {
+    let keep: Vec<bool> = criteria
+        .iter()
+        .map(|c| match c.trim().strip_prefix("SEARCH_CHECKED_OK:") {
+            Some(target) => checked_term_is_concrete(target),
+            None => true,
+        })
+        .collect();
+    if !keep.iter().any(|k| *k) {
+        return;
+    }
+    let mut i = 0;
+    criteria.retain(|_| {
+        let k = keep[i];
+        i += 1;
+        k
+    });
+}
+
+fn drop_abstract_checked_criteria(graph: &mut TaskGraph) {
+    for node in graph.nodes.values_mut() {
+        filter_abstract_checked(&mut node.success_criteria);
+    }
+}
+
 fn checked_term_is_concrete(target: &str) -> bool {
     let t = target.trim();
     if t.is_empty() {
@@ -2380,5 +2410,48 @@ mod noun_filter_tests {
         assert!(!checked_term_is_concrete(""));
         assert!(!checked_term_is_concrete("  "));
         assert!(!checked_term_is_concrete("crates/runtime_core/src:"));
+    }
+}
+
+#[cfg(test)]
+mod p1b_abstract_checked_tests {
+    use super::*;
+
+    #[test]
+    fn predicate_rejects_abstract_and_accepts_identifiers() {
+        assert!(!checked_term_is_concrete("reliability"));
+        assert!(!checked_term_is_concrete("verify complete"));
+        assert!(!checked_term_is_concrete("crates/runtime_core/src:worker"));
+        assert!(checked_term_is_concrete("crates/runtime_core/src:unimplemented!"));
+        assert!(checked_term_is_concrete("deprecated_fn"));
+    }
+
+    #[test]
+    fn abstract_checked_criterion_is_dropped_when_others_remain() {
+        let mut v = vec![
+            "SEARCH_CHECKED_OK:crates/runtime_core/src:worker".to_string(),
+            "SEARCH_CHECKED_OK:crates/runtime_core/src:unimplemented!".to_string(),
+            "ANALYSIS_OK".to_string(),
+        ];
+        filter_abstract_checked(&mut v);
+        assert_eq!(v.len(), 2);
+        assert!(v.iter().all(|c| !c.ends_with(":worker")));
+    }
+
+    #[test]
+    fn last_criterion_is_never_dropped() {
+        let mut v = vec!["SEARCH_CHECKED_OK:reliability".to_string()];
+        filter_abstract_checked(&mut v);
+        assert_eq!(v.len(), 1);
+    }
+
+    #[test]
+    fn search_code_criteria_are_untouched() {
+        let mut v = vec![
+            "SEARCH_CODE_OK:crates:worker".to_string(),
+            "SEARCH_CHECKED_OK:crates:todo!".to_string(),
+        ];
+        filter_abstract_checked(&mut v);
+        assert_eq!(v.len(), 2);
     }
 }
