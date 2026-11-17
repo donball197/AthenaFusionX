@@ -301,12 +301,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "deepseek-ai/deepseek-v4.1-flash",
-    "context": "128K in / 4K out",
-    "category": "FLASH"
-  },
-  {
-    "provider": "Nvidia",
     "name": "google/gemma-3-12b-it",
     "context": "8K in / 4K out",
     "category": "GEMMA"
