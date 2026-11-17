@@ -253,6 +253,13 @@ impl OutcomeVerifier {
                                     seen_paths.insert(path.to_string());
                                 }
                             }
+                        } else if let Some(rest) = l.strip_prefix("[SEARCH_CODE_OK] Path: ") {
+                            if let Some(path) = rest.split(" | ").next() {
+                                let path = path.trim();
+                                if !path.is_empty() {
+                                    seen_paths.insert(path.to_string());
+                                }
+                            }
                         }
                     }
                     !seen_paths.is_empty()
@@ -966,5 +973,24 @@ mod adversarial {
             }
         }
         assert!(failures.is_empty(), "adversarial failures:\n{}", failures.join("\n"));
+    }
+}
+
+#[cfg(test)]
+mod p4_search_source_tests {
+    use super::*;
+
+    #[test]
+    fn search_evidence_alone_satisfies_source_code_evidence() {
+        let conditions = vec![CompletionCondition::SourceCodeEvidenceRequired];
+        let ev = "[SEARCH_CODE_OK] Path: crates/runtime_core/src | Query: 'worker'\nMATCHES:\nplanner.rs:353\n";
+        assert!(OutcomeVerifier::mission_completion_authorized(ev, 1.0, &conditions));
+    }
+
+    #[test]
+    fn nested_search_marker_in_body_does_not_satisfy() {
+        let conditions = vec![CompletionCondition::SourceCodeEvidenceRequired];
+        let ev = "[CMD_OK] Command: echo\nStatus: exit status: 0\n  [SEARCH_CODE_OK] Path: x | Query: y\n";
+        assert!(!OutcomeVerifier::mission_completion_authorized(ev, 1.0, &conditions));
     }
 }
