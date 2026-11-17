@@ -718,6 +718,7 @@ impl RoboticExecutor {
                 }
                 rg_args.extend_from_slice(&[
                     "--glob=!.git/**",
+                    "--glob=!.nexus_debug/**",
                     "--glob=!**/target/**",
                     "--glob=!.venv/**",
                     "--glob=!.nexus_venv/**",
@@ -750,6 +751,7 @@ impl RoboticExecutor {
                 }
                 grep_args.extend_from_slice(&[
                     "--exclude-dir=.git",
+                    "--exclude-dir=.nexus_debug",
                     "--exclude-dir=target",
                     "--exclude-dir=.venv",
                     "--exclude-dir=.nexus_venv",
