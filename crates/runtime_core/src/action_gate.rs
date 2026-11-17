@@ -62,6 +62,12 @@ pub fn check_forced_search(evidence: &str, action: &MotorAction) -> Result<()> {
     if crate::evidence_markers::search_checked_satisfied(evidence, &target) {
         return Ok(());
     }
+    // Recovery stops re-forcing after 3 lines; release the gate too, so an
+    // unsatisfiable forced search cannot block every other search.
+    let forced_line = format!("[CONTRACT_FIRST_FORCED] search_code:{}:{}", expected_path, expected_query);
+    if evidence.lines().filter(|l| l.trim() == forced_line).count() >= 3 {
+        return Ok(());
+    }
     if let MotorAction::SearchCode { path, query } = action {
         if !forced_search_paths_match(path, &expected_path)
             || !query.trim().eq_ignore_ascii_case(expected_query.trim())
@@ -392,5 +398,27 @@ mod forced_search_gate_tests {
 
         let slash_ev = "[CONTRACT_FIRST_FORCED] search_code:bins/:main\n";
         assert!(check_forced_search(slash_ev, &search("bins", "main")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod p9_forced_cap_tests {
+    use super::*;
+
+    fn search(path: &str, query: &str) -> MotorAction {
+        MotorAction::SearchCode { path: path.into(), query: query.into() }
+    }
+    const L: &str = "[CONTRACT_FIRST_FORCED] search_code:Cargo.toml:workspace\n";
+
+    #[test]
+    fn forced_search_still_enforced_below_cap() {
+        let ev = L.repeat(2);
+        assert!(check_forced_search(&ev, &search("other", "x")).is_err());
+    }
+
+    #[test]
+    fn forced_search_released_after_three_forcings() {
+        let ev = L.repeat(3);
+        assert!(check_forced_search(&ev, &search("other", "x")).is_ok());
     }
 }
