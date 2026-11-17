@@ -11,7 +11,6 @@ pub mod cortex;
 pub(crate) mod cortical;
 pub mod cortical_loop;
 pub mod coverage;
-pub mod critic;
 pub mod diff;
 pub mod distributed_scheduler;
 pub mod epistemic_engine;

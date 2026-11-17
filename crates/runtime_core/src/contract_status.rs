@@ -94,15 +94,16 @@ fn action_would_satisfy(
         // A SearchCode emits `[SEARCH_CODE_OK] Path: <p> | Query: '<q>'`,
         // which search_checked_satisfied() accepts as proof that
         // SearchCheckedAcquired{target:"<leaf>:<term>"} was checked.
-        (A::SearchCode { path, query, .. }, C::SearchCheckedAcquired { target }) => {
-            let leaf = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path);
-            target == &format!("{}:{}", leaf, query)
+        (A::SearchCode { .. }, C::SearchCheckedAcquired { target }) => {
+            crate::cortical::contract_advance::search_action_matches_target(
+                action, target,
+            )
         }
         // Path-bound reads emit [READ_OK] / [READ_FUNCTION_OK] which
         // satisfies ReadPathAcquired{path}.
         (A::ReadFile { path, .. }, C::ReadPathAcquired { path: want })
         | (A::ReadFunction { path, .. }, C::ReadPathAcquired { path: want }) => {
-            path == want || path.ends_with(want.as_str())
+            crate::cortical::contract_advance::same_workspace_path(path, want)
         }
         // BUG-19 gap exposed by the task_1 diagnostic: write-producing
         // actions satisfy write contracts, but the previous match had no
@@ -129,18 +130,93 @@ fn action_would_satisfy(
         | (A::PatchFunction { path, .. }, C::WritePathAcquired { path: want })
         | (A::PatchFile { path, .. }, C::WritePathAcquired { path: want })
         | (A::ReplaceLines { path, .. }, C::WritePathAcquired { path: want }) => {
-            path == want || path.ends_with(want.as_str())
+            crate::cortical::contract_advance::same_workspace_path(path, want)
         }
         (A::SynthesizeReport { output_path, .. }, C::WritePathAcquired { path: want }) => {
-            output_path == want || output_path.ends_with(want.as_str())
+            crate::cortical::contract_advance::same_workspace_path(output_path, want)
+        }
+        (A::AtomicPatch { patches, .. }, C::WritePathAcquired { path: want }) => {
+            patches.iter().any(|patch| {
+                crate::cortical::contract_advance::same_workspace_path(
+                    &patch.path, want,
+                )
+            })
         }
 
         // Any ExecuteCommand satisfies a bare command marker. The
-        // stricter exact-command bypass at critic.rs:154 fires earlier
+        // stricter exact-command bypass at cortical_loop/critic.rs (REQUIRED-COMMAND BYPASS) fires earlier
         // when the contract is `CommandExecutionVerified` — do not
         // duplicate that logic here.
         (A::ExecuteCommand { .. }, C::CommandMarkerAcquired) => true,
 
         _ => false,
+    }
+}
+
+
+#[cfg(test)]
+mod proposal_path_matching_tests {
+    use super::*;
+    use crate::agent_protocol::{AgentAction, FilePatch};
+    use crate::completion_engine::CompletionCondition;
+
+    #[test]
+    fn atomic_patch_matches_a_path_in_its_patch_list() {
+        let action = AgentAction::AtomicPatch {
+            patches: vec![
+                FilePatch {
+                    path: "crates/runtime_core/src/first.rs".into(),
+                    search: "old".into(),
+                    replace: "new".into(),
+                },
+                FilePatch {
+                    path: "crates/runtime_core/src/target.rs".into(),
+                    search: "before".into(),
+                    replace: "after".into(),
+                },
+            ],
+            reasoning: "test".into(),
+            _thought_process: None,
+        };
+
+        let condition = CompletionCondition::WritePathAcquired {
+            path: "crates/runtime_core/src/target.rs".into(),
+        };
+
+        assert!(action_would_satisfy(&action, &condition));
+    }
+
+    #[test]
+    fn atomic_patch_rejects_unrelated_same_filename_path() {
+        let action = AgentAction::AtomicPatch {
+            patches: vec![FilePatch {
+                path: "crates/runtime_core/src/target.rs".into(),
+                search: "old".into(),
+                replace: "new".into(),
+            }],
+            reasoning: "test".into(),
+            _thought_process: None,
+        };
+
+        let condition = CompletionCondition::WritePathAcquired {
+            path: "bins/other/src/target.rs".into(),
+        };
+
+        assert!(!action_would_satisfy(&action, &condition));
+    }
+
+    #[test]
+    fn atomic_patch_with_no_patches_does_not_match_path_condition() {
+        let action = AgentAction::AtomicPatch {
+            patches: vec![],
+            reasoning: "test".into(),
+            _thought_process: None,
+        };
+
+        let condition = CompletionCondition::WritePathAcquired {
+            path: "crates/runtime_core/src/target.rs".into(),
+        };
+
+        assert!(!action_would_satisfy(&action, &condition));
     }
 }

@@ -408,10 +408,32 @@ impl CorticalLoop {
                     (kind, l.chars().take(400).collect::<String>())
                 })
                 .unwrap_or(("rejected", String::new()));
-            session.local_evidence.push_str(&format!(
-                "\n[NODE PHASE] The artifact `{}` was {}. Reason: {}\nFix that exact cause before halting; re-read the artifact after any rewrite. Do NOT propose halt until it is accepted.\n",
-                target, reject_kind, reject_text
-            ));
+            let since_last_ok = strip_read_bodies_for_markers(&session.local_evidence);
+            let last_ok = [
+                "[WRITE_OK]",
+                "[READ_OK]",
+                "[READ_CHUNK_OK]",
+                "[CMD_OK]",
+                "[SEARCH_CODE_OK]",
+            ]
+            .iter()
+            .filter_map(|m| since_last_ok.rfind(m))
+            .max()
+            .unwrap_or(0);
+            let tail_since_ok = &since_last_ok[last_ok..];
+            if !tail_since_ok.contains("[NODE PHASE] The artifact") {
+                session.local_evidence.push_str(&format!(
+                    "\n[NODE PHASE] The artifact `{}` was {}. Reason: {}\nWrite a substantially revised, complete report in `{}` using the newly gathered evidence (do NOT re-emit the previous draft); re-read after rewriting and do NOT propose halt until it is accepted.\n",
+                    target, reject_kind, reject_text, target
+                ));
+            } else if tail_since_ok.contains("[LOOP_VETO]")
+                && !tail_since_ok.contains("[WRITE_REWRITE_REQUIRED]")
+            {
+                session.local_evidence.push_str(&format!(
+                    "\n[WRITE_REWRITE_REQUIRED] Your previous `write_file` content for `{}` was identical to an earlier draft and blocked by anti-loop. Synthesize a completely new, detailed report from the [READ_CHUNK_OK]/[READ_OK]/[CMD_OK] evidence now.\n",
+                    target
+                ));
+            }
             format!("write_file:{}", target)
         } else if session.contract.is_mutation_task
             && unwritten_targets.is_empty()
@@ -608,7 +630,7 @@ impl CorticalLoop {
                 .map(|a| a.path.as_str())
                 .unwrap_or("the deliverable");
             format!(
-                "{}\n\n[WRITE PHASE REQUIREMENTS]\nWrite the report to `{}` in ONE write_file call.\nRULES:\n- Follow any length the mission specifies; otherwise stay under 500 words.\n- Finish every sentence and close every section; never end mid-expression.\n- Prose and bullets only. NO code blocks and NO multi-line code excerpts.\n- Avoid copying raw TOML/code quote syntax (e.g. write `resolver version 2` instead of `resolver = \"2\"`).\n- Reference functions by name in backticks only; do NOT quote function bodies.\n- Do NOT include evidence markers like [READ_OK] in the report body.\n- Cite only symbols and line numbers that appear in the evidence you have read.\n",
+                "{}\n\n[WRITE PHASE REQUIREMENTS]\nWrite the report to `{}` in ONE write_file call.\nRULES:\n- Follow any length the mission specifies; otherwise stay concise (300-450 words).\n- Finish every sentence and close every section; never end mid-expression.\n- Prose and bullets only. NO code blocks and NO multi-line code excerpts.\n- NEVER put double quotes (\") inside the report content (use backticks or single quotes instead; unescaped double quotes truncate the tool call).\n- Reference functions by name in backticks only; do NOT quote function bodies.\n- Do NOT include evidence markers like [READ_OK] in the report body.\n- Cite only symbols and line numbers that appear in the evidence you have read.\n",
                 enhanced_mission, deliverable,
             )
         } else {
@@ -983,21 +1005,23 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
         if let Some(AgentAction::WriteFile { path, content, .. }) = actions.first() {
             let deliverable = path.ends_with(".md") || path.ends_with(".txt");
             if deliverable {
+                let semantic = crate::completion_engine::requires_semantic_verification(
+                    &session.contract.objective,
+                );
                 let unclosed_fence = content.matches("```").count() % 2 == 1;
-                let tiny = content.trim().len() < 500
-                    && crate::completion_engine::requires_semantic_verification(
-                        &session.contract.objective,
-                    );
+                let tail = content.trim_end();
+                let truncated_ending = semantic
+                    && !tail.is_empty()
+                    && (!tail.ends_with(['.', ')', '!', '?', '`', '"'])
+                        || content.matches('`').count() % 2 == 1);
+                let incomplete = unclosed_fence || truncated_ending;
+                let tiny = content.trim().len() < 500 && semantic;
+
                 // Strip read-file bodies so the gate's own source text
                 // (which contains the literal "[WRITE_TRUNCATION]" marker)
                 // cannot poison the counter when strategize.rs itself was
-                // read this session. Same self-reference class as the
-                // original [CRITIC_VETO] bug in citation_veto_pending.
+                // read this session.
                 let stripped = strip_read_bodies_for_markers(&session.local_evidence);
-                // Scope to AFTER the most recent WRITE_OK of this path (or
-                // any WRITE_OK, if this path was never written). Otherwise a
-                // long-lived session keeps prior >= 2 forever and the gate
-                // never rejects again after the first successful write.
                 let since = stripped
                     .rfind(&format!("[WRITE_OK] {}", path))
                     .or_else(|| stripped.rfind("[WRITE_OK]"))
@@ -1005,61 +1029,35 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                     .unwrap_or(0);
                 let prior = stripped[since..].matches("[WRITE_TRUNCATION]").count();
 
-                // Retry exhaustion is not evidence of deliverable completeness.
-                // Never allow a known-small report through merely because the model
-                // has already failed twice.
-                if tiny && !unclosed_fence && prior >= 2 {
-                    tracing::error!(
-        "[WRITE_TRUNCATION] Refusing incomplete deliverable '{}' after {} rejections; retry exhaustion does not establish report completeness.",
-        path,
-        prior
-    );
-
-                    session.local_evidence.push_str(&format!(
-        "\n[WRITE_TRUNCATION_TERMINAL] Refused incomplete deliverable '{}' after {} rejections. No WRITE_OK or completion claim is authorized.\n",
-        path,
-        prior
-    ));
-
-                    return Ok(CortexState::Fail {
-                        belief: current_belief,
-                        evidence: format!(
-            "[WRITE_TRUNCATION_TERMINAL] Refused incomplete deliverable `{}` after {} rejections.",
-            path,
-            prior
-        ),
-                    });
-                }
-                if (unclosed_fence || tiny) && prior < 2 {
+                if (incomplete || tiny) && prior < 2 {
+                    let reason = if unclosed_fence {
+                        " and ends inside an unclosed ``` code fence"
+                    } else if truncated_ending {
+                        " and appears cut off mid-sentence (never use double quotes \" inside content; use single quotes or backticks)"
+                    } else {
+                        " (too short to be a complete report)"
+                    };
                     let obs = format!(
                         "[WRITE_TRUNCATION] write_file `{}` rejected: content is {} bytes{}.\n\
-                         The deliverable must be complete. Re-emit the entire file in one call.\n\
-                         If you cannot fit it, shorten the summary — do NOT truncate mid-expression\n\
-                         or leave a code fence unclosed.\n",
-                        path,
-                        content.len(),
-                        if unclosed_fence { " and ends inside an unclosed ``` code fence" } else { "" }
+                         The deliverable must be complete and finish its final sentence cleanly.\n\
+                         Re-emit the entire file in one call (concise prose, no double quotes inside content).\n",
+                        path, content.len(), reason
                     );
                     self.log(format!(
-                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Rejecting truncated deliverable `{}` ({} bytes, unclosed_fence={}, prior_rejects={})",
-                        path, content.len(), unclosed_fence, prior
+                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Rejecting truncated deliverable `{}` ({} bytes, unclosed_fence={}, truncated_ending={}, prior_rejects={})",
+                        path, content.len(), unclosed_fence, truncated_ending, prior
                     ));
                     session.local_evidence.push_str(&obs);
                     if let Some(h_id) = session.best_hypothesis_id {
-                        Self::decay_hypothesis_belief(session, h_id, 0.10);
+                        Self::decay_hypothesis_belief(session, h_id, 0.05);
                     }
                     return Ok(CortexState::Strategize);
-                } else if unclosed_fence {
-                    // Never allow an unclosed fence through. A deliverable
-                    // that ends mid-sentence is worse than no deliverable.
+                } else if incomplete || tiny {
+                    // Repeated truncation/stub: try MirrorBridge sidecar if enabled before failing.
                     self.log(format!(
-                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Deliverable `{}` still has an unclosed ``` after {} attempts ({} bytes); attempting mirror delegation.",
+                        "\x1b[1;31m>> [WRITE_TRUNCATION]\x1b[0m Deliverable `{}` still incomplete after {} attempts ({} bytes); attempting mirror delegation.",
                         path, prior, content.len()
                     ));
-                    // Mirror-agent fallback: if a sidecar is running and the
-                    // env var is set, hand off synthesis. On success, synthesize
-                    // a normal [WRITE_OK] marker so downstream verification is
-                    // unchanged. On failure, fall through to Fail as before.
                     if std::env::var("NEXUS_MIRROR_DELEGATION").as_deref() == Ok("1") {
                         if artifact_denied_by_policy(&session.local_evidence, path) {
                             self.log(format!(
@@ -1103,20 +1101,17 @@ fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for t
                             }
                         }
                     }
+                    session.local_evidence.push_str(&format!(
+                        "\n[WRITE_TRUNCATION_TERMINAL] Refused incomplete deliverable '{}' after {} rejections. No WRITE_OK or completion claim is authorized.\n",
+                        path, prior
+                    ));
                     return Ok(CortexState::Fail {
                         belief: current_belief,
                         evidence: format!(
-                            "Deliverable `{}` could not be produced complete in {} attempts. Last content was {} bytes and ended mid-expression (unclosed ``` fence). This usually means the model was quoting source code inside the report body; do not quote function bodies, use prose only.",
+                            "[WRITE_TRUNCATION_TERMINAL] Deliverable `{}` could not be produced complete in {} attempts ({} bytes).",
                             path, prior, content.len()
                         ),
                     });
-                } else if tiny {
-                    // Tiny without unclosed fence: likely output-limited but
-                    // at least structurally complete. Allow through.
-                    self.log(format!(
-                        "\x1b[1;33m>> [WRITE_TRUNCATION]\x1b[0m Allowing small deliverable `{}` through after {} rejects (model appears output-limited).",
-                        path, prior
-                    ));
                 }
             }
         }

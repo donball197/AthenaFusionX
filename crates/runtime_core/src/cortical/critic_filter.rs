@@ -171,11 +171,20 @@ impl CorticalLoop {
                 }
             }
 
-            let loop_obs = format!(
-                "[LOOP_VETO] All proposed actions already attempted: {}. \
-                 Must choose different action(s).",
-                vetoed_keys.join(", ")
-            );
+            let write_repeat = vetoed_keys.iter().any(|k| k.starts_with("write_file:"));
+            let loop_obs = if write_repeat {
+                format!(
+                    "[LOOP_VETO] Identical write_file content already attempted ({}). \
+                     You MUST rewrite `content` with substantially new, expanded findings from evidence — NEVER repeat the prior text.",
+                    vetoed_keys.join(", ")
+                )
+            } else {
+                format!(
+                    "[LOOP_VETO] All proposed actions already attempted: {}. \
+                     Must choose different action(s).",
+                    vetoed_keys.join(", ")
+                )
+            };
             session.local_evidence.push_str(&loop_obs);
             session.local_evidence.push('\n');
 

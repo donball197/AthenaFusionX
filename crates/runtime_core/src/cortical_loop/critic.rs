@@ -166,6 +166,31 @@ impl CorticalLoop {
                             | CC::CommandExecutionVerified { .. }
                     )
                 });
+                if !allow_obj
+                    && crate::completion_engine::requires_semantic_verification(
+                        &session.contract.objective,
+                    )
+                    && content.trim().len() < 1200
+                    && content.matches('`').count() < 2
+                {
+                    self.log(format!(
+                        ">> [CONTENT CONSISTENCY GATE] Rejecting contentless report stub `{}`: cites no backticked symbols or paths.",
+                        path
+                    ));
+                    session.last_critic_rejected_actions = Some(
+                        actions
+                            .iter()
+                            .map(crate::cortical::action_identity::action_key)
+                            .collect::<Vec<_>>(),
+                    );
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
+                    session.local_evidence.push_str(&format!(
+                        "\n[CRITIC_VETO] CONTENT CONSISTENCY GATE: report `{}` cites no backticked source symbols, file paths, or commands (appears to be a restated objective stub). Gather source evidence first and write a full grounded report naming observed symbols/paths in backticks. [CRITIC_VETO_ACTION] Do not repeat the stub.\n",
+                        path
+                    ));
+                    return Ok(CortexState::Strategize);
+                }
                 let bad = hc::write_report_unverified_symbols(
                     path,
                     content,

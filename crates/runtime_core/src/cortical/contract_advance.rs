@@ -243,7 +243,7 @@ pub(crate) fn action_advances_unmet_contract_condition(
 
 /// True when a SearchCode action targets the path and query declared
 /// by a SearchCheckedAcquired condition.
-fn search_action_matches_target(action: &AgentAction, target: &str) -> bool {
+pub(crate) fn search_action_matches_target(action: &AgentAction, target: &str) -> bool {
     let expected = target.trim();
 
     if expected.is_empty() {
@@ -302,7 +302,7 @@ pub(crate) fn condition_is_met(
 /// workspace file (the strategist often emits `/root/.../Cargo.toml` for a
 /// contract that names `Cargo.toml`; the evidence verifier already treats them
 /// as the same path, so the strategy gate must too).
-fn same_workspace_path(a: &str, b: &str) -> bool {
+pub(crate) fn same_workspace_path(a: &str, b: &str) -> bool {
     let (a, b) = (a.trim(), b.trim());
     if a == b {
         return true;

@@ -234,10 +234,24 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
 /// Return true if `action_path` is still a mandatory unread target.
 /// Callers pass paths from the node contract that are not yet fully covered.
 pub fn is_mandatory_unread_path(action_path: &str, mandatory_unread: &[String]) -> bool {
-    mandatory_unread.iter().any(|m| {
-        let a = action_path.trim_start_matches("./");
-        let b = m.trim_start_matches("./");
-        a == b || a.ends_with(b) || b.ends_with(a)
+    // Compare whole path components so `lib.rs` never matches `other_lib.rs`,
+    // an empty entry never matches everything, and `..` is never accepted.
+    // Suffix matching is kept (absolute vs workspace-relative spellings), but
+    // only on a component boundary.
+    fn comps(p: &str) -> Option<Vec<&str>> {
+        let v: Vec<&str> = p.trim().split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+        if v.is_empty() || v.contains(&"..") {
+            None
+        } else {
+            Some(v)
+        }
+    }
+    let Some(a) = comps(action_path) else {
+        return false;
+    };
+    mandatory_unread.iter().any(|m| match comps(m) {
+        Some(b) => a == b || a.ends_with(&b) || b.ends_with(&a),
+        None => false,
     })
 }
 
@@ -252,6 +266,37 @@ pub fn allow_mandatory_pivot(
         return true;
     }
     is_mandatory_unread_path(action_path, mandatory_unread)
+}
+
+#[cfg(test)]
+mod mandatory_unread_path_tests {
+    use super::is_mandatory_unread_path;
+
+    fn m(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn exact_dot_slash_and_absolute_spellings_match() {
+        assert!(is_mandatory_unread_path("src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(is_mandatory_unread_path("./src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(is_mandatory_unread_path("/root/X/src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(is_mandatory_unread_path("src/lib.rs", &m(&["/root/X/src/lib.rs"])));
+    }
+
+    #[test]
+    fn partial_component_names_do_not_match() {
+        assert!(!is_mandatory_unread_path("other_lib.rs", &m(&["lib.rs"])));
+        assert!(!is_mandatory_unread_path("src/lib.rs", &m(&["b.rs"])));
+    }
+
+    #[test]
+    fn empty_and_dotdot_never_match() {
+        assert!(!is_mandatory_unread_path("src/lib.rs", &m(&[""])));
+        assert!(!is_mandatory_unread_path("", &m(&["src/lib.rs"])));
+        assert!(!is_mandatory_unread_path("../src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(!is_mandatory_unread_path("src/lib.rs", &m(&["../src/lib.rs"])));
+    }
 }
 
 #[cfg(test)]
