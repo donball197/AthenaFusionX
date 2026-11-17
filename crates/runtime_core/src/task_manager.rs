@@ -118,17 +118,43 @@ async fn send_task_inner(
         }
     };
 
-    let expected_paths: Vec<String> =
+    // Directive-level deliverable pre-flight.
+    //
+    // infer_contract only sees structured criteria headers (WRITE_OK:,
+    // REQUIRED ARTIFACTS:, etc.). A prose directive like "Write
+    // mission_04_worker_recovery.md" produces zero required_artifact_paths,
+    // so the existing check below passed vacuously — the planner was free
+    // to drop the write, the DAG verified green, and the file was never
+    // created. Supplement with the directive-level extractor, which handles
+    // both prose ("write X.md") and structured criteria.
+    let mut expected_paths: Vec<String> =
         crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", raw_directive)
             .required_artifact_paths
             .into_iter()
             .map(|a| a.path)
             .collect();
+    for extra in crate::orchestrator_v2::planner::extract_write_targets_from_directive(raw_directive) {
+        if !expected_paths.iter().any(|p| p == &extra) {
+            expected_paths.push(extra);
+        }
+    }
     for expected_path in &expected_paths {
-        let has_write_node =
-            graph.nodes.values().any(|n| n.objective.contains(expected_path.as_str()));
+        // Recognize both the objective-text form (a correctly-planned node
+        // usually mentions the path) and the structured success_criteria
+        // form (WRITE_OK:X.md injected by apply_write_deliverable_criterion).
+        let has_write_node = graph.nodes.values().any(|n| {
+            n.objective.contains(expected_path.as_str())
+                || n.success_criteria.iter().any(|c| {
+                    let t = c.trim();
+                    t.starts_with("WRITE_OK:") && t.ends_with(expected_path.as_str())
+                })
+        });
         if !has_write_node {
-            return Err(TaskError::Planner(format!("Directive requires writing '{}' but Planner produced no node for it. Refusing to run an incomplete DAG.", expected_path)));
+            return Err(TaskError::Planner(format!(
+                "Directive requires writing '{}' but Planner produced no node for it. \
+                 Refusing to run an incomplete DAG.",
+                expected_path
+            )));
         }
     }
 
@@ -699,9 +725,35 @@ async fn send_task_inner(
             )));
         }
     };
+    // Directive-level deliverable check at mission completion.
+    //
+    // Even when every node verifies green, confirm that each write target
+    // the directive named actually exists on disk. Catches silent false
+    // success: node green, file absent. Common causes: planner
+    // under-decomposition that the pre-flight missed, out-of-band file
+    // deletion after write, or a write path that silently failed.
+    let missing_deliverables: Vec<String> =
+        crate::orchestrator_v2::planner::extract_write_targets_from_directive(raw_directive)
+            .into_iter()
+            .filter(|p| !std::path::Path::new(p).exists())
+            .collect();
+    if !missing_deliverables.is_empty() {
+        let _ = ctx.tx.send(
+            serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!(
+                    "[DAG INCOMPLETE] MISSION_DELIVERABLE_MISSING: directive named write deliverable(s) but the file(s) are absent from disk: {:?}. All planned nodes may have reported success, but the mission's stated deliverable was never produced.",
+                    missing_deliverables
+                )
+            })
+            .to_string()
+        );
+    }
+
     let final_status = if mission_had_failures
         || planned_node_count == 0
         || completed_node_count != planned_node_count
+        || !missing_deliverables.is_empty()
     {
         "Aborted"
     } else {
@@ -732,7 +784,10 @@ async fn send_task_inner(
         }
     }
 
-    if mission_had_failures || planned_node_count == 0 || completed_node_count != planned_node_count
+    if mission_had_failures
+        || planned_node_count == 0
+        || completed_node_count != planned_node_count
+        || !missing_deliverables.is_empty()
     {
         let _ = ctx.tx.send(
             serde_json::json!({

@@ -306,7 +306,7 @@ fn criterion_is_inspection_only(criterion: &str) -> bool {
 ///   * only `.md`, `.txt`, `.json`, `.yaml`, `.yml` extensions
 ///   * only relative or bare paths (rejects absolute and `..`)
 ///   * no wildcards, no globs, no directory names
-fn extract_write_targets_from_directive(directive: &str) -> Vec<String> {
+pub(crate) fn extract_write_targets_from_directive(directive: &str) -> Vec<String> {
     const VERBS: &[&str] = &[
         "write the result to ",
         "write the findings to ",
@@ -2261,5 +2261,31 @@ mod write_deliverable_tests {
         );
         assert!(out.contains(&"a.md".to_string()));
         assert!(out.contains(&"b.json".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod directive_deliverable_presence_tests {
+    use super::extract_write_targets_from_directive;
+
+    fn missing(directive: &str) -> Vec<String> {
+        extract_write_targets_from_directive(directive)
+            .into_iter()
+            .filter(|p| !std::path::Path::new(p).exists())
+            .collect()
+    }
+
+    #[test]
+    fn missing_deliverable_is_detected() {
+        // A path with an unlikely extension, definitely not on disk.
+        let missing = missing("Write to __impossible_deliverable_xyzzy.md");
+        assert_eq!(missing, vec!["__impossible_deliverable_xyzzy.md".to_string()]);
+    }
+
+    #[test]
+    fn multiple_missing_are_all_reported() {
+        let m = missing("Write to __absent_a.md. Save the result to __absent_b.json.");
+        assert!(m.contains(&"__absent_a.md".to_string()));
+        assert!(m.contains(&"__absent_b.json".to_string()));
     }
 }
