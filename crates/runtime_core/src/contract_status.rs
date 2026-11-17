@@ -220,3 +220,24 @@ mod proposal_path_matching_tests {
         assert!(!action_would_satisfy(&action, &condition));
     }
 }
+
+#[cfg(test)]
+mod p1b_search_checked_tests {
+    use super::*;
+    use crate::agent_protocol::AgentAction;
+    use crate::completion_engine::CompletionCondition;
+
+    #[test]
+    fn full_path_checked_target_is_advanced_by_matching_search() {
+        let action = AgentAction::SearchCode {
+            _thought_process: None,
+            path: "crates/runtime_core/src".into(),
+            query: "worker".into(),
+            reasoning: String::new(),
+        };
+        let cond = CompletionCondition::SearchCheckedAcquired {
+            target: "crates/runtime_core/src:worker".into(),
+        };
+        assert!(action_would_satisfy(&action, &cond));
+    }
+}
