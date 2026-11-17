@@ -132,7 +132,10 @@ pub fn classify_duplicate(
     if let AgentAction::SearchCode { path, query, .. } = action {
         let target = format!("{}:{}", path.trim(), query.trim());
         let last_search = evidence.rfind(&format!("[SEARCH_CODE_OK] Path: {}", path.trim()));
-        let last_write = evidence.rfind("[WRITE_OK]");
+        let last_write = ["[WRITE_OK]", "[PATCH_FUNCTION_OK]", "[DIFF_PATCH_OK]"]
+            .iter()
+            .filter_map(|m| evidence.rfind(*m))
+            .max();
         let written_since = matches!((last_search, last_write), (Some(s), Some(w)) if w > s);
         if !written_since && crate::evidence_markers::search_checked_satisfied(evidence, &target) {
             return FilterOutcome::FilterAndDecay;
@@ -263,5 +266,42 @@ mod p2a_search_guard_tests {
     fn satisfied_search_without_write_is_stale() {
         let ev = "[SEARCH_CODE_OK] Path: crates | Query: 'x'\nNo code matches found in specified path.\n";
         assert!(matches!(classify_duplicate(&search(), &contract(), ev), FilterOutcome::FilterAndDecay));
+    }
+}
+
+#[cfg(test)]
+mod p2a_patch_marker_tests {
+    use super::*;
+
+    fn contract() -> SubgoalContract {
+        SubgoalContract {
+            node_id: "t".into(), objective: "o".into(), read_only: false,
+            is_mutation_task: false, required_artifact_paths: vec![], conditions: vec![],
+        }
+    }
+    fn search() -> AgentAction {
+        AgentAction::SearchCode {
+            _thought_process: None, path: "crates".into(),
+            query: "x".into(), reasoning: String::new(),
+        }
+    }
+    const S: &str = "[SEARCH_CODE_OK] Path: crates | Query: 'x'\nNo code matches found in specified path.\n";
+
+    #[test]
+    fn search_after_diff_patch_is_retry() {
+        let ev = format!("{S}[DIFF_PATCH_OK] Applied changes to crates\n");
+        assert!(matches!(classify_duplicate(&search(), &contract(), &ev), FilterOutcome::AllowRetry));
+    }
+
+    #[test]
+    fn search_after_patch_function_is_retry() {
+        let ev = format!("{S}[PATCH_FUNCTION_OK] crates:f\nUpdated function 'f' in crates\n");
+        assert!(matches!(classify_duplicate(&search(), &contract(), &ev), FilterOutcome::AllowRetry));
+    }
+
+    #[test]
+    fn search_after_idempotent_patch_is_still_stale() {
+        let ev = format!("{S}[PATCH_IDEMPOTENT_OK] crates:f\n");
+        assert!(matches!(classify_duplicate(&search(), &contract(), &ev), FilterOutcome::FilterAndDecay));
     }
 }
