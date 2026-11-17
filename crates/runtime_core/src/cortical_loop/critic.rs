@@ -219,6 +219,32 @@ impl CorticalLoop {
                     ));
                     return Ok(CortexState::Strategize);
                 }
+                let absent = crate::cortical::halt_claims::write_report_unsupported_absences(
+                    path,
+                    content,
+                    &session.local_evidence,
+                );
+                if !absent.is_empty() {
+                    let names =
+                        absent.iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", ");
+                    self.log(format!(
+                        ">> [CONTENT CONSISTENCY GATE] Rejecting report `{}`: unsupported absence claim(s) {}",
+                        path, names
+                    ));
+                    session.last_critic_rejected_actions = Some(
+                        actions
+                            .iter()
+                            .map(crate::cortical::action_identity::action_key)
+                            .collect::<Vec<_>>(),
+                    );
+                    session.last_critic_rejected_at_evidence_len =
+                        Some(session.local_evidence.len());
+                    session.local_evidence.push_str(&format!(
+                        "\n[CRITIC_VETO] CONTENT CONSISTENCY GATE: report `{}` claims {} do not exist, but no search_code was ever run for them. Run search_code for each name before asserting absence, or remove the claim. [CRITIC_VETO_ACTION] Do not repeat the unsupported claim.\n",
+                        path, names
+                    ));
+                    return Ok(CortexState::Strategize);
+                }
             }
         }
 
