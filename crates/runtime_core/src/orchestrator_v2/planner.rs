@@ -71,6 +71,11 @@ fn apply_read_only_search_rewrite(graph: &mut TaskGraph, directive: &str) {
     for node in graph.nodes.values_mut() {
         for criterion in node.success_criteria.iter_mut() {
             if criterion.starts_with("SEARCH_CODE_OK:") {
+                if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
+                    if !checked_term_is_concrete(target) {
+                        continue;
+                    }
+                }
                 *criterion = criterion.replacen("SEARCH_CODE_OK:", "SEARCH_CHECKED_OK:", 1);
             }
         }
@@ -168,6 +173,11 @@ fn apply_audit_search_rewrite(graph: &mut TaskGraph, directive: &str) {
     for node in graph.nodes.values_mut() {
         for criterion in node.success_criteria.iter_mut() {
             if criterion.starts_with("SEARCH_CODE_OK:") {
+                if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
+                    if !checked_term_is_concrete(target) {
+                        continue;
+                    }
+                }
                 *criterion = criterion.replacen("SEARCH_CODE_OK:", "SEARCH_CHECKED_OK:", 1);
             }
         }
@@ -2287,5 +2297,88 @@ mod directive_deliverable_presence_tests {
         let m = missing("Write to __absent_a.md. Save the result to __absent_b.json.");
         assert!(m.contains(&"__absent_a.md".to_string()));
         assert!(m.contains(&"__absent_b.json".to_string()));
+    }
+}
+
+/// True when a SEARCH_CHECKED_OK target's term is a concrete code
+/// identifier, macro, filename, or explicit path -- not an abstract
+/// prompt noun.  Enforces CRITICAL RULE [AUDIT SEARCH USES CHECKED FORM]
+/// at minting time.  Parsing mirrors search_checked_satisfied
+/// (evidence_markers.rs) so the two agree on what the "term" is.
+fn checked_term_is_concrete(target: &str) -> bool {
+    let t = target.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let term = match t.split_once(':') {
+        Some((p, rest))
+            if crate::evidence_markers::looks_like_workspace_path(p.trim()) =>
+        {
+            rest.trim()
+        }
+        _ => t,
+    };
+    if term.is_empty() {
+        return false;
+    }
+    const ABSTRACT: &[&str] = &[
+        "worker", "reliability", "security", "performance", "quality",
+        "error", "errors", "bug", "bugs", "issue", "issues", "risk",
+        "risks", "behavior", "behaviour", "logic", "flow", "state",
+        "verify", "complete", "check", "test", "audit", "review",
+        "status", "health", "coverage", "safety", "robustness",
+    ];
+    // Multi-word: concrete if ANY word is not abstract.
+    // Single word:  concrete if not abstract.
+    !term
+        .split_whitespace()
+        .all(|w| ABSTRACT.contains(&w.to_ascii_lowercase().as_str()))
+}
+
+#[cfg(test)]
+mod noun_filter_tests {
+    use super::checked_term_is_concrete;
+
+    #[test]
+    fn concrete_identifiers_pass() {
+        assert!(checked_term_is_concrete("unimplemented!"));
+        assert!(checked_term_is_concrete("tokio::spawn"));
+        assert!(checked_term_is_concrete("Cargo.toml"));
+        assert!(checked_term_is_concrete("crates/runtime_core/src"));
+        assert!(checked_term_is_concrete("sanitize_in"));
+        assert!(checked_term_is_concrete("SCREAMING_SNAKE"));
+    }
+
+    #[test]
+    fn abstract_nouns_rejected() {
+        assert!(!checked_term_is_concrete("worker"));
+        assert!(!checked_term_is_concrete("reliability"));
+        assert!(!checked_term_is_concrete("verify"));
+        assert!(!checked_term_is_concrete("security"));
+        assert!(!checked_term_is_concrete("robustness"));
+    }
+
+    #[test]
+    fn multi_word_abstract_phrase_rejected() {
+        assert!(!checked_term_is_concrete("verify complete"));
+    }
+
+    #[test]
+    fn path_scoped_abstract_noun_is_rejected() {
+        assert!(!checked_term_is_concrete("crates/runtime_core/src:worker"));
+        assert!(!checked_term_is_concrete("bins/ide_backend:reliability"));
+    }
+
+    #[test]
+    fn path_scoped_concrete_term_passes() {
+        assert!(checked_term_is_concrete("crates/runtime_core/src:unimplemented!"));
+        assert!(checked_term_is_concrete("crates/runtime_core/src:sanitize_in"));
+    }
+
+    #[test]
+    fn empty_rejected() {
+        assert!(!checked_term_is_concrete(""));
+        assert!(!checked_term_is_concrete("  "));
+        assert!(!checked_term_is_concrete("crates/runtime_core/src:"));
     }
 }
