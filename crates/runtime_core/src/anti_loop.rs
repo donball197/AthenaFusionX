@@ -128,6 +128,17 @@ pub fn classify_duplicate(
         }
     }
 
+    // STALE-ADVANCE GUARD: search already satisfied and nothing written since.
+    if let AgentAction::SearchCode { path, query, .. } = action {
+        let target = format!("{}:{}", path.trim(), query.trim());
+        let last_search = evidence.rfind(&format!("[SEARCH_CODE_OK] Path: {}", path.trim()));
+        let last_write = evidence.rfind("[WRITE_OK]");
+        let written_since = matches!((last_search, last_write), (Some(s), Some(w)) if w > s);
+        if !written_since && crate::evidence_markers::search_checked_satisfied(evidence, &target) {
+            return FilterOutcome::FilterAndDecay;
+        }
+    }
+
     if matches!(
         action,
         AgentAction::ReadFileChunk { .. }
@@ -222,5 +233,35 @@ No code matches found in specified path.
         let failed = "[ACTION FAILED] OS rejected action: bad regex";
         let fail_score = score_search_relevance("(", failed);
         assert!(!should_raise_belief(fail_score, 0.45));
+    }
+}
+
+#[cfg(test)]
+mod p2a_search_guard_tests {
+    use super::*;
+
+    fn contract() -> SubgoalContract {
+        SubgoalContract {
+            node_id: "t".into(), objective: "o".into(), read_only: false,
+            is_mutation_task: false, required_artifact_paths: vec![], conditions: vec![],
+        }
+    }
+    fn search() -> AgentAction {
+        AgentAction::SearchCode {
+            _thought_process: None, path: "crates".into(),
+            query: "x".into(), reasoning: String::new(),
+        }
+    }
+
+    #[test]
+    fn search_after_write_is_retry_not_stale() {
+        let ev = "[SEARCH_CODE_OK] Path: crates | Query: 'x'\nNo code matches found in specified path.\n[WRITE_OK] a.rs\n";
+        assert!(matches!(classify_duplicate(&search(), &contract(), ev), FilterOutcome::AllowRetry));
+    }
+
+    #[test]
+    fn satisfied_search_without_write_is_stale() {
+        let ev = "[SEARCH_CODE_OK] Path: crates | Query: 'x'\nNo code matches found in specified path.\n";
+        assert!(matches!(classify_duplicate(&search(), &contract(), ev), FilterOutcome::FilterAndDecay));
     }
 }
