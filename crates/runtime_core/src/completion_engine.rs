@@ -755,11 +755,18 @@ fn declared_criteria_contract(
     }
 
     for path in extract_all_named_targets(criteria_text, "WRITE_OK:") {
-        if read_only {
+        if read_only && path.trim().ends_with(".rs") {
             continue;
         }
         conditions.push(CompletionCondition::WritePathAcquired { path: path.clone() });
-        required_artifact_paths.push(ArtifactSpec { path, reason: "output_deliverable".into() });
+        required_artifact_paths.push(ArtifactSpec {
+            path,
+            reason: if read_only {
+                "report deliverable under read-only audit".into()
+            } else {
+                "output_deliverable".into()
+            },
+        });
     }
 
     if !read_only {
@@ -945,10 +952,16 @@ fn declared_criteria_contract(
         conditions.push(CompletionCondition::HaltDelivered);
     }
 
+    let has_source_mutation = conditions.iter().any(|c| match c {
+        CompletionCondition::PatchMarkerAcquired
+        | CompletionCondition::PatchPathAcquired { .. } => true,
+        CompletionCondition::WritePathAcquired { path } => path.trim().ends_with(".rs"),
+        _ => false,
+    });
     Some(SubgoalContract {
         node_id: node_id.to_string(),
         objective: full_text.to_string(),
-        is_mutation_task: has_output,
+        is_mutation_task: if read_only { has_source_mutation } else { has_output },
         read_only,
         conditions,
         required_artifact_paths,
@@ -956,7 +969,7 @@ fn declared_criteria_contract(
 }
 
 impl SubgoalCompletionEngine {
-    pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
+    fn infer_contract_raw(node_id: &str, objective: &str) -> SubgoalContract {
         let scopes = MissionScopes::parse(objective);
         let inference_text = scopes.inference_text();
         let objective: &str = &inference_text;
@@ -1088,11 +1101,15 @@ impl SubgoalCompletionEngine {
             };
         }
 
-        // Inline-analysis contract: no reads, searches, or belief threshold.
+        // Inline-analysis contract: no reads, searches, report writes, or belief threshold.
+        let has_non_source_write_ok = extract_all_named_targets(scopes.criteria, "WRITE_OK:")
+            .into_iter()
+            .any(|p| !p.trim().ends_with(".rs"));
         if scopes.criteria.contains("ANALYSIS_OK")
             && !scopes.criteria.contains("READ_OK:")
             && !scopes.criteria.contains("SEARCH_CODE_OK:")
             && !scopes.criteria.contains("SEARCH_CHECKED_OK:")
+            && !has_non_source_write_ok
         {
             return SubgoalContract {
                 node_id: node_id.to_string(),
@@ -1453,6 +1470,49 @@ impl SubgoalCompletionEngine {
             is_mutation_task,
             read_only,
             required_artifact_paths: arts,
+        }
+    }
+
+    /// Public entry point. Runs `infer_contract_raw` then merges prose
+    /// deliverables from the objective into the contract regardless of
+    /// which internal code path produced it.  Fixes run 5dddb6d8: a
+    /// HaltDelivered-only contract dropped "write the result to X.md"
+    /// because prose artifact extraction was never reached.
+    pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
+        let mut contract = Self::infer_contract_raw(node_id, objective);
+        Self::merge_prose_deliverables(&mut contract, objective);
+        contract
+    }
+
+    /// Extract prose write targets from the objective and ensure each is
+    /// represented by a `WritePathAcquired` condition and an artifact spec.
+    /// Idempotent: never duplicates an already-present path.  Read-only
+    /// protection: `.rs` paths are skipped; non-`.rs` report deliverables
+    /// survive even under read-only.
+    fn merge_prose_deliverables(contract: &mut SubgoalContract, objective: &str) {
+        let prose_targets = extract_required_artifact_paths(objective);
+        for art in prose_targets {
+            let already = contract
+                .required_artifact_paths
+                .iter()
+                .any(|a| a.path == art.path)
+                || contract.conditions.iter().any(|c| {
+                    matches!(c,
+                        CompletionCondition::WritePathAcquired { path }
+                            if *path == art.path)
+                });
+            if already {
+                continue;
+            }
+            if contract.read_only && art.path.trim().ends_with(".rs") {
+                continue;
+            }
+            contract
+                .conditions
+                .push(CompletionCondition::WritePathAcquired {
+                    path: art.path.clone(),
+                });
+            contract.required_artifact_paths.push(art);
         }
     }
 
@@ -2088,6 +2148,42 @@ LINEAGE CONTEXT:
         assert!(
             contract.required_artifact_paths.iter().any(|a| a.path == "summary.md"),
             "report write must be an artifact so write_phase_ready can fire: {:?}",
+            contract.required_artifact_paths
+        );
+    }
+
+    #[test]
+    fn analysis_plus_report_write_under_readonly_keeps_report_artifact() {
+        let mission = r#"OBJECTIVE: Read-only investigation of the repo. Write the result to mission_01_completion_audit.md.
+
+MANDATORY NODE SUCCESS CRITERIA:
+ANALYSIS_OK
+WRITE_OK:mission_01_completion_audit.md
+"#;
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(contract.read_only, "source read-only protection must hold");
+        assert!(!contract.is_mutation_task, "report write must not arm mutation pivot");
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::WritePathAcquired { path }
+                    if path == "mission_01_completion_audit.md"
+            )),
+            "conditions = {:?}",
+            contract.conditions
+        );
+        assert!(
+            contract.conditions.iter().any(|c| matches!(c, CompletionCondition::HaltDelivered)),
+            "conditions = {:?}",
+            contract.conditions
+        );
+        assert!(
+            contract
+                .required_artifact_paths
+                .iter()
+                .any(|a| a.path == "mission_01_completion_audit.md"),
+            "artifacts = {:?}",
             contract.required_artifact_paths
         );
     }
@@ -2860,5 +2956,96 @@ mod recon_halt_delivered_tests {
             CompletionCondition::HaltDelivered,
         ]);
         assert!(!SubgoalCompletionEngine::reconnaissance_complete(&c, EV, 1.0));
+    }
+}
+
+
+#[cfg(test)]
+mod deliverable_merge_v2_tests {
+    use super::{CompletionCondition, SubgoalCompletionEngine};
+
+    #[test]
+    fn halt_only_path_preserves_prose_deliverable() {
+        // Run 5dddb6d8: no criteria header; prose investigation +
+        // "Write the result to X.md".  Previously produced
+        // conditions=[HaltDelivered] with the deliverable lost.
+        let mission = "Investigate the AthenaFusionX repository for the source of the current mission-completion decision. Read the relevant implementation and trace the complete path from mission requirements through execution evidence to final completion or HALT. Write the result to mission_01_completion_audit.md.";
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::WritePathAcquired { path }
+                    if path == "mission_01_completion_audit.md"
+            )),
+            "prose deliverable must survive halt-only path: {:?}",
+            contract.conditions
+        );
+        assert!(
+            contract
+                .required_artifact_paths
+                .iter()
+                .any(|a| a.path == "mission_01_completion_audit.md"),
+            "artifact must be in required_artifact_paths"
+        );
+    }
+
+    #[test]
+    fn command_path_preserves_prose_deliverable() {
+        let mission = "Run the build and write the result to build_report.md.";
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(
+            contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::WritePathAcquired { path }
+                    if path == "build_report.md"
+            )),
+            "command-path contract must carry prose deliverable: {:?}",
+            contract.conditions
+        );
+    }
+
+    #[test]
+    fn no_prose_deliverable_is_noop() {
+        let mission = "READ-ONLY audit. Do not modify any files. Inspect the router.";
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(contract.read_only);
+        assert!(
+            !contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::WritePathAcquired { .. }
+            )),
+            "merge must not invent write conditions without prose deliverable"
+        );
+    }
+
+    #[test]
+    fn rs_write_blocked_under_readonly_after_merge() {
+        let mission = "READ-ONLY audit. Do not modify source files. Write the result to main.rs.";
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        assert!(
+            !contract.conditions.iter().any(|c| matches!(
+                c,
+                CompletionCondition::WritePathAcquired { path } if path.ends_with(".rs")
+            )),
+            ".rs writes blocked under read-only even from prose"
+        );
+    }
+
+    #[test]
+    fn merge_is_idempotent_with_declared_write() {
+        // Criteria already declare WRITE_OK:X.md; prose also mentions it.
+        let mission = "OBJECTIVE: Write the result to out.md.\n\nASSIGNED ROLE: CodeAnalyzer\n\nMANDATORY NODE SUCCESS CRITERIA:\nWRITE_OK:out.md\n\nNODE COMPLETION RULE: x\n\nROOT DIRECTIVE CONTEXT:\nr\n\nLINEAGE CONTEXT:\n";
+        let contract = SubgoalCompletionEngine::infer_contract("task_1", mission);
+
+        let count = contract
+            .conditions
+            .iter()
+            .filter(|c| matches!(c, CompletionCondition::WritePathAcquired { path } if path == "out.md"))
+            .count();
+        assert_eq!(count, 1, "declared WRITE_OK must not be duplicated by merge");
     }
 }
