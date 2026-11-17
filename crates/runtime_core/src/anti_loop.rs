@@ -142,6 +142,22 @@ pub fn classify_duplicate(
         }
     }
 
+    // ATTEMPT CAP: a read/search path that has failed MAX_FAILED_ATTEMPTS times
+    // is a loop, not a legitimate retry. Writes are excluded on purpose.
+    const MAX_FAILED_ATTEMPTS: usize = 3;
+    let failing_path = match action {
+        AgentAction::ReadFile { path, .. }
+        | AgentAction::ReadFileChunk { path, .. }
+        | AgentAction::SearchCode { path, .. } => Some(path.trim()),
+        _ => None,
+    };
+    if let Some(p) = failing_path {
+        let fails = evidence.matches(&format!("[ACTION FAILED] path={}", p)).count();
+        if fails >= MAX_FAILED_ATTEMPTS {
+            return FilterOutcome::FilterAndDecay;
+        }
+    }
+
     if matches!(
         action,
         AgentAction::ReadFileChunk { .. }
@@ -303,5 +319,34 @@ mod p2a_patch_marker_tests {
     fn search_after_idempotent_patch_is_still_stale() {
         let ev = format!("{S}[PATCH_IDEMPOTENT_OK] crates:f\n");
         assert!(matches!(classify_duplicate(&search(), &contract(), &ev), FilterOutcome::FilterAndDecay));
+    }
+}
+
+#[cfg(test)]
+mod p2b_attempt_cap_tests {
+    use super::*;
+
+    fn contract() -> SubgoalContract {
+        SubgoalContract {
+            node_id: "t".into(), objective: "o".into(), read_only: false,
+            is_mutation_task: false, required_artifact_paths: vec![], conditions: vec![],
+        }
+    }
+    fn read() -> AgentAction {
+        AgentAction::ReadFile {
+            _thought_process: None, path: "a.rs".into(), reasoning: String::new(),
+        }
+    }
+    const F: &str = "[ACTION FAILED] path=a.rs OS rejected action: sandbox denied\n";
+
+    #[test]
+    fn three_failed_reads_are_capped() {
+        let ev = F.repeat(3);
+        assert!(matches!(classify_duplicate(&read(), &contract(), &ev), FilterOutcome::FilterAndDecay));
+    }
+
+    #[test]
+    fn one_failed_read_is_still_retry() {
+        assert!(matches!(classify_duplicate(&read(), &contract(), F), FilterOutcome::AllowRetry));
     }
 }
