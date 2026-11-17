@@ -361,7 +361,9 @@ impl CorticalLoop {
         // Requirements named in the objective are checked deterministically
         // against the file on disk; on failure the write evidence is discarded
         // so the contract stays unsatisfied (and reflection never sees it).
-        if !session.contract.read_only && latest_evidence.contains("[WRITE_OK]") {
+        if !session.contract.read_only
+        && (latest_evidence.contains("[WRITE_OK]") || latest_evidence.contains("[WRITE_NOOP]"))
+    {
             let objective = session.contract.objective.clone();
             let mut failures: Vec<String> = Vec::new();
             for p in mutation_paths.iter().filter(|p| p.ends_with(".py")) {
@@ -400,7 +402,8 @@ impl CorticalLoop {
                     }
                     let mut kept = String::new();
                     for line in session.local_evidence.lines() {
-                        let drop = line.contains("[WRITE_OK]") && line.contains(path_part);
+                        let drop = (line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
+                            && line.contains(path_part);
                         if !drop {
                             kept.push_str(line);
                             kept.push('\n');
