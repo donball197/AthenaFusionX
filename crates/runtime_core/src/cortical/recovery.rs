@@ -1057,7 +1057,8 @@ impl crate::cortical_loop::CorticalLoop {
             return;
         }
         session.local_evidence.push_str(&format!(
-            "[RECON_REQUESTED] {} (strategy forced; NOT read evidence)\n",
+            "[RECON_REQUESTED] {} (strategy forced; NOT read evidence)\n[CONTRACT_FIRST_FORCED] {}\n",
+            strat,
             strat
         ));
 

@@ -54,6 +54,51 @@ fn forced_search_paths_match(actual: &str, expected: &str) -> bool {
     norm(a) == norm(e)
 }
 
+/// Enforce that a ReadFile/ReadFileChunk matches the currently-forced
+/// `read_file:<path>` strategy. Only the most recent [CONTRACT_FIRST_FORCED]
+/// line counts. Released once the read is satisfied or after 3 forcings
+/// (recovery stops re-forcing at the same point). Writes and commands are
+/// never blocked here.
+pub fn check_forced_read(evidence: &str, action: &MotorAction) -> Result<()> {
+    let path = match action {
+        MotorAction::ReadFile { path } | MotorAction::ReadFileChunk { path, .. } => path,
+        _ => return Ok(()),
+    };
+    let Some(last) = evidence
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with("[CONTRACT_FIRST_FORCED]"))
+    else {
+        return Ok(());
+    };
+    let last = last.trim();
+    let Some(expected) = last.strip_prefix("[CONTRACT_FIRST_FORCED] read_file:") else {
+        return Ok(());
+    };
+    let expected = expected.trim();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let satisfied = crate::outcome_verifier::OutcomeVerifier::mission_completion_authorized(
+        evidence,
+        1.0,
+        &[crate::completion_engine::CompletionCondition::ReadPathAcquired {
+            path: expected.to_string(),
+        }],
+    );
+    if satisfied || evidence.lines().filter(|l| l.trim() == last).count() >= 3 {
+        return Ok(());
+    }
+    if !forced_search_paths_match(path, expected) {
+        return Err(anyhow!(
+            "ACTION_GATE_STRATEGY_MISMATCH: forced strategy requires read_file:{}; got read of {}",
+            expected,
+            path
+        ));
+    }
+    Ok(())
+}
+
 pub fn check_forced_search(evidence: &str, action: &MotorAction) -> Result<()> {
     let Some((expected_path, expected_query)) = forced_search_from_evidence(evidence) else {
         return Ok(());
@@ -296,6 +341,7 @@ impl ActionGate {
     /// behavior is introduced.
     pub fn approve_with_forced_search(&self, command: &MotorCommand, evidence: &str) -> Result<()> {
         check_forced_search(evidence, &command.action)?;
+        check_forced_read(evidence, &command.action)?;
         self.approve(command)
     }
 }
@@ -420,5 +466,48 @@ mod p9_forced_cap_tests {
     fn forced_search_released_after_three_forcings() {
         let ev = L.repeat(3);
         assert!(check_forced_search(&ev, &search("other", "x")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod forced_read_gate_tests {
+    use super::*;
+
+    fn read(p: &str) -> MotorAction { MotorAction::ReadFile { path: p.into() } }
+    const L: &str = "[CONTRACT_FIRST_FORCED] read_file:a.rs\n";
+
+    #[test]
+    fn mismatched_read_is_rejected() {
+        assert!(check_forced_read(L, &read("b.rs")).is_err());
+    }
+
+    #[test]
+    fn matching_read_is_accepted() {
+        assert!(check_forced_read(L, &read("a.rs")).is_ok());
+    }
+
+    #[test]
+    fn satisfied_read_releases_gate() {
+        let ev = format!("{L}[READ_OK] a.rs\nFULL FILE CONTENT:\nx\n");
+        assert!(check_forced_read(&ev, &read("b.rs")).is_ok());
+    }
+
+    #[test]
+    fn gate_released_after_three_forcings() {
+        assert!(check_forced_read(&L.repeat(3), &read("b.rs")).is_ok());
+    }
+
+    #[test]
+    fn writes_and_commands_are_never_blocked() {
+        let w = MotorAction::WriteFile { path: "z.rs".into(), content: String::new() };
+        let c = MotorAction::ExecuteCommand { command: "ls".into() };
+        assert!(check_forced_read(L, &w).is_ok());
+        assert!(check_forced_read(L, &c).is_ok());
+    }
+
+    #[test]
+    fn latest_forced_line_being_a_search_does_not_gate_reads() {
+        let ev = format!("{L}[CONTRACT_FIRST_FORCED] search_code:.:todo\n");
+        assert!(check_forced_read(&ev, &read("b.rs")).is_ok());
     }
 }
