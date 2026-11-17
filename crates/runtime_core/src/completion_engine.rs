@@ -1494,6 +1494,9 @@ impl SubgoalCompletionEngine {
                         // budget (live audit 2026-11-12). Bound
                         // CommandExecutionVerified remains a recon gate.
                         | CompletionCondition::CommandMarkerAcquired
+                        // A delivered halt is what the recon->halt phase transition
+                        // produces; requiring it here makes the transition unreachable.
+                        | CompletionCondition::HaltDelivered
                 )
             })
             .cloned()
@@ -2825,5 +2828,37 @@ mod surgical_recon_write_tests {
             SubgoalCompletionEngine::reconnaissance_complete(&contract, evidence, 1.0),
             "recon must complete without CMD_OK when residual CommandMarkerAcquired remains"
         );
+    }
+}
+
+#[cfg(test)]
+mod recon_halt_delivered_tests {
+    use super::*;
+
+    fn contract(conds: Vec<CompletionCondition>) -> SubgoalContract {
+        SubgoalContract {
+            node_id: "t".into(), objective: "audit".into(), read_only: true,
+            is_mutation_task: false, required_artifact_paths: vec![], conditions: conds,
+        }
+    }
+    const EV: &str = "[READ_OK] a.rs\nFULL FILE CONTENT:\nfn x() {}\n";
+
+    #[test]
+    fn halt_delivered_does_not_block_recon_complete() {
+        let c = contract(vec![
+            CompletionCondition::ReadPathAcquired { path: "a.rs".into() },
+            CompletionCondition::MinBeliefScore(0.65),
+            CompletionCondition::HaltDelivered,
+        ]);
+        assert!(SubgoalCompletionEngine::reconnaissance_complete(&c, EV, 1.0));
+    }
+
+    #[test]
+    fn unmet_read_still_blocks_recon_complete() {
+        let c = contract(vec![
+            CompletionCondition::ReadPathAcquired { path: "b.rs".into() },
+            CompletionCondition::HaltDelivered,
+        ]);
+        assert!(!SubgoalCompletionEngine::reconnaissance_complete(&c, EV, 1.0));
     }
 }
