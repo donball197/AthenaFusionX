@@ -152,7 +152,7 @@ pub fn classify_duplicate(
         _ => None,
     };
     if let Some(p) = failing_path {
-        let fails = evidence.matches(&format!("[ACTION FAILED] path={}", p)).count();
+        let fails = evidence.matches(&format!("[ACTION FAILED] path={} ", p)).count();
         if fails >= MAX_FAILED_ATTEMPTS {
             return FilterOutcome::FilterAndDecay;
         }
