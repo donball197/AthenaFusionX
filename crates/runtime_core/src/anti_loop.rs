@@ -50,7 +50,9 @@ pub fn score_search_relevance(query: &str, evidence: &str) -> f32 {
 }
 
 pub fn should_raise_belief(score: f32, threshold: f32) -> bool {
-    // ⚡ FIX: Lower threshold from 0.45 to 0.30
+    // Belief-raise floor: any score >= 0.30 raises belief regardless of
+    // `threshold`; threshold only matters when set below 0.30. Pinned by
+    // incident_regressions::incident_should_raise_belief_floor_is_030.
     score >= threshold || score >= 0.30
 }
 

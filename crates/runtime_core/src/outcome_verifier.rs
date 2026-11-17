@@ -44,6 +44,11 @@ impl OutcomeVerifier {
         // never from inherited DAG lineage blocks.
         let own_evidence = strip_inherited_lineage(local_evidence);
 
+        // EVIDENCE SCOPE: marker-bound conditions require evidence from
+        // THIS node's own execution (own_evidence). Path-bound conditions
+        // may also accept inherited lineage evidence. Guarded by
+        // incident_regressions::incident_2.
+
         // 2. Strictly verify that EVERY condition in the contract is met
         for cond in conditions {
             let met = match cond {
