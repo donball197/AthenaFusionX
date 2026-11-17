@@ -1043,10 +1043,11 @@ impl crate::cortical_loop::CorticalLoop {
         };
         let strat = format!("read_file:{}", path);
         // A read that keeps failing must not pin the node forever.
+        // Count the marker this branch actually writes. Anchoring on the
+        // " (strategy" suffix keeps read_file:a.rs from matching a.rs.bak.
         let forced = session
             .local_evidence
-            .lines()
-            .filter(|l| l.starts_with("[CONTRACT_FIRST_FORCED]") && l.contains(strat.as_str()))
+            .matches(&format!("[RECON_REQUESTED] {} (strategy", strat))
             .count();
         if forced >= 3 {
             self.log(format!(
