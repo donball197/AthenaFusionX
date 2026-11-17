@@ -48,7 +48,15 @@ pub(crate) fn python_conformance_defects(
             t.starts_with(&def_prefix) || t.starts_with(&async_prefix)
         });
         if !defined {
-            defects.push(format!("missing `def {}(...)` required by the objective", name));
+            if content.contains(&def_prefix) {
+                defects.push(format!(
+                    "`def {}(` appears mid-line (for example after a `;`), which is invalid Python: a def must start its own line. The file has only {} line(s); put each statement on its own line with real line breaks",
+                    name,
+                    content.lines().count()
+                ));
+            } else {
+                defects.push(format!("missing `def {}(...)` required by the objective", name));
+            }
         }
     }
 
@@ -311,5 +319,32 @@ mod conformance_regression_tests {
             "import json import os def get_metrics(): return {",
         );
         assert!(d.iter().any(|x| x.contains("get_metrics")), "{d:?}");
+    }
+}
+
+#[cfg(test)]
+mod midline_def_tests {
+    use super::python_conformance_defects;
+
+    const OBJ: &str = "Define a function get_metrics() returning a dict.";
+
+    #[test]
+    fn midline_def_gets_a_specific_message() {
+        let d = python_conformance_defects(OBJ, "m.py", "import json, os; def get_metrics(): return {}");
+        assert!(d.iter().any(|m| m.contains("mid-line")), "{:?}", d);
+        assert!(!d.iter().any(|m| m.contains("missing `def")), "{:?}", d);
+    }
+
+    #[test]
+    fn truly_missing_def_keeps_the_old_message() {
+        let d = python_conformance_defects(OBJ, "m.py", "import json, os");
+        assert!(d.iter().any(|m| m.contains("missing `def get_metrics")), "{:?}", d);
+    }
+
+    #[test]
+    fn proper_multiline_def_is_accepted() {
+        let src = "import json, os\n\ndef get_metrics():\n    return {'load_avg': os.getloadavg()}\n\nprint(json.dumps(get_metrics()))\n";
+        let d = python_conformance_defects(OBJ, "m.py", src);
+        assert!(!d.iter().any(|m| m.contains("def get_metrics")), "{:?}", d);
     }
 }
