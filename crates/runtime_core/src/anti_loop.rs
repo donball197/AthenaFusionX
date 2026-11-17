@@ -53,7 +53,7 @@ pub fn should_raise_belief(score: f32, threshold: f32) -> bool {
     // Belief-raise floor: any score >= 0.30 raises belief regardless of
     // `threshold`; threshold only matters when set below 0.30. Pinned by
     // incident_regressions::incident_should_raise_belief_floor_is_030.
-    score >= threshold || score >= 0.30
+    score >= threshold.min(0.30)
 }
 
 // ---------------------------------------------------------------------
