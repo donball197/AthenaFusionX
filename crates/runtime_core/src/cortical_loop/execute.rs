@@ -413,6 +413,20 @@ impl CorticalLoop {
                 }
                 session.local_evidence.push_str(&message);
                 session.local_evidence.push('\n');
+                let conformance_fails = session
+                    .local_evidence
+                    .lines()
+                    .filter(|l| l.starts_with("[WRITE_CONFORMANCE_FAILED]"))
+                    .count();
+                if conformance_fails >= 5 {
+                    session.local_evidence.push_str(
+                        "[WRITE_CONFORMANCE_TERMINAL] Could not produce a conforming file after 5 attempts. No WRITE_OK or completion claim is authorized.\n",
+                    );
+                    return Ok(CortexState::Fail {
+                        belief: 0.0,
+                        evidence: "[WRITE_CONFORMANCE_TERMINAL]".to_string(),
+                    });
+                }
                 return Ok(CortexState::Strategize);
             }
 
