@@ -125,3 +125,4 @@ daemon.*.log
 journal_smoke.txt
 .mirror/
 *.bak.*
+.surgical_backup/
