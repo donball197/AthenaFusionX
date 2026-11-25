@@ -28,10 +28,10 @@ fn sarif_level(severity: &str) -> &'static str {
 
 fn normalize_uri(path: &Path, root: &Path) -> String {
     let rel = path.strip_prefix(root).unwrap_or(path);
-    let s = rel.to_string_lossy().replace('\\', "/");
-    s.trim_start_matches("./").to_string()
+    rel.to_string_lossy().replace('\\', "/")
 }
 
+/// Build a pretty-printed SARIF 2.1.0 document from audit records.
 pub fn render_sarif(
     records: &[AuditFindingRecord],
     rules: &[SecurityRule],
@@ -59,41 +59,11 @@ pub fn render_sarif(
         .map(|rec| {
             let f = &rec.finding;
             let uri = normalize_uri(&f.path, scan_root);
-            let mut msg = format!("{} detected", f.pattern_name);
-            if let Some(reason) = &rec.triage_reason {
-                msg = format!("{}: {}", f.pattern_name, reason);
-            } else if !f.taint_path.is_empty() {
-                msg = format!("{} (taint path: {})", f.pattern_name, f.taint_path.join(" -> "));
-            }
-
-            let mut thread_locs: Vec<Value> = f
-                .taint_locations
-                .iter()
-                .map(|loc| {
-                    json!({
-                        "location": {
-                            "physicalLocation": {
-                                "artifactLocation": { "uri": normalize_uri(&loc.path, scan_root) },
-                                "region": { "startLine": loc.line.max(1) }
-                            },
-                            "message": { "text": loc.message }
-                        }
-                    })
-                })
-                .collect();
-
-            thread_locs.push(json!({
-                "location": {
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": uri },
-                        "region": {
-                            "startLine": f.sink_start_line.max(1),
-                            "endLine": f.sink_end_line.max(f.sink_start_line.max(1))
-                        }
-                    },
-                    "message": { "text": format!("Dangerous sink `{}`", f.pattern_name) }
-                }
-            }));
+            let msg = if let Some(reason) = &rec.triage_reason {
+                format!("{}: {}", f.pattern_name, reason)
+            } else {
+                format!("{} detected", f.pattern_name)
+            };
 
             let mut obj = json!({
                 "ruleId": f.pattern_name,
@@ -114,23 +84,16 @@ pub fn render_sarif(
                     "modelSeverity": rec.model_severity,
                     "remediationStatus": rec.remediation_status,
                     "remediationDetail": rec.remediation_detail,
-                    "pocVerified": rec.poc_verified,
-                    "taintPath": f.taint_path
+                    "pocVerified": rec.poc_verified
                 }
             });
-
-            if !f.taint_locations.is_empty() {
-                obj["codeFlows"] = json!([{
-                    "threadFlows": [{
-                        "locations": thread_locs
-                    }]
-                }]);
-            }
 
             if rec.triage_state == "SAFE" {
                 obj["suppressions"] = json!([{
                     "kind": "external",
-                    "justification": rec.triage_reason.clone().unwrap_or_else(|| "Classified SAFE by AI triage".to_string())
+                    "justification": rec.triage_reason.clone().unwrap_or_else(|| {
+                        "Classified SAFE by AI triage".to_string()
+                    })
                 }]);
             }
 
@@ -172,12 +135,11 @@ pub fn render_json(records: &[AuditFindingRecord], summary: Value) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::callgraph::TaintLocation;
     use crate::polyglot::SupportedLanguage;
     use std::path::PathBuf;
 
     #[test]
-    fn generates_valid_sarif_2_1_with_code_flows() {
+    fn generates_valid_sarif_2_1() {
         let rec = AuditFindingRecord {
             finding: SecurityFinding {
                 language: SupportedLanguage::Python,
@@ -191,12 +153,6 @@ mod tests {
                 sink_start_line: 16,
                 sink_end_line: 18,
                 sink_text: "text(f\"...\")".to_string(),
-                taint_path: vec!["do_signup -> validate_token".to_string()],
-                taint_locations: vec![TaintLocation {
-                    path: PathBuf::from("/tmp/app/routes/signup.py"),
-                    line: 48,
-                    message: "Tainted argument passed from do_signup()".to_string(),
-                }],
             },
             triage_state: "EXPLOITABLE".to_string(),
             triage_reason: Some("Unsanitized SQL interpolation".to_string()),
@@ -210,13 +166,9 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["version"], "2.1.0");
         assert_eq!(
-            v["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            v["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
             "routes/signup.py"
         );
-        assert!(v["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 2);
     }
 }

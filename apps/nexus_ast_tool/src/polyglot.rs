@@ -7,8 +7,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Parser, Query, QueryCursor};
 use walkdir::WalkDir;
+use crate::callgraph::{enclosing_function_name, CallGraphIndex, TaintLocation};
+use crate::taint::{TaintAnalyzer, TaintSource, find_enclosing_function};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum SupportedLanguage {
     Rust,
     Zig,
@@ -40,7 +42,7 @@ impl SupportedLanguage {
         let ext = path.extension()?.to_str()?;
         match ext {
             "rs" => Some(Self::Rust),
-            "zig" | "zon" => Some(Self::Zig),
+            "zig" => Some(Self::Zig),
             "py" => Some(Self::Python),
             "js" | "jsx" | "mjs" => Some(Self::JavaScript),
             "ts" | "tsx" => Some(Self::TypeScript),
@@ -67,6 +69,17 @@ impl SupportedLanguage {
         }
     }
 
+    /// JavaScript rules apply to TypeScript files and vice versa,
+    /// because tree-sitter uses the same node types for both.
+    pub fn rule_applies_to(rule_lang: &str, file_lang: SupportedLanguage) -> bool {
+        match (Self::from_string(rule_lang), file_lang) {
+            (Some(rl), fl) if rl == fl => true,
+            (Some(Self::JavaScript), Self::TypeScript) => true,
+            (Some(Self::TypeScript), Self::JavaScript) => true,
+            _ => false,
+        }
+    }
+
     pub fn tree_sitter_language(&self) -> Language {
         match self {
             Self::Rust => tree_sitter_rust::LANGUAGE.into(),
@@ -79,6 +92,15 @@ impl SupportedLanguage {
             Self::Go => tree_sitter_go::LANGUAGE.into(),
             Self::PHP => tree_sitter_php::LANGUAGE_PHP.into(),
         }
+    }
+
+    pub fn tree_sitter_language_for_path(&self, path: &Path) -> Language {
+        if *self == Self::TypeScript
+            && path.extension().and_then(|s| s.to_str()) == Some("tsx")
+        {
+            return tree_sitter_typescript::LANGUAGE_TSX.into();
+        }
+        self.tree_sitter_language()
     }
 
     pub fn symbol_query(&self) -> &'static str {
@@ -171,6 +193,85 @@ impl SupportedLanguage {
     pub fn parses_cleanly(&self, source: &str) -> bool {
         self.tree_sitter_parse_status(source).is_clean()
     }
+
+    pub fn parses_cleanly_for_path(&self, path: &Path, source: &str) -> bool {
+        let mut parser = Parser::new();
+        let language = self.tree_sitter_language_for_path(path);
+        if parser.set_language(&language).is_err() {
+            return false;
+        }
+        matches!(parser.parse(source, None), Some(tree) if !tree.root_node().has_error())
+    }
+
+    /// Expand a 1-based sink line range to its enclosing AST statement lines (1-based),
+    /// preventing partial multi-line call replacements during auto-heal.
+    pub fn enclosing_statement_lines(
+        &self,
+        path: &Path,
+        source: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Option<(usize, usize)> {
+        let mut parser = Parser::new();
+        let language = self.tree_sitter_language_for_path(path);
+        parser.set_language(&language).ok()?;
+        let tree = parser.parse(source, None)?;
+
+        let lines: Vec<&str> = source.lines().collect();
+        if start_line == 0 || end_line == 0 || end_line > lines.len() || start_line > end_line {
+            return None;
+        }
+        let start_col = lines[start_line - 1]
+            .char_indices()
+            .find(|(_, c)| !c.is_whitespace())
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let end_col = lines[end_line - 1].trim_end().len();
+
+        let mut node = tree.root_node().descendant_for_point_range(
+            tree_sitter::Point::new(start_line - 1, start_col),
+            tree_sitter::Point::new(end_line - 1, end_col),
+        )?;
+
+        while let Some(parent) = node.parent() {
+            if matches!(
+                parent.kind(),
+                "module"
+                    | "block"
+                    | "statement_block"
+                    | "compound_statement"
+                    | "program"
+                    | "source_file"
+                    | "translation_unit"
+                    | "class_body"
+            ) {
+                break;
+            }
+            if matches!(
+                node.kind(),
+                "expression_statement"
+                    | "assignment"
+                    | "return_statement"
+                    | "lexical_declaration"
+                    | "variable_declaration"
+                    | "short_var_declaration"
+                    | "assignment_statement"
+                    | "let_declaration"
+                    | "declaration"
+            ) {
+                break;
+            }
+            node = parent;
+        }
+
+        let s = node.start_position().row + 1;
+        let e = node.end_position().row + 1;
+        if s <= start_line && e >= end_line && e.saturating_sub(s) <= 25 {
+            Some((s, e))
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -191,7 +292,7 @@ pub struct PolyglotSymbol {
     pub end_line: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SecurityFinding {
     pub language: SupportedLanguage,
     pub pattern_name: String,
@@ -204,6 +305,8 @@ pub struct SecurityFinding {
     pub sink_start_line: usize,
     pub sink_end_line: usize,
     pub sink_text: String,
+    pub taint_path: Vec<String>,
+    pub taint_locations: Vec<TaintLocation>,
 }
 
 pub fn find_concat_assignment(
@@ -356,7 +459,7 @@ impl PolyglotScanner {
         let mut symbols = Vec::new();
         for entry in WalkDir::new(root)
             .into_iter()
-            .filter_entry(|e| !is_ignored(e.path()))
+            .filter_entry(|e| !is_ignored(e.path()) && (include_tests() || e.depth() == 0 || !is_test_noise(e)))
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
@@ -411,34 +514,75 @@ impl PolyglotScanner {
         rules: &[SecurityRule],
     ) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
+        let all_langs = [
+            SupportedLanguage::Rust,
+            SupportedLanguage::Zig,
+            SupportedLanguage::Python,
+            SupportedLanguage::JavaScript,
+            SupportedLanguage::TypeScript,
+            SupportedLanguage::C,
+            SupportedLanguage::Cpp,
+            SupportedLanguage::Go,
+            SupportedLanguage::PHP,
+        ];
+        let compiled_rules: Vec<(&SecurityRule, SupportedLanguage, Query)> = rules
+            .iter()
+            .flat_map(|rule| {
+                all_langs
+                    .into_iter()
+                    .filter(|&lang| SupportedLanguage::rule_applies_to(&rule.language, lang))
+                    .filter_map(move |lang| {
+                        Query::new(&lang.tree_sitter_language(), &rule.tree_sitter_query)
+                            .ok()
+                            .map(|q| (rule, lang, q))
+                    })
+            })
+            .collect();
 
+        let mut loaded_files: Vec<(PathBuf, String, SupportedLanguage)> = Vec::new();
         for entry in WalkDir::new(root)
             .into_iter()
-            .filter_entry(|e| !is_ignored(e.path()))
+            .filter_entry(|e| !is_ignored(e.path()) && (include_tests() || e.depth() == 0 || !is_test_noise(e)))
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
             if let Some(file_lang) = SupportedLanguage::from_path(path) {
                 if let Ok(content) = fs::read_to_string(path) {
-                    for rule in rules {
-                        if SupportedLanguage::from_string(&rule.language) == Some(file_lang) {
-                            let Ok(query) = Query::new(
-                                &file_lang.tree_sitter_language(),
-                                &rule.tree_sitter_query,
-                            ) else {
-                                continue;
-                            };
-                            if let Ok(mut discovered) = Self::parse_security(
-                                path,
-                                &content,
-                                file_lang,
-                                &query,
-                                &rule.id,
-                                &rule.severity,
-                            ) {
-                                findings.append(&mut discovered);
-                            }
-                        }
+                    loaded_files.push((path.to_path_buf(), content, file_lang));
+                }
+            }
+        }
+
+        let call_graph = CallGraphIndex::build(&loaded_files);
+
+        for (path, content, file_lang) in &loaded_files {
+            let is_tsx = *file_lang == SupportedLanguage::TypeScript
+                && path.extension().and_then(|s| s.to_str()) == Some("tsx");
+            for (rule, rule_lang, query) in &compiled_rules {
+                if *rule_lang == *file_lang {
+                    let tsx_query;
+                    let active_query = if is_tsx {
+                        let Ok(q) = Query::new(
+                            &file_lang.tree_sitter_language_for_path(path),
+                            &rule.tree_sitter_query,
+                        ) else {
+                            continue;
+                        };
+                        tsx_query = q;
+                        &tsx_query
+                    } else {
+                        query
+                    };
+                    if let Ok(mut discovered) = Self::parse_security_with_callgraph(
+                        path,
+                        content,
+                        *file_lang,
+                        active_query,
+                        &rule.id,
+                        &rule.severity,
+                        Some(&call_graph),
+                    ) {
+                        findings.append(&mut discovered);
                     }
                 }
             }
@@ -465,11 +609,12 @@ impl PolyglotScanner {
     pub fn scan_source(path: &Path, source: &str, rules: &[SecurityRule]) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
         let Some(file_lang) = SupportedLanguage::from_path(path) else { return findings };
+        let ts_lang = file_lang.tree_sitter_language_for_path(path);
         for rule in rules {
-            if SupportedLanguage::from_string(&rule.language) != Some(file_lang) {
+            if !SupportedLanguage::rule_applies_to(&rule.language, file_lang) {
                 continue;
             }
-            let Ok(query) = Query::new(&file_lang.tree_sitter_language(), &rule.tree_sitter_query)
+            let Ok(query) = Query::new(&ts_lang, &rule.tree_sitter_query)
             else {
                 continue;
             };
@@ -479,6 +624,20 @@ impl PolyglotScanner {
                 findings.append(&mut discovered);
             }
         }
+        findings.sort_by(|a, b| {
+            (a.path.as_path(), a.sink_start_line, a.sink_end_line, a.pattern_name.as_str()).cmp(&(
+                b.path.as_path(),
+                b.sink_start_line,
+                b.sink_end_line,
+                b.pattern_name.as_str(),
+            ))
+        });
+        findings.dedup_by(|a, b| {
+            a.path == b.path
+                && a.sink_start_line == b.sink_start_line
+                && a.sink_end_line == b.sink_end_line
+                && a.pattern_name == b.pattern_name
+        });
         findings
     }
 
@@ -490,8 +649,20 @@ impl PolyglotScanner {
         rule_id: &str,
         severity: &str,
     ) -> Result<Vec<SecurityFinding>> {
+        Self::parse_security_with_callgraph(path, source, lang, query, rule_id, severity, None)
+    }
+
+    fn parse_security_with_callgraph(
+        path: &Path,
+        source: &str,
+        lang: SupportedLanguage,
+        query: &Query,
+        rule_id: &str,
+        severity: &str,
+        call_graph: Option<&CallGraphIndex>,
+    ) -> Result<Vec<SecurityFinding>> {
         let mut parser = Parser::new();
-        let ts_lang = lang.tree_sitter_language();
+        let ts_lang = lang.tree_sitter_language_for_path(path);
         parser.set_language(&ts_lang)?;
         let tree = parser
             .parse(source, None)
@@ -532,16 +703,97 @@ impl PolyglotScanner {
                 let sink_text = capture.node.utf8_text(source.as_bytes()).unwrap_or("").to_string();
 
                 // Check for inline suppression comment on the sink line or preceding line
-                let check_start = sink_start.saturating_sub(1);
-                let is_suppressed = source_lines[check_start..=sink_start].iter().any(|line| {
-                    (line.contains("nexus-ignore")
-                        || line.contains("nosemgrep")
-                        || line.contains("#[allow("))
-                        && (line.contains(rule_id) || line.contains("all"))
-                });
+                let is_suppressed = if sink_start < source_lines.len() {
+                    let check_start = sink_start.saturating_sub(1);
+                    source_lines[check_start..=sink_start].iter().any(|line| {
+                        (line.contains("nexus-ignore")
+                            || line.contains("nosemgrep")
+                            || line.contains("#[allow("))
+                            && (line.contains(rule_id) || line.contains("all"))
+                    })
+                } else {
+                    false
+                };
 
                 if is_suppressed {
                     continue;
+                }
+
+                // Avoid false positives on bare json.loads() when matching `from pickle import loads`
+                if rule_id == "PYTHON_INSECURE_DESERIALIZATION" {
+                    if let Some(call_node) = capture.node.parent() {
+                        if let Some(func_node) = call_node.child_by_field_name("function") {
+                            if func_node.kind() == "identifier" {
+                                let has_unsafe_import = source.contains("pickle")
+                                    || source.contains("cPickle")
+                                    || source.contains("marshal");
+                                if !has_unsafe_import {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut taint_path = Vec::new();
+                let mut taint_locations = Vec::new();
+
+                if matches!(
+                    rule_id,
+                    "SQL_INJECTION"
+                        | "GO_SQL_INJECTION"
+                        | "RUST_SQL_INJECTION"
+                        | "COMMAND_INJECTION"
+                        | "GO_COMMAND_INJECTION"
+                        | "PHP_COMMAND_INJECTION"
+                        | "RUST_COMMAND_INJECTION"
+                        | "C_COMMAND_INJECTION"
+                        | "CPP_COMMAND_INJECTION"
+                        | "JS_XSS"
+                        | "PYTHON_INSECURE_DESERIALIZATION"
+                        | "PYTHON_SSTI"
+                ) {
+                    let func_node = find_enclosing_function(capture.node);
+                    let mut analyzer = TaintAnalyzer::new(source, lang);
+                    if let Some(func) = func_node {
+                        let (has_callers, caller_seeds) = match (
+                            call_graph,
+                            enclosing_function_name(func, source),
+                        ) {
+                            (Some(cg), Some(ref fname)) => cg.seeds_for(fname),
+                            _ => (false, Vec::new()),
+                        };
+                        let simple_seeds: Vec<(usize, TaintSource, Vec<String>)> = caller_seeds
+                            .iter()
+                            .map(|s| (s.param_index, s.source, s.trace.clone()))
+                            .collect();
+                        analyzer.analyze_function_with_callers(
+                            func,
+                            &simple_seeds,
+                            has_callers,
+                            sink_start,
+                        );
+                        for seed in caller_seeds {
+                            if !taint_locations.contains(&seed.caller_step) {
+                                taint_locations.push(seed.caller_step);
+                            }
+                        }
+                    }
+                    let taint_report = analyzer.check_expression(capture.node);
+                    if !taint_report.tainted {
+                        continue;
+                    }
+                    taint_path = taint_report.path;
+                    if taint_locations.is_empty() && !taint_path.is_empty() {
+                        let source_line = func_node
+                            .map(|f| f.start_position().row + 1)
+                            .unwrap_or(sink_start + 1);
+                        taint_locations.push(TaintLocation {
+                            path: path.to_path_buf(),
+                            line: source_line,
+                            message: format!("Taint origin: {}", taint_path.join(" -> ")),
+                        });
+                    }
                 }
 
                 results.push(SecurityFinding {
@@ -556,6 +808,8 @@ impl PolyglotScanner {
                     sink_start_line: sink_start + 1,
                     sink_end_line: sink_end + 1,
                     sink_text,
+                    taint_path,
+                    taint_locations,
                 });
             }
         }
@@ -571,8 +825,14 @@ impl PolyglotScanner {
         patch_snippet: &str,
     ) -> Result<(), String> {
         match finding_type {
-            "SQL_INJECTION" => Self::verify_sqli_patch(lang, source, patch_snippet),
-            "PHP_COMMAND_INJECTION" | "OS_COMMAND" => {
+            "SQL_INJECTION" | "GO_SQL_INJECTION" => {
+                Self::verify_sqli_patch(lang, source, patch_snippet)
+            }
+            "PHP_COMMAND_INJECTION"
+            | "OS_COMMAND"
+            | "PYTHON_OS_COMMAND_INJECTION"
+            | "COMMAND_INJECTION"
+            | "GO_COMMAND_INJECTION" => {
                 Self::verify_cmdi_patch(lang, source, patch_snippet)
             }
             _ => Ok(()),
@@ -642,14 +902,17 @@ impl PolyglotScanner {
             SupportedLanguage::Python => {
                 if patch.contains("execute(f\"")
                     || patch.contains("execute(f'")
-                    || (patch.contains("execute(\"\"\"") && patch.contains('{'))
+                    || patch.contains("text(f\"")
+                    || patch.contains("text(f'")
+                    || ((patch.contains("execute(\"\"\"") || patch.contains("text(\"\"\""))
+                        && patch.contains('{'))
                 {
-                    return Err("UNSAFE PYTHON SQL: execute() uses f-string interpolation instead of parameter tuple".into());
+                    return Err("UNSAFE PYTHON SQL: query uses f-string interpolation instead of bound parameters".into());
                 }
-                if patch.contains("execute(")
+                if (patch.contains("execute(") || patch.contains("text("))
                     && (patch.contains(" % ") || patch.contains(".format("))
                 {
-                    return Err("UNSAFE PYTHON SQL: execute() uses string formatting instead of parameter tuple".into());
+                    return Err("UNSAFE PYTHON SQL: query uses string formatting instead of bound parameters".into());
                 }
             }
             SupportedLanguage::JavaScript | SupportedLanguage::TypeScript
@@ -687,8 +950,66 @@ impl PolyglotScanner {
             {
                 return Err("UNSAFE COMMAND EXECUTION: Use child_process.execFile with argument array instead of exec(shell_string)".into());
             }
+            SupportedLanguage::Go => {
+                let has_allowlist = patch.contains("map[string]bool{")
+                    || patch.contains(":= map[")
+                    || patch.contains("allowed :=")
+                    || patch.contains("allowed =")
+                    || patch.contains("allowlist :=")
+                    || patch.contains("allowlist =")
+                    || patch.contains("switch ");
+                if !has_allowlist {
+                    for call in ["exec.Command(", "exec.CommandContext("] {
+                        if let Some(pos) = patch.find(call) {
+                            let after = &patch[pos + call.len()..];
+                            let trimmed = after.trim_start();
+                            let arg_start = if call.contains("CommandContext") {
+                                match trimmed.find(',') {
+                                    Some(c) => trimmed[c + 1..].trim_start(),
+                                    None => continue,
+                                }
+                            } else {
+                                trimmed
+                            };
+                            if arg_start
+                                .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                            {
+                                if let Some(close) = arg_start.find(')') {
+                                    let arg = &arg_start[..close];
+                                    if !arg.contains(',') && !arg.contains('"') {
+                                        return Err(format!(
+                                            "unsafe: user-controlled variable `{}` passed directly to {} without allowlist",
+                                            arg.trim(),
+                                            call.trim_end_matches('('),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
     }
 }
+
+
+// ---- nexus_tune additions ----
+fn include_tests() -> bool {
+    std::env::var("NEXUS_INCLUDE_TESTS").is_ok()
+}
+
+fn is_test_noise(e: &walkdir::DirEntry) -> bool {
+    let name = e.file_name().to_str().unwrap_or("");
+    if e.file_type().is_dir() {
+        return matches!(name, "test" | "tests" | "__tests__" | "cypress" | "e2e" | "spec" | "mocks");
+    }
+    const SUFFIXES: &[&str] = &[
+        ".spec.ts", ".test.ts", ".spec.js", ".test.js",
+        ".config.ts", ".config.js", ".d.ts", ".min.js",
+    ];
+    SUFFIXES.iter().any(|s| name.ends_with(s))
+}
+
