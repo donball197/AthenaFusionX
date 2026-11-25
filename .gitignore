@@ -126,3 +126,7 @@ journal_smoke.txt
 .mirror/
 *.bak.*
 .surgical_backup/
+glm-5.3-flash-from-scratch/
+nexus_heal_sandbox_*
+/tmp/nexus_heal_sandbox_*
+.nexus/holds/

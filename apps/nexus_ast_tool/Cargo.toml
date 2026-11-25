@@ -36,3 +36,20 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
+
+[dependencies]
+sha2 = "0.10"
+
+[dependencies]
+regex = "1.13.2"
+
+[dependencies]
+ratatui = "0.30.2"
+
+[dependencies]
+crossterm = "0.29.0"
+
+[dependencies]
+hex = "0.4"
+
+[dependencies]
