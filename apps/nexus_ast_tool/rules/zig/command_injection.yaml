@@ -8,3 +8,9 @@ tree_sitter_query: |
       member: (identifier) @method (#match? @method "^(system|exec|Child)$")
     )
   ) @danger.command_injection
+  (call_expression
+    function: (field_expression
+      object: (field_expression member: (identifier) @cls (#eq? @cls "Child"))
+      member: (identifier) @init (#eq? @init "init")
+    )
+  ) @danger.command_injection

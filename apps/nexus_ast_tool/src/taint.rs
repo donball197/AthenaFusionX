@@ -364,6 +364,15 @@ impl<'a> TaintAnalyzer<'a> {
 
         let text = self.node_text(node);
 
+        if node.kind().contains("call") {
+            if let Some(name) = self.extract_call_name(text) {
+                if is_sanitizer(&name, self.language) {
+                    report.sanitized = true;
+                    return;
+                }
+            }
+        }
+
         // Direct source detection on any node
         if let Some(source) = self.detect_source(text) {
             report.tainted = true;

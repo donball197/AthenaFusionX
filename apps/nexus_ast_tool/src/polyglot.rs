@@ -203,6 +203,22 @@ impl SupportedLanguage {
         matches!(parser.parse(source, None), Some(tree) if !tree.root_node().has_error())
     }
 
+    pub fn tree_sitter_error_count_for_path(&self, path: &Path, source: &str) -> Option<usize> {
+        let mut parser = Parser::new();
+        let language = self.tree_sitter_language_for_path(path);
+        parser.set_language(&language).ok()?;
+        let tree = parser.parse(source, None)?;
+        fn count_errors(node: tree_sitter::Node) -> usize {
+            let mut n = usize::from(node.is_error() || node.is_missing());
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                n += count_errors(child);
+            }
+            n
+        }
+        Some(count_errors(tree.root_node()))
+    }
+
     /// Expand a 1-based sink line range to its enclosing AST statement lines (1-based),
     /// preventing partial multi-line call replacements during auto-heal.
     pub fn enclosing_statement_lines(
@@ -685,7 +701,10 @@ impl PolyglotScanner {
                 let sink_start = range.start_point.row;
                 let sink_end = range.end_point.row;
 
-                let context_start = sink_start.saturating_sub(6);
+                let func_start = find_enclosing_function(capture.node)
+                    .map(|f| f.start_position().row)
+                    .unwrap_or(0);
+                let context_start = sink_start.saturating_sub(14).max(func_start);
                 let context_end = (sink_end + 2).min(source_lines.len().saturating_sub(1));
 
                 let snippet = if sink_start < source_lines.len() {
@@ -719,6 +738,67 @@ impl PolyglotScanner {
                     continue;
                 }
 
+                // Avoid false positives on Zig std.process.Child.init when no shell is invoked
+                if rule_id == "ZIG_COMMAND_INJECTION" && lang == SupportedLanguage::Zig {
+                    let scope_text = find_enclosing_function(capture.node)
+                        .and_then(|f| f.utf8_text(source.as_bytes()).ok())
+                        .unwrap_or("");
+                    let check_slice;
+                    let text_to_check = if scope_text.is_empty() {
+                        let s = sink_start.saturating_sub(4);
+                        let e = sink_end.min(source_lines.len().saturating_sub(1));
+                        check_slice = source_lines[s..=e].join("\n");
+                        check_slice.as_str()
+                    } else {
+                        scope_text
+                    };
+                    let has_shell = text_to_check.contains("\"sh\"")
+                        || text_to_check.contains("\"bash\"")
+                        || text_to_check.contains("\"cmd\"")
+                        || text_to_check.contains("/bin/sh")
+                        || text_to_check.contains("/bin/bash")
+                        || text_to_check.contains("powershell");
+                    if !has_shell {
+                        continue;
+                    }
+                }
+
+                // Avoid false positives on JS/TS RegExp.prototype.exec()
+                if rule_id == "COMMAND_INJECTION"
+                    && matches!(lang, SupportedLanguage::JavaScript | SupportedLanguage::TypeScript)
+                {
+                    let mut call_opt = Some(capture.node);
+                    while let Some(n) = call_opt {
+                        if n.kind() == "call_expression" {
+                            break;
+                        }
+                        call_opt = n.parent();
+                    }
+                    if let Some(call_node) = call_opt {
+                        if let Some(func_node) = call_node.child_by_field_name("function") {
+                            if func_node.kind() == "member_expression" {
+                                let prop_name = func_node
+                                    .child_by_field_name("property")
+                                    .and_then(|p| p.utf8_text(source.as_bytes()).ok());
+                                if prop_name == Some("exec") {
+                                    if let Some(obj) = func_node.child_by_field_name("object") {
+                                        let obj_text = obj
+                                            .utf8_text(source.as_bytes())
+                                            .unwrap_or("")
+                                            .trim();
+                                        if obj.kind() == "regex"
+                                            || obj_text.starts_with('/')
+                                            || obj_text.starts_with("new RegExp")
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Avoid false positives on bare json.loads() when matching `from pickle import loads`
                 if rule_id == "PYTHON_INSECURE_DESERIALIZATION" {
                     if let Some(call_node) = capture.node.parent() {
@@ -749,6 +829,7 @@ impl PolyglotScanner {
                         | "RUST_COMMAND_INJECTION"
                         | "C_COMMAND_INJECTION"
                         | "CPP_COMMAND_INJECTION"
+                        | "ZIG_COMMAND_INJECTION"
                         | "JS_XSS"
                         | "PYTHON_INSECURE_DESERIALIZATION"
                         | "PYTHON_SSTI"
@@ -841,7 +922,145 @@ impl PolyglotScanner {
         }
     }
 
+    fn has_quoted_sql_placeholder(patch: &str) -> bool {
+        patch.contains("'%?")
+            || patch.contains("?%'")
+            || patch.contains("\"%?")
+            || patch.contains("?%\"")
+            || patch.contains("'%$1")
+            || patch.contains("$1%'")
+            || patch.contains("\"%$1")
+            || patch.contains("$1%\"")
+    }
+
+    fn is_valid_php_lvalue_ref(arg: &str) -> bool {
+        let s = arg.trim();
+        if !s.starts_with('$') || s.len() < 2 {
+            return false;
+        }
+        let bytes = s.as_bytes();
+        let mut i = 1;
+        if !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+            return false;
+        }
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        while i < bytes.len() {
+            if bytes[i] == b'[' {
+                let mut depth = 0i32;
+                let mut in_sq = false;
+                let mut in_dq = false;
+                let mut esc = false;
+                while i < bytes.len() {
+                    let b = bytes[i];
+                    if esc {
+                        esc = false;
+                    } else if b == b'\\' && (in_sq || in_dq) {
+                        esc = true;
+                    } else if b == b'\'' && !in_dq {
+                        in_sq = !in_sq;
+                    } else if b == b'"' && !in_sq {
+                        in_dq = !in_dq;
+                    } else if !in_sq && !in_dq {
+                        if b == b'[' {
+                            depth += 1;
+                        } else if b == b']' {
+                            depth -= 1;
+                            if depth == 0 {
+                                i += 1;
+                                break;
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+                if depth != 0 {
+                    return false;
+                }
+            } else if s[i..].starts_with("->") {
+                i += 2;
+                if i >= bytes.len() || !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+                    return false;
+                }
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn validate_php_bind_param_args(patch: &str) -> Result<(), String> {
+        let mut search_from = 0usize;
+        while let Some(rel) = patch[search_from..].find("bind_param(") {
+            let open_idx = search_from + rel + "bind_param(".len();
+            let bytes = patch.as_bytes();
+            let mut p_depth = 1i32;
+            let mut b_depth = 0i32;
+            let mut in_sq = false;
+            let mut in_dq = false;
+            let mut esc = false;
+            let mut args = Vec::new();
+            let mut cur_start = open_idx;
+            let mut i = open_idx;
+            let mut closed = false;
+
+            while i < bytes.len() {
+                let b = bytes[i];
+                if esc {
+                    esc = false;
+                } else if b == b'\\' && (in_sq || in_dq) {
+                    esc = true;
+                } else if b == b'\'' && !in_dq {
+                    in_sq = !in_sq;
+                } else if b == b'"' && !in_sq {
+                    in_dq = !in_dq;
+                } else if !in_sq && !in_dq {
+                    match b {
+                        b'(' => p_depth += 1,
+                        b')' => {
+                            p_depth -= 1;
+                            if p_depth == 0 {
+                                args.push(patch[cur_start..i].trim());
+                                closed = true;
+                                i += 1;
+                                break;
+                            }
+                        }
+                        b'[' => b_depth += 1,
+                        b']' => b_depth -= 1,
+                        b',' if p_depth == 1 && b_depth == 0 => {
+                            args.push(patch[cur_start..i].trim());
+                            cur_start = i + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                i += 1;
+            }
+
+            if closed && args.len() > 1 {
+                for arg in &args[1..] {
+                    if !Self::is_valid_php_lvalue_ref(arg) {
+                        return Err(format!(
+                            "PHP RUNTIME ERROR: bind_param() requires variable references, not expression '{}' — assign it to a local $var first",
+                            arg
+                        ));
+                    }
+                }
+            }
+            search_from = i.max(open_idx);
+        }
+        Ok(())
+    }
+
     fn verify_sqli_patch(lang: SupportedLanguage, source: &str, patch: &str) -> Result<(), String> {
+        if Self::has_quoted_sql_placeholder(patch) {
+            return Err("BROKEN SQL PLACEHOLDER: '?' or '$1' must not be inside SQL quotes like LIKE '%?%' — write LIKE ? and pass '%' + val + '%' as parameter".into());
+        }
         match lang {
             SupportedLanguage::PHP => {
                 let has_var_prepare =
@@ -869,6 +1088,7 @@ impl PolyglotScanner {
                             placeholder_count
                         ));
                     }
+                    Self::validate_php_bind_param_args(patch)?;
 
                     let mut start_idx = 0;
                     while let Some(pos) = patch[start_idx..].find('$') {
@@ -892,7 +1112,9 @@ impl PolyglotScanner {
                             continue;
                         }
 
-                        if !source.contains(var_name) {
+                        let assigned_in_patch = patch.contains(&format!("{} =", var_name))
+                            || patch.contains(&format!("{}=", var_name));
+                        if !source.contains(var_name) && !assigned_in_patch {
                             return Err(format!(
                                 "HALLUCINATED SYMBOL REJECTED: Variable '{}' does not exist in the source file",
                                 var_name

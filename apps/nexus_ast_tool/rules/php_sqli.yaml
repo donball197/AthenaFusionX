@@ -1,0 +1,35 @@
+id: SQL_INJECTION
+language: php
+severity: High
+description: "Unsafe SQL query with interpolated or concatenated user input."
+tree_sitter_query: |
+  (function_call_expression
+    function: (name) @func_name
+    (#match? @func_name "^(mysqli_query|mysqli_multi_query|mysql_query|pg_query|pg_query_params|sqlite_query)$")
+    arguments: (arguments (argument) (argument (binary_expression)) @danger.sql_injection)
+  )
+  (function_call_expression
+    function: (name) @func_name
+    (#match? @func_name "^(mysqli_query|mysqli_multi_query|mysql_query|pg_query|pg_query_params|sqlite_query)$")
+    arguments: (arguments (argument) (argument (encapsed_string (variable_name))) @danger.sql_injection)
+  )
+  (function_call_expression
+    function: (name) @func_name
+    (#match? @func_name "^(mysqli_query|mysqli_multi_query|mysql_query|pg_query|pg_query_params|sqlite_query)$")
+    arguments: (arguments (argument) (argument (variable_name)) @danger.sql_injection)
+  )
+  (member_call_expression
+    name: (name) @func_name
+    (#match? @func_name "^(query|exec|multi_query)$")
+    arguments: (arguments (argument (binary_expression)) @danger.sql_injection)
+  )
+  (member_call_expression
+    name: (name) @func_name
+    (#match? @func_name "^(query|exec|multi_query)$")
+    arguments: (arguments (argument (encapsed_string (variable_name))) @danger.sql_injection)
+  )
+  (member_call_expression
+    name: (name) @func_name
+    (#match? @func_name "^(query|exec|multi_query)$")
+    arguments: (arguments (argument (variable_name)) @danger.sql_injection)
+  )

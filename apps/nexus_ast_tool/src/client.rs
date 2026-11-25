@@ -47,6 +47,8 @@ impl ApiClient {
         // 2. NVIDIA NIM Cloud
         if lower.contains("nvidia")
             || lower.contains("nemotron")
+            || lower.contains("laguna")
+            || lower.starts_with("poolside/")
             || lower.contains("deepseek")
             || lower.contains("meta/")
             || lower.contains("moonshotai/")
@@ -109,18 +111,27 @@ impl ApiClient {
     }
 
     fn call(prompt: &str, temperature: f32) -> Result<String> {
-        Self::call_with(prompt, temperature, 512, false)
+        Self::call_with(prompt, temperature, 1536, false)
     }
 
     fn call_with(prompt: &str, temperature: f32, max_tokens: u32, strict: bool) -> Result<String> {
         let ep = Self::resolve_endpoint()?;
+        let lower_model = ep.model.to_ascii_lowercase();
+        let effective_max_tokens = if lower_model.contains("beam")
+            || lower_model.contains("nemotron")
+            || lower_model.contains("deepseek")
+            || lower_model.contains("qwq")
+        {
+            max_tokens.max(4096)
+        } else {
+            max_tokens
+        };
         let mut body = json!({
             "model": ep.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_tokens": effective_max_tokens
         });
-        let lower_model = ep.model.to_ascii_lowercase();
         if lower_model.contains("mimo") || lower_model.starts_with("xiaomi") {
             body["reasoning_effort"] = json!("none");
         }
@@ -133,7 +144,7 @@ impl ApiClient {
         let resp: serde_json::Value = req.send_json(body)?.into_json()?;
         if strict {
             if resp["choices"][0]["finish_reason"].as_str() == Some("length") {
-                return Err(anyhow!("LLM output truncated (finish_reason=length, max_tokens={})", max_tokens));
+                return Err(anyhow!("LLM output truncated (finish_reason=length, max_tokens={})", effective_max_tokens));
             }
             let msg = &resp["choices"][0]["message"];
             let content_empty = msg["content"].as_str().map_or(true, |x| x.trim().is_empty());
@@ -191,14 +202,55 @@ impl ApiClient {
         out
     }
 
+    fn strip_think_blocks(raw: &str) -> String {
+        let mut out = raw.to_string();
+        while let Some(start) = out.find("<think>") {
+            if let Some(rel_end) = out[start..].find("</think>") {
+                let end = start + rel_end + "</think>".len();
+                out.replace_range(start..end, "");
+            } else {
+                out.truncate(start);
+                break;
+            }
+        }
+        out.trim().to_string()
+    }
+
     fn strip_code_fences(raw: &str) -> String {
         let mut t = raw.trim();
-        for lang_tag in
-            &["```php", "```python", "```py", "```javascript", "```js", "```json", "```"]
-        {
+        for lang_tag in &[
+            "```typescript",
+            "```javascript",
+            "```python",
+            "```rust",
+            "```json",
+            "```tsx",
+            "```jsx",
+            "```cpp",
+            "```php",
+            "```zig",
+            "```ts",
+            "```js",
+            "```py",
+            "```go",
+            "```rs",
+            "```c",
+        ] {
             if let Some(rest) = t.strip_prefix(lang_tag) {
                 t = rest;
                 break;
+            }
+        }
+        if let Some(after_open) = t.strip_prefix("```") {
+            if let Some(nl) = after_open.find('\n') {
+                let tag = after_open[..nl].trim();
+                if tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+')) {
+                    t = &after_open[nl + 1..];
+                } else {
+                    t = after_open;
+                }
+            } else {
+                t = after_open;
             }
         }
         if let Some(body) = t.strip_suffix("```") {
@@ -228,16 +280,17 @@ impl ApiClient {
     }
 
     fn extract_payload(text: &str) -> Result<String> {
-        let extracted = if let Some(start) = text.find("<payload>") {
+        let no_think = Self::strip_think_blocks(text);
+        let extracted = if let Some(start) = no_think.rfind("<payload>") {
             let actual_start = start + "<payload>".len();
-            let end = text[actual_start..]
+            let end = no_think[actual_start..]
                 .find("</payload>")
                 .map(|idx| actual_start + idx)
                 .ok_or_else(|| anyhow!("Model output truncated: missing </payload>"))?;
-            let inner = &text[actual_start..end];
+            let inner = &no_think[actual_start..end];
             Self::strip_code_fences(inner)
         } else {
-            Self::strip_code_fences(text)
+            Self::strip_code_fences(&no_think)
         };
 
         let cleaned = if let Some(unwrapped) = Self::unwrap_json_payload(&extracted) {
@@ -287,16 +340,21 @@ impl ApiClient {
              <payload>{{\"state\": \"EXPLOITABLE\", \"severity\": \"High\", \"reason\": \"Vulnerable sink detected\"}}</payload>"
         );
 
-        let text = Self::call(&prompt, 0.0)?;
-        let start = text
-            .find("<payload>")
-            .map(|i| i + "<payload>".len())
-            .unwrap_or_else(|| text.find('{').unwrap_or(0));
-        let end = text
-            .rfind("</payload>")
-            .unwrap_or_else(|| text.rfind('}').map(|i| i + 1).unwrap_or(text.len()))
-            .max(start);
-        let json_str = Self::strip_code_fences(&text[start..end]);
+        let text = Self::call_with(&prompt, 0.0, 1536, false)?;
+        let clean = Self::strip_think_blocks(&text);
+        let (start, end) = if let Some(s) = clean.rfind("<payload>") {
+            let actual_start = s + "<payload>".len();
+            let e = clean[actual_start..]
+                .find("</payload>")
+                .map(|idx| actual_start + idx)
+                .unwrap_or(clean.len());
+            (actual_start, e)
+        } else {
+            let s = clean.rfind('{').unwrap_or(0);
+            let e = clean.rfind('}').map(|i| i + 1).unwrap_or(clean.len()).max(s);
+            (s, e)
+        };
+        let json_str = Self::strip_code_fences(&clean[start..end]);
         let sanitized = Self::sanitize_json(&json_str);
 
         let parsed: serde_json::Value = serde_json::from_str(&sanitized)
@@ -377,7 +435,7 @@ impl ApiClient {
             } else if is_secondary_sink {
                 "MANDATORY: Output ONLY '$result = $stmt->get_result();'"
             } else {
-                "MANDATORY: Write out prepared statement ($con->prepare, bind_param, execute, $result = $stmt->get_result())."
+                "MANDATORY: Write out prepared statement ($con->prepare, bind_param, execute, $result = $stmt->get_result()). Pass ONLY variables to bind_param() (e.g. $hashed = md5($pass); $stmt->bind_param(\"s\", $hashed);) — NEVER pass function calls or string concatenation directly into bind_param(), and never put ? inside SQL quotes like LIKE '%?%'."
             };
 
             let ex = if is_cmdi {
@@ -387,15 +445,15 @@ impl ApiClient {
             };
             (rule, ex)
         } else if is_python {
-            let rule = "MANDATORY: Preserve outer assignment variables and valid parentheses. For SQLAlchemy text(), use named `:param` placeholders with `.bindparams(param=val)` or `session.execute(text(...), {'param': val})` (NEVER f-strings or `%s` inside text()). For DB-API cursors, use `cursor.execute('... %s', (val,))`. For SSTI with render_template_string(), avoid untrusted template syntax—pass `escape(...)` from markupsafe or format plain text/Flask `render_template`. For pickle/yaml deserialization, replace `loads(...)` with `json.loads(...)` using already-imported helpers. Keep table-name expressions such as RegistrationCode.__tablename__ exactly as written in the snippet; never hardcode a table name. Never introduce a name that is not in the snippet or context.";
+            let rule = "MANDATORY: Preserve outer assignment variables and valid parentheses. For SQLAlchemy text(), use named `:param` placeholders with `.bindparams(param=val)` or `session.execute(text(...), {'param': val})` (NEVER f-strings or `%s` inside text()). For DB-API cursors, use `cursor.execute('... %s', (val,))`. For eval()/exec(), replace with `json.loads(...)` or `ast.literal_eval(...)` using only imported/stdlib helpers (NEVER keep `eval(..., {'__builtins__': {}})` and never invent undefined functions like `safe_eval`). For SSTI with render_template_string(), avoid untrusted template syntax—pass `escape(...)` from markupsafe or format plain text/Flask `render_template`. For pickle/yaml deserialization, replace `loads(...)` with `json.loads(...)` using already-imported helpers. Keep table-name expressions such as RegistrationCode.__tablename__ exactly as written in the snippet; never hardcode a table name. Never introduce a name that is not in the snippet or context.";
             let ex = "[EXAMPLE INPUT]:\nresult = session.execute(text(f\"SELECT id FROM users WHERE code = '{code}'\")).first()\n[EXAMPLE OUTPUT]:\n<payload>result = session.execute(text(\"SELECT id FROM users WHERE code = :code\"), {\"code\": code}).first()</payload>";
             (rule, ex)
         } else if is_js {
-            let rule = "MANDATORY: If fixing SQLi, use parameterized queries (e.g. db.query('SELECT * FROM users WHERE id = $1', [id])). If fixing command injection, use child_process.execFile('cmd', [args]) instead of exec(string).";
+            let rule = "MANDATORY: Preserve the complete statement/call chain shown in 'Snippet to replace' (keep any chained .then(...).catch(...) calls and surrounding arguments). If fixing SQLi, use parameterized queries (e.g. db.query('SELECT * FROM users WHERE id = $1', [id]) or Sequelize replacements/bind) and NEVER put '?' inside quotes like LIKE '%?%' (write LIKE ? and pass '%' + val + '%' or `%${val}%`). If fixing command injection, use child_process.execFile('cmd', [args]) instead of exec(string). If fixing eval(), replace with JSON.parse(...) or safe parsing (NEVER use Function() or new Function()).";
             let ex = "[EXAMPLE INPUT]:\ndb.query(`SELECT * FROM users WHERE id = ${id}`);\n[EXAMPLE OUTPUT]:\n<payload>db.query('SELECT * FROM users WHERE id = $1', [id]);</payload>";
             (rule, ex)
         } else if is_rust {
-            let rule = "MANDATORY: For SQL injection, use sqlx::query!() or sqlx::query() with bind() parameters. For command injection, use Command::new(...).args(...), never shell execution such as sh -c with an interpolated command string.";
+            let rule = "MANDATORY: For SQL injection, replace the complete query-building + execution lines shown in the snippet with one `sqlx::query(\"...\").bind(...)` call (preserve `.execute(...)` / `.fetch_all(...)` and `.await?` if present). For command injection, use Command::new(...).args(...), never shell execution such as sh -c with an interpolated command string.";
             let ex = "[EXAMPLE INPUT]:\nlet query = format!(\"SELECT * FROM users WHERE id = {}\", id);\nsqlx::query(&query).execute(&pool).await?;\n[EXAMPLE OUTPUT]:\n<payload>sqlx::query(\"SELECT * FROM users WHERE id = ?\").bind(id).execute(&pool).await?;</payload>";
             (rule, ex)
         } else if lang.eq_ignore_ascii_case("Go") {
@@ -411,6 +469,16 @@ impl ApiClient {
                 "[EXAMPLE INPUT]:\nq := fmt.Sprintf(\"SELECT * FROM users WHERE id = '%s'\", id)\nrows, _ := db.Query(q)\n[EXAMPLE OUTPUT]:\n<payload>rows, _ := db.Query(\"SELECT * FROM users WHERE id = ?\", id)</payload>"
             };
             (rule, ex)
+        } else if lang.eq_ignore_ascii_case("Zig") {
+            (
+                "MANDATORY: Never invoke a shell ('sh', '-c', 'bash', 'cmd') in std.process.Child.init. Replace argv with the direct executable and separate argument slices (e.g. const argv = [_][]const u8{ \"ping\", \"-c\", \"1\", user_arg }; var child = std.process.Child.init(&argv, allocator);).",
+                "[EXAMPLE INPUT]:\nconst argv = [_][]const u8{ \"sh\", \"-c\", user_arg };\nvar child = std.process.Child.init(&argv, allocator);\n[EXAMPLE OUTPUT]:\n<payload>const argv = [_][]const u8{ \"ping\", \"-c\", \"1\", user_arg };\nvar child = std.process.Child.init(&argv, allocator);</payload>",
+            )
+        } else if lang.eq_ignore_ascii_case("C") || lang.eq_ignore_ascii_case("Cpp") {
+            (
+                "MANDATORY: Replace system()/std::system()/popen() with POSIX execv/execvp using a CONSTANT executable path (e.g. \"/bin/echo\" or \"/bin/ls\") and a NULL-terminated argv array (never pass user input or argv[1] as the executable path, and never output comment-only stubs).",
+                "[EXAMPLE INPUT]:\nsystem(argv[1]);\n[EXAMPLE OUTPUT]:\n<payload>if (argc > 1) { char *args[] = { \"/bin/echo\", argv[1], NULL }; execv(\"/bin/echo\", args); }</payload>",
+            )
         } else {
             {
             let is_go_lang = lang.eq_ignore_ascii_case("Go");
@@ -450,7 +518,7 @@ rows, _ := db.Query("SELECT * FROM users WHERE email = '" + email + "'")
              Replacement:"
         );
 
-        let text = Self::call(&prompt, 0.0)?;
+        let text = Self::call_with(&prompt, 0.0, 2048, true)?;
         Self::extract_payload(&text)
     }
 
@@ -633,15 +701,16 @@ rows, _ := db.Query("SELECT * FROM users WHERE email = '" + email + "'")
     fn extract_text_from_value(json: &serde_json::Value) -> Result<String> {
         let msg = &json["choices"][0]["message"];
 
-        // Handle OpenAI, Nemotron reasoning models, and standard assistant messages
+        // Handle OpenAI, Nemotron/Beam reasoning models, and standard assistant messages
         if let Some(content) = msg["content"].as_str() {
-            if !content.trim().is_empty() {
-                return Ok(content.to_string());
+            let stripped = Self::strip_think_blocks(content);
+            if !stripped.trim().is_empty() {
+                return Ok(stripped);
             }
         }
 
         if let Some(rc) = msg["reasoning_content"].as_str() {
-            if !rc.trim().is_empty() {
+            if rc.contains("<payload>") && rc.contains("</payload>") {
                 return Ok(rc.to_string());
             }
         }

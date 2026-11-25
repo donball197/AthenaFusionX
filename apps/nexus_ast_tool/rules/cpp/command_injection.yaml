@@ -6,3 +6,6 @@ tree_sitter_query: |
   (call_expression
     function: (identifier) @func_name (#match? @func_name "^(system|popen)$")
   ) @danger.command_injection
+  (call_expression
+    function: (qualified_identifier name: (identifier) @func_name (#match? @func_name "^(system|popen)$"))
+  ) @danger.command_injection

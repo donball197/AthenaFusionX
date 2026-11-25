@@ -4,15 +4,9 @@ severity: "High"
 description: "Spawning an arbitrary subshell via Command::new('sh') or Command::new('bash')."
 tree_sitter_query: |
   (call_expression
-    function: [
-      (scoped_identifier
-        name: (identifier) @method (#eq? @method "new")
-      )
-      (field_expression
-        field: (field_identifier) @fmethod (#eq? @fmethod "new")
-      )
-    ]
-    arguments: (arguments
-      (string_literal) @danger.command_injection (#match? @danger.command_injection "^\"(sh|bash|cmd|powershell)\"")
+    function: (field_expression
+      value: (_) @recv (#match? @recv "Command::new\\(\"(sh|bash|cmd|powershell)\"\\)")
+      field: (field_identifier) @method (#match? @method "^(arg|args)$")
     )
+    arguments: (arguments (_) @danger.command_injection)
   )

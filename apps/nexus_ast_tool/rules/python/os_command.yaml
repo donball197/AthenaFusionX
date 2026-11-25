@@ -4,6 +4,14 @@ severity: "Critical"
 description: "Execution of OS commands using unsanitized or dynamic arguments."
 tree_sitter_query: |
   (call
-    function: (attribute object: (identifier) @obj (#match? @obj "^(os|subprocess)$") attribute: (identifier) @method (#match? @method "^(system|popen|call|check_output|run|Popen)$"))
+    function: (attribute object: (identifier) @obj (#eq? @obj "os") attribute: (identifier) @method (#match? @method "^(system|popen)$"))
     arguments: (argument_list) @danger.os_command
+  )
+  (call
+    function: (attribute object: (identifier) @obj (#eq? @obj "subprocess") attribute: (identifier) @method (#match? @method "^(call|check_output|check_call|run|Popen)$"))
+    arguments: (argument_list (keyword_argument name: (identifier) @kw (#eq? @kw "shell") value: (true))) @danger.os_command
+  )
+  (call
+    function: (attribute object: (identifier) @obj (#eq? @obj "subprocess") attribute: (identifier) @method (#match? @method "^(call|check_output|check_call|run|Popen)$"))
+    arguments: (argument_list . [(string) (identifier) (binary_operator) (call)] @danger.os_command)
   )

@@ -327,7 +327,7 @@ fn main() -> Result<()> {
             let mut branch_name = String::new();
 
             if let Some(repo_url) = repo {
-                scan_path = PathBuf::from("./nexus_audit_target");
+                scan_path = std::env::temp_dir().join(format!("nexus_audit_target_{}", std::process::id()));
                 if scan_path.exists() {
                     fs::remove_dir_all(&scan_path)?;
                 }
@@ -454,9 +454,18 @@ fn main() -> Result<()> {
                         let lang_str = format!("{:?}", finding.language);
 
                         let triage_result: Result<(String, String, String), String> = if ai_triage {
+                            let triage_snippet = if finding.taint_path.is_empty() {
+                                finding.source_snippet.clone()
+                            } else {
+                                format!(
+                                    "{}\n// Static taint trace: {}",
+                                    finding.source_snippet,
+                                    finding.taint_path.join(" -> ")
+                                )
+                            };
                             nexus_ast_tool::client::ApiClient::triage_vulnerability(
                                 &finding.pattern_name,
-                                &finding.source_snippet,
+                                &triage_snippet,
                             ).map_err(|e| e.to_string())
                         } else {
                             Ok(("EXPLOITABLE".to_string(), finding.severity.clone(), "Auto-heal mode - no LLM triage".to_string()))
@@ -467,7 +476,7 @@ fn main() -> Result<()> {
                                 {
                                     "EXPLOITABLE" => "EXPLOITABLE",
                                     "SAFE" => "SAFE",
-                                    _ => "EXPLOITABLE",
+                                    _ => "UNKNOWN",
                                 };
 
                                 if classification == "EXPLOITABLE" {
@@ -540,10 +549,12 @@ fn main() -> Result<()> {
                                             .contains("$result = mysqli_query")
                                             || finding.sink_text.contains("$result=mysqli_query");
 
+                                        let has_prior_prepare = lines[..live_sink_start].iter().any(|l| {
+                                            l.contains("$stmt = $con->prepare")
+                                                || l.contains("$stmt=$con->prepare")
+                                        });
                                         let (cleaned_patch, effective_start, effective_end) =
-                                            if is_secondary_fetch
-                                                && file_source.contains("$stmt = $con->prepare")
-                                            {
+                                            if is_secondary_fetch && has_prior_prepare {
                                                 println!(
                                                     "        [⚡ Deterministic Splice] Connecting secondary fetch to active prepared statement."
                                                 );
@@ -593,6 +604,56 @@ fn main() -> Result<()> {
                                                     }
                                                 }
 
+                                                // Expand 2-line builder + sink spans for Rust/Go/Zig
+                                                if finding.pattern_name == "RUST_SQL_INJECTION" {
+                                                    let head_line = lines[eff_start].trim();
+                                                    let cur_block = lines[eff_start..=eff_end].join("\n");
+                                                    if head_line.starts_with("let ") && cur_block.contains("format!") {
+                                                        let after_let = head_line.trim_start_matches("let ").trim_start_matches("mut ").trim();
+                                                        let var_name = after_let
+                                                            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                                                            .next()
+                                                            .unwrap_or("");
+                                                        if !var_name.is_empty() && eff_end + 1 < lines.len() && lines[eff_end + 1].contains(var_name) {
+                                                            if let Some((_, next_end)) = finding.language.enclosing_statement_lines(
+                                                                &finding.path,
+                                                                &file_source,
+                                                                eff_end + 2,
+                                                                eff_end + 2,
+                                                            ) {
+                                                                eff_end = next_end.saturating_sub(1).min(lines.len().saturating_sub(1));
+                                                            } else {
+                                                                eff_end = (eff_end + 1).min(lines.len().saturating_sub(1));
+                                                            }
+                                                        }
+                                                    }
+                                                } else if matches!(finding.pattern_name.as_str(), "GO_SQL_INJECTION" | "GO_COMMAND_INJECTION") && eff_start > 0 {
+                                                    let prev = lines[eff_start - 1].trim();
+                                                    if prev.contains("fmt.Sprintf(") {
+                                                        if let Some(lhs) = prev.split(":=").next().or_else(|| prev.split('=').next()) {
+                                                            let var_name = lhs.trim();
+                                                            if !var_name.is_empty()
+                                                                && var_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                                                                && lines[eff_start..=eff_end].join("\n").contains(var_name)
+                                                            {
+                                                                eff_start -= 1;
+                                                            }
+                                                        }
+                                                    }
+                                                } else if finding.pattern_name == "ZIG_COMMAND_INJECTION" && eff_start > 0 {
+                                                    let prev = lines[eff_start - 1].trim();
+                                                    if (prev.starts_with("const ") || prev.starts_with("var ")) && prev.contains('=') {
+                                                        let decl = prev.trim_start_matches("const ").trim_start_matches("var ").trim();
+                                                        let var_name = decl
+                                                            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                                                            .next()
+                                                            .unwrap_or("");
+                                                        if !var_name.is_empty() && lines[eff_start..=eff_end].join("\n").contains(var_name) {
+                                                            eff_start -= 1;
+                                                        }
+                                                    }
+                                                }
+
                                                 let effective_snippet =
                                                     lines[eff_start..=eff_end].join("\n");
 
@@ -628,7 +689,8 @@ fn main() -> Result<()> {
                                                     if attempt == 1 {
                                                         break;
                                                     }
-                                                    let cand_raw = nexus_ast_tool::sanitizer::sanitize_model_patch(&replacement, false);
+                                                    let is_php_retry = lang_str.eq_ignore_ascii_case("PHP");
+                                                    let cand_raw = nexus_ast_tool::sanitizer::sanitize_model_patch(&replacement, is_php_retry);
                                                     let cand = format_with_indentation(&cand_raw, lines[eff_start]);
                                                     let mut cs = lines[..eff_start].join("\n");
                                                     cs.push('\n');
@@ -638,28 +700,67 @@ fn main() -> Result<()> {
                                                         cs.push_str(&lines[eff_end + 1..].join("\n"));
                                                     }
                                                     let mut issues = patch_static_issues(&file_source, &cs);
-                                                                                                        // Go SQLi: fmt.Sprintf must be removed for parameterized fix
-                                                                                                        if cs.contains("fmt.Sprintf") && cs.contains("db.Query") {
-                                                                                                            issues.push("fmt.Sprintf query construction still present - replace ALL query-building lines with ONE parameterized db.Query using ? placeholder".to_string());
-                                                                                                        }
-                                                                                                        // Go CMDi: bare variable to exec.Command needs allowlist
-                                                                                                        if let Some(pos) = cs.find("exec.Command(") {
-                                                                                                            let ac = &cs[pos + 14..];
-                                                                                                            let tc = ac.trim_start();
-                                                                                                            if tc.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
-                                                                                                                if !cs.contains("map[string]bool{") && !cs.contains("allowed :=") && !cs.contains("allowed=") {
-                                                                                                                    issues.push("exec.Command with bare variable and no allowlist definition - add allowed := map[string]bool{...} before the call".to_string());
-                                                                                                                }
-                                                                                                            }
-                                                                                                        }
-                                                                                                        // Python SQLi: f-strings must be replaced
-                                                                                                        if cs.contains("f\"") || cs.contains("f'") {
-                                                                                                            if cs.contains("SELECT") || cs.contains("INSERT") || cs.contains("UPDATE") || cs.contains("DELETE") {
-                                                                                                                if cs.contains("execute(") && !cs.contains("?") && !cs.contains("%s") && !cs.contains(":param") {
-                                                                                                                    issues.push("SQL f-string interpolation still present - use parameterized execute with bound parameters".to_string());
-                                                                                                                }
-                                                                                                            }
-                                                                                                        }
+                                                    if let Err(sem_err) = PolyglotScanner::verify_semantic_integrity(
+                                                        &finding.pattern_name,
+                                                        finding.language,
+                                                        &file_source,
+                                                        &cand,
+                                                    ) {
+                                                        issues.push(sem_err);
+                                                    }
+                                                    if cand.trim_start().starts_with('.') && !effective_snippet.trim_start().starts_with('.') {
+                                                        issues.push("patch starts with '.' and dropped the receiver/query call - keep the full call expression".to_string());
+                                                    }
+                                                    if finding.pattern_name == "SQL_INJECTION"
+                                                        && matches!(finding.language, nexus_ast_tool::polyglot::SupportedLanguage::JavaScript | nexus_ast_tool::polyglot::SupportedLanguage::TypeScript)
+                                                        && (effective_snippet.contains(".query(") || effective_snippet.contains(".execute("))
+                                                        && !cand.contains(".query(")
+                                                        && !cand.contains(".execute(")
+                                                    {
+                                                        issues.push("patch dropped the database .query()/.execute() call instead of parameterizing it".to_string());
+                                                    }
+                                                    let has_code_line = cand.lines().any(|l| {
+                                                        let t = l.trim();
+                                                        !t.is_empty()
+                                                            && !t.starts_with("//")
+                                                            && !t.starts_with('#')
+                                                            && !t.starts_with("/*")
+                                                            && !t.starts_with('*')
+                                                            && !t.starts_with("*/")
+                                                    });
+                                                    if !has_code_line {
+                                                        issues.push("patch contains only comments and no executable code".to_string());
+                                                    }
+                                                    // Go SQLi: fmt.Sprintf must be removed for parameterized fix
+                                                    if finding.pattern_name == "GO_SQL_INJECTION"
+                                                        && cand.contains("fmt.Sprintf")
+                                                        && cand.contains("db.Query")
+                                                    {
+                                                        issues.push("fmt.Sprintf query construction still present - replace ALL query-building lines with ONE parameterized db.Query using ? placeholder".to_string());
+                                                    }
+                                                    // Go CMDi: bare variable to exec.Command needs allowlist
+                                                    if finding.pattern_name == "GO_COMMAND_INJECTION" {
+                                                        if let Some(pos) = cand.find("exec.Command(") {
+                                                            let ac = &cand[pos + "exec.Command(".len()..];
+                                                            let tc = ac.trim_start();
+                                                            if tc.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                                                                if !cand.contains("map[string]bool{")
+                                                                    && !cand.contains("allowed :=")
+                                                                    && !cand.contains("allowed=")
+                                                                {
+                                                                    issues.push("exec.Command with bare variable and no allowlist definition - add allowed := map[string]bool{...} before the call".to_string());
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    // Python SQLi: f-strings must be replaced
+                                                    if finding.pattern_name == "SQL_INJECTION"
+                                                        && lang_str.eq_ignore_ascii_case("python")
+                                                        && (cand.contains("f\"") || cand.contains("f'"))
+                                                        && (cand.contains("SELECT") || cand.contains("INSERT") || cand.contains("UPDATE") || cand.contains("DELETE"))
+                                                    {
+                                                        issues.push("SQL f-string interpolation still present - use parameterized execute with bound parameters".to_string());
+                                                    }
                                                     if issues.is_empty() {
                                                         break;
                                                     }
@@ -687,9 +788,18 @@ fn main() -> Result<()> {
                                                 (indented_patch, eff_start, eff_end)
                                             };
 
-                                        if cleaned_patch.trim().is_empty() {
+                                        let has_exec_line = cleaned_patch.lines().any(|l| {
+                                            let t = l.trim();
+                                            !t.is_empty()
+                                                && !t.starts_with("//")
+                                                && !t.starts_with('#')
+                                                && !t.starts_with("/*")
+                                                && !t.starts_with('*')
+                                                && !t.starts_with("*/")
+                                        });
+                                        if cleaned_patch.trim().is_empty() || !has_exec_line {
                                             println!(
-                                                "        [❌ Patch Rejected] Empty replacement."
+                                                "        [❌ Patch Rejected] Empty or comment-only replacement."
                                             );
                                             failed_fix_count += 1;
                                             continue;
@@ -697,6 +807,26 @@ fn main() -> Result<()> {
                                         if cleaned_patch.contains("\"payload\"") {
                                             println!(
                                                 "        [❌ Patch Rejected] Unwrapped JSON payload marker detected."
+                                            );
+                                            failed_fix_count += 1;
+                                            continue;
+                                        }
+                                        let orig_slice = lines[effective_start..=effective_end].join("\n");
+                                        if cleaned_patch.trim_start().starts_with('.') && !orig_slice.trim_start().starts_with('.') {
+                                            println!(
+                                                "        [❌ Patch Rejected] Patch starts with '.' and dropped the receiver/query call."
+                                            );
+                                            failed_fix_count += 1;
+                                            continue;
+                                        }
+                                        if finding.pattern_name == "SQL_INJECTION"
+                                            && matches!(finding.language, nexus_ast_tool::polyglot::SupportedLanguage::JavaScript | nexus_ast_tool::polyglot::SupportedLanguage::TypeScript)
+                                            && (orig_slice.contains(".query(") || orig_slice.contains(".execute("))
+                                            && !cleaned_patch.contains(".query(")
+                                            && !cleaned_patch.contains(".execute(")
+                                        {
+                                            println!(
+                                                "        [❌ Patch Rejected] Patch dropped the database .query()/.execute() call."
                                             );
                                             failed_fix_count += 1;
                                             continue;
@@ -730,11 +860,21 @@ fn main() -> Result<()> {
                                             new_source.push_str(sep);
                                         }
 
-                                        // Gate 1: Formal Syntax Check
-                                        let ts_ok = finding
+                                        // Gate 1: Formal Syntax Check (differential when original file has pre-existing syntax errors)
+                                        let orig_errors = finding
                                             .language
-                                            .parses_cleanly_for_path(&finding.path, &new_source);
-                                        let lint = if ts_ok {
+                                            .tree_sitter_error_count_for_path(&finding.path, &file_source);
+                                        let new_errors = finding
+                                            .language
+                                            .tree_sitter_error_count_for_path(&finding.path, &new_source);
+                                        let ts_ok = match (orig_errors, new_errors) {
+                                            (Some(0), Some(0)) => true,
+                                            (Some(oe), Some(ne)) if oe > 0 && ne <= oe => {
+                                                finding.language.parses_cleanly_for_path(&finding.path, &cleaned_patch)
+                                            }
+                                            _ => false,
+                                        };
+                                        let lint = if ts_ok && orig_errors == Some(0) {
                                             external_lint(&lang_str, &new_source, &finding.path)
                                         } else {
                                             None

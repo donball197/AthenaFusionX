@@ -1,0 +1,35 @@
+id: "SQL_INJECTION"
+language: "typescript"
+severity: "High"
+description: "DB query with interpolated, concatenated, or tainted SQL argument."
+tree_sitter_query: |
+  (call_expression
+    function: (member_expression
+      object: [
+        (identifier) @recv
+        (member_expression property: (property_identifier) @recv)
+      ]
+      property: (property_identifier) @method)
+    arguments: (arguments . (template_string (template_substitution)) @danger.sql_injection)
+    (#match? @method "^(query|execute|raw|run|all|get|exec|\\$queryRawUnsafe|\\$executeRawUnsafe)$")
+    (#match? @recv "(?i)^(sequelize|db|database|knex|pool|conn|connection|client|mysql|pg|sqlite|tx|prisma)$"))
+  (call_expression
+    function: (member_expression
+      object: [
+        (identifier) @recv
+        (member_expression property: (property_identifier) @recv)
+      ]
+      property: (property_identifier) @method)
+    arguments: (arguments . (binary_expression operator: "+") @danger.sql_injection)
+    (#match? @method "^(query|execute|raw|run|all|get|exec|\\$queryRawUnsafe|\\$executeRawUnsafe)$")
+    (#match? @recv "(?i)^(sequelize|db|database|knex|pool|conn|connection|client|mysql|pg|sqlite|tx|prisma)$"))
+  (call_expression
+    function: (member_expression
+      object: [
+        (identifier) @recv
+        (member_expression property: (property_identifier) @recv)
+      ]
+      property: (property_identifier) @method)
+    arguments: (arguments . (identifier) @danger.sql_injection)
+    (#match? @method "^(query|execute|raw|run|all|get|exec|\\$queryRawUnsafe|\\$executeRawUnsafe)$")
+    (#match? @recv "(?i)^(sequelize|db|database|knex|pool|conn|connection|client|mysql|pg|sqlite|tx|prisma)$"))
