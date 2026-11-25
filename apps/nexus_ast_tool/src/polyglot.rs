@@ -778,6 +778,8 @@ impl PolyglotScanner {
                                 taint_locations.push(seed.caller_step);
                             }
                         }
+                    } else {
+                        analyzer.analyze_top_level_until(tree.root_node(), sink_start);
                     }
                     let taint_report = analyzer.check_expression(capture.node);
                     if !taint_report.tainted {

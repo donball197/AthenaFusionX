@@ -425,8 +425,8 @@ fn main() -> Result<()> {
                     findings.len()
                 );
 
-                if ai_triage {
-                    println!("\n==> [AI Triage] Initializing LLM to filter false positives...");
+                if ai_triage || auto_heal {
+                    println!("\n==> [Processing] Analyzing {} finding(s)...", findings.len());
 
                     findings.sort_by(|a, b| {
                         a.path.cmp(&b.path).then(a.sink_start_line.cmp(&b.sink_start_line))
@@ -453,10 +453,15 @@ fn main() -> Result<()> {
                         let file_path_str = finding.path.display().to_string();
                         let lang_str = format!("{:?}", finding.language);
 
-                        match nexus_ast_tool::client::ApiClient::triage_vulnerability(
-                            &finding.pattern_name,
-                            &finding.source_snippet,
-                        ) {
+                        let triage_result: Result<(String, String, String), String> = if ai_triage {
+                            nexus_ast_tool::client::ApiClient::triage_vulnerability(
+                                &finding.pattern_name,
+                                &finding.source_snippet,
+                            ).map_err(|e| e.to_string())
+                        } else {
+                            Ok(("EXPLOITABLE".to_string(), finding.severity.clone(), "Auto-heal mode - no LLM triage".to_string()))
+                        };
+                        match triage_result {
                             Ok((state_raw, llm_severity, reason)) => {
                                 let classification = match state_raw.trim().to_uppercase().as_str()
                                 {

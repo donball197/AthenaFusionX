@@ -153,6 +153,8 @@ mod tests {
                 sink_start_line: 16,
                 sink_end_line: 18,
                 sink_text: "text(f\"...\")".to_string(),
+                taint_path: vec![],
+                taint_locations: vec![],
             },
             triage_state: "EXPLOITABLE".to_string(),
             triage_reason: Some("Unsanitized SQL interpolation".to_string()),

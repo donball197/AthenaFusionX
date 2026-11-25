@@ -85,6 +85,12 @@ impl<'a> TaintAnalyzer<'a> {
         self.walk_until(func_node, max_row);
     }
 
+    /// Statement-ordered top-level analysis up to `max_row` (0-based),
+    /// skipping function definitions so local variables cannot clobber top-level taint.
+    pub fn analyze_top_level_until(&mut self, root: Node, max_row: usize) {
+        self.walk_top_level_until(root, root, max_row);
+    }
+
     /// Analyze a function using cross-file caller taint summaries when available.
     pub fn analyze_function_with_callers(
         &mut self,
@@ -175,6 +181,44 @@ impl<'a> TaintAnalyzer<'a> {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             self.walk_until(child, max_row);
+        }
+    }
+
+    fn walk_top_level_until(&mut self, root: Node, node: Node, max_row: usize) {
+        if node.start_position().row > max_row {
+            return;
+        }
+        if node.id() != root.id()
+            && matches!(
+                node.kind(),
+                "function_declaration"
+                    | "function_expression"
+                    | "arrow_function"
+                    | "method_definition"
+                    | "function_item"
+                    | "function_definition"
+                    | "method_declaration"
+                    | "func_literal"
+            )
+        {
+            return;
+        }
+        match node.kind() {
+            "variable_declarator"
+            | "assignment_expression"
+            | "assignment"
+            | "short_var_declaration"
+            | "assignment_statement"
+            | "var_spec"
+            | "let_declaration"
+            | "init_declarator" => {
+                self.handle_assignment(node);
+            }
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.walk_top_level_until(root, child, max_row);
         }
     }
 
