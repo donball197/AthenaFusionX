@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use nexus_ast_tool::polyglot::{PolyglotScanner, SecurityFinding};
+use nexus_ast_tool::sandbox::{verify_poc_against_patch, patch_static_issues, HealSandbox};
+use nexus_ast_tool::sarif::{render_json, render_sarif, AuditFindingRecord};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,11 +34,25 @@ enum Commands {
         #[arg(long)]
         auto_heal: bool,
         #[arg(long)]
+        sandbox_verify: bool,
+        #[arg(long)]
+        poc_verify: bool,
+        #[arg(long)]
         generate_report: bool,
+        #[arg(long, default_value = "markdown", help = "Report format: markdown | sarif | json")]
+        format: String,
+        #[arg(long, help = "Optional path to write SARIF 2.1.0 report")]
+        sarif_out: Option<PathBuf>,
+        #[arg(long, help = "Optional path to write JSON report")]
+        json_out: Option<PathBuf>,
         #[arg(long)]
         branch_fix: bool,
         #[arg(long)]
         run_tests: bool,
+        #[arg(long, help = "Hold verified patches for human promotion instead of auto-promoting (needs --auto-heal --sandbox-verify)")]
+        hold: bool,
+        #[arg(long, default_value = ".nexus/holds")]
+        hold_dir: PathBuf,
     },
     Refactor {
         #[arg(short, long, alias = "path")]
@@ -77,6 +93,22 @@ enum Commands {
             help = "Directory where the approval artifact is persisted"
         )]
         output: PathBuf,
+    },
+    Tui {
+        #[arg(long, default_value = ".nexus/holds")]
+        dir: PathBuf,
+    },
+    Review {
+        #[arg(long, help = "Show one hold; omit to list all")]
+        hold: Option<String>,
+        #[arg(long, default_value = ".nexus/holds")]
+        dir: PathBuf,
+    },
+    Promote {
+        #[arg(long)]
+        hold: String,
+        #[arg(long, default_value = ".nexus/holds")]
+        dir: PathBuf,
     },
     Optimize {
         #[arg(short, long, default_value = ".")]
@@ -146,6 +178,8 @@ fn run_project_test_suite(repo_path: &Path) -> Option<bool> {
         || (repo_path.join("tests").exists() && repo_path.join("requirements.txt").exists())
     {
         ("pytest", vec![])
+    } else if repo_path.join("go.mod").exists() {
+        ("go", vec!["test", "./..."])
     } else if repo_path.join("package.json").exists() {
         ("npm", vec!["test", "--", "--passWithNoTests"])
     } else {
@@ -275,10 +309,20 @@ fn main() -> Result<()> {
             repo,
             ai_triage,
             auto_heal,
+            sandbox_verify,
+            poc_verify,
             generate_report,
+            format,
+            sarif_out,
+            json_out,
             branch_fix,
             run_tests,
+            hold,
+            hold_dir,
         } => {
+            if hold && !(auto_heal && sandbox_verify) {
+                return Err(anyhow::anyhow!("--hold requires --auto-heal and --sandbox-verify"));
+            }
             let mut scan_path = path.clone();
             let mut branch_name = String::new();
 
@@ -331,7 +375,14 @@ fn main() -> Result<()> {
                 scan_path.display()
             );
 
-            let rules_dir = PathBuf::from("apps/nexus_ast_tool/rules");
+            let rules_dir = {
+                let cwd_rules = PathBuf::from("apps/nexus_ast_tool/rules");
+                if cwd_rules.exists() {
+                    cwd_rules
+                } else {
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rules")
+                }
+            };
             let rules = PolyglotScanner::load_rules(&rules_dir);
             println!(
                 "==> [Rules Engine] Loaded {} dynamic security rules from {:?}",
@@ -346,10 +397,23 @@ fn main() -> Result<()> {
             let mut actionable_count = 0;
             let mut fixed_count = 0;
             let mut failed_fix_count = 0;
+            let mut unconfirmed_count: usize = 0;
             let mut already_resolved_count = 0;
             let mut safe_count = 0;
             let mut unknown_count = 0;
             let mut _triage_error_count = 0;
+            let mut audit_records: Vec<AuditFindingRecord> = Vec::new();
+            let heal_sandbox = if auto_heal && sandbox_verify {
+                let sb = HealSandbox::create(&scan_path)?;
+                println!(
+                    "==> [Sandbox] Isolated remediation workspace: {}",
+                    sb.sandbox_root.display()
+                );
+                Some(sb)
+            } else {
+                None
+            };
+            let mut sandbox_modified_files: Vec<PathBuf> = Vec::new();
 
             if findings.is_empty() {
                 println!(
@@ -368,6 +432,7 @@ fn main() -> Result<()> {
                         a.path.cmp(&b.path).then(a.sink_start_line.cmp(&b.sink_start_line))
                     });
 
+                    let mut rejected_with_reason: Vec<(String, String)> = Vec::new();
                     for finding in findings {
                         let file_source = match fs::read_to_string(&finding.path) {
                             Ok(s) => s,
@@ -397,7 +462,7 @@ fn main() -> Result<()> {
                                 {
                                     "EXPLOITABLE" => "EXPLOITABLE",
                                     "SAFE" => "SAFE",
-                                    _ => "UNKNOWN",
+                                    _ => "EXPLOITABLE",
                                 };
 
                                 if classification == "EXPLOITABLE" {
@@ -434,7 +499,12 @@ fn main() -> Result<()> {
                                             "        [🛠️ Auto-Heal] Generating secure anchor-based patch..."
                                         );
 
-                                        let file_source = match fs::read_to_string(&finding.path) {
+                                        let edit_path = match &heal_sandbox {
+                                            Some(sb) => sb.sandbox_path(&finding.path)?,
+                                            None => finding.path.clone(),
+                                        };
+
+                                        let file_source = match fs::read_to_string(&edit_path) {
                                             Ok(src) => src,
                                             Err(e) => {
                                                 println!(
@@ -502,19 +572,100 @@ fn main() -> Result<()> {
                                                         .min(lines.len().saturating_sub(1));
                                                 }
 
+                                                if taint.is_none() {
+                                                    if let Some((stmt_start, stmt_end)) =
+                                                        finding.language.enclosing_statement_lines(
+                                                            &finding.path,
+                                                            &file_source,
+                                                            eff_start + 1,
+                                                            eff_end + 1,
+                                                        )
+                                                    {
+                                                        eff_start = stmt_start.saturating_sub(1);
+                                                        eff_end = stmt_end
+                                                            .saturating_sub(1)
+                                                            .min(lines.len().saturating_sub(1));
+                                                    }
+                                                }
+
                                                 let effective_snippet =
                                                     lines[eff_start..=eff_end].join("\n");
 
-                                                let replacement = match nexus_ast_tool::client::ApiClient::generate_security_patch(
-                                                &finding.pattern_name, &effective_snippet, &lang_str,
-                                            ) {
-                                                Ok(r) => r,
-                                                Err(e) => {
+                                                let header_imports: String = lines
+                                                    .iter()
+                                                    .take(30)
+                                                    .copied()
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n");
+                                                let context_snippet = format!(
+                                                    "{}\n\n// ... enclosing function context ...\n{}",
+                                                    header_imports, finding.source_snippet
+                                                );
+
+                                                let mut replacement = String::new();
+                                                let mut gen_err: Option<String> = None;
+                                                let mut feedback = String::new();
+                                                for attempt in 0..2 {
+                                                    let ctx = if feedback.is_empty() {
+                                                        context_snippet.clone()
+                                                    } else {
+                                                        format!("{}\n\nPREVIOUS ATTEMPT REJECTED: {}\nFix this. Keep identifiers and table-name expressions exactly as in the snippet; never hardcode names.", context_snippet, feedback)
+                                                    };
+                                                    match nexus_ast_tool::client::ApiClient::generate_security_patch_with_context(
+                                                        &finding.pattern_name, &effective_snippet, &ctx, &lang_str,
+                                                    ) {
+                                                        Ok(r) => replacement = r,
+                                                        Err(e) => {
+                                                            gen_err = Some(e.to_string());
+                                                            break;
+                                                        }
+                                                    }
+                                                    if attempt == 1 {
+                                                        break;
+                                                    }
+                                                    let cand_raw = nexus_ast_tool::sanitizer::sanitize_model_patch(&replacement, false);
+                                                    let cand = format_with_indentation(&cand_raw, lines[eff_start]);
+                                                    let mut cs = lines[..eff_start].join("\n");
+                                                    cs.push('\n');
+                                                    cs.push_str(&cand);
+                                                    if eff_end + 1 < lines.len() {
+                                                        cs.push('\n');
+                                                        cs.push_str(&lines[eff_end + 1..].join("\n"));
+                                                    }
+                                                    let mut issues = patch_static_issues(&file_source, &cs);
+                                                                                                        // Go SQLi: fmt.Sprintf must be removed for parameterized fix
+                                                                                                        if cs.contains("fmt.Sprintf") && cs.contains("db.Query") {
+                                                                                                            issues.push("fmt.Sprintf query construction still present - replace ALL query-building lines with ONE parameterized db.Query using ? placeholder".to_string());
+                                                                                                        }
+                                                                                                        // Go CMDi: bare variable to exec.Command needs allowlist
+                                                                                                        if let Some(pos) = cs.find("exec.Command(") {
+                                                                                                            let ac = &cs[pos + 14..];
+                                                                                                            let tc = ac.trim_start();
+                                                                                                            if tc.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                                                                                                                if !cs.contains("map[string]bool{") && !cs.contains("allowed :=") && !cs.contains("allowed=") {
+                                                                                                                    issues.push("exec.Command with bare variable and no allowlist definition - add allowed := map[string]bool{...} before the call".to_string());
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                        // Python SQLi: f-strings must be replaced
+                                                                                                        if cs.contains("f\"") || cs.contains("f'") {
+                                                                                                            if cs.contains("SELECT") || cs.contains("INSERT") || cs.contains("UPDATE") || cs.contains("DELETE") {
+                                                                                                                if cs.contains("execute(") && !cs.contains("?") && !cs.contains("%s") && !cs.contains(":param") {
+                                                                                                                    issues.push("SQL f-string interpolation still present - use parameterized execute with bound parameters".to_string());
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                    if issues.is_empty() {
+                                                        break;
+                                                    }
+                                                    feedback = issues.join("; ");
+                                                    println!("        [🔁 Retry] Static check failed ({}). Regenerating once.", feedback);
+                                                }
+                                                if let Some(e) = gen_err {
                                                     println!("        [❌ Patch Gen Error] {}", e);
                                                     failed_fix_count += 1;
                                                     continue;
                                                 }
-                                            };
 
                                                 let is_php = lang_str.eq_ignore_ascii_case("PHP");
                                                 let raw_cleaned =
@@ -534,6 +685,13 @@ fn main() -> Result<()> {
                                         if cleaned_patch.trim().is_empty() {
                                             println!(
                                                 "        [❌ Patch Rejected] Empty replacement."
+                                            );
+                                            failed_fix_count += 1;
+                                            continue;
+                                        }
+                                        if cleaned_patch.contains("\"payload\"") {
+                                            println!(
+                                                "        [❌ Patch Rejected] Unwrapped JSON payload marker detected."
                                             );
                                             failed_fix_count += 1;
                                             continue;
@@ -568,7 +726,9 @@ fn main() -> Result<()> {
                                         }
 
                                         // Gate 1: Formal Syntax Check
-                                        let ts_ok = finding.language.parses_cleanly(&new_source);
+                                        let ts_ok = finding
+                                            .language
+                                            .parses_cleanly_for_path(&finding.path, &new_source);
                                         let lint = if ts_ok {
                                             external_lint(&lang_str, &new_source, &finding.path)
                                         } else {
@@ -614,8 +774,82 @@ fn main() -> Result<()> {
                                             false
                                         };
 
-                                        if syntax_ok && semantic_ok && ast_ok {
-                                            if let Err(e) = fs::write(&finding.path, &new_source) {
+                                        let mut static_error = String::new();
+                                        let static_ok = if syntax_ok
+                                            && semantic_ok
+                                            && ast_ok
+                                            && lang_str.eq_ignore_ascii_case("python")
+                                        {
+                                            let mut issues = patch_static_issues(&file_source, &new_source);
+                                            if cleaned_patch.contains("json.loads") {
+                                                let mut from = 0usize;
+                                                while let Some(pos) = new_source[from..].find("dumps(") {
+                                                    let abs = from + pos;
+                                                    if !new_source[..abs].ends_with("json.") {
+                                                        issues.push("deserializer swapped but a non-json dumps() write site remains".to_string());
+                                                        break;
+                                                    }
+                                                    from = abs + 6;
+                                                }
+                                            }
+                                            if issues.is_empty() {
+                                                true
+                                            } else {
+                                                static_error = issues.join("; ");
+                                                false
+                                            }
+                                        } else {
+                                            true
+                                        };
+
+                                        if syntax_ok && semantic_ok && ast_ok && static_ok {
+                                            let poc_result = if poc_verify {
+                                                let outcome = verify_poc_against_patch(
+                                                    &finding,
+                                                    &lines[effective_start.saturating_sub(5)..=(effective_end + 5).min(lines.len().saturating_sub(1))].join("\n"),
+                                                    &cleaned_patch,
+                                                );
+                                                println!("        [🧪 PoC Gate] {}", outcome.detail);
+                                                match (outcome.executed, outcome.exploited_before, outcome.blocked_after) {
+                                                    (true, Some(true), Some(true)) => Some(true),
+                                                    (true, Some(true), Some(false)) => Some(false),
+                                                    _ => None,
+                                                }
+                                            } else {
+                                                None
+                                            };
+
+                                            if poc_strict_mode() && poc_verify && poc_result.is_none() {
+                                                unconfirmed_count += 1;
+                                                println!("        [⚠️ Patch Unconfirmed] PoC did not demonstrate exploit-then-block. Nothing was written.");
+                                                audit_records.push(AuditFindingRecord {
+                                                    finding: finding.clone(),
+                                                    triage_state: classification.to_string(),
+                                                    triage_reason: Some(reason.clone()),
+                                                    model_severity: Some(llm_severity.clone()),
+                                                    remediation_status: "UNCONFIRMED".to_string(),
+                                                    remediation_detail: Some(cleaned_patch.clone()),
+                                                    poc_verified: None,
+                                                });
+                                                continue;
+                                            }
+
+                                            if poc_strict_mode() && poc_result == Some(false) {
+                                                failed_fix_count += 1;
+                                                println!("        [❌ Patch Rejected] PoC verification failed.");
+                                                audit_records.push(AuditFindingRecord {
+                                                    finding: finding.clone(),
+                                                    triage_state: classification.to_string(),
+                                                    triage_reason: Some(reason.clone()),
+                                                    model_severity: Some(llm_severity.clone()),
+                                                    remediation_status: "REJECTED".to_string(),
+                                                    remediation_detail: Some("PoC verification failed".to_string()),
+                                                    poc_verified: poc_result,
+                                                });
+                                                continue;
+                                            }
+
+                                            if let Err(e) = fs::write(&edit_path, &new_source) {
                                                 println!(
                                                     "        [❌ Patch Error] I/O write error: {}",
                                                     e
@@ -623,9 +857,14 @@ fn main() -> Result<()> {
                                                 failed_fix_count += 1;
                                                 continue;
                                             }
+                                            if heal_sandbox.is_some()
+                                                && !sandbox_modified_files.contains(&finding.path)
+                                            {
+                                                sandbox_modified_files.push(finding.path.clone());
+                                            }
                                             fixed_count += 1;
                                             println!(
-                                                "        [✅ Patch Verified] Syntax OK, Semantic checks passed, and AST rescan confirms sink eliminated."
+                                                "        [✅ Patch Accepted] Syntax OK, semantic checks passed, AST rescan confirms sink eliminated. Runtime behavior NOT verified (runtime unverified)."
                                             );
                                             report_md.push_str(
                                                 "### Recommended Patch (Auto-Healed, Verified)\n",
@@ -635,6 +874,15 @@ fn main() -> Result<()> {
                                                 lang_str.to_lowercase(),
                                                 cleaned_patch
                                             ));
+                                            audit_records.push(AuditFindingRecord {
+                                                finding: finding.clone(),
+                                                triage_state: classification.to_string(),
+                                                triage_reason: Some(reason.clone()),
+                                                model_severity: Some(llm_severity.clone()),
+                                                remediation_status: "FIXED".to_string(),
+                                                remediation_detail: Some(cleaned_patch.clone()),
+                                                poc_verified: poc_result,
+                                            });
                                             continue;
                                         }
 
@@ -642,9 +890,7 @@ fn main() -> Result<()> {
                                             "tree-sitter syntax gate failed"
                                         } else if lint == Some(false) {
                                             "external linter rejected the patch"
-                                        } else if !semantic_ok {
-                                            &semantic_error
-                                        } else {
+                                        } else if !semantic_ok { &semantic_error } else if !static_ok { &static_error } else {
                                             "AST rescan still detects the sink"
                                         };
 
@@ -656,18 +902,54 @@ fn main() -> Result<()> {
                                         report_md.push_str(&format!(
                                             "### Recommended Patch (REJECTED: {} - never written)\n```{}\n{}\n```\n\n---\n\n",
                                             reject_reason, lang_str.to_lowercase(), cleaned_patch));
+                                        audit_records.push(AuditFindingRecord {
+                                            finding: finding.clone(),
+                                            triage_state: classification.to_string(),
+                                            triage_reason: Some(reason.clone()),
+                                            model_severity: Some(llm_severity.clone()),
+                                            remediation_status: "REJECTED".to_string(),
+                                            remediation_detail: Some(reject_reason.to_string()),
+                                            poc_verified: None,
+                                        });
                                         continue;
                                     }
 
+                                    audit_records.push(AuditFindingRecord {
+                                        finding: finding.clone(),
+                                        triage_state: classification.to_string(),
+                                        triage_reason: Some(reason.clone()),
+                                        model_severity: Some(llm_severity.clone()),
+                                        remediation_status: "NOT_ATTEMPTED".to_string(),
+                                        remediation_detail: None,
+                                        poc_verified: None,
+                                    });
                                     report_md.push_str("---\n\n");
                                 } else if classification == "SAFE" {
                                     safe_count += 1;
                                     println!("        [🟢 SAFE] Explicitly classified safe.");
+                                    audit_records.push(AuditFindingRecord {
+                                        finding: finding.clone(),
+                                        triage_state: "SAFE".to_string(),
+                                        triage_reason: Some(reason.clone()),
+                                        model_severity: Some(llm_severity.clone()),
+                                        remediation_status: "NOT_ATTEMPTED".to_string(),
+                                        remediation_detail: None,
+                                        poc_verified: None,
+                                    });
                                 } else {
                                     unknown_count += 1;
                                     println!(
                                         "        [🟡 UNKNOWN] Security state cannot be established without assumptions."
                                     );
+                                    audit_records.push(AuditFindingRecord {
+                                        finding: finding.clone(),
+                                        triage_state: "UNKNOWN".to_string(),
+                                        triage_reason: Some(reason.clone()),
+                                        model_severity: Some(llm_severity.clone()),
+                                        remediation_status: "NOT_ATTEMPTED".to_string(),
+                                        remediation_detail: None,
+                                        poc_verified: None,
+                                    });
                                 }
                             }
                             Err(e) => {
@@ -676,22 +958,109 @@ fn main() -> Result<()> {
                             }
                         }
                     }
+                } else if !findings.is_empty() {
+                            eprintln!(">>> [WARN] AUTO-HEAL REQUIRES AI TRIAGE: {} finding(s) skipped. Add --ai-triage to classify and heal.", findings.len());
+                    unknown_count = findings.len();
+                    for finding in &findings {
+                        report_md.push_str(&format!(
+                            "## ⚠️ Potential Vulnerability (untriaged): {}\n",
+                            finding.pattern_name.to_uppercase()
+                        ));
+                        report_md.push_str(&format!("- **Rule severity:** {}\n", finding.severity));
+                        report_md.push_str(&format!(
+                            "- **File:** `{}` (Sink lines {}-{})\n\n",
+                            finding.path.display(),
+                            finding.sink_start_line,
+                            finding.sink_end_line
+                        ));
+                        report_md.push_str(&format!(
+                            "### Vulnerable Code\n```{}\n{}\n```\n\n",
+                            format!("{:?}", finding.language).to_lowercase(),
+                            finding.patch_snippet
+                        ));
+                        if !finding.taint_path.is_empty() {
+                            report_md.push_str(&format!(
+                                "- **Taint Trace:** `{}`\n\n",
+                                finding.taint_path.join(" -> ")
+                            ));
+                        }
+                        report_md.push_str(
+                            "> Not evaluated by AI triage — rerun with `--ai-triage` to classify.\n\n---\n\n",
+                        );
+                        audit_records.push(AuditFindingRecord {
+                            finding: finding.clone(),
+                            triage_state: "UNTRIAGED".to_string(),
+                            triage_reason: None,
+                            model_severity: None,
+                            remediation_status: "NOT_ATTEMPTED".to_string(),
+                            remediation_detail: None,
+                            poc_verified: None,
+                        });
+                    }
                 }
             }
 
-            // Always execute test suite if requested, regardless of findings count
-            let tests_passed =
-                if run_tests { run_project_test_suite(&scan_path).unwrap_or(true) } else { true };
+            // Run tests inside the sandbox first (when --sandbox-verify is enabled) before promoting
+            let test_target_root = heal_sandbox
+                .as_ref()
+                .map(|sb| sb.sandbox_root.clone())
+                .unwrap_or_else(|| scan_path.clone());
+            let tests_passed = if run_tests {
+                run_project_test_suite(&test_target_root).unwrap_or(true)
+            } else {
+                true
+            };
 
-            let remediation_clean = failed_fix_count == 0
+            let remediation_clean = actionable_count > 0 && failed_fix_count == 0 && unconfirmed_count == 0
                 && actionable_count == (fixed_count + already_resolved_count)
                 && tests_passed;
+
+            eprintln!(">>> [DEBUG] tests_passed={} fixed_count={} modified_files={} hold={}", tests_passed, fixed_count, sandbox_modified_files.len(), hold);
+            eprintln!(">>> [DEBUG] failed_fix_count={} unconfirmed_count={} actionable={}", failed_fix_count, unconfirmed_count, actionable_count);
+            for (i, rec) in audit_records.iter().enumerate() {
+                eprintln!(">>> [DEBUG] rec[{}] pattern={} status={} path={}", i, rec.finding.pattern_name, rec.remediation_status, rec.finding.path.display());
+            }
+
+            if let Some(ref sb) = heal_sandbox {
+                if tests_passed && fixed_count > 0 && !sandbox_modified_files.is_empty() && hold {
+                    let entries = sandbox_modified_files
+                        .iter()
+                        .map(|p| {
+                            let fl: Vec<nexus_ast_tool::hold::HeldFinding> = audit_records
+                                .iter()
+                                .filter(|r| r.remediation_status == "FIXED" && &r.finding.path == p)
+                                .map(|r| nexus_ast_tool::hold::HeldFinding {
+                                    pattern: r.finding.pattern_name.clone(),
+                                    line: r.finding.sink_start_line,
+                                    patch: r.remediation_detail.clone().unwrap_or_default(),
+                                })
+                                .collect();
+                            Ok((p.clone(), sb.sandbox_path(p)?, fl))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let h = nexus_ast_tool::hold::create(&hold_dir, &sb.authoritative_root, entries)?;
+                    println!(
+                        "==> [Hold] {} file(s) held as {}. Nothing written to target. Review: nexus_ast_tool review --hold {}  |  Apply: nexus_ast_tool promote --hold {}",
+                        h.files.len(), h.id, h.id, h.id
+                    );
+                } else if tests_passed && fixed_count > 0 && !sandbox_modified_files.is_empty() {
+                    let count = sb.promote(&sandbox_modified_files)?;
+                    println!(
+                        "==> [Sandbox] Promoted {} file(s) containing only accepted patches; {} finding(s) remain open (rejected/unconfirmed/failed) and need manual work.", count, failed_fix_count + unconfirmed_count
+                    );
+                } else if !sandbox_modified_files.is_empty() {
+                    println!(
+                        "==> [Sandbox] Test suite failed. Authoritative target left UNCHANGED."
+                    );
+                }
+            }
 
             if generate_report {
                 report_md.push_str("\n# Final Audit Summary\n\n");
                 report_md.push_str(&format!("- **Actionable findings:** {}\n", actionable_count));
-                report_md.push_str(&format!("- **Verified fixed:** {}\n", fixed_count));
+                report_md.push_str(&format!("- **Sink removed (runtime unverified):** {}\n", fixed_count));
                 report_md.push_str(&format!("- **Remediation failed:** {}\n", failed_fix_count));
+                report_md.push_str(&format!("- **Unconfirmed:** {}\n", unconfirmed_count));
                 report_md
                     .push_str(&format!("- **Already resolved:** {}\n", already_resolved_count));
                 report_md.push_str(&format!("- **Explicitly safe:** {}\n", safe_count));
@@ -708,12 +1077,56 @@ fn main() -> Result<()> {
                     report_md.push_str("\n## Remediation Integrity\n\n**FAIL** — One or more actionable findings were not verified fixed or tests failed.\n\n");
                 }
 
-                fs::write("bounty_report.md", &report_md)?;
+                let fmt_lower = format.trim().to_ascii_lowercase();
+                let summary_json = serde_json::json!({
+                    "actionable_findings": actionable_count,
+                    "verified_fixed": fixed_count,
+                    "remediation_failed": failed_fix_count,
+                    "unconfirmed": unconfirmed_count,
+                    "already_resolved": already_resolved_count,
+                    "explicitly_safe": safe_count,
+                    "unknown": unknown_count,
+                    "tests_passed": tests_passed,
+                    "remediation_clean": remediation_clean
+                });
 
-                println!("\n==> [Report Generator] 📄 bounty_report.md generated.");
+                if let Some(ref sarif_path) = sarif_out {
+                    let sarif_str = render_sarif(&audit_records, &rules, &scan_path)?;
+                    fs::write(sarif_path, sarif_str)?;
+                    println!("\n==> [Report Generator] 📄 SARIF 2.1.0 written to {}", sarif_path.display());
+                }
+                if let Some(ref j_path) = json_out {
+                    let json_str = render_json(&audit_records, summary_json.clone())?;
+                    fs::write(j_path, json_str)?;
+                    println!("==> [Report Generator] 📄 JSON written to {}", j_path.display());
+                }
+
+                match fmt_lower.as_str() {
+                    "sarif" => {
+                        let out_path = sarif_out.clone().unwrap_or_else(|| PathBuf::from("bounty_report.sarif"));
+                        if sarif_out.is_none() {
+                            let sarif_str = render_sarif(&audit_records, &rules, &scan_path)?;
+                            fs::write(&out_path, sarif_str)?;
+                            println!("\n==> [Report Generator] 📄 {} generated.", out_path.display());
+                        }
+                    }
+                    "json" => {
+                        let out_path = json_out.clone().unwrap_or_else(|| PathBuf::from("bounty_report.json"));
+                        if json_out.is_none() {
+                            let json_str = render_json(&audit_records, summary_json)?;
+                            fs::write(&out_path, json_str)?;
+                            println!("\n==> [Report Generator] 📄 {} generated.", out_path.display());
+                        }
+                    }
+                    _ => {
+                        fs::write("bounty_report.md", &report_md)?;
+                        println!("\n==> [Report Generator] 📄 bounty_report.md generated.");
+                    }
+                }
                 println!("    Actionable findings : {}", actionable_count);
-                println!("    Verified fixed      : {}", fixed_count);
+                println!("    Sink removed (unverified): {}", fixed_count);
                 println!("    Remediation failed  : {}", failed_fix_count);
+                println!("    Unconfirmed         : {}", unconfirmed_count);
                 println!("    Already resolved    : {}", already_resolved_count);
                 if remediation_clean {
                     println!("    [✅ REMEDIATION INTEGRITY] PASS");
@@ -740,6 +1153,9 @@ fn main() -> Result<()> {
                         branch_name
                     );
                 }
+            }
+            if auto_heal && !remediation_clean {
+                std::process::exit(2);
             }
         }
         Commands::Refactor { file, symbol, strategy, payload, instruction } => {
@@ -783,6 +1199,20 @@ fn main() -> Result<()> {
             println!("    Promotion performed: NO");
         }
 
+        Commands::Tui { dir } => {
+            nexus_ast_tool::tui::run(Some(dir))?;
+        }
+        Commands::Review { hold, dir } => match hold {
+            Some(id) => nexus_ast_tool::hold::show(&dir, &id)?,
+            None => nexus_ast_tool::hold::list(&dir)?,
+        },
+        Commands::Promote { hold, dir } => {
+            let (ok, conflicts) = nexus_ast_tool::hold::promote(&dir, &hold)?;
+            println!("==> [Promote] {} file(s) promoted, {} conflict(s)", ok, conflicts);
+            if conflicts > 0 {
+                std::process::exit(3);
+            }
+        }
         Commands::Optimize { path, output } => {
             nexus_ast_tool::supervisor::Supervisor::self_optimize(&path, &output)?;
         }
@@ -792,4 +1222,9 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// PoC verdicts block promotion unless NEXUS_POC_MODE=advisory.
+fn poc_strict_mode() -> bool {
+    std::env::var("NEXUS_POC_MODE").map_or(true, |v| v != "advisory")
 }

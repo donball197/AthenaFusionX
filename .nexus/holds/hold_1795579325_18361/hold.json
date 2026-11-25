@@ -1,0 +1,21 @@
+{
+  "id": "hold_1795579325_18361",
+  "created_unix": 1795579325,
+  "authoritative_root": "/root/AthenaFusionX/nexus_audit_target",
+  "single_file": false,
+  "files": [
+    {
+      "rel": "index.php",
+      "status": "Held",
+      "findings": [
+        {
+          "pattern": "SQL_INJECTION",
+          "line": 4,
+          "patch": "    $stmt = $con->prepare(\"SELECT * FROM users WHERE id = ?\");\n    $stmt->bind_param(\"s\", $id);\n    if (!$stmt->execute()) {\n    // Handle error\n    }\n    $result = $stmt->get_result();"
+        }
+      ],
+      "orig_sha256": "a6a215d21e647fa4e6762806e2e3f6d081716c461facf6f08f5a34cc610c10ea",
+      "patched_sha256": "6b492d0062c88941d87024d411741d8cd7debf0b0cec8f6769f7addbe727ebcd"
+    }
+  ]
+}
