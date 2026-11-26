@@ -1539,17 +1539,44 @@ impl SubgoalCompletionEngine {
     pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
         let mut contract = Self::infer_contract_raw(node_id, objective);
         let scopes = MissionScopes::parse(objective);
-        // Merge prose deliverables from the node's objective AND the root
-        // directive (the original user prompt), but NOT from the criteria
-        // block (marker strings are handled by declared_criteria_contract).
-        // Fix B's nearest-verb rule handles read/write attribution within
-        // each clause.
-        let merge_text = if scopes.root_directive.is_empty() {
-            scopes.objective.to_string()
-        } else {
-            format!("{}\n{}", scopes.objective, scopes.root_directive)
-        };
-        Self::merge_prose_deliverables(&mut contract, &merge_text);
+        // Merge prose deliverables from the node's objective, never from the
+// criteria block (marker strings are handled by
+// declared_criteria_contract). The root directive (original user
+// prompt) is consulted only as a fallback when the objective shows
+// output intent (a write-verb) but names no deliverable itself and the
+// contract declares no artifacts -- the run 5dddb6d8 shape ("write the
+// result to X.md"). A node whose objective carries no write-verb
+// (execute / verify / read) must NOT adopt root-directive targets:
+// that leaked task_1's `sys_monitor_v2.py` into task_2's contract and
+// rejected its valid halt ("Terminal HALT rejected"). Within a clause,
+// extract_required_artifact_paths's nearest-verb rule resolves
+// read/write attribution.
+let objective_has_output_intent = scopes
+    .objective
+    .split(|c: char| !c.is_ascii_alphanumeric())
+    .any(|w| {
+        matches!(
+            w.to_ascii_lowercase().as_str(),
+            "write"
+                | "save"
+                | "export"
+                | "synthesize"
+                | "create"
+                | "implement"
+                | "integrate"
+                | "add"
+        )
+    });
+let merge_text = if !scopes.root_directive.is_empty()
+    && objective_has_output_intent
+    && extract_required_artifact_paths(scopes.objective).is_empty()
+    && contract.required_artifact_paths.is_empty()
+{
+    format!("{}\n{}", scopes.objective, scopes.root_directive)
+} else {
+    scopes.objective.to_string()
+};
+Self::merge_prose_deliverables(&mut contract, &merge_text);
         contract
     }
 
@@ -1688,20 +1715,9 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
             while start > min_start && !tokens[start - 1].ends_with(',') {
                 start -= 1;
             }
-            let clause_tokens = &tokens[start..=i];
-            let nearest_is_read = clause_tokens.iter().rev().any(|t| {
-                let norm = t.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_lowercase();
-                read_words.contains(&norm.as_str())
-            });
-            let has_write_verb = clause_tokens.iter().any(|t| {
-                let norm = t.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_lowercase();
-                write_words.contains(&norm.as_str())
-            });
-            let _ = (nearest_is_read, has_write_verb, was_criterion_marked);
-
-            // Match write-verbs as whole words, not substrings: a bare "to" is too
-            // generic (it's the infinitive/preposition in "read ... to understand"),
-            // and naive substring matching lets words like "tools" falsely match "to".
+            // Nearest-verb rule: walk backward from the path to the first verb in
+// the clause. A read-verb drops the path, a write-verb registers it,
+// and no verb means "do not assume write".
             let is_write_tgt = was_criterion_marked
                 || tokens[start..i]
                     .iter()

@@ -159,39 +159,54 @@ fi
 # --- 7b. Start mirror-agent sidecar (dormant unless NEXUS_MIRROR_DELEGATION=1) ---
 MIRROR_PID=""
 if [ -x "./mirror/target/release/mirror-agent" ] && [ -n "${NEXUS_MIRROR_DELEGATION:-}" ]; then
-    echo -e "\x1b[36m[2.5/3] Starting mirror-agent sidecar (delegation enabled)...\x1b[0m"
-    stdbuf -oL -eL ./mirror/target/release/mirror-agent serve \
-        --api reflection \
-        --model "${MIRROR_MODEL:-Beam-1.0-501B-A23B}" \
-        --workspace "$PWD" \
-        --bind 127.0.0.1:8081 \
-        --tools read,write \
-        --output /tmp/mirror-trace.jsonl \
-        --max-iterations 10 \
-        --max-exceptions 2 \
-        --turn-timeout-seconds 300 \
-        > /tmp/mirror-agent.log 2>&1 9>&- &
-    MIRROR_PID=$!
+    # Pre-flight: refuse the port if something already answers there. A stale
+    # sidecar from a previous boot would satisfy the health probe and fake
+    # readiness while our own child dies of "Address already in use" (os
+    # error 98) -- exactly the 2026-11-26 boot failure mode.
+    if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:8081/health"; then
+        echo -e "\x1b[31m>> [WARN] port 8081 already serving (stale mirror-agent?); delegation disabled.\x1b[0m"
+        echo -e "\x1b[31m>>        holder: lsof -nP -iTCP:8081 -sTCP:LISTEN   (or: fuser -v 8081/tcp)\x1b[0m"
+    else
+        echo -e "\x1b[36m[2.5/3] Starting mirror-agent sidecar (delegation enabled)...\x1b[0m"
+        stdbuf -oL -eL ./mirror/target/release/mirror-agent serve \
+            --api reflection \
+            --model "${MIRROR_MODEL:-Beam-1.0-501B-A23B}" \
+            --workspace "$PWD" \
+            --bind 127.0.0.1:8081 \
+            --tools read,write \
+            --output /tmp/mirror-trace.jsonl \
+            --max-iterations 10 \
+            --max-exceptions 2 \
+            --turn-timeout-seconds 300 \
+            > /tmp/mirror-agent.log 2>&1 9>&- &
+        MIRROR_PID=$!
 
-    MIRROR_READY=0
-    for i in $(seq 1 30); do
-        if curl -s -o /dev/null --max-time 1 -X GET \
-            "http://127.0.0.1:8081/health"; then
-            echo -e "\x1b[32m[✓] Mirror-agent sidecar ready after ${i}s.\x1b[0m"
-            MIRROR_READY=1
-            break
-        fi
-        if ! kill -0 "$MIRROR_PID" 2>/dev/null; then
-            echo -e "\x1b[31m>> [WARN] mirror-agent exited; delegation disabled.\x1b[0m"
+        MIRROR_READY=0
+        for i in $(seq 1 30); do
+            # Liveness FIRST: a bind failure exits the child fast and must not
+            # wait behind a health answer from some other process.
+            if ! kill -0 "$MIRROR_PID" 2>/dev/null; then
+                echo -e "\x1b[31m>> [WARN] mirror-agent exited (see /tmp/mirror-agent.log); delegation disabled.\x1b[0m"
+                tail -n 3 /tmp/mirror-agent.log 2>/dev/null || true
+                MIRROR_PID=""
+                break
+            fi
+            if curl -s -o /dev/null --max-time 1 -X GET \
+                "http://127.0.0.1:8081/health"; then
+                # Believe the probe only if our own child is still alive.
+                if kill -0 "$MIRROR_PID" 2>/dev/null; then
+                    echo -e "\x1b[32m[✓] Mirror-agent sidecar ready after ${i}s.\x1b[0m"
+                    MIRROR_READY=1
+                    break
+                fi
+            fi
+            sleep 1
+        done
+        if [ "$MIRROR_READY" -eq 0 ] && [ -n "$MIRROR_PID" ]; then
+            echo -e "\x1b[31m>> [WARN] mirror-agent did not become ready in 30s; delegation disabled.\x1b[0m"
+            kill -TERM "$MIRROR_PID" 2>/dev/null || true
             MIRROR_PID=""
-            break
         fi
-        sleep 1
-    done
-    if [ "$MIRROR_READY" -eq 0 ] && [ -n "$MIRROR_PID" ]; then
-        echo -e "\x1b[31m>> [WARN] mirror-agent did not become ready in 30s; delegation disabled.\x1b[0m"
-        kill -TERM "$MIRROR_PID" 2>/dev/null || true
-        MIRROR_PID=""
     fi
 fi
 

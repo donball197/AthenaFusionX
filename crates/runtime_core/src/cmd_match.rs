@@ -108,7 +108,7 @@ pub fn command_condition_met(cmd: &str, evidence: &str) -> bool {
 
     let stripped = strip_workspace_cd_prefix(cmd);
     let want = cmd_hash(stripped);
-    if hash_marker_present(&want, evidence) || cmd_ok_block_matches(&want, evidence) {
+    if hash_marker_present(&want, evidence) || cmd_ok_block_matches(&want, evidence) || prefix_match_command(&want, evidence) {
         return true;
     }
     // Segment fallback: a strategist may propose a compound command
@@ -181,6 +181,35 @@ fn hash_marker_present(want: &str, evidence: &str) -> bool {
 /// Legacy path: `[CMD_OK] Command: <cmd...>` may span multiple lines (as with
 /// the multi-line `python3 -c` commands in the logs) and ends at a line
 /// beginning with `Status:`.
+
+/// P1-a fix: When `want` is a short command name (e.g. "sed"), match any
+/// [CMD_OK] Command: line that STARTS with that name. This handles the case
+/// where the contract says `command: "sed"` but the actual command is
+/// `sed -i 's/...' pivot_test.rs`.
+fn prefix_match_command(want: &str, evidence: &str) -> bool {
+    let want = want.trim();
+    // Only apply prefix matching for short command names (1-2 words)
+    let want_words: Vec<&str> = want.split_whitespace().collect();
+    if want_words.len() > 2 {
+        return false; // too specific — use exact matching
+    }
+
+    for trimmed in evidence.lines().map(|l| l.trim()) {
+        if let Some(rest) = trimmed.strip_prefix("[CMD_OK] Command: ") {
+            let cmd = rest.trim();
+            // Check if the command starts with the wanted name
+            if cmd.starts_with(want) {
+                // Ensure it's a word boundary (next char is space or end)
+                let after = cmd[want.len()..].chars().next();
+                if after.is_none() || after == Some(' ') {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn cmd_ok_block_matches(want: &str, evidence: &str) -> bool {
     let mut capture: Option<String> = None;
     for line in evidence.lines() {
