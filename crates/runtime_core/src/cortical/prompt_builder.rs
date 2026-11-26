@@ -89,3 +89,88 @@ pub fn build_enhanced_mission(
         enhanced
     }
 }
+
+/// Extract the most recent conformance failure and NOOP messages from
+/// session evidence so the strategist prompt can include them. This closes
+/// the P0 feedback gap: the model must see what went wrong before it can
+/// generate a correction.
+///
+/// Returns a formatted block to prepend to the strategist prompt, or empty
+/// if no failures are recorded.
+pub fn conformance_feedback(evidence: &str) -> String {
+    let clean = crate::cortical::util::strip_read_bodies_for_markers(evidence);
+    let lines: Vec<&str> = clean.lines().map(str::trim_start).collect();
+
+    let mut failures: Vec<String> = Vec::new();
+    for l in lines.iter().rev() {
+        if let Some(rest) = l.strip_prefix("[WRITE_CONFORMANCE_FAILED]") {
+            let r = rest.trim().to_string();
+            if !failures.contains(&r) {
+                failures.push(r);
+            }
+            if failures.len() == 3 {
+                break;
+            }
+        }
+    }
+
+    // NOOP counts only if newer than the last real write.
+    let last_ok = lines.iter().rposition(|l| l.starts_with("[WRITE_OK]"));
+    let noop = lines
+        .iter()
+        .rposition(|l| l.starts_with("[WRITE_NOOP]"))
+        .filter(|&i| last_ok.map_or(true, |o| i > o))
+        .map(|i| lines[i]);
+
+    if failures.is_empty() && noop.is_none() {
+        return String::new();
+    }
+
+    let mut out = String::from("\n===== CRITICAL: YOUR PREVIOUS WRITE(S) FAILED =====\n");
+    if noop.is_some() {
+        out.push_str("Your last write was byte-identical to the file on disk. You MUST produce DIFFERENT content.\n");
+    }
+    for (i, f) in failures.iter().enumerate() {
+        out.push_str(&format!("Defect {}: {}\n", i + 1, f));
+    }
+    out.push_str("\nFIX REQUIREMENTS:\n- Write the COMPLETE file in ONE write_file call\n- Address EVERY defect listed above\n");
+    let python = failures
+        .iter()
+        .any(|f| f.contains(".py") || f.contains("SyntaxError") || f.contains("def "));
+    if python {
+        out.push_str("- Use REAL newlines between Python statements\n- NEVER join `import`, `def`, `class`, or `if` with semicolons on one line\n- Each `def` and `class` starts on its own line\n");
+    }
+    out.push_str("=====================================================\n");
+    out
+}
+
+#[cfg(test)]
+mod conformance_feedback_tests {
+    use super::conformance_feedback;
+
+    #[test]
+    fn failure_is_reported_and_deduped() {
+        let ev = "[WRITE_OK] a.py\n[WRITE_CONFORMANCE_FAILED] a.py: missing def get_metrics\n[WRITE_CONFORMANCE_FAILED] a.py: missing def get_metrics\n";
+        let f = conformance_feedback(ev);
+        assert!(f.contains("missing def get_metrics"));
+        assert_eq!(f.matches("Defect ").count(), 1);
+        assert!(f.contains("semicolons"));
+    }
+
+    #[test]
+    fn noop_before_last_write_is_stale() {
+        assert!(conformance_feedback("[WRITE_NOOP] a.py\n[WRITE_OK] a.py\n").is_empty());
+    }
+
+    #[test]
+    fn marker_inside_read_body_is_ignored() {
+        let ev = "[READ_OK] prompt_builder.rs\nFULL FILE CONTENT:\n[WRITE_CONFORMANCE_FAILED] x\n[PROPOSITION] p\n";
+        assert!(conformance_feedback(ev).is_empty());
+    }
+
+    #[test]
+    fn markdown_failure_gets_no_python_rules() {
+        let f = conformance_feedback("[WRITE_CONFORMANCE_FAILED] report.md: too short\n");
+        assert!(!f.contains("semicolons"));
+    }
+}

@@ -98,7 +98,21 @@ pub fn classify_duplicate(
     }
     if let AgentAction::WriteFile { path, .. } = action {
         let required = contract.required_artifact_paths.iter().any(|a| a.path == *path);
-        if required && !crate::evidence_markers::has_artifact_write(evidence, path) {
+        // P0-b: Only count ACCEPTED writes (post-conformance), not raw WRITE_OK
+            let has_accepted = evidence.lines().any(|l| {
+            l.trim()
+                .strip_prefix("[WRITE_ACCEPTED] ")
+                .is_some_and(|p| crate::evidence_paths::paths_equivalent(p.trim(), path))
+        });
+            if required && !has_accepted {
+            let conf_key = format!("`{}`:", path);
+            let conf_fails = evidence
+                .lines()
+                .filter(|l| l.contains("[WRITE_CONFORMANCE_FAILED]") && l.contains(&conf_key))
+                .count();
+            if conf_fails >= 2 {
+                return FilterOutcome::FilterAndDecay;
+            }
             return FilterOutcome::AllowRetry; // earlier write failed
         }
     }

@@ -402,8 +402,9 @@ impl CorticalLoop {
                     }
                     let mut kept = String::new();
                     for line in session.local_evidence.lines() {
-                        let drop = (line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
-                            && line.contains(path_part);
+                        let drop = ((line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
+                              && line.contains(path_part))
+                          || line.trim() == format!("[WRITE_ACCEPTED] {}", path_part);
                         if !drop {
                             kept.push_str(line);
                             kept.push('\n');
@@ -431,7 +432,7 @@ impl CorticalLoop {
             }
 
             // All candidate Python paths passed conformance. Remove stale
-            // failure records only after this successful verification.
+// failure records only after this successful verification.
             if mutation_paths.iter().any(|p| p.ends_with(".py")) {
                 session.local_evidence = session
                     .local_evidence
@@ -489,8 +490,9 @@ impl CorticalLoop {
                     self.log(format!("\x1b[1;31m>> [REPORT CONSISTENCY] {}\x1b[0m", msg));
                     let mut kept = String::new();
                     for line in session.local_evidence.lines() {
-                        let drop = (line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
-                            && line.contains(p.as_str());
+                        let drop = ((line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
+                              && line.contains(p.as_str()))
+                          || line.trim() == format!("[WRITE_ACCEPTED] {}", p);
                         if !drop {
                             kept.push_str(line);
                             kept.push('\n');
@@ -513,6 +515,15 @@ impl CorticalLoop {
                     }
                 }
                 return Ok(CortexState::Strategize);
+            }
+
+            // P0-b: every gate above passed. Mark each written path ACCEPTED.
+            for p in mutation_paths.iter().filter(|p| !p.is_empty() && !p.contains(' ')) {
+                let tag = format!("[WRITE_ACCEPTED] {}", p);
+                if !session.local_evidence.lines().any(|l| l.trim() == tag) {
+                    session.local_evidence.push_str(&tag);
+                    session.local_evidence.push('\n');
+                }
             }
         }
 

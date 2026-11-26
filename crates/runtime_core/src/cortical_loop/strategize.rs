@@ -237,6 +237,7 @@ impl CorticalLoop {
         // Strategist that write_file is available while continuing to pass
         // the old execute_command hypothesis as the authoritative strategy.
         //
+
         // This is intentionally upstream of EpistemicEngine::propose_action().
         // That function already force-selects the native tool for explicit
         // strategies, so the Cortex must supply the correct strategy here.
@@ -405,7 +406,7 @@ impl CorticalLoop {
                     } else {
                         "not accepted by deterministic completion verification"
                     };
-                    (kind, l.chars().take(400).collect::<String>())
+                    (kind, l.chars().take(2000).collect::<String>())
                 })
                 .unwrap_or(("rejected", String::new()));
             let since_last_ok = strip_read_bodies_for_markers(&session.local_evidence);
@@ -637,6 +638,20 @@ impl CorticalLoop {
             enhanced_mission
         };
 
+        // P0-a: attach conformance feedback to THIS turn's prompt. Never
+        // mutates evidence, so it cannot accumulate or self-match.
+        let conf_feedback =
+            crate::cortical::prompt_builder::conformance_feedback(&session.local_evidence);
+        let enhanced_mission = if conf_feedback.is_empty() {
+            enhanced_mission
+        } else {
+            self.log(
+                "\x1b[1;33m>> [CONFORMANCE FEEDBACK] Attached to strategist prompt.\x1b[0m"
+                    .to_string(),
+            );
+            format!("{}\n{}", enhanced_mission, conf_feedback)
+        };
+
         let proposal_strategy = veto_pivot_strategy(&active_strategy, session);
         session.budget.record_call();
 
@@ -695,6 +710,14 @@ impl CorticalLoop {
         // A SearchCode with an empty query would fail at the executor
         // anyway; rejecting here forces the parse-fault recovery path
         // below to run and feed the schema hint back to the strategist.
+        for action in &mut actions {
+            if let AgentAction::WriteFile { path, content, .. } = action {
+                *content = crate::proposal_sanitize::expand_python_semicolons(
+                    content.as_str(), path.as_str()
+                );
+            }
+        }
+
         if actions.is_empty() {
             if let Some(intercepted) =
                 crate::action_intercept::intercept_fallback_action(&raw_proposal)
@@ -933,10 +956,10 @@ impl CorticalLoop {
                 .unwrap_or_default();
             let parse_fault_obs = format!(
                 "[PARSE_FAULT] Proposal could not be deserialized as a valid AgentAction. \
-Raw proposal (truncated to 500 chars): {}\n\
+Raw proposal (truncated to 2000 chars): {}\n\
 [PARSE_FAULT_ACTION] Re-propose using a valid AgentAction type with its required \
 fields. Do NOT repeat the rejected proposal verbatim. Use the key \"type\" for the action name and put ALL fields at the top level of the object (never nested under action_input or args).{}",
-                raw_proposal.chars().take(500).collect::<String>(),
+                raw_proposal.chars().take(2000).collect::<String>(),
                 schema_hint
             );
             let snippet: String = raw_proposal.chars().take(500).collect();
@@ -1389,6 +1412,7 @@ fn strip_read_bodies_for_markers(evidence: &str) -> String {
                 || t.starts_with("[READ_CHUNK_OK]")
                 || t.starts_with("[WRITE_OK]")
                 || t.starts_with("[WRITE_NOOP]")
+                || t.starts_with("[WRITE_ACCEPTED]")
                 || t.starts_with("[CMD_OK]")
                 || t.starts_with("[HALT]")
                 || t.starts_with("[HALT_REJECTED")
