@@ -618,6 +618,48 @@ fn truncate_at_unquoted_stopper(line: &str, stoppers: &[&str]) -> String {
 /// Unlike `extract_named_target` (single first-match), this scans the
 /// entire objective, deduplicates, and returns targets in order of
 /// appearance.
+/// P1-a: Extract ALL explicitly named shell commands from an objective.
+/// Handles "use 'sed'", "including grep", "run exactly: python3 ...", etc.
+fn extract_all_named_commands(text: &str) -> Vec<String> {
+    use std::collections::BTreeSet;
+    const KNOWN_COMMANDS: &[&str] = &[
+        "sed", "awk", "grep", "rg", "cat", "echo", "python3", "python",
+        "cargo", "git", "ls", "find", "curl", "wget", "head", "tail",
+        "sort", "uniq", "wc", "diff", "cp", "mv", "rm", "mkdir", "touch",
+        "chmod", "chown", "tar", "zip", "unzip", "make", "gcc", "rustc",
+    ];
+    let mut found: BTreeSet<String> = BTreeSet::new();
+    for cmd in KNOWN_COMMANDS {
+        let patterns = [
+            format!("use '{}'", cmd),
+            format!("use `{}`", cmd),
+            format!("use \"{}\"", cmd),
+            format!("including {}", cmd),
+            format!("run {}", cmd),
+            format!("execute {}", cmd),
+            format!("using `{}`", cmd),
+            format!("using '{}'", cmd),
+            format!("`{}", cmd),
+        ];
+        for p in &patterns {
+            if text.contains(p.as_str()) {
+                found.insert(cmd.to_string());
+            }
+        }
+    }
+    for leader in ["run exactly:", "execute:", "run:", "command:"] {
+        if let Some(pos) = text.to_lowercase().find(leader) {
+            let rest = &text[pos + leader.len()..];
+            let line = rest.lines().next().unwrap_or("").trim();
+            let first_word = line.split_whitespace().next().unwrap_or("");
+            if KNOWN_COMMANDS.contains(&first_word) {
+                found.insert(first_word.to_string());
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
 pub(crate) fn extract_all_named_targets(objective: &str, marker: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut search_from = 0usize;
@@ -853,10 +895,26 @@ fn declared_criteria_contract(
     }
 
     if criteria_text.contains("CMD_OK") {
+        // P1-a: Extract ALL named commands from multi-step objectives.
+        // The old code only extracted ONE command via extract_required_command
+        // and fell back to CommandMarkerAcquired (any command satisfies),
+        // which is why "use 'sed'" was silently dropped from pivot_test.rs.
+        // P1-a: Try extract_required_command first (gets full command like
+        // "cargo check --package foo"). Only fall back to named-command scan
+        // for multi-step directives where extract_required_command returns None.
         if let Some(command) = extract_required_command(full_text) {
             conditions.push(CompletionCondition::CommandExecutionVerified { command });
         } else {
-            conditions.push(CompletionCondition::CommandMarkerAcquired);
+            let named = extract_all_named_commands(full_text);
+            if !named.is_empty() {
+                for command in &named {
+                    conditions.push(CompletionCondition::CommandExecutionVerified {
+                        command: command.clone(),
+                    });
+                }
+            } else {
+                conditions.push(CompletionCondition::CommandMarkerAcquired);
+            }
         }
     }
 
