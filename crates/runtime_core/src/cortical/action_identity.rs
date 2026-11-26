@@ -64,3 +64,25 @@ pub(crate) fn action_key(action: &AgentAction) -> String {
         None => format!("{:?}", action),
     }
 }
+
+/// FIX BUG-17: canonical "does this action touch `path`" predicate, used by
+/// the code-shift listener to distinguish self-inflicted mutations from
+/// external ones. Prefer this over substring matching on `local_evidence`,
+/// which also matches inherited DAG lineage and critic text.
+pub(crate) fn action_touches_path(action: &crate::agent_protocol::AgentAction, path: &str) -> bool {
+    use crate::agent_protocol::AgentAction as A;
+    match action {
+        A::PatchFile { path: p, .. }
+        | A::ReadFunction { path: p, .. }
+        | A::ReadFile { path: p, .. }
+        | A::ReadFileChunk { path: p, .. }
+        | A::SearchCode { path: p, .. }
+        | A::WriteFile { path: p, .. }
+        | A::ReplaceLines { path: p, .. }
+        | A::DiffPatch { path: p, .. }
+        | A::SynthesizeReport { output_path: p, .. }
+        | A::PatchFunction { path: p, .. } => p == path,
+        A::AtomicPatch { patches, .. } => patches.iter().any(|fp| fp.path == path),
+        _ => false,
+    }
+}

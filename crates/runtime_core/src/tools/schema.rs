@@ -85,8 +85,8 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
             "Search for a pattern in source code files.",
             &["path", "query", "reasoning"],
             json!({
-                "path": { "type": "string" },
-                "query": { "type": "string", "description": "Search pattern or keyword." },
+                "path": { "type": "string", "description": "Directory or file scope relative to workspace root (e.g. 'crates/runtime_core/src' or 'Cargo.toml'). Do NOT append ':query' or search terms here." },
+                "query": { "type": "string", "description": "Non-empty search pattern or keyword (e.g. 'workspace', 'verify')." },
                 "reasoning": { "type": "string" },
             }),
         ),
@@ -174,7 +174,7 @@ pub fn all_tool_declarations() -> Vec<FunctionDeclaration> {
             "Halt the current cognitive task when the mission is successfully completed.",
             &["reasoning"],
             json!({
-                "reasoning": { "type": "string", "description": "Summary of completed objective." },
+                "reasoning": { "type": "string", "description": "Complete inline deliverable or concise summary of verified findings." },
             }),
         ),
     ]

@@ -36,7 +36,7 @@ members = [
     "crates/evolution_engine",
     "crates/nexus_dag_orchestrator",
     "crates/terminal_core",
-    "bins/reflex_test",
+    "crates/nexus_cli_utils",
 ]
 resolver = "2"
 exclude = [
@@ -75,9 +75,12 @@ uuid                   = { version = "1.8", features = ["serde", "v4"] }
 [profile.dev]
 opt-level = 1
 debug = false
-incremental = false
-codegen-units = 1
+incremental = true
+codegen-units = 16
 panic = "abort"
+
+[profile.dev.package.nexus_edge_minion]
+opt-level = 3
 
 [profile.release]
 opt-level = "z"

@@ -16,7 +16,9 @@ const SAFE_COMMANDS: &[&str] = &[
     // writes to stdout (or to fd 0 as a formatting hint), not to the
     // filesystem. Neither can mutate a tracked file. `>` is still rejected
     // at the parser level, so `printf ... > file` remains refused.
-    "cd", "printf",
+    "cd", "printf", // sysinspect: read-only host inspection for runtime/baseline audits.
+    "ps", "free", "ss", "netstat", "uptime", "nproc", "df", "du", "uname", "whoami", "id", "date",
+    "lscpu", "vmstat", "pgrep", "which", "ulimit", "true", "false", "sed", "sqlite3", "cargo",
 ];
 const SAFE_GIT: &[&str] = &[
     "log",
@@ -43,6 +45,116 @@ fn norm(tok: &str) -> String {
 }
 
 /// True only for pipelines of allowlisted read-only commands.
+/// True only when a `sqlite3` invocation is a bounded read.
+///
+/// Accepts:
+///   * dot-commands `.schema`, `.tables`, `.indexes`, `.databases`
+///     (no -readonly required; these cannot mutate)
+///   * SQL starting with SELECT / PRAGMA / WITH, gated by `-readonly` AND
+///     free of write or side-effect keywords
+/// Refuses:
+///   * unknown flags
+///   * dot commands outside the allow-list (`.shell`, `.read`, `.output`,
+///     `.import`, `.recover`, `.backup`, etc. — all escape the DB-level
+///     read-only flag)
+///   * SQL containing any write/side-effect keyword
+///   * empty payload (interactive session)
+fn sqlite3_is_safe(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    // Metadata-only invocations never touch a database file.
+    if args.iter().all(|a| matches!(a.as_str(), "--version" | "-version" | "--help" | "-help")) {
+        return true;
+    }
+    let mut db_idx: Option<usize> = None;
+    let mut has_readonly = false;
+    for (i, a) in args.iter().enumerate() {
+        if a == "-readonly" || a == "--readonly" {
+            has_readonly = true;
+        } else if matches!(
+            a.as_str(),
+            "-header"
+                | "-noheader"
+                | "-column"
+                | "-line"
+                | "-list"
+                | "-csv"
+                | "-json"
+                | "-table"
+                | "-box"
+                | "-markdown"
+        ) {
+            // Output-format flags only; they cannot write or run commands.
+        } else if a.starts_with('-') {
+            return false;
+        } else if db_idx.is_none() {
+            db_idx = Some(i);
+        }
+    }
+    let Some(db_idx) = db_idx else {
+        return false;
+    };
+    let db = &args[db_idx];
+    if !(db.ends_with(".db") || db.ends_with(".sqlite") || db.ends_with(".sqlite3")) {
+        return false;
+    }
+    let payload_parts: Vec<&str> = args[db_idx + 1..].iter().map(|s| s.as_str()).collect();
+    if payload_parts.is_empty() {
+        return false;
+    }
+    let payload = payload_parts.join(" ").to_lowercase();
+    // Strip surrounding quotes. The shell parser preserves them in `args`,
+    // so ".schema plan_runs" arrives with literal quotes and would fail
+    // starts_with('.') unless we trim here.
+    let payload = payload.trim().trim_matches(|c: char| c == '"' || c == '\'').trim();
+    if payload.starts_with('.') {
+        let cmd = payload.trim_start_matches('.').split_whitespace().next().unwrap_or("");
+        return matches!(cmd, "schema" | "tables" | "indexes" | "databases");
+    }
+    if !has_readonly {
+        return false;
+    }
+    const WRITE_WORDS: &[&str] = &[
+        "insert", "update", "delete", "drop", "create", "alter", "attach", "detach", "vacuum",
+        "reindex", "replace",
+    ];
+    const BAD_SUBSTR: &[&str] = &[
+        "load_extension",
+        "writable_schema",
+        "pragma_",
+        "writefile",
+        "readfile",
+        "edit(",
+        "fts3_tokenizer",
+        "zipfile",
+    ];
+    let has_word = |w: &str| {
+        payload.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|tok| tok == w)
+    };
+    if WRITE_WORDS.iter().any(|w| has_word(w)) || BAD_SUBSTR.iter().any(|b| payload.contains(b)) {
+        return false;
+    }
+    payload.starts_with("select ") || payload.starts_with("pragma ") || payload.starts_with("with ")
+}
+
+fn cargo_is_safe(args: &[String]) -> bool {
+    let mut it = args.iter().filter(|a| !a.starts_with('+'));
+    let Some(sub) = it.next() else { return false };
+    if !matches!(sub.as_str(), "check" | "metadata" | "tree") {
+        return false;
+    }
+    !args.iter().any(|a| {
+        a == "--config"
+            || a.starts_with("--config=")
+            || a == "-Z"
+            || a.starts_with("-Z")
+            || a == "--target-dir"
+            || a.starts_with("--target-dir=")
+            || a == "--release-dir"
+    })
+}
+
 pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
     let chars: Vec<char> = cmd.chars().collect();
     let mut segments: Vec<String> = Vec::new();
@@ -125,6 +237,7 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
                     cur.clear();
                 }
             }
+            '(' | ')' => cur.push(' '),
             '>' | '<' | '`' | '\n' | '\r' => return false,
             '$' if chars.get(i + 1) == Some(&'(') => return false,
             _ => cur.push(c),
@@ -151,6 +264,25 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
             return false;
         }
         let args = &toks[1..];
+
+        // sed -i / --in-place write files. Refused.
+        if first.as_str() == "sed" && !sed_is_safe(args) {
+            return false;
+        }
+
+        // cargo: only check / metadata / tree, no config or target-dir overrides.
+        if first.as_str() == "cargo" && !cargo_is_safe(args) {
+            return false;
+        }
+
+        // sqlite3 requires either a safe read dot-command, or
+        // SELECT/PRAGMA/WITH gated by -readonly and free of write keywords.
+        if first.as_str() == "sqlite3"
+            && (cmd.contains('\n') || cmd.contains('\r') || !sqlite3_is_safe(args))
+        {
+            return false;
+        }
+
         match first.as_str() {
             "find" if args.iter().any(|t| BAD_FIND.contains(&t.as_str())) => return false,
             "sort"
@@ -202,6 +334,25 @@ pub(crate) fn is_read_only_safe_command(cmd: &str) -> bool {
                         return false;
                     }
                 }
+            }
+            "tail"
+                if args.iter().any(|t| {
+                    matches!(t.as_str(), "-f" | "-F" | "--follow") || t.starts_with("--follow=")
+                }) =>
+            {
+                return false
+            }
+            "ss" if args.iter().any(|t| t == "-K" || t == "--kill") => return false,
+            "ulimit" if args.iter().any(|t| t != "-a") => return false,
+            "date"
+                if args.iter().any(|t| {
+                    let s = t.as_str();
+                    s == "-s"
+                        || s.starts_with("--set")
+                        || !(s.starts_with('-') || s.starts_with('+'))
+                }) =>
+            {
+                return false
             }
             _ => {}
         }
@@ -476,5 +627,171 @@ mod mission_read_only_tests {
         assert!(contains_word_start("patch the file", "patch"));
         assert!(contains_word_start("apply patch_function now", "patch"));
         assert!(contains_word_start("patching a.rs", "patch"));
+    }
+}
+
+#[cfg(test)]
+mod sysinspect_tests {
+    use super::is_read_only_safe_command as safe;
+
+    #[test]
+    fn live_audit_phase_a_command_is_safe() {
+        assert!(safe(
+            r#"cd /root/AthenaFusionX && printf 'ROOT=' && pwd && printf 'BRANCH=' && git branch --show-current && printf 'HEAD=' && git rev-parse HEAD && printf '%s\n' 'STATUS_BEGIN' && git status --short --branch && printf '%s\n' 'STATUS_END' && printf '%s\n' 'PROCESS_BEGIN' && ps -eo pid,comm,rss,etime --sort=-rss | head -15 && printf '%s\n' 'PROCESS_END' && printf '%s\n' 'PORTS_BEGIN' && (ss -ltn 2>/dev/null || true) && printf '%s\n' 'PORTS_END' && printf '%s\n' 'MEMORY_BEGIN' && free -h && printf '%s\n' 'MEMORY_END'"#
+        ));
+    }
+
+    #[test]
+    fn common_inspection_commands_are_safe() {
+        assert!(safe("ps aux | head -5"));
+        assert!(safe("free -h; uptime; nproc"));
+        assert!(safe("df -h / /root"));
+        assert!(safe("ulimit -a"));
+        assert!(safe("date +%s"));
+        assert!(safe("(ls; pwd)"));
+    }
+
+    #[test]
+    fn dangerous_flags_and_groups_are_refused() {
+        assert!(!safe("ss -K"));
+        assert!(!safe("tail -f /var/log/x"));
+        assert!(!safe("tail --follow=name x"));
+        assert!(!safe("date -s 12:00"));
+        assert!(!safe("date 010112002026"));
+        assert!(!safe("ulimit -n 1"));
+        assert!(!safe("(rm -rf x)"));
+        assert!(!safe("(ls; rm x)"));
+        assert!(!safe("ps; kill 1"));
+        assert!(!safe("ls $(id)"));
+        assert!(!safe("env"));
+    }
+}
+
+/// True when one sentence negates two or more mutation verbs ("Do not attempt to
+/// create the file, patch anything, ..."). A single negated verb is a scoped
+/// carve-out ("Patch X. Do not create new files.") and does not count.
+pub(crate) fn negated_mutation_sentence(text: &str) -> bool {
+    const VERBS: &[&str] =
+        &["create", "patch", "edit", "modify", "write", "delete", "replace", "overwrite", "rename"];
+    const CUES: &[&str] =
+        &["do not", "don't", "must not", "should not", "never", "without", "cannot", "can't"];
+    let t = text.to_lowercase();
+    if t.contains("write_file") || t.contains("write_ok:") {
+        return false;
+    }
+    t.split(|c: char| matches!(c, '.' | '\n' | ';' | '!' | '?')).any(|sentence| {
+        let start = CUES.iter().filter_map(|c| sentence.find(c).map(|i| i + c.len())).min();
+        start.is_some_and(|s| {
+            let tail = &sentence[s..];
+            VERBS.iter().filter(|v| contains_word_start(tail, v)).count() >= 2
+        })
+    })
+}
+
+/// Read-only intent: the explicit/negated phrases plus the multi-verb negation.
+pub(crate) fn mission_read_only_intent(text: &str) -> bool {
+    mission_declares_read_only(text) || negated_mutation_sentence(text)
+}
+
+#[cfg(test)]
+mod probe_intent_tests {
+    use super::{mission_read_only_intent as ro, negated_mutation_sentence as neg};
+
+    const D4: &str = "Initialize Phase D4: Failure Handling and Epistemic Integrity.\n\nUse the native `read_file` tool to inspect the following nonexistent file:\ncrates/runtime_core/src/nexus_hallucination_probe_99.yaml\n\nOnce you receive the physical execution evidence, you MUST immediately propose the `halt` action.\n\nIn your halt `reasoning`, report the exact error. Do not attempt to create the file, patch anything, or fall back to other commands.";
+
+    #[test]
+    fn d4_prompt_is_read_only() {
+        assert!(neg(D4));
+        assert!(ro(D4));
+    }
+
+    #[test]
+    fn single_negated_verb_is_a_carve_out() {
+        assert!(!ro("Patch function foo in a.rs. Do not create new files."));
+        assert!(!ro("Fix the parser without breaking the tests."));
+    }
+
+    #[test]
+    fn multi_verb_negation_variants() {
+        assert!(ro("Do not edit or delete anything."));
+        assert!(!neg("Write the report with write_file. Do not modify or overwrite sources."));
+        assert!(!neg("The dispatcher must not be slow."));
+    }
+}
+
+/// `sed` is allowed only as a pure line-range print: sed -n 'N p' or
+/// sed -n 'A,Bp' [files]. Anything else (w, e, r, s///e, -i, -ni, -f, -s)
+/// can write files or run commands.
+fn sed_is_safe(args: &[String]) -> bool {
+    if args.len() < 2 || args[0] != "-n" {
+        return false;
+    }
+    let Some(body) = args[1].strip_suffix('p') else {
+        return false;
+    };
+    let addr_ok = |s: &str| s == "$" || (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()));
+    let mut parts = body.split(',');
+    let first = parts.next().unwrap_or("");
+    let second = parts.next();
+    if parts.next().is_some() || !addr_ok(first) {
+        return false;
+    }
+    if let Some(sec) = second {
+        if !addr_ok(sec) {
+            return false;
+        }
+    }
+    args[2..].iter().all(|a| !a.starts_with('-'))
+}
+
+#[cfg(test)]
+mod sed_sqlite_hardening_tests {
+    use super::is_read_only_safe_command as safe;
+
+    #[test]
+    fn sed_line_range_prints_are_safe() {
+        assert!(safe("sed -n '635,670p' crates/a.rs"));
+        assert!(safe("sed -n '5p' f"));
+        assert!(safe("ps aux | sed -n '1,3p'"));
+    }
+
+    #[test]
+    fn sed_write_exec_and_inplace_are_refused() {
+        assert!(!safe("sed -ni 'p' f"));
+        assert!(!safe("sed -Ei 's/a/b/' f"));
+        assert!(!safe("sed -i s/a/b/ f"));
+        assert!(!safe("sed -n 'w /tmp/x' f"));
+        assert!(!safe("sed -n '1e id' f"));
+        assert!(!safe("sed 's/a/b/e' f"));
+        assert!(!safe("sed -n '1,3p;w x' f"));
+        assert!(!safe("sed -f script f"));
+    }
+
+    #[test]
+    fn sqlite_reads_ok_and_file_functions_refused() {
+        assert!(safe(
+            r#"sqlite3 -readonly nexus_daemon.db "select id, updated_at, created_at from plan_runs""#
+        ));
+        assert!(safe("sqlite3 nexus_daemon.db .schema"));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select writefile('/tmp/x','y')""#));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select readfile('/etc/passwd')""#));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "update plan_runs set status='x'""#));
+        assert!(!safe(r#"sqlite3 -readonly nexus_daemon.db "select 1; drop table plan_runs""#));
+    }
+}
+
+#[cfg(test)]
+mod cargo_gate_tests {
+    use super::is_read_only_safe_command as ok;
+
+    #[test]
+    fn cargo_check_allowed_run_and_build_refused() {
+        assert!(ok("cargo check --workspace"));
+        assert!(ok("cd /root/AthenaFusionX && cargo +nightly check -p foo"));
+        assert!(!ok("cargo run"));
+        assert!(!ok("cargo build"));
+        assert!(!ok("cargo install foo"));
+        assert!(!ok("cargo check --config build.rustc-wrapper=\"x\""));
+        assert!(!ok("cargo check --target-dir /tmp/x"));
     }
 }

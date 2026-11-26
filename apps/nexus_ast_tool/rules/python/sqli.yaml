@@ -11,3 +11,11 @@ tree_sitter_query: |
     function: (attribute object: (identifier) @obj attribute: (identifier) @method (#match? @method "^(execute|executemany)$"))
     arguments: (argument_list (string (interpolation)) @danger.sql_injection)
   )
+  (call
+    function: (identifier) @func (#eq? @func "text")
+    arguments: (argument_list (string (interpolation)) @danger.sql_injection)
+  )
+  (call
+    function: (identifier) @func (#eq? @func "text")
+    arguments: (argument_list (binary_operator) @danger.sql_injection)
+  )

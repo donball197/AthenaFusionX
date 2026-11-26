@@ -104,6 +104,52 @@ impl Verifier {
         Self::evaluate_contract_criteria(stdout, criteria)
     }
 
+    /// True only when the current node has a successful command record
+    /// matching the required command. Ancestor lineage is never command proof
+    /// for the current node.
+    pub fn command_ok_for(evidence: &str, command: &str) -> bool {
+        if command.trim().is_empty() {
+            return false;
+        }
+
+        let own = Self::current_node_evidence(evidence);
+        crate::cmd_match::command_condition_met(command, &own)
+    }
+
+    /// Remove inherited DAG evidence before checking node-local requirements.
+    ///
+    /// An unterminated lineage envelope intentionally suppresses the remainder
+    /// of the evidence: malformed inherited data must not become local proof.
+    fn current_node_evidence(evidence: &str) -> String {
+        const START: &str = "[DAG LINEAGE INHERITED EVIDENCE";
+        const END: &str = "[DAG LINEAGE COMPLETE";
+
+        let mut in_lineage = false;
+        let mut own = Vec::new();
+
+        for line in evidence.lines() {
+            let trimmed = line.trim_start();
+
+            if trimmed.starts_with(START) {
+                in_lineage = true;
+                continue;
+            }
+
+            if trimmed.starts_with(END) {
+                if in_lineage {
+                    in_lineage = false;
+                    continue;
+                }
+            }
+
+            if !in_lineage {
+                own.push(line);
+            }
+        }
+
+        own.join("\n")
+    }
+
     /// Deterministic contract verification based on explicit node criteria.
     ///
     /// Explicit success criteria are authoritative. Legacy node-id rules are
@@ -131,11 +177,16 @@ impl Verifier {
             );
         }
 
+        let own_evidence = Self::current_node_evidence(evidence);
+
         for criterion in criteria {
             let criterion = criterion.trim();
 
+            // This legacy criterion is circular: task_manager emits
+            // [DAG NODE COMPLETE] after Cortex proposes completion. That
+            // wrapper cannot independently verify the node objective.
             let satisfied = if criterion == "NODE_OBJECTIVE_EXECUTED_AND_VERIFIED" {
-                evidence.contains("[DAG NODE COMPLETE]")
+                false
             } else if let Some(path) = criterion.strip_prefix("READ_OK:") {
                 read_evidence_matches_path(evidence, path.trim())
             } else if let Some(target) = criterion.strip_prefix("READ_FUNCTION_OK:") {
@@ -145,10 +196,13 @@ impl Verifier {
                 crate::evidence_markers::read_function_marker_satisfies(evidence, path, func)
             } else if let Some(target) = criterion.strip_prefix("SEARCH_CODE_OK:") {
                 crate::evidence_markers::search_term_satisfied(evidence, target)
+            } else if let Some(target) = criterion.strip_prefix("SEARCH_CHECKED_OK:") {
+                crate::evidence_markers::search_checked_satisfied(evidence, target)
             } else if criterion == "ANALYSIS_OK" {
-                evidence.contains("[HALT]")
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[HALT]"))
+                    && crate::halt_gate::halt_range_gate(&own_evidence).is_none()
             } else if criterion == "SEARCH_MEMORY_OK" {
-                evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[SEARCH_MEMORY_OK]"))
             } else if let Some(path) = criterion.strip_prefix("WRITE_OK:") {
                 let target = path.trim();
                 crate::evidence_markers::write_path_satisfied(evidence, target)
@@ -181,40 +235,66 @@ impl Verifier {
                 // bounded by the next bracketed marker so a Status line
                 // belonging to a later, unrelated command block can't be
                 // matched instead.
-                let lines: Vec<&str> = evidence.lines().collect();
-                lines.iter().enumerate().any(|(i, line)| {
-                    // Trimmed: an indented [CMD_OK] counts. Scan bounded by
-                    // is_marker_line so bracketed command output does not
-                    // truncate the scan early.
-                    line.trim_start().starts_with("[CMD_OK]")
-                        && lines[i + 1..]
-                            .iter()
-                            .take_while(|l| !crate::evidence_paths::is_marker_line(l))
-                            .any(|l| l.trim() == "Status: exit status: 0")
-                })
+                let own = evidence
+                    .rfind("[DAG LINEAGE COMPLETE sha256:")
+                    .and_then(|i| evidence[i..].find('\n').map(|j| &evidence[i + j + 1..]))
+                    .unwrap_or(evidence);
+                let reject_after_ok = match (own.rfind("[HALT_REJECTED"), own.rfind("[CMD_OK]")) {
+                    (Some(r), Some(o)) if r > o => true,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                !reject_after_ok && crate::evidence_paths::cmd_ok_binds_command(own)
             } else if criterion == "PATCH_FUNCTION_OK" {
-                evidence.contains("[PATCH_FUNCTION_OK]")
-                    || evidence.contains("[PATCH_IDEMPOTENT_OK]")
+                own_evidence.lines().any(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("[PATCH_FUNCTION_OK]") || t.starts_with("[PATCH_IDEMPOTENT_OK]")
+                })
             } else if let Some(func) = criterion.strip_prefix("PATCH_FUNCTION_OK:") {
                 let mut parts = func.splitn(2, ':');
-                let path = parts.next().unwrap_or("").trim();
-                let name = parts.next().unwrap_or("").trim();
-                (evidence.contains("[PATCH_FUNCTION_OK]")
-                    || evidence.contains("[PATCH_IDEMPOTENT_OK]"))
-                    && (evidence.contains(func)
-                        || (!path.is_empty()
-                            && !name.is_empty()
-                            && evidence.contains(path)
-                            && evidence.contains(name))
-                        || (!name.is_empty() && evidence.contains(name)))
+                let path_or_name = parts.next().unwrap_or("").trim();
+                let maybe_name = parts.next().unwrap_or("").trim();
+                if path_or_name.is_empty() {
+                    false
+                } else if maybe_name.is_empty() {
+                    // Single-field form. Bind the function name to a real
+                    // [PATCH_FUNCTION_OK] or [PATCH_IDEMPOTENT_OK] record,
+                    // so the name appearing in unrelated read text does
+                    // not satisfy this criterion.
+                    evidence.lines().any(|l| {
+                        let t = l.trim_start();
+                        let rest = match t.strip_prefix("[PATCH_FUNCTION_OK]") {
+                            Some(r) => r,
+                            None => match t.strip_prefix("[PATCH_IDEMPOTENT_OK]") {
+                                Some(r) => r,
+                                None => return false,
+                            },
+                        };
+                        rest.contains(path_or_name)
+                    })
+                } else {
+                    // Two-field form (<path>:<fn>). Delegate to the shared
+                    // record-scoped matcher, which binds kind + path + fn.
+                    crate::evidence_markers::patch_path_satisfied(
+                        evidence,
+                        "PATCH_FUNCTION_OK",
+                        path_or_name,
+                        Some(maybe_name),
+                    )
+                }
             } else if criterion == "DIFF_PATCH_OK" {
-                evidence.contains("[DIFF_PATCH_OK]")
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[DIFF_PATCH_OK]"))
             } else if let Some(path) = criterion.strip_prefix("DIFF_PATCH_OK:") {
-                evidence.contains("[DIFF_PATCH_OK]") && evidence.contains(path)
+                crate::evidence_markers::patch_path_satisfied(evidence, "DIFF_PATCH_OK", path, None)
             } else if criterion == "REPLACE_LINES_OK" {
-                evidence.contains("[REPLACE_LINES_OK]")
+                own_evidence.lines().any(|l| l.trim_start().starts_with("[REPLACE_LINES_OK]"))
             } else if let Some(path) = criterion.strip_prefix("REPLACE_LINES_OK:") {
-                evidence.contains("[REPLACE_LINES_OK]") && evidence.contains(path)
+                crate::evidence_markers::patch_path_satisfied(
+                    evidence,
+                    "REPLACE_LINES_OK",
+                    path,
+                    None,
+                )
             } else if criterion == "DAG_LINEAGE_OK" {
                 crate::outcome_verifier::verify_lineage_provenance(evidence)
             } else {
@@ -261,6 +341,84 @@ mod tests {
         let unrelated =
             Verifier::verify_contract("task_1", "[SEARCH_CODE_OK] host observations", &criteria);
         assert!(matches!(unrelated, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn checked_criterion_accepts_no_match_but_strict_does_not() {
+        let no_match = concat!(
+            "[SEARCH_CODE_OK] Path: bins | Query: 'todo!'\n",
+            "No code matches found in specified path.\n"
+        );
+
+        let checked = vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()];
+        assert_eq!(
+            Verifier::verify_contract("t", no_match, &checked),
+            VerificationResult::Success,
+            "checked-search must accept a documented no-match"
+        );
+
+        let strict = vec!["SEARCH_CODE_OK:bins:todo!".to_string()];
+        assert!(
+            matches!(
+                Verifier::verify_contract("t", no_match, &strict),
+                VerificationResult::Retry(_)
+            ),
+            "strict search must reject a documented no-match"
+        );
+    }
+
+    #[test]
+    fn checked_criterion_rejects_bare_marker() {
+        let criteria = vec!["SEARCH_CHECKED_OK:bins:todo!".to_string()];
+        let bare = "[SEARCH_CODE_OK] Path: bins | Query: 'todo!'\n";
+        assert!(matches!(
+            Verifier::verify_contract("t", bare, &criteria),
+            VerificationResult::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn bins_criterion_rejects_crates_only_search() {
+        let criteria = vec!["SEARCH_CODE_OK:bins:unimplemented!".to_string()];
+        let evidence = "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nfoo.rs:1: unimplemented!()\n";
+        let result = Verifier::verify_contract("t", evidence, &criteria);
+        assert!(
+            matches!(result, VerificationResult::Retry(_)),
+            "a crates-only search must not satisfy a bins-bound criterion; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn bins_criterion_accepts_bins_search() {
+        let criteria = vec!["SEARCH_CODE_OK:bins:unimplemented!".to_string()];
+        let evidence = "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nmain.rs:1: unimplemented!()\n";
+        assert_eq!(
+            Verifier::verify_contract("t", evidence, &criteria),
+            VerificationResult::Success
+        );
+    }
+
+    #[test]
+    fn crates_and_bins_criteria_require_both_searches() {
+        let criteria = vec![
+            "SEARCH_CODE_OK:crates:unimplemented!".to_string(),
+            "SEARCH_CODE_OK:bins:unimplemented!".to_string(),
+        ];
+        let only_crates = "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nlib.rs:1: unimplemented!()\n";
+        assert!(
+            matches!(
+                Verifier::verify_contract("t", only_crates, &criteria),
+                VerificationResult::Retry(_)
+            ),
+            "one crates search must not satisfy both crates and bins criteria"
+        );
+
+        let both = concat!(
+            "[SEARCH_CODE_OK] Path: crates | Query: 'unimplemented!'\nMATCHES:\nlib.rs:1: unimplemented!()\n",
+            "[SEARCH_CODE_OK] Path: bins | Query: 'unimplemented!'\nMATCHES:\nmain.rs:1: unimplemented!()\n",
+        );
+        assert_eq!(Verifier::verify_contract("t", both, &criteria), VerificationResult::Success);
     }
 
     #[test]
@@ -353,6 +511,79 @@ mod tests {
         );
         let failed = Verifier::verify_contract("task_verify", &tampered, &criteria);
         assert!(matches!(failed, VerificationResult::Retry(_)));
+    }
+
+    #[test]
+    fn command_ok_for_ignores_ancestor_lineage_and_requires_exact_command() {
+        let inherited_only = concat!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:deadbeef]\n",
+            "[CMD_OK] Command: echo child\nStatus: exit status: 0\n",
+            "[DAG LINEAGE COMPLETE sha256:deadbeef]\n",
+            "[READ_OK] src/lib.rs\n",
+        );
+
+        assert!(!Verifier::command_ok_for(inherited_only, "echo child"));
+
+        let exact = "[CMD_OK] Command: echo child\nStatus: exit status: 0\n";
+        assert!(Verifier::command_ok_for(exact, "echo child"));
+
+        let partial = "[CMD_OK] Command: echo child-extra\nStatus: exit status: 0\n";
+        assert!(!Verifier::command_ok_for(partial, "echo child"));
+    }
+
+    #[test]
+    fn command_ok_for_fails_closed_on_unterminated_lineage() {
+        let evidence = concat!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:deadbeef]\n",
+            "[CMD_OK] Command: echo child\nStatus: exit status: 0\n",
+        );
+
+        assert!(!Verifier::command_ok_for(evidence, "echo child"));
+    }
+
+    #[test]
+    fn legacy_node_completion_marker_cannot_verify_its_own_criterion() {
+        let criteria = vec!["NODE_OBJECTIVE_EXECUTED_AND_VERIFIED".to_string()];
+        let evidence = "[DAG NODE COMPLETE] Objective: test\nBelief: 1.00\n";
+
+        assert!(matches!(
+            Verifier::verify_contract("child", evidence, &criteria),
+            VerificationResult::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn cmd_ok_ignores_inherited_lineage_and_resets_on_halt_rejected() {
+        let criteria = vec!["CMD_OK".to_string()];
+        let inherited_only = concat!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:deadbeef]\n",
+            "[CMD_OK] Command: echo ancestor\nStatus: exit status: 0\n",
+            "[DAG LINEAGE COMPLETE sha256:deadbeef]\n",
+            "[READ_OK] src/lib.rs\n",
+        );
+        assert!(matches!(
+            Verifier::verify_contract("child", inherited_only, &criteria),
+            VerificationResult::Retry(_)
+        ));
+
+        let rejected_after = concat!(
+            "[CMD_OK] Command: echo child\nStatus: exit status: 0\n",
+            "[HALT_REJECTED] missing output\n",
+        );
+        assert!(matches!(
+            Verifier::verify_contract("child", rejected_after, &criteria),
+            VerificationResult::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn analysis_ok_rejects_unread_line_ranges() {
+        let criteria = vec!["ANALYSIS_OK".to_string()];
+        let bad = "[READ_CHUNK_OK] File: x.rs | Lines 1-50 of 200\nCONTENT:\nfn a() {}\n[HALT] see lines 120-180.\n";
+        assert!(matches!(
+            Verifier::verify_contract("audit", bad, &criteria),
+            VerificationResult::Retry(_)
+        ));
     }
 }
 

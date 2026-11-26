@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
@@ -186,10 +186,6 @@ fn is_critical_core_symbol(target: &str) -> bool {
         || lower.contains("beliefvector")
 }
 
-fn parse_arg(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|r| r == flag).and_then(|i| args.get(i + 1)).cloned()
-}
-
 fn scan_json_value(
     val: &serde_json::Value,
     edges: &mut Vec<(String, String)>,
@@ -331,7 +327,7 @@ fn parse_positional(args: &[String]) -> Option<String> {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
-    let output_path = parse_arg(&args, "--output").map(PathBuf::from);
+    let output_path = nexus_cli_utils::parse_arg(&args, &["--output"]).map(PathBuf::from);
 
     let mut edges = Vec::new();
     let mut total_nodes = 40932; // Fallback default
@@ -347,9 +343,9 @@ fn main() -> Result<()> {
     let mut extracted_target = None;
 
     let graph_paths = vec![
-        parse_arg(&args, "--mutation-map"),
-        parse_arg(&args, "--symbol-graph"),
-        parse_arg(&args, "--graph"),
+        nexus_cli_utils::parse_arg(&args, &["--mutation-map"]),
+        nexus_cli_utils::parse_arg(&args, &["--symbol-graph"]),
+        nexus_cli_utils::parse_arg(&args, &["--graph"]),
     ];
 
     for path_opt in graph_paths.into_iter().flatten() {
@@ -367,7 +363,7 @@ fn main() -> Result<()> {
         }
     }
 
-    let target_symbol = match parse_arg(&args, "--target")
+    let target_symbol = match nexus_cli_utils::parse_arg(&args, &["--target"])
         .or(extracted_target)
         .or_else(|| parse_positional(&args))
     {
@@ -384,11 +380,7 @@ fn main() -> Result<()> {
     let json_output = serde_json::to_string_pretty(&report)?;
 
     if let Some(out_path) = output_path {
-        if let Some(parent) = out_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        fs::write(&out_path, &json_output)
-            .with_context(|| format!("Failed to write output to {:?}", out_path))?;
+        nexus_cli_utils::write_text_output(&out_path, &json_output)?;
     }
 
     println!("{}", json_output);

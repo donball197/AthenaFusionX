@@ -25,10 +25,71 @@ pub fn sanitize_json_escapes(json_str: &str) -> String {
     sanitized
 }
 
+/// Fix 2: unwrap common "plan then execute" and function-call envelopes
+/// emitted by the strategist model before handing the payload to
+/// `extract_actions`. Fires only when the envelope shape parses AND the
+/// unwrapped `Vec<AgentAction>` deserializes cleanly, so a well-shaped
+/// action array is unaffected.
+///
+/// Handles:
+///   {"reasoning": "...", "actions": [{...}, ...]}     -- plan-then-execute
+///   {"tool": "<name>", "args": {<fields>}}            -- function-call
+///
+/// Both may be bare or wrapped in ```json fences.
+fn try_unwrap_envelope(s: &str) -> Option<Vec<crate::agent_protocol::AgentAction>> {
+    let stripped =
+        s.trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    let candidates: [&str; 2] = [s, stripped];
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(candidate) else {
+            continue;
+        };
+        // Envelope A: {"reasoning": "...", "actions": [...]}
+        if let Some(arr) = val.get("actions").and_then(|v| v.as_array()) {
+            if let Ok(parsed) = serde_json::from_value::<Vec<crate::agent_protocol::AgentAction>>(
+                serde_json::Value::Array(arr.clone()),
+            ) {
+                return Some(parsed);
+            }
+        }
+        // Envelope B: {"tool": "<name>", "args": {<fields>}}
+        if let Some(tool) = val.get("tool").and_then(|v| v.as_str()) {
+            if let Some(args) = val.get("args").and_then(|v| v.as_object()) {
+                let mut action_obj = args.clone();
+                action_obj.insert("type".into(), serde_json::Value::String(tool.to_string()));
+                // Common field-name confusion: models often emit `filepath`
+                // when the schema expects `path`. Alias it here so the
+                // function-call envelope round-trips through AgentAction.
+                if action_obj.contains_key("filepath") && !action_obj.contains_key("path") {
+                    let filepath = action_obj.remove("filepath").unwrap();
+                    action_obj.insert("path".into(), filepath);
+                }
+                let wrapped = serde_json::Value::Array(vec![serde_json::Value::Object(action_obj)]);
+                if let Ok(parsed) =
+                    serde_json::from_value::<Vec<crate::agent_protocol::AgentAction>>(wrapped)
+                {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     let text = response.trim();
     if text.is_empty() || text == "[]" {
         return Ok(vec![]);
+    }
+
+    // Fix 2: Envelope unwrap for common "plan then execute" shapes.
+    // Handles {"reasoning": ..., "actions": [...]} and {"tool": ..., "args": {...}}
+    // before any boundary discovery, so a well-shaped action array is untouched.
+    if let Some(actions) = try_unwrap_envelope(text) {
+        return Ok(actions);
     }
 
     // 1. Raw write artifact intercept
@@ -88,27 +149,51 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     extracted = extracted.trim();
 
-    // 3. Strict JSON boundary discovery (Do NOT match pseudo-text like [TOOL]:)
-    let json_str = if let (Some(s), Some(e)) = (
-        extracted
-            .find("[{")
-            .or_else(|| extracted.find("[\n"))
-            .or_else(|| extracted.find("[\""))
-            .or_else(|| extracted.find("[ \"")),
-        extracted.rfind(']'),
-    ) {
-        &extracted[s..=e]
-    } else if let (Some(s), Some(e)) = (extracted.find('['), extracted.rfind(']')) {
-        &extracted[s..=e]
-    } else if let (Some(s), Some(e)) =
-        (extracted.find("{\"").or_else(|| extracted.find("{\n")), extracted.rfind('}'))
-    {
-        &extracted[s..=e]
-    } else {
-        return Err(anyhow::anyhow!("No JSON boundaries found in model output."));
+    // 3. Strict JSON boundary discovery (Do NOT match pseudo-text like [TOOL]:
+    //    or marker brackets like `[READ_OK]` inside a top-level `{...}` object's string fields).
+    let arr_start = extracted
+        .find("[{")
+        .or_else(|| extracted.find("[\n"))
+        .or_else(|| extracted.find("[\""))
+        .or_else(|| extracted.find("[ \""))
+        .or_else(|| extracted.find('['));
+    let obj_start = extracted.find("{\"").or_else(|| extracted.find("{\n"));
+
+    let json_str = match (extracted.starts_with('{'), obj_start, arr_start) {
+        (true, _, _) => match (extracted.find('{'), extracted.rfind('}')) {
+            (Some(s), Some(e)) if e >= s => &extracted[s..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        (false, Some(os), Some(as_)) if os < as_ => match extracted.rfind('}') {
+            Some(e) if e >= os => &extracted[os..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        (false, Some(os), None) => match extracted.rfind('}') {
+            Some(e) if e >= os => &extracted[os..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        (false, _, Some(as_)) => match extracted.rfind(']') {
+            Some(e) if e >= as_ => &extracted[as_..=e],
+            _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
+        },
+        _ => return Err(anyhow::anyhow!("No JSON boundaries found in model output.")),
     };
 
+    // Models sometimes emit several JSON values back to back (`{..}{..}` or
+    // `[..]\n[..]`). Keep only the first complete value; if it does not parse,
+    // fall back to the unmodified text so existing behavior is unchanged.
+    fn first_json_value(s: &str) -> String {
+        let mut it = serde_json::Deserializer::from_str(s).into_iter::<serde_json::Value>();
+        match it.next() {
+            Some(Ok(_)) => {
+                let end = it.byte_offset();
+                s[..end].to_string()
+            }
+            _ => s.to_string(),
+        }
+    }
     let clean_text = sanitize_json_escapes(json_str);
+    let clean_text: String = first_json_value(&clean_text.to_string());
 
     if clean_text.contains("00000000000000000000") || clean_text.len() > 35_000 {
         tracing::error!("[CORTEX PARSE ABORT] Token Resonance block. Returning safe halt.");
@@ -117,7 +202,6 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     let clean_text = if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&clean_text) {
         let process_obj = |obj: &mut serde_json::Map<String, serde_json::Value>| {
-
             // Float to Int normalization for model quirks
             for key in ["start_line", "max_lines", "end_line", "offset", "limit"] {
                 if let Some(val) = obj.get_mut(key) {
@@ -130,7 +214,7 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                     }
                 }
             }
-    
+
             if let Some(tool_val) = obj.remove("tool") {
                 obj.insert("type".to_string(), tool_val);
             }
@@ -198,22 +282,20 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
             // The native ReadFileChunk contract uses `max_lines`, but some
             // models emit an inclusive `end_line`. Normalize that model-side
             // alias before strict AgentAction deserialization.
+            // filepath is a common model-side alias for `path`. Normalize when
+            // explicit `path` is absent.
+            if !obj.contains_key("path") {
+                if let Some(filepath) = obj.remove("filepath") {
+                    obj.insert("path".to_string(), filepath);
+                }
+            }
+
             let is_read_file_chunk = obj
                 .get("type")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|action_type| action_type == "read_file_chunk");
 
             if is_read_file_chunk {
-                // filepath is a model-side alias for the native `path`
-                // field. Normalize it only for read_file_chunk so unrelated
-                // action schemas are not changed. Explicit `path` wins.
-                // filepath alias normalization
-                if !obj.contains_key("path") {
-                    if let Some(filepath) = obj.remove("filepath") {
-                        obj.insert("path".to_string(), filepath);
-                    }
-                }
-
                 if !obj.contains_key("start_line") {
                     if let Some(offset) = obj.remove("offset") {
                         obj.insert("start_line".to_string(), offset);
@@ -310,6 +392,23 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
                     }
                 }
             }
+
+            //             // Normalize replace_lines model-side field names
+            //             let is_replace_lines = obj
+            //                 .get("type")
+            //                 .and_then(serde_json::Value::as_str)
+            //                 .is_some_and(|t| t == "replace_lines");
+            //             if is_replace_lines {
+            //                 if !obj.contains_key("replacement") {
+            //                     if let Some(v) = obj
+            //                         .remove("new_content")
+            //                         .or_else(|| obj.remove("content"))
+            //                         .or_else(|| obj.remove("new_body"))
+            //                     {
+            //                         obj.insert("replacement".to_string(), v);
+            //                     }
+            //                 }
+            //             }
         };
 
         if let Some(arr) = val.as_array_mut() {
@@ -333,8 +432,9 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
     // A halt whose text was cut is a parse fault: re-propose, do not accept.
     let clean_text = match serde_json::from_str::<serde_json::Value>(&clean_text) {
         Ok(orig) => {
+            let confined = crate::proposal_sanitize::leak_confined_to_reasoning(&orig);
             let s = crate::proposal_sanitize::sanitize(orig);
-            if s.stripped {
+            if s.stripped && !confined {
                 return Err(anyhow::anyhow!(
                     "PARSE_FAULT: control-token leak in proposal; re-propose"
                 ));
@@ -346,10 +446,15 @@ pub fn extract_actions(response: &str) -> Result<Vec<AgentAction>> {
 
     match serde_json::from_str::<Vec<AgentAction>>(&clean_text) {
         Ok(actions) => Ok(actions),
-        Err(_) => match serde_json::from_str::<AgentAction>(&clean_text) {
-            Ok(single) => Ok(vec![single]),
-            Err(e) => Err(anyhow::anyhow!("JSON serialization failed: {}", e)),
-        },
+        Err(vec_err) => {
+            if clean_text.trim_start().starts_with('[') {
+                return Err(anyhow::anyhow!("JSON serialization failed: {}", vec_err));
+            }
+            match serde_json::from_str::<AgentAction>(&clean_text) {
+                Ok(single) => Ok(vec![single]),
+                Err(e) => Err(anyhow::anyhow!("JSON serialization failed: {}", e)),
+            }
+        }
     }
 }
 
@@ -524,6 +629,69 @@ mod tests {
             other => panic!("expected ReadFileChunk, got {:?}", other),
         }
     }
+
+    #[test]
+    fn replace_lines_accepts_new_content_alias() {
+        let action = extract_single(
+            r#"[{
+                "type": "replace_lines",
+                "path": "bins/ide_backend/src/main.rs",
+                "start_line": 228,
+                "end_line": 228,
+                "new_content": "            return;",
+                "reasoning": "graceful shutdown"
+            }]"#,
+        );
+        match action {
+            AgentAction::ReplaceLines { path, start_line, end_line, replacement, .. } => {
+                assert_eq!(path, "bins/ide_backend/src/main.rs");
+                assert_eq!(start_line, 228);
+                assert_eq!(end_line, 228);
+                assert_eq!(replacement, "            return;");
+            }
+            other => panic!("expected ReplaceLines, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_lines_still_accepts_native_replacement() {
+        let action = extract_single(
+            r#"[{
+                "type": "replace_lines",
+                "path": "src/lib.rs",
+                "start_line": 10,
+                "end_line": 12,
+                "replacement": "fn foo() {}",
+                "reasoning": "native form"
+            }]"#,
+        );
+        match action {
+            AgentAction::ReplaceLines { replacement, .. } => {
+                assert_eq!(replacement, "fn foo() {}");
+            }
+            other => panic!("expected ReplaceLines, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_lines_accepts_content_alias() {
+        let action = extract_single(
+            r#"[{
+                "type": "replace_lines",
+                "path": "a.rs",
+                "start_line": 1,
+                "end_line": 1,
+                "content": "// replaced",
+                "reasoning": ""
+            }]"#,
+        );
+        match action {
+            AgentAction::ReplaceLines { replacement, .. } => {
+                assert_eq!(replacement, "// replaced");
+            }
+            other => panic!("expected ReplaceLines, got {:?}", other),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -570,5 +738,87 @@ mod conversational_recovery_tests {
             }
             other => panic!("expected ReadFileChunk, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn bare_object_with_brackets_in_reasoning_parses() {
+        let payload = r#"{"type": "halt", "reasoning": "Verified `[READ_OK]` and `[HALT_REJECTED]` handling across `verifier.rs`."}"#;
+        let actions = extract_actions(payload).expect("bare JSON object with brackets must parse");
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions[0], AgentAction::Halt { .. }), "{:?}", actions);
+    }
+
+    #[test]
+    fn prefixed_object_with_brackets_in_reasoning_parses() {
+        let payload = r#"Final action: {"type": "halt", "reasoning": "Checked `[CMD_OK]` and `[SEARCH_CODE_OK]` paths."}"#;
+        let actions =
+            extract_actions(payload).expect("prefixed JSON object with brackets must parse");
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions[0], AgentAction::Halt { .. }), "{:?}", actions);
+    }
+
+    #[test]
+    fn concatenated_objects_take_first_value() {
+        let payload = r#"{"type": "read_file", "path": "a.rs", "reasoning": "x"}{"type": "read_file", "path": "b.rs", "reasoning": "y"}"#;
+        let actions = extract_actions(payload).expect("first of concatenated objects must parse");
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn newline_separated_arrays_take_first_array() {
+        let payload = "[{\"type\": \"read_file\", \"path\": \"a.rs\", \"reasoning\": \"x\"}]\n[{\"type\": \"read_file\", \"path\": \"b.rs\", \"reasoning\": \"y\"}]";
+        let actions = extract_actions(payload).expect("first of concatenated arrays must parse");
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn long_halt_with_markers_and_escaped_newlines_parses() {
+        let body = "Q1 `[HALT_REJECTED]` and `[DAG NODE COMPLETE]`.\\n".repeat(80);
+        let payload = format!(r#"[{{"type": "halt", "reasoning": "{}"}}]"#, body);
+        let actions = extract_actions(&payload).expect("long bracketed halt must parse");
+        assert!(matches!(actions[0], AgentAction::Halt { .. }));
+    }
+}
+
+#[cfg(test)]
+mod envelope_unwrap_tests {
+    use super::extract_actions;
+    use crate::agent_protocol::AgentAction;
+
+    #[test]
+    fn unwraps_reasoning_actions_envelope() {
+        let raw = r#"{"reasoning": "attempt 1", "actions": [{"type":"write_file","path":"a.md","content":"hi","reasoning":"r"}]}"#;
+        let parsed = extract_actions(raw).expect("plan-then-execute envelope must unwrap");
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0] {
+            AgentAction::WriteFile { path, content, .. } => {
+                assert_eq!(path, "a.md");
+                assert_eq!(content, "hi");
+            }
+            other => panic!("expected WriteFile, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unwraps_tool_args_envelope_and_aliases_filepath() {
+        let raw = r#"{"tool": "read_file_chunk", "args": {"filepath": "src/x.rs", "start_line": 100, "max_lines": 200, "reasoning": "r"}}"#;
+        let parsed = extract_actions(raw).expect("function-call envelope must unwrap");
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0] {
+            AgentAction::ReadFileChunk { path, start_line, max_lines, .. } => {
+                assert_eq!(path, "src/x.rs", "filepath must be aliased to path");
+                assert_eq!(*start_line, 100);
+                assert_eq!(*max_lines, 200);
+            }
+            other => panic!("expected ReadFileChunk, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bare_action_array_still_parses() {
+        let raw = r#"[{"type":"read_file","path":"a.rs","reasoning":"r"}]"#;
+        let parsed = extract_actions(raw).expect("bare array must be unaffected");
+        assert_eq!(parsed.len(), 1);
+        assert!(matches!(parsed[0], AgentAction::ReadFile { .. }));
     }
 }

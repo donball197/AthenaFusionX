@@ -1,128 +1,132 @@
-# === PROJECT NEXUS: UNIVERSAL DNA PROTECTION ===
 
-# --- Rust & Cargo (The Brain) ---
-/target/
-**/*.rs.bk
-Cargo.lock
-
-# --- Zig & Native (The Muscles) ---
-# We never sync compiled binaries across ARM64 devices
-*.so
-*.a
-*.o
-*.lib
-*.dll
-*.dylib
-zig-out/
-zig-cache/
-
-# --- Svelte & Node (The Glass) ---
-node_modules/
-/ui/dist/
-/ui/.svelte-kit/
-.env
-.env.*
 !.env.example
-npm-debug.log*
-
-# --- Sovereign Vault & Secrets ---
-# Protect your API keys and your identity
-.env
-auth.json
-persona.json
-GEMINI_API_KEY
-
-# --- Deep Memory & State ---
-# SQLite and local memory stay on the physical device
-*.db
-*.db-journal
-*.sqlite
-.nexus_memory/
-.lazarus/snapshots/
-# We sync the ledger.json so the DNA knows its history, but not the blobs
 !.lazarus/ledger.json
-
+# --- Deep Memory & State ---
 # --- Large Model Weights ---
-# Never push GGUF or TFLite models to Git
-vault/models/
-*.gguf
-*.tflite
-*.bin
-*.weights
-
 # --- OS Noise ---
-.DS_Store
-Thumbs.db
-.direnv/
-.env
-.gcp_key.json
-*.snap
-wire_modes_and_governance.py
-.env
-*.db*
-target_dummy/
-genesis_lab/target/
-
-# Rust Artifacts
-target/
-**/target/
-*.rlib
-*.so
-repository_analysis/symbol_graph.json
-*.safetensors
-.cargo/config.toml
-.nexus_debug/
-.nexus_debug/
-.envt
-.nexus_ui_token
-*.bak
-*.bak2
-*_dump.txt
-daemon.log
-*.cwasm
-
-# Environment & Credentials
-.env
-.env.*
-.nexus_ui_token
-
-# Databases & Runtime Sockets
-*.db
-*.db-wal
-*.db-shm
-
+# --- Rust & Cargo (The Brain) ---
+# --- Sovereign Vault & Secrets ---
+# --- Svelte & Node (The Glass) ---
+# --- Zig & Native (The Muscles) ---
+# === PROJECT NEXUS: UNIVERSAL DNA PROTECTION ===
 # Build Artifacts & Audit Targets
-nexus_audit_target/
-.nexus_debug/
-daemon.log
-/tmp/
-.cargo/config.toml
-server.log
-*.log
-*.bak.*
-*.sha256.*
-*.bak.*
-*~
-attic/
-
+# Databases & Runtime Sockets
+# Environment & Credentials
+# Never push GGUF or TFLite models to Git
+# Protect your API keys and your identity
+# Rust Artifacts
+# SQLite and local memory stay on the physical device
+# We never sync compiled binaries across ARM64 devices
+# We sync the ledger.json so the DNA knows its history, but not the blobs
 # local runtime logs and scratch tooling
-daemon.log
-cortical_loop_inventory.txt
-extract_strategy_match.sh
-model_preflight.py
-scout_models3.py
-
-# local runtime logs and scratch tooling
-daemon.log
-cortical_loop_inventory.txt
-extract_strategy_match.sh
-model_preflight.py
-scout_models3.py
-secret.json
-__pycache__/
-mirror/
-.patch_backups/
-vendor/
+**/*.rs.bk
+**/target/
+*.a
 *.bak
+*.bak.*
+*.bak2
 *.bak[0-9]
 *.bak[0-9][0-9]
+*.bin
+*.cwasm
+*.db
+*.db*
+*.db-journal
+*.db-shm
+*.db-wal
+*.db.bak
+*.dll
+*.dylib
+*.env
+*.gguf
+*.lib
+*.log
+*.o
+*.rlib
+*.safetensors
+*.sha256.*
+*.snap
+*.so
+*.sqlite
+*.sqlite3
+*.tflite
+*.weights
+*_dump.txt
+*~
+.DS_Store
+.cargo/config.toml
+.direnv/
+.env
+.env.*
+.envt
+.gcp_key.json
+.lazarus/snapshots/
+.nexus_daemon.lock
+.nexus_debug/
+.nexus_memory/
+.nexus_ui_token
+.patch_backups/
+/target/
+/tmp/
+/ui/.svelte-kit/
+/ui/dist/
+GEMINI_API_KEY
+Thumbs.db
+__pycache__/
+attic/
+auth.json
+cortical_loop_inventory.txt
+daemon.log
+extract_strategy_match.sh
+genesis_lab/target/
+mirror/
+model_preflight.py
+nexus_audit_target/
+node_modules/
+npm-debug.log*
+persona.json
+repository_analysis/symbol_graph.json
+scout_models3.py
+secret.json
+server.log
+target/
+target_dummy/
+vault/models/
+vendor/
+wire_modes_and_governance.py
+zig-cache/
+zig-out/
+audit_out/
+*.prepatch
+audit_cargo.txt
+active_workspace_signatures.txt
+
+# Surgical patch backups — transient rollback targets
+.surgical_backup_*/
+
+# Patch scripts — development tooling, not part of the runtime
+patch_*.sh
+surgical_belief_floor_fix.sh
+apply_cortex_fixes.sh
+
+# Audit artifacts from framework test runs
+full_system_audit*.md
+cognition_core_audit.md
+verifier_audit.md
+worker_shape_audit.md
+completion_boundary_audit.md
+marker_summary.md
+
+# Local edit backups
+*.bak_*
+# Runtime artifacts
+mission.log
+daemon.*.log
+journal_smoke.txt
+.mirror/
+*.bak.*
+.surgical_backup/
+glm-5.3-flash-from-scratch/
+nexus_heal_sandbox_*
+/tmp/nexus_heal_sandbox_*
+.nexus/holds/

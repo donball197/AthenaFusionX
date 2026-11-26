@@ -43,8 +43,7 @@ impl ProbabilisticMemory {
                 .await
             {
                 for m in memories {
-                    if has_marker(&m, "[HIGH_FITNESS_PATTERN]") || has_marker(&m, "[COMPILE_OK]")
-                    {
+                    if has_marker(&m, "[HIGH_FITNESS_PATTERN]") || has_marker(&m, "[COMPILE_OK]") {
                         positive_priors.push(MemoryPrior {
                             directive: m.directive.clone(),
                             pattern_type: "POSITIVE_GENOME".to_string(),
@@ -161,9 +160,6 @@ mod has_marker_tests {
 
     #[test]
     fn marker_mentioned_mid_line_does_not_count() {
-        assert!(!has_marker(
-            &mem("ExecuteCommand", "println!(\"[COMPILE_OK]\");"),
-            "[COMPILE_OK]"
-        ));
+        assert!(!has_marker(&mem("ExecuteCommand", "println!(\"[COMPILE_OK]\");"), "[COMPILE_OK]"));
     }
 }

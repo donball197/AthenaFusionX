@@ -1,0 +1,308 @@
+//! Mirror-agent bridge: delegated synthesis for missions whose
+//! cortical-loop write path fails (truncation, turns exhausted,
+//! model confusion).
+//!
+//! Dormant unless `NEXUS_MIRROR_DELEGATION=1` is set. In that case,
+//! a failing write is handed to a running mirror-agent sidecar at
+//! `http://127.0.0.1:8081` with the accumulated evidence corpus as
+//! context. A successful delegation is verified against the target
+//! file before the caller may record a synthetic [WRITE_OK] marker.
+//!
+//! # Approval model
+//!
+//! `mirror-agent serve` hardcodes `AgentApprovalMode::Auto` (see
+//! `mirror/mirror-agent/src/http/cli.rs:289`). Approval and workspace
+//! containment are separate controls: serve explicitly calls
+//! `set_allow_outside_workspace(false)` right after startup
+//! (`cli.rs:306`, before the runner is returned), so the file tools
+//! refuse paths outside the `--workspace` root even though every call
+//! is auto-approved.
+//!
+//! Containment applies to the file tools (read, write, edit, find, grep,
+//! ls). A shell cannot be confined by path checks, so the bash tool
+//! refuses to run when approval is Auto and containment is on. The launch
+//! scripts (`nexus.sh`, `scripts/mirror_smoke.sh`) pass `--tools
+//! read,write`, so bash is not enabled for delegations; keep it that way.
+//!
+//! Delegations pass workspace-relative `target_path` values from
+//! `session.contract.required_artifact_paths`. If the delegation surface
+//! ever needs absolute paths, widen containment deliberately with
+//! `set_allow_outside_workspace(true)` rather than relying on approval
+//! mode, and re-check the cortical loop's `artifact_denied_by_policy`
+//! gate.
+
+use anyhow::{anyhow, bail, Result};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub struct MirrorBridge {
+    endpoint: String,
+    timeout: Duration,
+    workspace_root: Option<PathBuf>,
+}
+
+impl MirrorBridge {
+    pub fn new(endpoint: &str) -> Self {
+        Self {
+            endpoint: endpoint.trim_end_matches('/').to_string(),
+            timeout: Duration::from_secs(900),
+            workspace_root: None,
+        }
+    }
+
+    pub fn with_workspace_root(mut self, root: impl AsRef<Path>) -> Result<Self> {
+        let canonical = std::fs::canonicalize(root.as_ref()).map_err(|error| {
+            anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({error})")
+        })?;
+        self.workspace_root = Some(canonical);
+        Ok(self)
+    }
+
+    /// Ask the sidecar to produce the deliverable at `target_path`.
+    ///
+    /// The sidecar contract signals a completed turn with HTTP 204.
+    /// Success additionally requires the target file to exist, contain
+    /// at least 200 bytes, and differ from its pre-delegation contents.
+    pub async fn delegate_write(
+        &self,
+        target_path: &str,
+        mission: &str,
+        evidence_corpus: &str,
+    ) -> Result<()> {
+        let (fs_target, prompt_target) = match &self.workspace_root {
+            Some(root) => {
+                let resolved = crate::executor::resolve_write_path_in(root, target_path)?;
+                let rel =
+                    resolved.strip_prefix(root).unwrap_or(&resolved).to_string_lossy().into_owned();
+                (resolved, rel)
+            }
+            None => (PathBuf::from(target_path), target_path.to_string()),
+        };
+
+        // Capture the original contents so a stale file cannot be
+        // mistaken for a successful delegated write.
+        let before = match tokio::fs::read(&fs_target).await {
+            Ok(contents) => Some(contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(anyhow!(
+                    "cannot inspect target before Mirror delegation ({target_path}): {error}"
+                ));
+            }
+        };
+
+        let prompt = format!(
+            "You are a subagent in the AthenaFusionX audit pipeline.\n\
+             Your ONLY task: write the deliverable file.\n\n\
+             MISSION:\n{mission}\n\n\
+             TARGET FILE: {prompt_target}\n\
+             (relative to workspace root)\n\n\
+             EVIDENCE GATHERED BY THE PARENT AGENT:\n\
+             ---\n{evidence_corpus}\n---\n\n\
+             INSTRUCTIONS:\n\
+             - Use the `write` tool to create {prompt_target}.\n\
+             - Content must be complete prose. No code blocks.\n\
+             - Reference functions by name only (backticks ok).\n\
+             - Do NOT cite line numbers.\n\
+             - Finish every sentence. Close every section.\n"
+        );
+
+        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
+
+        let response = client
+            .post(format!("{}/message", self.endpoint))
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
+            .body(prompt)
+            .send()
+            .await
+            .map_err(|error| anyhow!("mirror-agent HTTP request failed: {error}"))?;
+
+        let status = response.status();
+        if status != reqwest::StatusCode::NO_CONTENT {
+            let body = response.text().await.unwrap_or_default();
+            let hint = match status.as_u16() {
+                415 => " (Content-Type must be text/plain)",
+                409 => " (mirror-agent busy: another turn already running)",
+                400 => " (empty prompt)",
+                504 => " (turn timed out — increase --turn-timeout-seconds)",
+                502 => " (model request failed — check API key/quota)",
+                503 => " (service unavailable)",
+                _ => "",
+            };
+            bail!(
+                "mirror-agent returned HTTP {status}{hint}; response: {}",
+                body.chars().take(500).collect::<String>()
+            );
+        }
+
+        // HTTP 204 means the agent turn completed, not that the requested
+        // file was correctly written. Verify the actual target independently.
+        let after = tokio::fs::read(&fs_target).await.map_err(|error| {
+            anyhow!("Mirror turn completed but target {target_path} is unreadable: {error}")
+        })?;
+
+        if after.len() < 200 {
+            bail!(
+                "Mirror turn completed but target {target_path} is only {} bytes (< 200)",
+                after.len()
+            );
+        }
+
+        if before.as_deref() == Some(after.as_slice()) {
+            bail!(
+                "Mirror turn completed but target {target_path} is unchanged from its pre-delegation contents"
+            );
+        }
+
+        // HALT-report validation is specific to report artifacts. The bridge
+        // can also write source/configuration files, which must not be judged
+        // by a prose-report validator.
+        if crate::cortical::halt_claims::is_report_artifact(target_path) {
+            let text = std::str::from_utf8(&after).map_err(|error| {
+                anyhow!("Mirror report artifact {target_path} is not valid UTF-8: {error}")
+            })?;
+
+            let defects = crate::cortical::halt_claims::report_defects(text, evidence_corpus);
+
+            if !defects.is_empty() {
+                bail!(
+                    "Mirror report artifact failed report validation                      ({} defect(s)): {}",
+                    defects.len(),
+                    defects.join("; ")
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MirrorBridge;
+    use std::path::PathBuf;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn mock_sidecar(status: u16, write_target: Option<PathBuf>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock sidecar");
+        let address = listener.local_addr().expect("mock sidecar address");
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = [0u8; 8192];
+            let _ = stream.read(&mut request).await;
+
+            if let Some(path) = write_target {
+                // Must satisfy report_defects / has_lexical_substance for *.md.
+                // Repeated single-character filler is intentionally rejected.
+                let body = "Mirror bridge delivered the artifact successfully.\n\
+Target path was created with the expected byte length.\n\
+HTTP 204 was returned by the sidecar with no residual differences.\n\
+The report contains concrete findings rather than repeated filler.\n\
+Additional varied prose ensures the lexical diversity gate is satisfied.\n\
+This body is longer than two hundred bytes and contains many unique words.";
+                tokio::fs::write(path, body.as_bytes()).await.expect("write mock deliverable");
+            }
+
+            let reason = if status == 204 { "No Content" } else { "Bad Gateway" };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).await.expect("send mock response");
+        });
+
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn accepts_204_when_target_is_created() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let target = directory.path().join("deliverable.md");
+        let endpoint = mock_sidecar(204, Some(target.clone())).await;
+
+        MirrorBridge::new(&endpoint)
+            .delegate_write(
+                target.to_str().expect("UTF-8 target path"),
+                "write a report",
+                "test evidence",
+            )
+            .await
+            .expect("changed deliverable should be accepted");
+
+        let len = tokio::fs::metadata(&target).await.expect("deliverable exists").len();
+        assert!(len >= 200, "deliverable must be at least 200 bytes, got {len}");
+    }
+
+    #[tokio::test]
+    async fn rejects_204_when_target_is_missing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let target = directory.path().join("missing.md");
+        let endpoint = mock_sidecar(204, None).await;
+
+        let error = MirrorBridge::new(&endpoint)
+            .delegate_write(
+                target.to_str().expect("UTF-8 target path"),
+                "write a report",
+                "test evidence",
+            )
+            .await
+            .expect_err("missing deliverable must fail");
+
+        assert!(error.to_string().contains("unreadable"));
+    }
+
+    #[tokio::test]
+    async fn rejects_204_when_existing_target_is_unchanged() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let target = directory.path().join("stale.md");
+        let original = vec![b's'; 256];
+        tokio::fs::write(&target, &original).await.expect("create stale target");
+        let endpoint = mock_sidecar(204, None).await;
+
+        let error = MirrorBridge::new(&endpoint)
+            .delegate_write(
+                target.to_str().expect("UTF-8 target path"),
+                "write a report",
+                "test evidence",
+            )
+            .await
+            .expect_err("unchanged target must fail");
+
+        assert!(error.to_string().contains("unchanged"));
+    }
+
+    #[tokio::test]
+    async fn rejects_non_204_http_response() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let target = directory.path().join("deliverable.md");
+        let endpoint = mock_sidecar(502, None).await;
+
+        let error = MirrorBridge::new(&endpoint)
+            .delegate_write(
+                target.to_str().expect("UTF-8 target path"),
+                "write a report",
+                "test evidence",
+            )
+            .await
+            .expect_err("non-204 response must fail");
+
+        assert!(error.to_string().contains("HTTP 502"));
+    }
+
+    #[tokio::test]
+    async fn rejects_outside_workspace_when_contained() {
+        let directory = tempfile::tempdir().expect("temporary workspace");
+        let bridge = MirrorBridge::new("http://127.0.0.1:1")
+            .with_workspace_root(directory.path())
+            .expect("canonical workspace");
+
+        for outside in ["/tmp/outside.md", "../outside.md"] {
+            let error = bridge
+                .delegate_write(outside, "write a report", "test evidence")
+                .await
+                .expect_err("outside path must be rejected before HTTP");
+            assert!(error.to_string().contains("PATH_TRAVERSAL_DENIED"), "got: {error}");
+        }
+    }
+}

@@ -4,6 +4,71 @@ use std::io::{self, Write};
 use std::process::Command;
 use tokio_tungstenite::connect_async;
 
+/// Detect a bash heredoc opener on this line and return its delimiter.
+/// Recognizes `<<WORD`, `<<'WORD'`, `<<"WORD"`, and `<<-WORD`. Skips
+/// here-strings (`<<<`), shift-assign (`<<=`), and arithmetic shifts
+/// (`a << b`) so ordinary Rust code pasted into the prompt is not
+/// mistaken for a heredoc opener.
+fn split_heredoc_delimiter(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'<' && bytes[i + 1] == b'<' {
+            if i + 2 < bytes.len() && (bytes[i + 2] == b'<' || bytes[i + 2] == b'=') {
+                i += 2;
+                continue;
+            }
+            let preceded_by_ident = i > 0 && {
+                let p = bytes[i - 1];
+                p.is_ascii_alphanumeric() || p == b'_'
+            };
+            if preceded_by_ident {
+                i += 2;
+                continue;
+            }
+            let mut j = i + 2;
+            if j < bytes.len() && bytes[j] == b'-' {
+                j += 1;
+            }
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            let quote = if j < bytes.len() && (bytes[j] == b'\'' || bytes[j] == b'"') {
+                let q = bytes[j];
+                j += 1;
+                Some(q)
+            } else {
+                None
+            };
+            let start = j;
+            while j < bytes.len() {
+                let c = bytes[j];
+                if let Some(q) = quote {
+                    if c == q {
+                        break;
+                    }
+                } else if !(c.is_ascii_alphanumeric() || c == b'_') {
+                    break;
+                }
+                j += 1;
+            }
+            if j > start {
+                let delim = String::from_utf8_lossy(&bytes[start..j]).into_owned();
+                let has_letter = delim.chars().any(|c| c.is_ascii_alphabetic());
+                let upper_ok = quote.is_some()
+                    || delim
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                if delim.len() >= 2 && has_letter && upper_ok {
+                    return Some(delim);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -16,7 +81,9 @@ async fn main() -> anyhow::Result<()> {
         .trim()
         .to_string();
 
-    let ws_url = "ws://127.0.0.1:3000/ws/telemetry";
+    let ws_url: &'static str = Box::leak(
+        format!("ws://127.0.0.1:3000/ws/telemetry?token={}", token.trim()).into_boxed_str(),
+    );
 
     let ws_stream = match connect_async(ws_url).await {
         Ok((stream, _)) => Some(stream),
@@ -83,10 +150,35 @@ async fn main() -> anyhow::Result<()> {
             io::stdout().flush()?;
 
             let mut input = String::new();
+            let mut pending_heredoc: Option<String> = None;
             loop {
                 let mut line = String::new();
                 let bytes_read = stdin.read_line(&mut line)?;
-                if bytes_read == 0 || line.trim() == "EOF" {
+                if bytes_read == 0 {
+                    break;
+                }
+                let trimmed = line.trim();
+
+                // Inside a pending heredoc: only the exact delimiter closes
+                // it. A bare `EOF` line inside `cat >f <<'EOF' ... EOF` is
+                // script content, not the CLI submit sentinel.
+                if let Some(delim) = pending_heredoc.as_deref() {
+                    input.push_str(&line);
+                    if trimmed == delim {
+                        pending_heredoc = None;
+                    }
+                    continue;
+                }
+
+                // Heredoc opener on this line: enter heredoc mode.
+                if let Some(delim) = split_heredoc_delimiter(&line) {
+                    pending_heredoc = Some(delim);
+                    input.push_str(&line);
+                    continue;
+                }
+
+                // Submit sentinel (only when no heredoc is pending).
+                if trimmed == "EOF" {
                     break;
                 }
                 input.push_str(&line);
@@ -256,4 +348,28 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod heredoc_delimiter_tests {
+    use super::split_heredoc_delimiter;
+    fn d(line: &str) -> Option<String> {
+        split_heredoc_delimiter(line)
+    }
+    #[test]
+    fn recognizes_real_openers() {
+        assert_eq!(d("cat > f <<EOF"), Some("EOF".to_string()));
+        assert_eq!(d("cat > f <<-EOF"), Some("EOF".to_string()));
+        assert_eq!(d("printf 'test' <<'CANARY'"), Some("CANARY".to_string()));
+        assert_eq!(d("cat <<\"END_OF_FILE\""), Some("END_OF_FILE".to_string()));
+    }
+    #[test]
+    fn ignores_shifts_here_strings_and_prose() {
+        assert_eq!(d("let x = 1 << 10;"), None);
+        assert_eq!(d("let y = a<<b;"), None);
+        assert_eq!(d("cat <<< word"), None);
+        assert_eq!(d("x <<= 2"), None);
+        assert_eq!(d("use <<end for lowercase"), None);
+        assert_eq!(d("no opener here"), None);
+    }
 }

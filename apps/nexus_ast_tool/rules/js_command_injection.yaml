@@ -1,0 +1,29 @@
+id: "COMMAND_INJECTION"
+language: "javascript"
+severity: "Critical"
+description: "Command execution with user-controlled input via exec, execSync, or child_process."
+tree_sitter_query: |
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#match? @method "^(exec|execSync|execFile|spawn|spawnSync)$"))
+    arguments: (arguments (template_string (template_substitution)) @danger.command_injection)
+  )
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#match? @method "^(exec|execSync|execFile|spawn|spawnSync)$"))
+    arguments: (arguments (binary_expression) @danger.command_injection)
+  )
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#match? @method "^(exec|execSync|execFile|spawn|spawnSync)$"))
+    arguments: (arguments . (identifier) @danger.command_injection)
+  )
+  (call_expression
+    function: (identifier) @func (#match? @func "^(exec|execSync)$")
+    arguments: (arguments (template_string (template_substitution)) @danger.command_injection)
+  )
+  (call_expression
+    function: (identifier) @func (#match? @func "^(exec|execSync)$")
+    arguments: (arguments (binary_expression) @danger.command_injection)
+  )
+  (call_expression
+    function: (identifier) @func (#match? @func "^(exec|execSync)$")
+    arguments: (arguments . (identifier) @danger.command_injection)
+  )

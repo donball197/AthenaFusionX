@@ -1,3 +1,4 @@
+pub mod secrets_guard;
 pub mod agent_protocol;
 pub mod arbiter_agent;
 pub mod cli_utils;
@@ -10,7 +11,6 @@ pub mod cortex;
 pub(crate) mod cortical;
 pub mod cortical_loop;
 pub mod coverage;
-pub mod critic;
 pub mod diff;
 pub mod distributed_scheduler;
 pub mod epistemic_engine;
@@ -31,6 +31,7 @@ pub mod logger;
 pub mod logic_engine;
 pub mod memory_actor;
 pub mod metrics;
+pub mod mirror_bridge;
 pub mod model_config;
 pub mod orchestrator;
 pub mod orchestrator_v2;
@@ -65,6 +66,7 @@ pub mod compile_remediation;
 pub mod completion_engine;
 pub mod config;
 pub mod evidence;
+pub mod evidence_adapter;
 pub mod evidence_paths;
 pub mod executive_cortex;
 pub mod goal_adaptation;
@@ -81,6 +83,8 @@ pub mod tools;
 pub use client::ApiClient;
 pub use config::NexusConfig;
 pub mod anti_loop;
+#[cfg(test)]
+mod forever_fix_dryrun;
 pub mod contract_status;
 pub mod epistemic_tuple;
 pub mod probabilistic_memory;
@@ -101,3 +105,10 @@ mod semantic_gate_tests;
 
 #[cfg(test)]
 mod write_noop_tests;
+
+// === athx upgrade: journal/episodic ===
+pub mod episodic;
+pub mod journal;
+
+#[cfg(test)]
+mod report_readonly_dryrun;

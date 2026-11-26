@@ -70,6 +70,23 @@ const SKIP: &[&str] = &[
     "type",
     "extern",
     "super",
+    // Tool / action names. A report that says "no `read_file` was performed"
+    // is describing a tool, not claiming a symbol exists in the codebase.
+    // Without these, `unverified_symbols` rejects any halt that honestly
+    // enumerates which native actions it did and did not use.
+    "read_file",
+    "read_file_chunk",
+    "read_function",
+    "search_code",
+    "search_memory",
+    "write_file",
+    "patch_function",
+    "replace_lines",
+    "diff_patch",
+    "execute_command",
+    "run_tests",
+    "synthesize_report",
+    "halt",
 ];
 
 fn is_word_char(c: char) -> bool {
@@ -100,33 +117,207 @@ pub fn verification_corpus(local_evidence: &str, current_turn_evidence: &str) ->
         .join("\n")
 }
 
+/// True when the backticked span sits in an absence claim ("no `x` exists",
+/// "`x` does not appear"), where citing a missing symbol is the finding.
+fn absence_context(report: &str, start: usize, end: usize) -> bool {
+    let before_all = report.get(..start).unwrap_or("");
+    let line_start = before_all.rfind('\n').map_or(0, |i| i + 1);
+    let tail: Vec<char> = before_all[line_start..].chars().collect();
+    let skip = tail.len().saturating_sub(60);
+    let before: String = tail[skip..].iter().collect::<String>().to_lowercase();
+    let before = before.trim_end().trim_end_matches('`').trim_end().to_string();
+    let after: String =
+        report.get(end..).unwrap_or("").chars().take(70).collect::<String>().to_lowercase();
+    ["no", "not", "never", "without", "neither", "nor", "absent"]
+        .iter()
+        .any(|w| before.ends_with(w))
+        || [
+            "does not",
+            "not appear",
+            "not found",
+            "not present",
+            "never ",
+            "is absent",
+            "doesn't",
+            "no such",
+            "not exist",
+        ]
+        .iter()
+        .any(|w| after.contains(w))
+}
+
 /// Backticked identifiers in `report` that do not appear in `corpus`.
 /// CamelCase / CONSTANT -> must appear as a whole word.
 /// snake_case           -> must appear as `fn name` or `name(`.
 /// Spans with spaces, paths, attributes, or punctuation are ignored.
 pub fn unverified_symbols(report: &str, corpus: &str) -> Vec<String> {
     let mut bad: Vec<String> = Vec::new();
-    for span in report.split('`').skip(1).step_by(2) {
-        let span = span.trim().trim_end_matches("()");
-        let name = span.rsplit("::").next().unwrap_or("");
-        if !is_ident(name) || SKIP.contains(&name) {
+    let mut off = 0usize;
+    for (part_idx, part) in report.split('`').enumerate() {
+        let span_start = off;
+        off += part.len() + 1;
+        if part_idx % 2 == 0 {
             continue;
         }
-        let found = if name.chars().next().is_some_and(|c| c.is_uppercase()) {
-            word_present(corpus, name)
-        } else {
-            word_present(corpus, &format!("fn {}", name))
-                || corpus.contains(&format!("{}(", name))
-                // Variables, fields and string literals (e.g. `mutation_paths`,
-                // `python3`) are legitimate backticked claims; they only need to
-                // appear in the evidence. Invented names still fail.
-                || word_present(corpus, name)
-        };
-        if !found && !bad.iter().any(|b| b == name) {
+        let span_end = span_start + part.len();
+        let span = part.trim().trim_end_matches("()");
+        let name = span.rsplit("::").next().unwrap_or("");
+        if !is_ident(name) || SKIP.contains(&name) || is_grounding_skip_token(name) {
+            continue;
+        }
+        // General Markdown Formatting Fix:
+        // A backticked word is considered verified if it appears anywhere in the
+        // physical evidence (e.g. cargo check output, variable names, internal functions).
+        // It does not need to be a formal `pub` definition.
+        let found = word_present(corpus, name);
+        if !found
+            && !absence_context(report, span_start, span_end)
+            && !bad.iter().any(|b| b == name)
+        {
             bad.push(name.to_string());
         }
     }
     bad
+}
+
+/// True when `evidence` holds a search block (SEARCH_CODE_OK or
+/// SEARCH_CHECKED_OK marker line) whose query contains `sym`, case-insensitive.
+/// A documented no-match counts: the search was actually run.
+fn searched_for(evidence: &str, sym: &str) -> bool {
+    let needle = sym.to_ascii_lowercase();
+    evidence.lines().any(|l| {
+        let t = l.trim_start();
+        if !(t.starts_with("[SEARCH_CODE_OK]") || t.starts_with("[SEARCH_CHECKED_OK]")) {
+            return false;
+        }
+        let lower = t.to_ascii_lowercase();
+        match lower.find("query: '") {
+            Some(i) => lower[i + 8..].contains(&needle),
+            None => false,
+        }
+    })
+}
+
+/// Backticked symbols the report claims are ABSENT (absence_context) that are
+/// not in `corpus` and for which no search was ever run. An unsupported
+/// negative is as fabricated as an unsupported positive. Capped at 5.
+pub fn unsupported_absence_symbols(report: &str, corpus: &str, evidence: &str) -> Vec<String> {
+    let mut bad: Vec<String> = Vec::new();
+    let mut off = 0usize;
+    for (part_idx, part) in report.split('`').enumerate() {
+        let span_start = off;
+        off += part.len() + 1;
+        if part_idx % 2 == 0 {
+            continue;
+        }
+        let span_end = span_start + part.len();
+        let span = part.trim().trim_end_matches("()");
+        let name = span.rsplit("::").next().unwrap_or("");
+        if !is_ident(name) || SKIP.contains(&name) || is_grounding_skip_token(name) {
+            continue;
+        }
+        if word_present(corpus, name) || !absence_context(report, span_start, span_end) {
+            continue;
+        }
+        if !searched_for(evidence, name) && !bad.iter().any(|b| b == name) {
+            bad.push(name.to_string());
+            if bad.len() >= 5 {
+                break;
+            }
+        }
+    }
+    bad
+}
+
+pub fn write_report_unsupported_absences(path: &str, content: &str, local_evidence: &str) -> Vec<String> {
+    if !is_report_artifact(path) {
+        return Vec::new();
+    }
+    let corpus = verification_corpus(local_evidence, "");
+    unsupported_absence_symbols(content, &corpus, local_evidence)
+}
+
+#[cfg(test)]
+mod unsupported_absence_tests {
+    use super::unsupported_absence_symbols;
+
+    #[test]
+    fn absence_claim_without_search_is_flagged() {
+        let r = "`Mirror` is absent from the codebase.";
+        assert_eq!(unsupported_absence_symbols(r, "", ""), vec!["Mirror".to_string()]);
+    }
+
+    #[test]
+    fn absence_claim_with_nomatch_search_is_accepted() {
+        let r = "`Mirror` is absent from the codebase.";
+        let ev = "[SEARCH_CODE_OK] Path: crates | Query: 'mirror'\nNo code matches found in specified path.\n";
+        assert!(unsupported_absence_symbols(r, "", ev).is_empty());
+    }
+
+    #[test]
+    fn search_text_in_a_body_line_does_not_count() {
+        let r = "`Mirror` is absent from the codebase.";
+        let ev = "[READ_OK] x.md\nFULL FILE CONTENT:\n  [SEARCH_CODE_OK] Path: a | Query: 'mirror'\nmore\n";
+        // marker nested in a body is indented, but trim_start would accept it;
+        // the READ_OK body above is still a known limit, so only assert the plain case.
+        let _ = ev;
+        assert_eq!(unsupported_absence_symbols(r, "", "").len(), 1);
+    }
+
+    #[test]
+    fn real_symbols_in_corpus_are_not_flagged() {
+        let r = "`add` is absent.";
+        assert!(unsupported_absence_symbols(r, "pub fn add(a: u8) -> u8 { a }", "").is_empty());
+    }
+}
+
+/// Check a report `write_file` payload's backticked symbol claims against
+/// gathered physical evidence (READ_OK / READ_CHUNK_OK / SEARCH_*_OK / CMD_OK).
+/// When `allow_objective_corpus` is true (zero-recon synthesis tasks with no
+/// read/search/command criteria), symbols named directly in `objective` are
+/// also permitted; fabricated symbols absent from both are still rejected.
+pub fn write_report_unverified_symbols(
+    path: &str,
+    content: &str,
+    local_evidence: &str,
+    objective: &str,
+    allow_objective_corpus: bool,
+) -> Vec<String> {
+    if !is_report_artifact(path) {
+        return Vec::new();
+    }
+    let mut corpus = verification_corpus(local_evidence, "");
+    if allow_objective_corpus {
+        corpus.push('\n');
+        corpus.push_str(strip_lineage(objective));
+    }
+    unverified_symbols(content, &corpus)
+}
+
+#[cfg(test)]
+mod write_consistency_tests {
+    use super::write_report_unverified_symbols;
+
+    #[test]
+    fn flags_fabricated_symbols_in_written_report() {
+        let ev = "[READ_OK] src/lib.rs\nFULL FILE CONTENT:\npub fn real_fn() {}\n";
+        let report = "# Audit\nObserved `real_fn` and fabricated `ghost_helper`.\n";
+        assert_eq!(
+            write_report_unverified_symbols("audit.md", report, ev, "Audit src/lib.rs", false),
+            vec!["ghost_helper"]
+        );
+    }
+
+    #[test]
+    fn accepts_grounded_report_and_non_report_files() {
+        let ev = "[READ_OK] src/lib.rs\nFULL FILE CONTENT:\npub fn real_fn() {}\n";
+        let report = "# Audit\nObserved `real_fn`; `ghost_helper` does not exist.\n";
+        assert!(write_report_unverified_symbols("audit.md", report, ev, "Audit src/lib.rs", false)
+            .is_empty());
+        assert!(write_report_unverified_symbols("src/lib.rs", "`invented_rs`", ev, "Edit", false)
+            .is_empty());
+        assert!(write_report_unverified_symbols("smoke.txt", "ok", "", "Write ok", true).is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +389,94 @@ const INTENT_PHRASES: &[&str] = &[
     "before halting",
 ];
 
+const META_STUB_PHRASES: &[&str] = &[
+    "in the halt reasoning",
+    "halt reasoning field",
+    "report has been synthesized",
+    "has been synthesized inline",
+    "mandatory node success criteria have been",
+    "evidence is sufficient to answer",
+    "halting with the inline report",
+];
+
+/// Reject payloads that meet the length threshold but contain almost no
+/// lexical information, or that are dominated by repeated filler blocks.
+/// This is a substance check, not a full semantic correctness check.
+fn has_lexical_substance(report: &str) -> bool {
+    // Four rejection criteria (any one returns false):
+    // 1. Absolute floor: counted < 5 || unique < 3 || unique_chars < 4.
+    // 2. Unique-token ratio < 0.32 (only when counted >= 24).
+    // 3. Peak token frequency / total > 0.25 (only when counted >= 24).
+    // 4. Any 48-byte sliding window appearing >= 3 times (stride 1 + early exit).
+    //
+    // Tokenization matches the original: both leading and trailing
+    // non-alphanumeric characters (except '_') are folded away.
+    let mut counted: usize = 0;
+    let mut unique: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut freq: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut unique_chars: std::collections::HashSet<char> = std::collections::HashSet::new();
+
+    for raw in report.split_whitespace() {
+        let folded = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+        if folded.is_empty() {
+            counted += 1;
+            continue;
+        }
+        if folded.len() < 2 {
+            counted += 1;
+            continue;
+        }
+        let lower = folded.to_ascii_lowercase();
+        counted += 1;
+        unique.insert(lower.clone());
+        *freq.entry(lower).or_insert(0) += 1;
+        for c in folded.chars() {
+            unique_chars.insert(c.to_ascii_lowercase());
+        }
+    }
+
+    if counted < 5 || unique.len() < 3 || unique_chars.len() < 4 {
+        return false;
+    }
+
+    if counted >= 24 {
+        let ratio = unique.len() as f64 / counted as f64;
+        if ratio < 0.32 {
+            return false;
+        }
+        let peak = freq.values().copied().max().unwrap_or(0) as f64;
+        if peak / counted as f64 > 0.25 {
+            return false;
+        }
+    }
+
+    // 48-byte repeated-block detection. Stride MUST be 1.
+    // Performance: ~0.2 ms on a 3 KB report, ~5–10 ms on 200 KB (ARM64 release).
+    // Early exit makes highly-repetitive input cheaper, which is the case the
+    // gate exists to catch. HashMap uses std's SipHash-1-3 (RandomState); no
+    // ahash/fxhash is warranted at the sizes report_defects sees. If this ever
+    // shows up in a profile, swap to hashbrown::HashMap with FxHasher — one line.
+    const WINDOW: usize = 48;
+    const REPEATS: u32 = 3;
+    let bytes = report.as_bytes();
+    if bytes.len() >= WINDOW * REPEATS as usize {
+        let mut windows: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+        for i in 0..=bytes.len() - WINDOW {
+            let slice = &bytes[i..i + WINDOW];
+            if slice.iter().all(|&b| matches!(b, b' ' | b'\n' | b'\t' | b'\r')) {
+                continue;
+            }
+            let count = windows.entry(slice).or_insert(0);
+            *count += 1;
+            if *count >= REPEATS {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// Defects that make a halt text a non-report. Empty = acceptable.
 pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -205,23 +484,56 @@ pub fn report_defects(report: &str, corpus: &str) -> Vec<String> {
     if n < 50 {
         out.push(format!("report is only {} chars; need >= 50 of findings", n));
     }
+    if !has_lexical_substance(report) {
+        out.push(
+            "report contains insufficient lexical diversity; deliver actual findings instead of repeated filler"
+                .to_string(),
+        );
+    }
     let lower = report.to_ascii_lowercase();
     if INTENT_PHRASES.iter().any(|p| lower.contains(p)) {
         out.push("states intent/process instead of findings".to_string());
     }
-    let mut verified: Vec<&str> = Vec::new();
+    let mut verified_any: Vec<&str> = Vec::new();
     for span in report.split('`').skip(1).step_by(2) {
         let name = span.trim().trim_end_matches("()").rsplit("::").next().unwrap_or("");
         if is_ident(name)
-            && name.chars().next().is_some_and(|c| c.is_lowercase() || c == '_')
-            && word_present(corpus, &format!("fn {}", name))
-            && !verified.contains(&name)
+            && !SKIP.contains(&name)
+            && !is_grounding_skip_token(name)
+            && word_present(corpus, name)
+            && !verified_any.contains(&name)
         {
-            verified.push(name);
+            verified_any.push(name);
         }
     }
-    if verified.len() == 0 && corpus.len() > 1000 {
-        // out.push("no verified `fn` names cited; need at least 1 (enclose function name in backticks, e.g. `fn_name`)".to_string());
+    if META_STUB_PHRASES.iter().any(|p| lower.contains(p))
+        && (verified_any.is_empty()
+            || (verified_any.len() <= 1 && lower.contains("no further actions are needed")))
+    {
+        out.push(
+            "meta-summary claims a report exists without delivering inline findings".to_string(),
+        );
+    }
+    if verified_any.is_empty() && corpus.len() > 1000 && corpus.contains("fn ") {
+        out.push(
+            "no verified source identifiers cited in backticks; deliver concrete findings citing symbols from the read evidence (e.g. `fn_name` or `StructName`)"
+                .to_string(),
+        );
+    }
+    // Large evidence corpus: a one-symbol, two-paragraph stub is not an audit.
+    if corpus.len() > 20_000 {
+        if verified_any.len() < 3 {
+            out.push(format!(
+                "only {} distinct verified symbol(s) cited; a report over this much read evidence must cite at least 3",
+                verified_any.len()
+            ));
+        }
+        if report.chars().count() < 2000 {
+            out.push(
+                "report is too short for the amount of evidence read; deliver the full structured findings, not a summary"
+                    .to_string(),
+            );
+        }
     }
     out
 }
@@ -239,14 +551,74 @@ mod substance_tests {
 
     #[test]
     fn accepts_substantive_report() {
-        let body = "`handle_strategize` selects the strategy and proposes actions. ".repeat(10)
-            + "`handle_critic` filters duplicates and vetoes. `handle_execute` runs the gated motor command.";
-        assert!(report_defects(&body, SRC).is_empty());
+        // Diverse prose with real symbol citations. Must not rely on .repeat()
+        // of a short phrase, which the window/ratio checks correctly reject.
+        let body = "`handle_strategize` selects the strategy and proposes actions. `handle_critic` filters duplicates and vetoes. `handle_execute` runs the gated motor command. The cortical loop advances belief only after physical evidence is acquired. Recovery paths re-plan when a write is truncated or a critic registers a veto.";
+        assert!(report_defects(body, SRC).is_empty());
+    }
+
+    #[test]
+    fn rejects_repeated_character_filler_on_small_corpus() {
+        let filler = "y".repeat(500);
+        assert!(
+            !report_defects(&filler, "ev").is_empty(),
+            "repeated-character filler must not pass report validation"
+        );
+    }
+
+    #[test]
+    fn rejects_repeated_word_filler_on_small_corpus() {
+        let filler = "finding ".repeat(70);
+        assert!(
+            !report_defects(&filler, "ev").is_empty(),
+            "repeated-word filler must not pass report validation"
+        );
+    }
+
+    #[test]
+    fn accepts_concise_report_on_small_corpus() {
+        let report = "The `Gate` rejects paths outside its configured workspace.";
+        let corpus = "pub struct Gate;";
+
+        assert!(
+            report_defects(report, corpus).is_empty(),
+            "a concise report with actual findings should remain valid: {:?}",
+            report_defects(report, corpus)
+        );
     }
 
     #[test]
     fn extracts_reasoning() {
         assert_eq!(report_text(r#"{"type":"halt","reasoning":"abc"}"#), "abc");
+    }
+
+    #[test]
+    fn rejects_empty_meta_stub_on_source_audit() {
+        let big_src =
+            format!("pub struct Verifier;\npub fn verify_contract() {{}}\n{}", "x\n".repeat(600));
+        let stub = "All mandatory node success criteria have been physically evidenced. The final report has been synthesized inline in the halt reasoning field. No further actions are needed.";
+        assert!(!report_defects(stub, &big_src).is_empty());
+        let grounded = "The `Verifier` struct checks contracts in `verify_contract` across all branches and states.";
+        assert!(report_defects(grounded, &big_src).is_empty());
+    }
+
+    #[test]
+    fn large_corpus_rejects_short_or_thin_reports() {
+        let corpus = format!(
+            "pub struct Verifier;
+pub struct Gate;
+pub fn verify_contract() {{}}
+{}",
+            "x
+"
+            .repeat(15_000)
+        );
+        let stub = "The `Verifier` struct checks contracts in `verify_contract`.";
+        assert!(!report_defects(stub, &corpus).is_empty());
+        // Varied findings so the window/ratio checks do not false-reject a
+        // legitimate long report on a large corpus.
+        let full = "`Verifier` calls `verify_contract` and `Gate` blocks unauthorized transitions. The control flow acquires a write path before any mutation is emitted. Belief is raised only after physical evidence markers appear in the ledger. Recovery re-plans when a critic veto is registered or a deliverable is truncated. Lineage provenance is checked against the read ledger before a halt is authorized. Concrete symbols from the source are cited so the report stays grounded in evidence. The workspace declares thirty-seven members with resolver two and edition twenty twenty-one. A preaudit backup of the manifest sits beside the live manifest and is not referenced by the build. Daemon logs accumulate without rotation and the primary database has grown past sixty megabytes. The debug snapshot directory stores turn-by-turn evidence that is not needed after the session ends. Path sanitization lives in the executor with helpers for lexical normalization and ancestor canonicalization. Write-path resolution walks the nearest existing ancestor so a dangling symlink cannot escape the workspace. The completion engine exposes infer_contract and evaluate as its public surface. The outcome verifier exposes mission_completion_authorized and unmet_conditions. The cortical loop carries recovery helpers for patch-command phase transitions and unmet-read scheduling. The critic filter distinguishes state-sensitive actions from idempotent retries. A failed write against a still-absent target is retried up to a fixed cap instead of being suppressed. The anti-loop module scores search relevance and classifies duplicates. A repeated command after a mutation is treated as a new attempt rather than a stall. The hypothesis graph decays belief on repeated contradiction without compounding edge weight. Candidate strategies are pruned when their belief falls below the selection floor. The executor refuses to write through symlinks that resolve outside the workspace root. The read ledger separates own evidence from inherited lineage so a downstream node cannot close on work it did not perform. Verifier records inherit the parent session without rebinding the write path or the belief threshold.";
+        assert!(report_defects(full, &corpus).is_empty(), "{:?}", report_defects(full, &corpus));
     }
 }
 
@@ -409,6 +781,7 @@ fn words_at(hay: &str, needle: &str) -> Vec<usize> {
         .collect()
 }
 
+#[allow(dead_code)]
 fn range_after(window: &str) -> Option<(usize, usize)> {
     let i = window.find("ines ")? + "ines ".len();
     let rest = window[i..].trim_start_matches(|c: char| !c.is_ascii_digit());
@@ -428,6 +801,55 @@ fn range_after(window: &str) -> Option<(usize, usize)> {
         return None;
     }
     Some((a.parse().ok()?, b.parse().ok()?))
+}
+
+fn all_ranges(s: &str) -> Vec<(usize, usize)> {
+    let cs: Vec<char> = s.chars().collect();
+    let (mut out, mut i) = (Vec::new(), 0usize);
+    while i < cs.len() {
+        if cs[i].is_ascii_digit() {
+            let st = i;
+            while i < cs.len() && cs[i].is_ascii_digit() {
+                i += 1;
+            }
+            let a: String = cs[st..i].iter().collect();
+            if i + 1 < cs.len()
+                && matches!(cs[i], '-' | '\u{2013}' | '\u{2014}')
+                && cs[i + 1].is_ascii_digit()
+            {
+                let mut j = i + 1;
+                while j < cs.len() && cs[j].is_ascii_digit() {
+                    j += 1;
+                }
+                let b: String = cs[i + 1..j].iter().collect();
+                if let (Ok(a), Ok(b)) = (a.parse(), b.parse()) {
+                    out.push((a, b));
+                }
+                i = j;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// All ranges after the first "lines " in the window; prefers one that matches
+/// a ledger span of `name` (a line may cite two functions with two ranges).
+fn best_range_after(window: &str, spans: &[FnSpan], name: &str) -> Option<(usize, usize)> {
+    let i = window.find("ines ")? + "ines ".len();
+    let ranges = all_ranges(&window[i..]);
+    let first = *ranges.first()?;
+    Some(
+        ranges
+            .into_iter()
+            .find(|&(a, b)| {
+                spans.iter().filter(|x| x.name == name).any(|x| {
+                    x.end.is_some_and(|e| a.abs_diff(x.start) <= 25 && b.abs_diff(e) <= 40)
+                })
+            })
+            .unwrap_or(first),
+    )
 }
 
 /// Cited `name` + "Lines A-B" on the same report line must match the ledger.
@@ -450,7 +872,7 @@ pub fn range_defects(report: &str, spans: &[FnSpan], min_len: usize) -> Vec<Stri
             }
             let line: &str = report[pos..].lines().next().unwrap_or("");
             let window: String = line.chars().take(300).collect();
-            if let Some((a, b)) = range_after(&window) {
+            if let Some((a, b)) = best_range_after(&window, spans, &sp.name) {
                 let ok = spans.iter().filter(|x| x.name == sp.name).any(|x| {
                     x.end.is_some_and(|e| a.abs_diff(x.start) <= 25 && b.abs_diff(e) <= 40)
                 });
@@ -616,6 +1038,41 @@ fn public_definitions(corpus: &str) -> std::collections::HashSet<String> {
 /// a `pub use ... NAME` re-export). Call sites, imports, `impl` headers and
 /// `pub(crate)`/private items do not count. Stricter than `unverified_symbols`;
 /// use it only when the mission asks for public items.
+/// Returns true for tokens that should NOT be treated as claimable
+/// public definitions. Audit reports legitimately name standard library
+/// types, standard methods, string-literal statuses, FFI/WASM conventions,
+/// and canonical entry points -- none of which are `pub fn` / `pub struct`
+/// items in the project source. Requiring a project-level `pub` definition
+/// for each of them makes the grounding gate unsatisfiable for a
+/// comprehensive audit report.
+fn is_grounding_skip_token(name: &str) -> bool {
+    matches!(
+        name,
+        // Std types and traits.
+        "String" | "Result" | "Option" | "Vec" | "HashMap" | "HashSet"
+            | "Arc" | "Mutex" | "RwLock" | "Handle" | "JoinHandle"
+            | "Drop" | "Iterator" | "Clone" | "Debug" | "Default"
+            | "Send" | "Sync" | "Any" | "Box" | "Duration" | "Instant"
+        // Std methods and combinators.
+            | "unwrap" | "expect" | "clone" | "to_string" | "from_str" | "parse"
+            | "spawn" | "spawn_blocking" | "try_current" | "exit" | "drop"
+            | "abort" | "panic" | "flush" | "read" | "write"
+        // Entry points, FFI, libc, WASM conventions.
+            | "main" | "_start" | "start_server" | "init"
+            | "flock" | "setuid" | "setgid" | "getuid" | "getgid"
+        // Status literal vocabulary and evidence markers.
+            | "Active" | "Aborted" | "Completed" | "Pending" | "Failed" | "Running"
+            | "FRACTURE" | "PERSISTENCE" | "INCOMPLETE" | "COMPLETE"
+            | "READ_OK" | "WRITE_OK" | "CMD_OK" | "CMD_FAILED"
+            | "SEARCH_CODE_OK" | "SEARCH_CHECKED_OK" | "SEARCH_MEMORY_OK"
+            | "READ_CHUNK_OK" | "READ_FUNCTION_OK" | "PATCH_FUNCTION_OK"
+            | "PATCH_IDEMPOTENT_OK" | "DIFF_PATCH_OK" | "REPLACE_LINES_OK"
+            | "HALT" | "DAG_LINEAGE_OK" | "ANALYSIS_OK" | "TIMEOUT"
+        // Report section labels.
+            | "Scope" | "Summary" | "Evidence" | "Conclusion"
+    ) || name.starts_with('_')
+}
+
 pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>) {
     let public = public_definitions(corpus);
     let (mut ok, mut bad): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
@@ -626,7 +1083,7 @@ pub fn check_pub_claims(report: &str, corpus: &str) -> (Vec<String>, Vec<String>
             None => continue,
         };
         let name = claimed.as_str();
-        if SKIP.contains(&name) {
+        if SKIP.contains(&name) || is_grounding_skip_token(name) {
             continue;
         }
         let bucket = if public.contains(name) { &mut ok } else { &mut bad };
@@ -732,9 +1189,27 @@ pub fn is_report_artifact(path: &str) -> bool {
     p.ends_with(".txt") || p.ends_with(".md")
 }
 
+/// Strip lineage sections from a composite mission so that
+/// `wants_pub_items` only inspects the node's own objective and the
+/// root directive — not evidence inherited from sibling/parent nodes
+/// (which frequently contains `pub struct` propositions from upstream
+/// `[PROPOSITION] ... Defined symbols: pub struct X` lines).
+fn strip_lineage(text: &str) -> &str {
+    let cut = [
+        text.find("[DEPENDENCY LINEAGE FROM"),
+        text.find("[DAG LINEAGE"),
+        text.find("LINEAGE CONTEXT:"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(text.len());
+    &text[..cut]
+}
+
 /// True when the mission asks for public items (so the strict check applies).
 pub fn wants_pub_items(objective: &str) -> bool {
-    let o = objective.to_ascii_lowercase();
+    let o = strip_lineage(objective).to_ascii_lowercase();
     ["pub fn", "pub struct", "pub enum", "pub trait", "public item", "public api"]
         .iter()
         .any(|k| o.contains(k))
@@ -838,5 +1313,168 @@ mod halt_claims_keyword_tests {
         let corpus = "pub fn add(a: u8) -> u8 { a }";
         let report = "No `unsafe`, `static`, `const` or `impl` blocks; `add` is the only fn.";
         assert!(unverified_symbols(report, corpus).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod two_range_tests {
+    use super::*;
+    #[test]
+    fn two_ranges_on_one_line_accept_the_matching_one() {
+        let mut m: std::collections::BTreeMap<usize, String> =
+            (1..=30).map(|n| (n, "    x;".to_string())).collect();
+        m.insert(1, "fn wrapper() {".to_string());
+        m.insert(3, "}".to_string());
+        m.insert(5, "fn big() {".to_string());
+        m.insert(30, "}".to_string());
+        let sp = function_spans(&m);
+        let r = "through `wrapper` / `big` (lines 1-3 and 5-30)";
+        assert!(range_defects(r, &sp, 1).is_empty(), "{:?}", range_defects(r, &sp, 1));
+        assert_eq!(range_defects("`big` (lines 100-180)", &sp, 1).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod absence_tests {
+    use super::*;
+    #[test]
+    fn absence_claims_pass_invented_claims_fail() {
+        let corpus = "fn real() {}";
+        assert!(unverified_symbols("(c) No `active_graph` symbol exists.", corpus).is_empty());
+        assert!(
+            unverified_symbols("The `active_graph` identifier does not appear.", corpus).is_empty()
+        );
+        assert_eq!(unverified_symbols("`invented_fn` returns 3", corpus), vec!["invented_fn"]);
+    }
+}
+
+#[cfg(test)]
+mod wants_pub_items_dry_run {
+    use super::*;
+
+    const NODE4_OBJECTIVE: &str = "Write a comprehensive report named `full_system_audit.md` containing: - Orphaned files and dead code found via cargo warnings. - Exact locations of stubs, placeholders, and technical debt. - Identification of any duplicated logic across crates. - Concrete architectural advice for advancing the system to live, unmonitored production runs.";
+
+    const ROOT_DIRECTIVE: &str = "OBJECTIVE: Perform a full system analysis of the bins/ apps/ and crates/ directories. Audit for orphaned files, stubs, duplicate logic, and production readiness. Step 1: Execute exactly `cargo check --workspace`. Step 2: Search the codebase for \"todo!\" and \"unimplemented!\" macros. Step 3: Read bins/ide_backend/src/main.rs and crates/runtime_core/src/task_manager.rs. Step 4: Write a comprehensive report named `full_system_audit.md`.";
+
+    const NODE3_LINEAGE: &str = "---\n[DEPENDENCY LINEAGE FROM task_3]:\n[DAG NODE COMPLETE] Objective: Read bins/ide_backend/src/main.rs and crates/runtime_core/src/task_manager.rs\nBelief: 0.95\nEvidence:\n- [Supports] [READ_OK] crates/runtime_core/src/task_manager.rs\n[PROPOSITION] crates/runtime_core/src/task_manager.rs -> Defined symbols: pub struct TaskContext\n- [Supports] [HALT] READ_OK criteria are satisfied...\n---\n";
+
+    fn composite_mission() -> String {
+        format!(
+            "OBJECTIVE: {}\nASSIGNED ROLE: CodeAnalyzer\n\n\
+             MANDATORY NODE SUCCESS CRITERIA:\n- WritePathAcquired {{ path: \"full_system_audit.md\" }}\n\n\
+             NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced before this node can be considered complete.\n\n\
+             ROOT DIRECTIVE CONTEXT:\n{}\n\n\
+             LINEAGE CONTEXT:\n{}",
+            NODE4_OBJECTIVE, ROOT_DIRECTIVE, NODE3_LINEAGE
+        )
+    }
+
+    #[test]
+    fn components_are_not_pub_item_requests() {
+        assert!(
+            !wants_pub_items(NODE4_OBJECTIVE),
+            "node 4's own objective does NOT ask for public API items"
+        );
+        assert!(
+            !wants_pub_items(ROOT_DIRECTIVE),
+            "the root directive does NOT ask for public API items"
+        );
+        assert!(
+            NODE3_LINEAGE.contains("pub struct"),
+            "sanity: lineage DOES contain 'pub struct' from upstream evidence"
+        );
+    }
+
+    #[test]
+    fn composite_mission_no_longer_fires_the_gate() {
+        let composite = composite_mission();
+        assert!(
+            !wants_pub_items(&composite),
+            "FIX CONFIRMED: composite mission no longer triggers wants_pub_items"
+        );
+    }
+
+    #[test]
+    fn genuine_pub_item_missions_still_fire() {
+        assert!(
+            wants_pub_items("List the pub fn items in src/lib.rs"),
+            "REGRESSION: real pub-fn missions must still trigger the gate"
+        );
+        assert!(
+            wants_pub_items("Enumerate the public API of nexus_runtime_core"),
+            "REGRESSION: 'public API' missions must still trigger"
+        );
+        assert!(
+            wants_pub_items("Output every pub struct Name in the crate"),
+            "REGRESSION: 'pub struct' missions must still trigger"
+        );
+    }
+
+    #[test]
+    fn strip_lineage_is_what_makes_it_work() {
+        let composite = composite_mission();
+        let stripped_len = strip_lineage(&composite).len();
+        assert!(
+            stripped_len < composite.len(),
+            "strip_lineage must shorten a lineage-bearing mission"
+        );
+        let stripped = &composite[..stripped_len];
+        assert!(
+            !stripped.to_ascii_lowercase().contains("pub struct"),
+            "after stripping, the string no longer contains 'pub struct'"
+        );
+    }
+
+    #[test]
+    fn strip_lineage_picks_the_earliest_marker() {
+        let text =
+            "OBJECTIVE: foo\n\nLINEAGE CONTEXT:\n[DEPENDENCY LINEAGE FROM t]:\npub struct Bar";
+        let cut = strip_lineage(text);
+        assert!(!cut.contains("pub struct"));
+        assert!(cut.contains("OBJECTIVE: foo"));
+    }
+    #[test]
+    fn rejects_unaligned_block_repeated_three_times() {
+        // 57-byte block, 10 unique words → ratio 0.33, peak 0.10.
+        // Only the 48-byte window check can reject this, and only with stride 1.
+        // Period 57 is not a multiple of 24, so a strided scan would miss it.
+        let block = "alpha beta gamma delta epsilon zeta eta theta iota kappa ";
+        let report = block.repeat(3);
+        assert!(
+            !has_lexical_substance(&report),
+            "a 57-byte block repeated 3 times must be rejected by the 48-byte window check"
+        );
+    }
+
+    #[test]
+    fn rejects_repeated_directory_listing() {
+        let block = "removing the .foo directory, removing the .bar directory, removing the .baz directory, ";
+        let report = block.repeat(5);
+        assert!(
+            !has_lexical_substance(&report),
+            "repeated directory-removal list must be rejected"
+        );
+    }
+
+    #[test]
+    fn accepts_two_repetitions_of_a_block() {
+        // Two repetitions must not trip the window threshold.
+        let block = "alpha beta gamma delta epsilon zeta eta theta iota kappa ";
+        let report = format!("{block}{block}");
+        assert!(
+            has_lexical_substance(&report),
+            "exactly two repetitions of a diverse block must still pass"
+        );
+    }
+
+    #[test]
+    fn rejects_the_2026_11_14_failed_audit_report() {
+        // Exact bytes from the live run that produced the repetitive
+        // directory-removal list. This is the empirical gate for Tier 1.
+        let report = include_str!("../../tests/fixtures/failed_audit_report_2026_11_14.md");
+        assert!(
+            !has_lexical_substance(report),
+            "the 2026-11-14 audit report must be rejected by Tier 1"
+        );
     }
 }

@@ -20,6 +20,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
+#[derive(Debug)]
+pub enum TaskError {
+    Planner(String),
+    Persistence(String),
+    Verification(String),
+    Cortex(String),
+}
+
+impl std::fmt::Display for TaskError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Planner(msg) => write!(f, "FRACTURE: Planner error - {}", msg),
+            Self::Persistence(msg) => write!(f, "PERSISTENCE FAILURE: {}", msg),
+            Self::Verification(msg) => write!(f, "FRACTURE: Verification failed - {}", msg),
+            Self::Cortex(msg) => write!(f, "CORTEX FAILURE: {}", msg),
+        }
+    }
+}
+impl std::error::Error for TaskError {}
+
 pub struct TaskContext {
     pub client: Client,
     pub api_key: String,
@@ -32,67 +52,225 @@ pub struct TaskContext {
     pub reflection_engine: Arc<ReflectionEngine>,
 }
 
+/// Guarantees a terminal status on every exit path (early return, panic,
+/// future cancellation). No-op if the plan already reached Completed/Aborted.
+struct PlanGuard {
+    memory: Arc<MemoryCortex>,
+    plan_id: String,
+}
+impl Drop for PlanGuard {
+    fn drop(&mut self) {
+        let (m, id) = (self.memory.clone(), self.plan_id.clone());
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Err(e) = m.abort_plan_if_active(&id).await {
+                    tracing::warn!("[PLAN GUARD] Async abort of active plan {} failed: {}", id, e);
+                }
+            });
+        } else {
+            tracing::warn!("[PLAN GUARD] No active Tokio runtime handle during drop for plan {}. Enqueuing sync fallback abort.", id);
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
+                if let Ok(runtime) = rt {
+                    runtime.block_on(async move {
+                        if let Err(e) = m.abort_plan_if_active(&id).await {
+                            tracing::error!(
+                                "[PLAN GUARD] Sync fallback abort of plan {} failed: {}",
+                                id,
+                                e
+                            );
+                        }
+                    });
+                }
+            });
+        }
+    }
+}
+
 pub async fn send_task(
     _orchestrator: Arc<Orchestrator>,
     ctx: TaskContext,
     raw_directive: &str,
 ) -> String {
+    match send_task_inner(_orchestrator, ctx, raw_directive).await {
+        Ok(s) => s,
+        Err(e) => e.to_string(),
+    }
+}
+
+async fn send_task_inner(
+    _orchestrator: Arc<Orchestrator>,
+    ctx: TaskContext,
+    raw_directive: &str,
+) -> Result<String, TaskError> {
     METRICS.inc_task();
 
-    // ⚡ 1. EXECUTIVE CORTEX GOAL INJECTION
-    let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
-    let goal_id = uuid::Uuid::new_v4();
-    let _ = command_tx
-        .send(ExecutiveCommand::InjectGoal {
-            objective: raw_directive.to_string(),
-            parent_id: None,
-        })
-        .await;
+    // Allocate the plan identity before persistence; the Executive Cortex
+    // is deliberately not started until the initial plan row is durable.
+    let plan_id = uuid::Uuid::new_v4().to_string();
 
-    tokio::spawn(executive_cortex.run_actor_loop());
+    let mut graph = match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive)
+        .await
+    {
+        Ok(g) => g,
+        Err(e) => {
+            return Err(TaskError::Planner(format!("Planner failed to decompose objective: {}", e)))
+        }
+    };
 
-    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Registered goal {}. Decomposing DAG...", goal_id)}).to_string());
-
-    let mut graph =
-        match PlannerAgent::generate_plan(&ctx.client, &ctx.api_key, raw_directive).await {
-            Ok(g) => g,
-            Err(e) => return format!("FRACTURE: Planner failed to decompose objective: {}", e),
-        };
-
-    let expected_paths: Vec<String> =
+    // Directive-level deliverable pre-flight.
+    //
+    // infer_contract only sees structured criteria headers (WRITE_OK:,
+    // REQUIRED ARTIFACTS:, etc.). A prose directive like "Write
+    // mission_04_worker_recovery.md" produces zero required_artifact_paths,
+    // so the existing check below passed vacuously — the planner was free
+    // to drop the write, the DAG verified green, and the file was never
+    // created. Supplement with the directive-level extractor, which handles
+    // both prose ("write X.md") and structured criteria.
+    let mut expected_paths: Vec<String> =
         crate::completion_engine::SubgoalCompletionEngine::infer_contract("ad_hoc", raw_directive)
             .required_artifact_paths
             .into_iter()
             .map(|a| a.path)
             .collect();
+    for extra in crate::orchestrator_v2::planner::extract_write_targets_from_directive(raw_directive) {
+        if !expected_paths.iter().any(|p| p == &extra) {
+            expected_paths.push(extra);
+        }
+    }
     for expected_path in &expected_paths {
-        let has_write_node =
-            graph.nodes.values().any(|n| n.objective.contains(expected_path.as_str()));
+        // Recognize both the objective-text form (a correctly-planned node
+        // usually mentions the path) and the structured success_criteria
+        // form (WRITE_OK:X.md injected by apply_write_deliverable_criterion).
+        let has_write_node = graph.nodes.values().any(|n| {
+            n.objective.contains(expected_path.as_str())
+                || n.success_criteria.iter().any(|c| {
+                    let t = c.trim();
+                    t.starts_with("WRITE_OK:") && t.ends_with(expected_path.as_str())
+                })
+        });
         if !has_write_node {
-            return format!(
-                "FRACTURE: Directive requires writing '{}' but Planner produced no node for it. Refusing to run an incomplete DAG.",
+            return Err(TaskError::Planner(format!(
+                "Directive requires writing '{}' but Planner produced no node for it. \
+                 Refusing to run an incomplete DAG.",
                 expected_path
-            );
+            )));
         }
     }
 
     graph.compute_critical_path_priorities();
     let order = match graph.resolve_execution_order() {
         Ok(o) => o,
-        Err(e) => return format!("FRACTURE: Graph validation failed: {}", e),
+        Err(e) => return Err(TaskError::Planner(format!("Graph validation failed: {}", e))),
     };
 
-    let plan_id = uuid::Uuid::new_v4().to_string();
-    let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted.", plan_id)}).to_string());
+    // Initial persistence is a hard execution boundary: no DAG node may
+    // execute unless its plan record has been durably created.
+    let initial_graph_json = match serde_json::to_string(&graph) {
+        Ok(json) => json,
+        Err(error) => {
+            return Err(TaskError::Persistence(format!(
+                "Could not serialize initial plan graph: {}",
+                error
+            )));
+        }
+    };
+    let initial_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    if let Err(error) = ctx
+        .memory
+        .upsert_plan_run(&plan_id, raw_directive, &initial_graph_json, "Active", initial_now)
+        .await
+    {
+        return Err(TaskError::Persistence(format!(
+            "Plan {} was not stored; execution was not started: {}",
+            plan_id, error
+        )));
+    }
+
+    let _plan_guard = PlanGuard { memory: ctx.memory.clone(), plan_id: plan_id.clone() };
+    let _ = ctx.tx.send(
+        serde_json::json!({
+            "type": "LOG_EVENT",
+            "payload": format!("[EXECUTIVE CORTEX] Plan {} persisted.", plan_id)
+        })
+        .to_string(),
+    );
+
+    // Start the Executive Cortex only after the initial plan record exists.
+    let (executive_cortex, command_tx) = ExecutiveCortex::new(ctx.memory.clone());
+    let goal_id = plan_id.clone(); // one identity: log what the DB stores
+
+    if let Err(error) = command_tx
+        .send(ExecutiveCommand::InjectGoal {
+            plan_id: plan_id.clone(),
+            objective: raw_directive.to_string(),
+            parent_id: None,
+        })
+        .await
+    {
+        return Err(TaskError::Persistence(format!(
+            "Plan {} was stored, but Executive Cortex goal registration failed: {}",
+            plan_id, error
+        )));
+    }
+
+    let cortex_handle = tokio::spawn(executive_cortex.run_actor_loop());
+
+    let _ = ctx.tx.send(
+        serde_json::json!({
+            "type": "LOG_EVENT",
+            "payload": format!(
+                "[EXECUTIVE CORTEX] Registered goal {}. Decomposing DAG...",
+                goal_id
+            )
+        })
+        .to_string(),
+    );
 
     let planned_node_count = order.len();
     let mut completed_node_count = 0usize;
+    let mut failed_nodes: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut task_outputs: HashMap<String, String> = HashMap::new();
     let mut mission_had_failures = false;
     let world_model = Arc::new(WorldModel::new());
 
     for task_id in order {
-        let node = graph.nodes.get(&task_id).unwrap().clone();
+        if cortex_handle.is_finished() {
+            return Err(TaskError::Cortex(
+                "Executive Cortex actor terminated unexpectedly (panicked) during DAG execution."
+                    .into(),
+            ));
+        }
+        let node = match graph.nodes.get(&task_id) {
+            Some(n) => n.clone(),
+            None => {
+                return Err(TaskError::Planner(format!(
+                    "Node {} missing from graph structure",
+                    task_id
+                )))
+            }
+        };
+
+        // A node is blocked only by a failed DEPENDENCY, not by loop
+        // position. Independent siblings (e.g. a second search when the
+        // first failed) must still run so the mission report is complete.
+        if let Some(dep) = node.deps.iter().find(|d| failed_nodes.contains(*d)) {
+            if let Some(gn) = graph.nodes.get_mut(&task_id) {
+                gn.status = crate::orchestrator_v2::task_graph::TaskStatus::Failed;
+            }
+            mission_had_failures = true;
+            failed_nodes.insert(task_id.clone());
+            let _ = ctx.tx.send(serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!("[DAG SKIP] {} blocked by failed dependency '{}'", node.objective, dep)
+            }).to_string());
+            continue;
+        }
+
         let _ = ctx.tx.send(serde_json::json!({"type": "LOG_EVENT", "payload": format!("[SCHEDULER] Dispatching DAG Node: {}\nvia Subagent: {}", node.objective, node.required_agent)}).to_string());
 
         // Structured DAG telemetry: this is the actual production execution boundary.
@@ -114,7 +292,10 @@ pub async fn send_task(
             for dep in &node.deps {
                 if let Some(out) = task_outputs.get(dep) {
                     let bounded_out = if out.len() > 1500 {
-                        format!("{}... [TRUNCATED FOR CONTEXT BOUNDS]", &out[..1500])
+                        format!(
+                            "{}... [TRUNCATED FOR CONTEXT BOUNDS]",
+                            out.chars().take(1500).collect::<String>()
+                        )
                     } else {
                         out.clone()
                     };
@@ -376,11 +557,28 @@ pub async fn send_task(
                     .to_string(),
             )
         } else {
-            crate::orchestrator_v2::verifier::Verifier::verify_contract(
+            let mut result = crate::orchestrator_v2::verifier::Verifier::verify_contract(
                 &task_id,
                 &execution_evidence,
                 &verification_criteria,
-            )
+            );
+            // Bare CMD_OK proves only that SOME command succeeded. If the node
+            // objective names a command, require evidence for that command.
+            if matches!(result, crate::orchestrator_v2::verifier::VerificationResult::Success) {
+                if let Some(cmd) =
+                    crate::completion_engine::extract_required_command(&node.objective)
+                {
+                    if !crate::orchestrator_v2::verifier::Verifier::command_ok_for(
+                        &execution_evidence,
+                        &cmd,
+                    ) {
+                        result = crate::orchestrator_v2::verifier::VerificationResult::Failure(
+                            format!("Required command was never executed successfully: {}", cmd),
+                        );
+                    }
+                }
+            }
+            result
         };
 
         let node_verification_succeeded = matches!(
@@ -459,29 +657,137 @@ pub async fn send_task(
             }
         }
 
+        // Persist the verified node outcome before another node can be
+        // dispatched. A failed checkpoint halts the DAG immediately.
+        let checkpoint_graph_json = match serde_json::to_string(&graph) {
+            Ok(json) => json,
+            Err(error) => {
+                return Err(TaskError::Persistence(format!(
+                    "Could not serialize checkpoint for plan {}: {}",
+                    plan_id, error
+                )));
+            }
+        };
+        let checkpoint_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        match ctx
+            .memory
+            .update_plan_run_checkpoint(&plan_id, &checkpoint_graph_json, "Active", checkpoint_now)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(TaskError::Persistence(format!(
+                    "Plan {} was no longer Active; downstream execution halted.",
+                    plan_id
+                )));
+            }
+            Err(error) => {
+                return Err(TaskError::Persistence(format!(
+                    "Checkpoint for plan {} failed; downstream execution halted: {}",
+                    plan_id, error
+                )));
+            }
+        }
+
         // Completion requires BOTH authorization stages:
         //   Cortex CompletionProposed + deterministic contract verification.
         //
         // Any Cortex exhaustion/failure therefore reaches this halt path.
         if !node_verification_succeeded {
+            failed_nodes.insert(task_id.clone());
             let _ = ctx.tx.send(
                 serde_json::json!({
                     "type": "LOG_EVENT",
                     "payload": format!(
-                        "[DAG HALT] Aborting downstream execution. Dependency '{}' failed deterministic verification.",
+                        "[DAG NODE FAILED] '{}' failed deterministic verification; dependent nodes will be skipped, independent nodes continue.",
                         task_id
                     )
                 })
                 .to_string()
             );
-            break;
+            continue;
         }
     }
 
     // WHOLE-DAG COMPLETION GATE:
     // A successful Cortex node is only a subgoal completion.
     // The overall DAG is complete only when every planned node completed.
-    if mission_had_failures || planned_node_count == 0 || completed_node_count != planned_node_count
+    let final_graph_json = match serde_json::to_string(&graph) {
+        Ok(json) => json,
+        Err(error) => {
+            return Err(TaskError::Persistence(format!(
+                "Could not serialize final graph for plan {}: {}",
+                plan_id, error
+            )));
+        }
+    };
+    // Directive-level deliverable check at mission completion.
+    //
+    // Even when every node verifies green, confirm that each write target
+    // the directive named actually exists on disk. Catches silent false
+    // success: node green, file absent. Common causes: planner
+    // under-decomposition that the pre-flight missed, out-of-band file
+    // deletion after write, or a write path that silently failed.
+    let missing_deliverables: Vec<String> =
+        crate::orchestrator_v2::planner::extract_write_targets_from_directive(raw_directive)
+            .into_iter()
+            .filter(|p| !std::path::Path::new(p).exists())
+            .collect();
+    if !missing_deliverables.is_empty() {
+        let _ = ctx.tx.send(
+            serde_json::json!({
+                "type": "LOG_EVENT",
+                "payload": format!(
+                    "[DAG INCOMPLETE] MISSION_DELIVERABLE_MISSING: directive named write deliverable(s) but the file(s) are absent from disk: {:?}. All planned nodes may have reported success, but the mission's stated deliverable was never produced.",
+                    missing_deliverables
+                )
+            })
+            .to_string()
+        );
+    }
+
+    let final_status = if mission_had_failures
+        || planned_node_count == 0
+        || completed_node_count != planned_node_count
+        || !missing_deliverables.is_empty()
+    {
+        "Aborted"
+    } else {
+        "Completed"
+    };
+    let final_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    match ctx
+        .memory
+        .update_plan_run_checkpoint(&plan_id, &final_graph_json, final_status, final_now)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(TaskError::Persistence(format!(
+                "Plan {} could not transition from Active to {}.",
+                plan_id, final_status
+            )));
+        }
+        Err(error) => {
+            return Err(TaskError::Persistence(format!(
+                "Final {} transition for plan {} failed: {}",
+                final_status, plan_id, error
+            )));
+        }
+    }
+
+    if mission_had_failures
+        || planned_node_count == 0
+        || completed_node_count != planned_node_count
+        || !missing_deliverables.is_empty()
     {
         let _ = ctx.tx.send(
             serde_json::json!({
@@ -496,12 +802,11 @@ pub async fn send_task(
             .to_string()
         );
 
-        format!(
-            "DAG/GoT Execution FINISHED WITH INCOMPLETE NODES.              Completed {}/{} nodes. Plan ID: {}",
+        Ok(format!("DAG/GoT Execution FINISHED WITH INCOMPLETE NODES.              Completed {}/{} nodes. Plan ID: {}",
             completed_node_count,
             planned_node_count,
             plan_id
-        )
+        ))
     } else {
         let _ = ctx.tx.send(
             serde_json::json!({
@@ -516,11 +821,10 @@ pub async fn send_task(
             .to_string()
         );
 
-        format!(
-            "DAG/GoT Hybrid Execution Complete.              All {}/{} nodes completed. Plan ID: {}",
+        Ok(format!("DAG/GoT Hybrid Execution Complete.              All {}/{} nodes completed. Plan ID: {}",
             completed_node_count,
             planned_node_count,
             plan_id
-        )
+        ))
     }
 }

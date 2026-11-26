@@ -15,6 +15,11 @@ toml = "0.8"
 walkdir = "2.4"
 dotenvy = "0.15"
 ureq = { version = "2.9", features = ["json"] }
+sha2 = "0.10"
+hex = "0.4"
+regex = "1.13.2"
+ratatui = "0.30.2"
+crossterm = "0.29.0"
 
 # Validated Zero-Fragmentation ABI Ecosystem
 tree-sitter = "0.23"

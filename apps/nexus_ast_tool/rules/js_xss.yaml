@@ -3,5 +3,6 @@ language: javascript
 severity: High
 description: Unsafe DOM injection via dangerouslySetInnerHTML or arbitrary script evaluation via eval().
 tree_sitter_query: >
-  (call_expression function: (identifier) @func_name (#eq? @func_name "eval")) @danger.code_execution
+  (call_expression function: (identifier) @func_name (#match? @func_name "^(eval|Function)$")) @danger.code_execution
+  (new_expression constructor: (identifier) @func_name (#eq? @func_name "Function")) @danger.code_execution
   (pair key: (property_identifier) @prop (#eq? @prop "dangerouslySetInnerHTML")) @danger.xss

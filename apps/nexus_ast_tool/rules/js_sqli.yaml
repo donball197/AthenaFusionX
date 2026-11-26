@@ -11,3 +11,15 @@ tree_sitter_query: |
     function: (member_expression property: (property_identifier) @method (#match? @method "^(query|execute)$"))
     arguments: (arguments (binary_expression) @danger.sql_injection)
   )
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#match? @method "^(query|execute)$"))
+    arguments: (arguments (string) (binary_expression) @danger.sql_injection)
+  )
+  (call_expression
+    function: (identifier) @func (#match? @func "^(query|execute)$")
+    arguments: (arguments (template_string (template_substitution)) @danger.sql_injection)
+  )
+  (call_expression
+    function: (identifier) @func (#match? @func "^(query|execute)$")
+    arguments: (arguments (binary_expression) @danger.sql_injection)
+  )

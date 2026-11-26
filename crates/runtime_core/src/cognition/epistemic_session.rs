@@ -63,11 +63,8 @@ fn distill_to_proposition(raw: &str) -> (String, Option<EpistemicTuple>) {
                 key_symbols.push(sig);
             }
         }
-        let symbols_summary = if key_symbols.is_empty() {
-            read_line_summary(&lines)
-        } else {
-            key_symbols.join(", ")
-        };
+        let symbols_summary =
+            if key_symbols.is_empty() { read_line_summary(&lines) } else { key_symbols.join(", ") };
 
         let tuple = EpistemicTuple::new("AST", path, "DEFINES", &symbols_summary, 1.0);
         let prop =
@@ -179,7 +176,13 @@ pub struct EpistemicSession {
     pub budget: CognitiveBudget,
     pub graph: CognitiveGraph,
     pub local_evidence: String,
+    #[serde(skip)]
+    pub typed_evidence: Vec<crate::evidence_adapter::TypedEvidenceRecord>,
     pub executed_actions: HashMap<String, u32>,
+    /// Log of actions executed this session. `executed_actions` keys are
+    /// opaque hashes; the code-shift listener needs the original action
+    /// to answer "did we touch path P?" (BUG-17).
+    pub executed_action_log: Vec<crate::agent_protocol::AgentAction>,
     #[serde(skip)]
     pub global_action_attempts: HashMap<String, u32>,
     #[serde(skip)]
@@ -197,19 +200,36 @@ pub struct EpistemicSession {
     /// the historical record of the veto.
     #[serde(skip)]
     pub last_critic_rejected_actions: Option<Vec<String>>,
+    /// `local_evidence.len()` at the moment of the last critic rejection.
+    /// A retried proposal whose batch matches the last rejection is only
+    /// repeat-vetoed while evidence has not meaningfully grown since the
+    /// veto; once the strategist produces new evidence the critic gets a
+    /// re-look. Prevents a single stale veto from deadlocking a correction
+    /// cycle that is producing fresh reconnaissance.
+    #[serde(skip)]
+    pub last_critic_rejected_at_evidence_len: Option<usize>,
 }
 
 impl EpistemicSession {
     pub fn new(mission: &str) -> Self {
+        let contract = SubgoalCompletionEngine::infer_contract("session_node", mission);
+        let mut budget = CognitiveBudget::default_for_node();
+        if contract.conditions.len() > 4 {
+            budget.max_turns =
+                budget.max_turns.max(((contract.conditions.len() as u32) * 8 + 16).min(120));
+            budget.max_model_calls = budget.max_model_calls.max(budget.max_turns * 3);
+        }
         Self {
             session_id: Uuid::new_v4(),
             mission: mission.to_string(),
-            contract: SubgoalCompletionEngine::infer_contract("session_node", mission),
-            budget: CognitiveBudget::default_for_node(),
+            contract,
+            budget,
             graph: CognitiveGraph::new(),
             local_evidence: String::new(),
+            typed_evidence: Vec::new(),
             coverage: crate::coverage::CoverageLedger::default(),
             executed_actions: HashMap::new(),
+            executed_action_log: Vec::new(),
             global_action_attempts: HashMap::new(),
             compile_remediation: crate::compile_remediation::CompileRemediationState::default(),
             active_mutation_paths: Vec::new(),
@@ -218,6 +238,7 @@ impl EpistemicSession {
             consecutive_mutation_vetoes: 0,
             tuples: Vec::new(),
             last_critic_rejected_actions: None,
+            last_critic_rejected_at_evidence_len: None,
         }
     }
 
@@ -269,8 +290,12 @@ impl EpistemicSession {
         }
     }
 
-    pub fn record_action_attempt(&mut self, action_key: &str) {
-        let count = self.executed_actions.entry(action_key.to_string()).or_insert(0);
+    pub fn record_action_attempt(&mut self, action: &crate::agent_protocol::AgentAction) {
+        // BUG-17: keep the action itself so the code-shift listener can
+        // answer "did we touch path P?" without parsing a hash.
+        self.executed_action_log.push(action.clone());
+        let action_key = crate::cortical::action_identity::action_key(action);
+        let count = self.executed_actions.entry(action_key).or_insert(0);
         *count += 1;
     }
 
@@ -386,7 +411,8 @@ mod read_line_summary_tests {
 
     #[test]
     fn directory_listing_is_not_described_as_a_file() {
-        let raw = "[READ_OK] d\nDIRECTORY LISTING:\nENTRIES: 2 (read individual files)\nd/a.rs\nd/b.rs\n";
+        let raw =
+            "[READ_OK] d\nDIRECTORY LISTING:\nENTRIES: 2 (read individual files)\nd/a.rs\nd/b.rs\n";
         let lines: Vec<&str> = raw.lines().collect();
         assert_eq!(read_line_summary(&lines), "Directory listing (2 entries)");
     }

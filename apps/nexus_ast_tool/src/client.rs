@@ -47,6 +47,8 @@ impl ApiClient {
         // 2. NVIDIA NIM Cloud
         if lower.contains("nvidia")
             || lower.contains("nemotron")
+            || lower.contains("laguna")
+            || lower.starts_with("poolside/")
             || lower.contains("deepseek")
             || lower.contains("meta/")
             || lower.contains("moonshotai/")
@@ -59,6 +61,36 @@ impl ApiClient {
                 url: "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
                 api_key,
             });
+        }
+
+        // 2b. AIHubMix (Xiaomi MiMo)
+        if lower.contains("mimo") || lower.starts_with("xiaomi") {
+            let api_key = env::var("AIHUBMIX_API_KEY")
+                .map_err(|_| anyhow!("AIHUBMIX_API_KEY required for AIHubMix/MiMo models"))?;
+            let base = env::var("AIHUBMIX_BASE_URL")
+                .unwrap_or_else(|_| "https://aihubmix.com/v1".to_string());
+            let clean = base.trim_end_matches('/');
+            let url = if clean.ends_with("/chat/completions") {
+                clean.to_string()
+            } else {
+                format!("{}/chat/completions", clean)
+            };
+            return Ok(LlmEndpoint { model, url, api_key });
+        }
+
+        // 2c. Reflection Cloud API (Beam)
+        if lower.contains("beam") || lower.contains("reflection") {
+            let api_key = env::var("REFLECTION_API_KEY")
+                .map_err(|_| anyhow!("REFLECTION_API_KEY required for Reflection/Beam models"))?;
+            let base = env::var("REFLECTION_BASE_URL")
+                .unwrap_or_else(|_| "https://api.reflection.ai/openai/v1".to_string());
+            let clean = base.trim_end_matches('/');
+            let url = if clean.ends_with("/chat/completions") {
+                clean.to_string()
+            } else {
+                format!("{}/chat/completions", clean)
+            };
+            return Ok(LlmEndpoint { model, url, api_key });
         }
 
         // 3. Local S23 Edge LiteRT-LM
@@ -79,20 +111,50 @@ impl ApiClient {
     }
 
     fn call(prompt: &str, temperature: f32) -> Result<String> {
+        Self::call_with(prompt, temperature, 1536, false)
+    }
+
+    fn call_with(prompt: &str, temperature: f32, max_tokens: u32, strict: bool) -> Result<String> {
         let ep = Self::resolve_endpoint()?;
-        let body = json!({
+        let lower_model = ep.model.to_ascii_lowercase();
+        let effective_max_tokens = if lower_model.contains("beam")
+            || lower_model.contains("nemotron")
+            || lower_model.contains("deepseek")
+            || lower_model.contains("qwq")
+        {
+            max_tokens.max(4096)
+        } else {
+            max_tokens
+        };
+        let mut body = json!({
             "model": ep.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
-            "max_tokens": 512
+            "max_tokens": effective_max_tokens
         });
+        if lower_model.contains("mimo") || lower_model.starts_with("xiaomi") {
+            body["reasoning_effort"] = json!("none");
+        }
 
         let req = ureq::post(&ep.url)
             .timeout(Duration::from_secs(180))
             .set("Content-Type", "application/json")
             .set("Authorization", &format!("Bearer {}", ep.api_key));
 
-        Self::extract_text(req.send_json(body)?)
+        let resp: serde_json::Value = req.send_json(body)?.into_json()?;
+        if strict {
+            if resp["choices"][0]["finish_reason"].as_str() == Some("length") {
+                return Err(anyhow!("LLM output truncated (finish_reason=length, max_tokens={})", effective_max_tokens));
+            }
+            let msg = &resp["choices"][0]["message"];
+            let content_empty = msg["content"].as_str().map_or(true, |x| x.trim().is_empty());
+            let rc_ok = msg["reasoning_content"].as_str()
+                .map_or(false, |x| x.contains("<payload>") && x.contains("</payload>"));
+            if content_empty && !rc_ok {
+                return Err(anyhow!("Model returned no usable content (reasoning-only output)"));
+            }
+        }
+        Self::extract_text_from_value(&resp)
     }
 
     fn with_retry_transient<T, F: FnMut() -> Result<T>>(mut f: F, max_attempts: u32) -> Result<T> {
@@ -140,14 +202,55 @@ impl ApiClient {
         out
     }
 
+    fn strip_think_blocks(raw: &str) -> String {
+        let mut out = raw.to_string();
+        while let Some(start) = out.find("<think>") {
+            if let Some(rel_end) = out[start..].find("</think>") {
+                let end = start + rel_end + "</think>".len();
+                out.replace_range(start..end, "");
+            } else {
+                out.truncate(start);
+                break;
+            }
+        }
+        out.trim().to_string()
+    }
+
     fn strip_code_fences(raw: &str) -> String {
         let mut t = raw.trim();
-        for lang_tag in
-            &["```php", "```python", "```py", "```javascript", "```js", "```json", "```"]
-        {
+        for lang_tag in &[
+            "```typescript",
+            "```javascript",
+            "```python",
+            "```rust",
+            "```json",
+            "```tsx",
+            "```jsx",
+            "```cpp",
+            "```php",
+            "```zig",
+            "```ts",
+            "```js",
+            "```py",
+            "```go",
+            "```rs",
+            "```c",
+        ] {
             if let Some(rest) = t.strip_prefix(lang_tag) {
                 t = rest;
                 break;
+            }
+        }
+        if let Some(after_open) = t.strip_prefix("```") {
+            if let Some(nl) = after_open.find('\n') {
+                let tag = after_open[..nl].trim();
+                if tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+')) {
+                    t = &after_open[nl + 1..];
+                } else {
+                    t = after_open;
+                }
+            } else {
+                t = after_open;
             }
         }
         if let Some(body) = t.strip_suffix("```") {
@@ -156,22 +259,51 @@ impl ApiClient {
         t.trim().to_string()
     }
 
+    fn unwrap_json_payload(text: &str) -> Option<String> {
+        let trimmed = text.trim();
+        let candidate = if trimmed.starts_with('{') {
+            trimmed
+        } else {
+            let s = trimmed.find('{')?;
+            let e = trimmed.rfind('}')? + 1;
+            if s >= e {
+                return None;
+            }
+            &trimmed[s..e]
+        };
+        if !candidate.contains("\"payload\"") {
+            return None;
+        }
+        let sanitized = Self::sanitize_json(candidate);
+        let v: serde_json::Value = serde_json::from_str(&sanitized).ok()?;
+        v["payload"].as_str().map(|p| Self::strip_code_fences(p))
+    }
+
     fn extract_payload(text: &str) -> Result<String> {
-        if let Some(start) = text.find("<payload>") {
+        let no_think = Self::strip_think_blocks(text);
+        let extracted = if let Some(start) = no_think.rfind("<payload>") {
             let actual_start = start + "<payload>".len();
-            let end = text[actual_start..]
+            let end = no_think[actual_start..]
                 .find("</payload>")
                 .map(|idx| actual_start + idx)
-                .unwrap_or(text.len());
-            let inner = &text[actual_start..end];
-            let cleaned = Self::strip_code_fences(inner);
-            if !cleaned.trim().is_empty() {
-                return Ok(cleaned);
-            }
-        }
-        // Fallback if model omitted <payload> tags
-        let cleaned = Self::strip_code_fences(text);
-        if cleaned.is_empty() {
+                .ok_or_else(|| anyhow!("Model output truncated: missing </payload>"))?;
+            let inner = &no_think[actual_start..end];
+            Self::strip_code_fences(inner)
+        } else {
+            Self::strip_code_fences(&no_think)
+        };
+
+        let cleaned = if let Some(unwrapped) = Self::unwrap_json_payload(&extracted) {
+            unwrapped
+        } else if extracted.contains("\"payload\"") && extracted.trim_start().starts_with('{') {
+            return Err(anyhow!(
+                "Model returned malformed JSON payload wrapper; refusing to splice raw JSON"
+            ));
+        } else {
+            extracted
+        };
+
+        if cleaned.trim().is_empty() {
             Err(anyhow!("Model returned empty output"))
         } else {
             Ok(cleaned)
@@ -208,16 +340,21 @@ impl ApiClient {
              <payload>{{\"state\": \"EXPLOITABLE\", \"severity\": \"High\", \"reason\": \"Vulnerable sink detected\"}}</payload>"
         );
 
-        let text = Self::call(&prompt, 0.0)?;
-        let start = text
-            .find("<payload>")
-            .map(|i| i + "<payload>".len())
-            .unwrap_or_else(|| text.find('{').unwrap_or(0));
-        let end = text
-            .rfind("</payload>")
-            .unwrap_or_else(|| text.rfind('}').map(|i| i + 1).unwrap_or(text.len()))
-            .max(start);
-        let json_str = Self::strip_code_fences(&text[start..end]);
+        let text = Self::call_with(&prompt, 0.0, 1536, false)?;
+        let clean = Self::strip_think_blocks(&text);
+        let (start, end) = if let Some(s) = clean.rfind("<payload>") {
+            let actual_start = s + "<payload>".len();
+            let e = clean[actual_start..]
+                .find("</payload>")
+                .map(|idx| actual_start + idx)
+                .unwrap_or(clean.len());
+            (actual_start, e)
+        } else {
+            let s = clean.rfind('{').unwrap_or(0);
+            let e = clean.rfind('}').map(|i| i + 1).unwrap_or(clean.len()).max(s);
+            (s, e)
+        };
+        let json_str = Self::strip_code_fences(&clean[start..end]);
         let sanitized = Self::sanitize_json(&json_str);
 
         let parsed: serde_json::Value = serde_json::from_str(&sanitized)
@@ -241,8 +378,24 @@ impl ApiClient {
         code_snippet: &str,
         lang: &str,
     ) -> Result<String> {
+        Self::generate_security_patch_with_context(finding_type, code_snippet, "", lang)
+    }
+
+    pub fn generate_security_patch_with_context(
+        finding_type: &str,
+        code_snippet: &str,
+        context_snippet: &str,
+        lang: &str,
+    ) -> Result<String> {
         Self::with_retry_transient(
-            || Self::generate_security_patch_attempt(finding_type, code_snippet, lang),
+            || {
+                Self::generate_security_patch_attempt(
+                    finding_type,
+                    code_snippet,
+                    context_snippet,
+                    lang,
+                )
+            },
             3,
         )
     }
@@ -250,6 +403,7 @@ impl ApiClient {
     fn generate_security_patch_attempt(
         finding_type: &str,
         code_snippet: &str,
+        context_snippet: &str,
         lang: &str,
     ) -> Result<String> {
         thread::sleep(Duration::from_millis(300));
@@ -261,6 +415,12 @@ impl ApiClient {
         let is_rust = lang.eq_ignore_ascii_case("Rust");
 
         let (rules, exemplar) = if is_php {
+            let is_cmdi = code_snippet.contains("system(")
+                || code_snippet.contains("exec(")
+                || code_snippet.contains("passthru(")
+                || code_snippet.contains("shell_exec(")
+                || code_snippet.contains("popen(")
+                || code_snippet.contains("proc_open(");
             let is_if_sink = (code_snippet.contains("if (")
                 || code_snippet.contains("if(!")
                 || code_snippet.contains("if (!"))
@@ -268,30 +428,80 @@ impl ApiClient {
             let is_secondary_sink = code_snippet.trim().starts_with("$result = mysqli_query")
                 || code_snippet.trim().starts_with("$result=mysqli_query");
 
-            let rule = if is_if_sink {
+            let rule = if is_cmdi {
+                "MANDATORY: Wrap every user-supplied argument with escapeshellarg(). Do NOT replace the command function itself unless you use a safe alternative. Keep the original command structure. For example: system(\"ls \" . escapeshellarg($cmd));. NEVER generate SQL/DB code for command injection fixes."
+            } else if is_if_sink {
                 "MANDATORY: The line being replaced ends with an 'if (...)'. Your replacement MUST end with 'if (!$stmt->execute())'. Do NOT add an opening brace '{' after it."
             } else if is_secondary_sink {
                 "MANDATORY: Output ONLY '$result = $stmt->get_result();'"
             } else {
-                "MANDATORY: Write out prepared statement ($con->prepare, bind_param, execute, $result = $stmt->get_result())."
+                "MANDATORY: Write out prepared statement ($con->prepare, bind_param, execute, $result = $stmt->get_result()). Pass ONLY variables to bind_param() (e.g. $hashed = md5($pass); $stmt->bind_param(\"s\", $hashed);) — NEVER pass function calls or string concatenation directly into bind_param(), and never put ? inside SQL quotes like LIKE '%?%'."
             };
 
-            let ex = "[EXAMPLE INPUT]:\n$q = \"SELECT * FROM users WHERE id = '\".$id.\"'\";\nif (!mysqli_query($con, $q))\n[EXAMPLE OUTPUT]:\n<payload>$stmt = $con->prepare(\"SELECT * FROM users WHERE id = ?\");\n$stmt->bind_param(\"s\", $id);\nif (!$stmt->execute())</payload>";
+            let ex = if is_cmdi {
+                "[EXAMPLE INPUT]:\n$cmd = $_GET['cmd'];\nsystem(\"ls \" . $cmd);\n[EXAMPLE OUTPUT]:\n<payload>$cmd = escapeshellarg($cmd);\nsystem(\"ls \" . $cmd);</payload>"
+            } else {
+                "[EXAMPLE INPUT]:\n$q = \"SELECT * FROM users WHERE id = '\".$id.\"'\";\nif (!mysqli_query($con, $q))\n[EXAMPLE OUTPUT]:\n<payload>$stmt = $con->prepare(\"SELECT * FROM users WHERE id = ?\");\n$stmt->bind_param(\"s\", $id);\nif (!$stmt->execute())</payload>"
+            };
             (rule, ex)
         } else if is_python {
-            let rule = "MANDATORY: If fixing SQLi, use parameterized query tuples (e.g. cursor.execute('SELECT * FROM users WHERE id = %s', (val,))). If fixing eval() code execution, replace with safe ast.literal_eval() or safe parsing. If fixing command injection, use subprocess.run(['cmd', arg]) without shell=True.";
-            let ex = "[EXAMPLE INPUT]:\ncursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n[EXAMPLE OUTPUT]:\n<payload>cursor.execute(\"SELECT * FROM users WHERE name = %s\", (name,))</payload>";
+            let rule = "MANDATORY: Preserve outer assignment variables and valid parentheses. For SQLAlchemy text(), use named `:param` placeholders with `.bindparams(param=val)` or `session.execute(text(...), {'param': val})` (NEVER f-strings or `%s` inside text()). For DB-API cursors, use `cursor.execute('... %s', (val,))`. For eval()/exec(), replace with `json.loads(...)` or `ast.literal_eval(...)` using only imported/stdlib helpers (NEVER keep `eval(..., {'__builtins__': {}})` and never invent undefined functions like `safe_eval`). For SSTI with render_template_string(), avoid untrusted template syntax—pass `escape(...)` from markupsafe or format plain text/Flask `render_template`. For pickle/yaml deserialization, replace `loads(...)` with `json.loads(...)` using already-imported helpers. Keep table-name expressions such as RegistrationCode.__tablename__ exactly as written in the snippet; never hardcode a table name. Never introduce a name that is not in the snippet or context.";
+            let ex = "[EXAMPLE INPUT]:\nresult = session.execute(text(f\"SELECT id FROM users WHERE code = '{code}'\")).first()\n[EXAMPLE OUTPUT]:\n<payload>result = session.execute(text(\"SELECT id FROM users WHERE code = :code\"), {\"code\": code}).first()</payload>";
             (rule, ex)
         } else if is_js {
-            let rule = "MANDATORY: If fixing SQLi, use parameterized queries (e.g. db.query('SELECT * FROM users WHERE id = $1', [id])). If fixing command injection, use child_process.execFile('cmd', [args]) instead of exec(string).";
+            let rule = "MANDATORY: Preserve the complete statement/call chain shown in 'Snippet to replace' (keep any chained .then(...).catch(...) calls and surrounding arguments). If fixing SQLi, use parameterized queries (e.g. db.query('SELECT * FROM users WHERE id = $1', [id]) or Sequelize replacements/bind) and NEVER put '?' inside quotes like LIKE '%?%' (write LIKE ? and pass '%' + val + '%' or `%${val}%`). If fixing command injection, use child_process.execFile('cmd', [args]) instead of exec(string). If fixing eval(), replace with JSON.parse(...) or safe parsing (NEVER use Function() or new Function()).";
             let ex = "[EXAMPLE INPUT]:\ndb.query(`SELECT * FROM users WHERE id = ${id}`);\n[EXAMPLE OUTPUT]:\n<payload>db.query('SELECT * FROM users WHERE id = $1', [id]);</payload>";
             (rule, ex)
         } else if is_rust {
-            let rule = "MANDATORY: For SQL injection, use sqlx::query!() or sqlx::query() with bind() parameters. For command injection, use Command::new(...).args(...), never shell execution such as sh -c with an interpolated command string.";
+            let rule = "MANDATORY: For SQL injection, replace the complete query-building + execution lines shown in the snippet with one `sqlx::query(\"...\").bind(...)` call (preserve `.execute(...)` / `.fetch_all(...)` and `.await?` if present). For command injection, use Command::new(...).args(...), never shell execution such as sh -c with an interpolated command string.";
             let ex = "[EXAMPLE INPUT]:\nlet query = format!(\"SELECT * FROM users WHERE id = {}\", id);\nsqlx::query(&query).execute(&pool).await?;\n[EXAMPLE OUTPUT]:\n<payload>sqlx::query(\"SELECT * FROM users WHERE id = ?\").bind(id).execute(&pool).await?;</payload>";
             (rule, ex)
+        } else if lang.eq_ignore_ascii_case("Go") {
+            let is_cmdi = code_snippet.contains("exec.Command") || code_snippet.contains("CommandContext");
+            let rule = if is_cmdi {
+                "MANDATORY: The ONLY safe form is exec.Command with a CONSTANT string as the command name and separate string arguments. For example: exec.Command(\"ls\", dir). NEVER pass a user-controlled variable as the command name (e.g., exec.Command(cmd) is FORBIDDEN). If you must support dynamic commands, use a strict allowlist: allowed := map[string]bool{\"ls\": true, \"pwd\": true}; if allowed[cmd] { exec.Command(cmd).Output() }."
+            } else {
+                "MANDATORY: Use db.Query with ? placeholder parameterization: db.Query(\"SELECT ... WHERE x = ?\", value). NEVER use fmt.Sprintf or string concatenation to build SQL. CRITICAL: When source has TWO lines like:\n  q := fmt.Sprintf(\"SELECT * FROM users WHERE email = %s\", email)\n  rows, _ := db.Query(q)\nyou MUST replace BOTH lines with ONE single line:\n  rows, _ := db.Query(\"SELECT * FROM users WHERE email = ?\", email)\nThe fmt.Sprintf line MUST be completely removed. Your patch MUST span both lines and produce a single db.Query call."
+            };
+            let ex = if is_cmdi {
+                "[EXAMPLE INPUT]:\ncmd := exec.Command(\"sh\", \"-c\", fmt.Sprintf(\"ls %s\", dir))\n[EXAMPLE OUTPUT]:\n<payload>cmd := exec.Command(\"ls\", dir)</payload>"
+            } else {
+                "[EXAMPLE INPUT]:\nq := fmt.Sprintf(\"SELECT * FROM users WHERE id = '%s'\", id)\nrows, _ := db.Query(q)\n[EXAMPLE OUTPUT]:\n<payload>rows, _ := db.Query(\"SELECT * FROM users WHERE id = ?\", id)</payload>"
+            };
+            (rule, ex)
+        } else if lang.eq_ignore_ascii_case("Zig") {
+            (
+                "MANDATORY: Never invoke a shell ('sh', '-c', 'bash', 'cmd') in std.process.Child.init. Replace argv with the direct executable and separate argument slices (e.g. const argv = [_][]const u8{ \"ping\", \"-c\", \"1\", user_arg }; var child = std.process.Child.init(&argv, allocator);).",
+                "[EXAMPLE INPUT]:\nconst argv = [_][]const u8{ \"sh\", \"-c\", user_arg };\nvar child = std.process.Child.init(&argv, allocator);\n[EXAMPLE OUTPUT]:\n<payload>const argv = [_][]const u8{ \"ping\", \"-c\", \"1\", user_arg };\nvar child = std.process.Child.init(&argv, allocator);</payload>",
+            )
+        } else if lang.eq_ignore_ascii_case("C") || lang.eq_ignore_ascii_case("Cpp") {
+            (
+                "MANDATORY: Replace system()/std::system()/popen() with POSIX execv/execvp using a CONSTANT executable path (e.g. \"/bin/echo\" or \"/bin/ls\") and a NULL-terminated argv array (never pass user input or argv[1] as the executable path, and never output comment-only stubs).",
+                "[EXAMPLE INPUT]:\nsystem(argv[1]);\n[EXAMPLE OUTPUT]:\n<payload>if (argc > 1) { char *args[] = { \"/bin/echo\", argv[1], NULL }; execv(\"/bin/echo\", args); }</payload>",
+            )
         } else {
-            ("MANDATORY: Replace unsafe dynamic construction with secure parameterized API.", "")
+            {
+            let is_go_lang = lang.eq_ignore_ascii_case("Go");
+            if is_go_lang {
+                (
+                    r#"MANDATORY: For database/sql SQL injection, use placeholders and pass values as arguments, e.g. db.Query("SELECT * FROM t WHERE c = ?", v) (use $1 style for Postgres). Never build SQL with + or fmt.Sprintf. For command injection, use exec.Command("prog", arg1, arg2) with separate args; never exec.Command("sh", "-c", userString). Keep the same assigned variables and err handling as the snippet."#,
+                    r#"[EXAMPLE INPUT]:
+rows, _ := db.Query("SELECT * FROM users WHERE email = '" + email + "'")
+[EXAMPLE OUTPUT]:
+<payload>rows, _ := db.Query("SELECT * FROM users WHERE email = ?", email)</payload>"#,
+                )
+            } else {
+                ("MANDATORY: Replace unsafe dynamic construction with secure parameterized API.", "")
+            }
+        }
+        };
+
+        let context_block = if context_snippet.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "Surrounding file/function context (for imports, receivers, and variable names ONLY - do NOT repeat it in your output):\n```\n{context_snippet}\n```\n\n"
+            )
         };
 
         let prompt = format!(
@@ -299,17 +509,49 @@ impl ApiClient {
              Task: Fix {finding_type} in this {lang} code.\n\n\
              {exemplar}\n\n\
              CRITICAL RULES:\n\
-             1. Output ONLY the raw {lang} replacement code inside <payload></payload> tags.\n\
-             2. Never use non-existent variables. Only use variables present in the snippet.\n\
+             1. Output ONLY the raw {lang} replacement code inside <payload></payload> tags (do NOT wrap the code in JSON).\n\
+             2. Never invent non-existent variables or unimported modules; only use variables/imports visible in the snippet or context.\n\
              3. Do not output conversational preamble or markdown fences.\n\
              4. {rules}\n\n\
-             Snippet to replace:\n\
+             {context_block}Snippet to replace:\n\
              ```\n{code_snippet}\n```\n\
              Replacement:"
         );
 
-        let text = Self::call(&prompt, 0.0)?;
+        let text = Self::call_with(&prompt, 0.0, 2048, true)?;
         Self::extract_payload(&text)
+    }
+
+    pub fn generate_poc_script(
+        finding_type: &str,
+        snippet: &str,
+        lang: &str,
+        mode: &str,
+    ) -> Result<String> {
+        let expectation = if mode == "vulnerable" {
+            "For `vulnerable` mode: verify using stdlib/AST or inline mock stubs (e.g. sqlite3 / mock session / json) that the snippet is vulnerable (e.g. interpolates untrusted input into SQL/template/pickle), and exit 0 if vulnerable, non-zero otherwise."
+        } else {
+            "For `patched` mode: verify using stdlib/AST or inline mock stubs (e.g. mock `session`, `Note`, `RegistrationCode`, `b64decode`, `render_template`, `json`) that the snippet runs/parses cleanly with an attack payload and properly parameterizes/escapes/avoids the unsafe sink, exiting 0 if safe, non-zero if still vulnerable."
+        };
+        let extra = if lang.eq_ignore_ascii_case("python") {
+            "A variable SNIPPET (a str) is ALREADY defined above your script and holds this exact code. Use it. NEVER retype, embed, or paste the code into your script. Start with `import ast, sys`. Do not use ast.Str, ast.Num, or node.parent. Keep the script under 40 lines. For EVERY name the snippet uses that is not stdlib or a builtin (for example Note, db, session, current_user, request), define it as an instance of unittest.mock.MagicMock (e.g. Note = MagicMock()) so any attribute access works, and run the snippet with exec(SNIPPET, namespace) where namespace holds those mocks.\n"
+        } else {
+            ""
+        };
+        let prompt = format!(
+            "Role: Offline Security PoC Verification Generator.\n\
+             Task: Write a tiny, 100% self-contained, stdlib-only {lang} script (NO external imports like flask/sqlalchemy/routes/models; define tiny inline mock classes/functions for any referenced symbols, or inspect the snippet string with stdlib AST) to verify `{finding_type}` on:\n\
+             ```{lang}\n{snippet}\n```\n\
+             {expectation}\n\
+             {extra}Output ONLY runnable {lang} code inside <payload></payload> tags."
+        );
+        let text = Self::with_retry_transient(|| Self::call_with(&prompt, 0.0, 1024, true), 2)?;
+        let body = Self::extract_payload(&text)?;
+        if lang.eq_ignore_ascii_case("python") {
+            Ok(format!("SNIPPET = {}\n{}", serde_json::to_string(snippet)?, body))
+        } else {
+            Ok(body)
+        }
     }
 
     pub fn generate_optimization(symbol: &str, code_snippet: &str) -> Result<String> {
@@ -343,6 +585,10 @@ impl ApiClient {
              5. Prefer pure `std` when the original implementation is std-only.\n\
              6. Keep the same function signature semantics (return type, error style, async-ness).\n\
              7. No comments, no markdown fences, no explanation text.\n\
+             8. If fixing SQL injection: replace ALL lines that build or execute the query with ONE parameterized call using ? placeholder. Remove fmt.Sprintf, string concatenation, and f-strings entirely.\n\
+             9. If fixing command injection: the command name MUST be a constant string literal. NEVER pass a bare user variable to exec.Command. Use an allowlist map of permitted commands and check membership before executing.\n\
+             10. If fixing deserialization: change ALL read AND write sites, not just one.\n\
+             11. Fix the COMPLETE vulnerability. Partial fixes are automatically rejected.\n\
              8. If you cannot improve the body without new dependencies, return the original body unchanged.\n\
              \n\
              {allowed_crates_hint}\n\
@@ -446,19 +692,25 @@ impl ApiClient {
         Ok(model)
     }
 
+    #[allow(dead_code)]
     fn extract_text(response: ureq::Response) -> Result<String> {
         let json: serde_json::Value = response.into_json()?;
+        Self::extract_text_from_value(&json)
+    }
+
+    fn extract_text_from_value(json: &serde_json::Value) -> Result<String> {
         let msg = &json["choices"][0]["message"];
 
-        // Handle OpenAI, Nemotron reasoning models, and standard assistant messages
+        // Handle OpenAI, Nemotron/Beam reasoning models, and standard assistant messages
         if let Some(content) = msg["content"].as_str() {
-            if !content.trim().is_empty() {
-                return Ok(content.to_string());
+            let stripped = Self::strip_think_blocks(content);
+            if !stripped.trim().is_empty() {
+                return Ok(stripped);
             }
         }
 
         if let Some(rc) = msg["reasoning_content"].as_str() {
-            if !rc.trim().is_empty() {
+            if rc.contains("<payload>") && rc.contains("</payload>") {
                 return Ok(rc.to_string());
             }
         }

@@ -21,10 +21,32 @@ impl CorticalLoop {
         let mut filtered_actions: Vec<AgentAction> = Vec::with_capacity(actions.len());
         let mut vetoed_keys: Vec<String> = Vec::new();
         let mut condition_satisfied_seen = false;
+        let mut refused_cmds: Vec<String> = Vec::new();
 
         for action in actions {
             let action_key = attempt_key(session, &action);
             let attempt_count = session.global_action_attempt_count(&action_key);
+
+            // REFUSED-ACTION VETO: the read-only gate refuses before an action
+            // ever counts as attempted, so classify_duplicate never sees it and
+            // the same refused proposal was re-admitted every turn (60-turn
+            // spin). Once a refusal marker exists, veto repeats of any action
+            // the gate would refuse again.
+            if session.contract.read_only
+                && crate::cortical::read_only_gate::violates_read_only(&action)
+                && session.local_evidence.contains("[READ_ONLY_VIOLATION]")
+            {
+                self.log(format!(
+                    "\x1b[1;31m>> [ANTI-LOOP] Action [{}] was already refused by the read-only gate; vetoing re-proposal.\x1b[0m",
+                    action_key
+                ));
+                refused_cmds.push(match &action {
+                    AgentAction::ExecuteCommand { command, .. } => command.clone(),
+                    _ => action_key.clone(),
+                });
+                vetoed_keys.push(action_key);
+                continue;
+            }
 
             // STRICT ANTI-LOOP:
             // An identical action that has already crossed the execution
@@ -47,7 +69,12 @@ impl CorticalLoop {
             // A repeated WriteFile is not a duplicate if its previous effect is
             // gone (reverted, or never landed): the target is physically absent.
             // Capped so an identical write that keeps failing still trips the veto.
-            let write_target_absent = is_retryable_absent_write(&action, attempt_count);
+            let write_target_absent = is_retryable_absent_write(&action, attempt_count)
+                || is_retryable_rejected_halt(
+                    &action,
+                    attempt_count as usize,
+                    &session.local_evidence,
+                );
 
             if attempt_count >= 1 && !bypass_antiloop_for_retention && !write_target_absent {
                 match crate::anti_loop::classify_duplicate(
@@ -63,6 +90,20 @@ impl CorticalLoop {
                         condition_satisfied_seen = true;
                     }
                     crate::anti_loop::FilterOutcome::AllowRetry => {
+                        // RETRY CAP: AllowRetry exists for transient failures. A
+                        // deterministic failure (e.g. permission denied) would be
+                        // retried until the turn budget is gone, so stop
+                        // re-admitting the same command after 3 attempts.
+                        if attempt_count >= 3
+                            && matches!(&action, AgentAction::ExecuteCommand { .. } | AgentAction::WriteFile { .. })
+                        {
+                            self.log(format!(
+                                "\x1b[1;31m>> [ANTI-LOOP] Command [{}] already attempted {} times without satisfying its contract; vetoing further retries.\x1b[0m",
+                                action_key, attempt_count
+                            ));
+                            vetoed_keys.push(action_key);
+                            continue;
+                        }
                         self.log(
                             "\x1b[1;33m>> [ANTI-LOOP] Duplicate required by contract with no marker; permitting retry.\x1b[0m"
                                 .to_string(),
@@ -88,6 +129,29 @@ impl CorticalLoop {
             }
         }
 
+        // REFUSAL -> HALT: when every proposed action was refused by the
+        // read-only gate, report the refusal as a halt finding (once per node)
+        // instead of spinning until belief decays.
+        if filtered_actions.is_empty()
+            && !refused_cmds.is_empty()
+            && !session.local_evidence.contains("[REFUSAL_HALT_EMITTED]")
+        {
+            let cmds: Vec<String> = refused_cmds.iter().map(|c| c.replace('`', "")).collect();
+            let report = format!(
+                "Read-only gate refusal finding: the read-only command gate refused the required command before execution, so no command output was collected and this audit criterion is not met. Refused command: {}. The gate refuses command substitution, redirection and other constructs it cannot prove read-only; the command must be rewritten without them to be retried.",
+                cmds.join(" ; ")
+            );
+            session.local_evidence.push_str("[REFUSAL_HALT_EMITTED]\n");
+            self.log(
+                "\x1b[1;36m>> [ANTI-LOOP] Converting read-only refusal into a halt finding.\x1b[0m"
+                    .to_string(),
+            );
+            return AntiLoopOutcome::Proceed(vec![AgentAction::Halt {
+                _thought_process: None,
+                reasoning: report,
+            }]);
+        }
+
         if filtered_actions.is_empty() && condition_satisfied_seen && vetoed_keys.is_empty() {
             self.log(
                 "[ANTI-LOOP RESOLVED] All proposed actions already satisfy their required command condition; returning to Strategize for any remaining verification or remediation."
@@ -107,16 +171,43 @@ impl CorticalLoop {
                 }
             }
 
-            let loop_obs = format!(
-                "[LOOP_VETO] All proposed actions already attempted: {}. \
-                 Must choose different action(s).",
-                vetoed_keys.join(", ")
-            );
+            let write_repeat = vetoed_keys.iter().any(|k| k.starts_with("write_file:"));
+            let loop_obs = if write_repeat {
+                format!(
+                    "[LOOP_VETO] Identical write_file content already attempted ({}). \
+                     You MUST rewrite `content` with substantially new, expanded findings from evidence — NEVER repeat the prior text.",
+                    vetoed_keys.join(", ")
+                )
+            } else {
+                format!(
+                    "[LOOP_VETO] All proposed actions already attempted: {}. \
+                     Must choose different action(s).",
+                    vetoed_keys.join(", ")
+                )
+            };
             session.local_evidence.push_str(&loop_obs);
             session.local_evidence.push('\n');
 
             const LOOP_VETO_BUDGET: usize = 6;
+            const MIRROR_DELEGATION_TRIGGER: usize = 3;
             let stuck_count = consecutive_loop_vetoes(&session.local_evidence);
+
+            if stuck_count >= MIRROR_DELEGATION_TRIGGER
+                && std::env::var("NEXUS_MIRROR_DELEGATION").as_deref() == Ok("1")
+                && !session.local_evidence.contains("[MIRROR_DELEGATION_REQUESTED]")
+            {
+                if let Some(target_art) = session.contract.required_artifact_paths.first() {
+                    self.log(format!(
+                        "\x1b[1;36m>> [MIRROR] {} consecutive loop vetoes; requesting mirror delegation for `{}`.\x1b[0m",
+                        stuck_count, target_art.path
+                    ));
+                    session.local_evidence.push_str(&format!(
+                        "[MIRROR_DELEGATION_REQUESTED] {}\n",
+                        target_art.path
+                    ));
+                    return AntiLoopOutcome::NeedsStrategize;
+                }
+            }
 
             if stuck_count >= LOOP_VETO_BUDGET {
                 self.log(format!(
@@ -357,5 +448,70 @@ mod attempt_key_tests {
         let ev = "[CMD_OK] x\n[WRITE_OK] a\n[READ_OK] b\n[PATCH_FUNCTION_OK] c\n[WRITE_NOOP] d\n";
         assert_eq!(mutation_epoch(ev), 2);
         assert_eq!(mutation_epoch(""), 0);
+    }
+}
+
+/// A repeated HALT is not a duplicate when its earlier rejection was for a
+/// cause the mission has since addressed: a `[HALT_REJECTED]` marker exists and
+/// new physical evidence landed after it. Capped so an unsatisfiable mission
+/// still trips the stuck-node veto.
+fn is_retryable_rejected_halt(
+    action: &crate::agent_protocol::AgentAction,
+    attempt_count: usize,
+    evidence: &str,
+) -> bool {
+    if !matches!(action, crate::agent_protocol::AgentAction::Halt { .. }) || attempt_count > 3 {
+        return false;
+    }
+    let Some(rej) = evidence.rfind("[HALT_REJECTED]") else {
+        return false;
+    };
+    // Skip the rejection line itself so its text cannot count as new evidence.
+    let after = evidence[rej..].split_once('\n').map(|(_, rest)| rest).unwrap_or("");
+    ["[CMD_OK]", "[WRITE_OK]", "[READ_OK]", "[SEARCH_CODE_OK]", "[TEST_OK]"]
+        .iter()
+        .any(|m| after.contains(m))
+}
+
+#[cfg(test)]
+mod halt_retry_tests {
+    use super::is_retryable_rejected_halt;
+    use crate::agent_protocol::AgentAction;
+
+    fn halt() -> AgentAction {
+        AgentAction::Halt { _thought_process: None, reasoning: "done".to_string() }
+    }
+
+    const REJ: &str =
+        "[HALT_REJECTED] Deterministic completion contract not satisfied. Unmet: [\"CommandMarkerAcquired\"]\n";
+
+    #[test]
+    fn no_rejection_means_not_retryable() {
+        assert!(!is_retryable_rejected_halt(&halt(), 1, "[WRITE_OK] a.md\n"));
+    }
+
+    #[test]
+    fn rejection_without_new_evidence_is_not_retryable() {
+        let ev = format!("[WRITE_OK] a.md\n{REJ}\n[NODE PHASE] fix it\n");
+        assert!(!is_retryable_rejected_halt(&halt(), 1, &ev));
+    }
+
+    #[test]
+    fn new_evidence_after_rejection_allows_retry() {
+        let ev = format!("{REJ}[CMD_OK] Command: cargo metadata --no-deps\n");
+        assert!(is_retryable_rejected_halt(&halt(), 1, &ev));
+    }
+
+    #[test]
+    fn evidence_before_the_rejection_does_not_count() {
+        let ev = format!("[CMD_OK] Command: ls\n{REJ}");
+        assert!(!is_retryable_rejected_halt(&halt(), 1, &ev));
+    }
+
+    #[test]
+    fn retry_is_capped() {
+        let ev = format!("{REJ}[CMD_OK] Command: ls\n");
+        assert!(is_retryable_rejected_halt(&halt(), 3, &ev));
+        assert!(!is_retryable_rejected_halt(&halt(), 4, &ev));
     }
 }

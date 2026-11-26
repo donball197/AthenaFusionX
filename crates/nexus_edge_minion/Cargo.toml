@@ -10,7 +10,7 @@ local_edge = []
 [dependencies]
 nexus_runtime_core = { path = "../runtime_core" }
 anyhow = "1.0"
-reqwest = { version = "0.12", features = ["json"] }
+
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

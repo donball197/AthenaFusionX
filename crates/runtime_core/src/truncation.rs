@@ -128,7 +128,11 @@ mod tests {
     #[test]
     fn complete_read_strips_marker_and_appends() {
         let out = complete_read(&sample(true), |s, n| {
-            Ok(format!("[READ_CHUNK_OK] File: a.rs | Lines {}-{} of 194\nCONTENT:\nx", s, s + n - 1))
+            Ok(format!(
+                "[READ_CHUNK_OK] File: a.rs | Lines {}-{} of 194\nCONTENT:\nx",
+                s,
+                s + n - 1
+            ))
         })
         .unwrap();
         assert!(!out.contains("TRUNCATED"));

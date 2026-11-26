@@ -28,10 +28,13 @@ use crate::policy::Capability;
 use crate::shared_state::VmoState;
 use crate::world_model::WorldModel;
 
-mod strategize;
 mod critic;
-mod execute;
 mod evaluate;
+mod execute;
+mod strategize;
+
+#[cfg(test)]
+mod incident_regressions;
 
 #[derive(Debug)]
 pub enum CortexOutcome {
@@ -51,6 +54,7 @@ struct EvaluationInput {
     belief: f32,
     is_halt_action: bool,
     mutation_path: Option<String>,
+    typed_evidence: Vec<crate::evidence_adapter::TypedEvidenceRecord>,
 }
 
 enum CortexState {
@@ -71,6 +75,7 @@ enum CortexState {
         belief: f32,
         is_halt_action: bool,
         mutation_path: Option<String>,
+        typed_evidence: Vec<crate::evidence_adapter::TypedEvidenceRecord>,
     },
     Complete {
         belief: f32,
@@ -335,11 +340,34 @@ impl CorticalLoop {
             if !evidence.trim().is_empty() {
                 use sha2::{Digest, Sha256};
                 let trimmed = evidence.trim();
-                let digest = format!("{:x}", Sha256::digest(trimmed.as_bytes()));
-                session.local_evidence.push_str(&format!(
-                    "\n[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]\n",
-                    digest, trimmed, digest
+                // Hash exactly the payload that the verifier will extract.
+                let (inherited_raw, inherit_stats) = inherit_physical_evidence(trimmed);
+                let (inherited, kept_blocks, pruned_blocks) = filter_claim_bound_lineage(
+                    inherited_raw.trim(),
+                    mission,
+                    &session.contract.conditions,
+                );
+                let inherited = inherited.trim();
+
+                self.log(format!(
+                    "[FUSION] Evidence inheritance: {} blocks, {} truncated, {} dropped, claim-bound kept={} pruned={}, {} chars emitted",
+                    inherit_stats.total_blocks,
+                    inherit_stats.truncated,
+                    inherit_stats.dropped,
+                    kept_blocks,
+                    pruned_blocks,
+                    inherited.len()
                 ));
+
+                if !inherited.is_empty() {
+                    let digest = format!("{:x}", Sha256::digest(inherited.as_bytes()));
+                    session.local_evidence.push_str(&format!(
+                        "\n[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]\n",
+                        digest,
+                        inherited,
+                        digest
+                    ));
+                }
             }
         }
 
@@ -407,8 +435,14 @@ impl CorticalLoop {
             // Active code-shift listener
             while let Ok(event) = shift_rx.try_recv() {
                 // Ignore code shifts caused by actions performed within this session
-                if session.local_evidence.contains(&event.path)
-                    || session.executed_actions.keys().any(|k| k.contains(&event.path))
+                // BUG-17: keys are opaque hashes, so substring-matching
+                // them never matched hash-keyed variants (ReadFile/
+                // WriteFile/DiffPatch/...). Use the canonical predicate
+                // against the stored actions instead.
+                if session
+                    .executed_action_log
+                    .iter()
+                    .any(|a| crate::cortical::action_identity::action_touches_path(a, &event.path))
                 {
                     continue;
                 }
@@ -446,6 +480,30 @@ impl CorticalLoop {
                         "\x1b[1;36m>> [CORTEX TERMINAL] Physical success contract already satisfied. No additional cognitive turn required.\x1b[0m"
                             .to_string(),
                     );
+
+                    // Journal the terminal-gate completion so replay can reconstruct
+                    // completions that never reached handle_evaluate. The action_type
+                    // marker distinguishes this from evaluator-judged turns; eval_modifier
+                    // is 0.0 because no LLM judgment occurred.
+                    crate::journal::append_global(crate::journal::TurnRecord {
+                        node_id: format!("{:?}", best_node.id),
+                        turn: 0,
+                        strategy: session.graph.content_of(best_node.id).to_string(),
+                        action_type: "terminal_gate".into(),
+                        evidence_hash: crate::journal::hash_bytes(
+                            session.local_evidence.as_bytes(),
+                        ),
+                        evidence_len: session.local_evidence.len(),
+                        belief_before: current_belief,
+                        belief_after: current_belief.max(0.95),
+                        eval_modifier: 0.0,
+                        unmet_before: Vec::new(),
+                        unmet_after: Vec::new(),
+                        provider: None,
+                        latency_ms: None,
+                        prev_hash: String::new(),
+                        record_hash: String::new(),
+                    });
 
                     return Ok(CortexOutcome::CompletionProposed {
                         belief: current_belief.max(0.95),
@@ -537,6 +595,7 @@ impl CorticalLoop {
                     belief,
                     is_halt_action,
                     mutation_path,
+                    typed_evidence,
                 } => {
                     self.handle_evaluate(
                         &mut session,
@@ -547,6 +606,7 @@ impl CorticalLoop {
                             belief,
                             is_halt_action,
                             mutation_path,
+                            typed_evidence,
                         },
                     )
                     .await?
@@ -642,14 +702,23 @@ impl CorticalLoop {
     /// explicit makes the invariant self-documenting: a read-only
     /// mission never enters the write phase, regardless of how artifact
     /// extraction behaves in the future.
-    fn write_phase_ready(
+    pub(crate) fn write_phase_ready(
         contract: &crate::completion_engine::SubgoalContract,
         unwritten_targets: &[String],
         recon_ready: bool,
     ) -> bool {
-        !unwritten_targets.is_empty() && recon_ready && !contract.read_only
+        if unwritten_targets.is_empty() || !recon_ready {
+            return false;
+        }
+        if !contract.read_only {
+            return true;
+        }
+        // FOREVER FIX: under read_only, only non-.rs report artifacts can
+        // enter the write phase. A .rs write under read_only is a contract
+        // violation and must not reach execute.rs. A .md/.txt/.json report
+        // is the audit deliverable and must.
+        unwritten_targets.iter().all(|p| !p.trim().ends_with(".rs"))
     }
-
 }
 
 /// Classification of a single `PatchFunction` action against the on-disk
@@ -667,3 +736,473 @@ pub(crate) use crate::cortical::patch_classification::{classify_patch_action, Pa
 #[cfg(test)]
 #[path = "cortical/loop_tests.rs"]
 mod tests;
+
+/// Keep physical-evidence blocks (marker line AND the body that follows it);
+/// drop critic/halt/recon chatter. Capped to bound prompt size.
+fn inherit_physical_evidence(evidence: &str) -> (String, InheritStats) {
+    // Includes the real executor patch markers. The old list carried
+    // "[PATCH_OK]" -- a marker the executor never emits -- so
+    // [PATCH_FUNCTION_OK], [PATCH_IDEMPOTENT_OK], and [DIFF_PATCH_OK]
+    // were silently filtered out of inherited lineage evidence.
+    // [WRITE_NOOP] is included for symmetry with [WRITE_OK]: both
+    // prove the requested end-state exists on disk.
+    const KEEP: [&str; 10] = [
+        "[READ_OK]",
+        "[READ_CHUNK_OK]",
+        "[SEARCH_CODE_OK]",
+        "[CMD_OK]",
+        "[WRITE_OK]",
+        "[WRITE_NOOP]",
+        "[PATCH_FUNCTION_OK]",
+        "[PATCH_IDEMPOTENT_OK]",
+        "[DIFF_PATCH_OK]",
+        "[REPLACE_LINES_OK]",
+    ];
+    // Uppercase-only bracket tags are harness markers; "[dependencies]" etc. are file content.
+    fn is_marker(t: &str) -> bool {
+        t.starts_with('[')
+            && t.find(']').map_or(false, |i| {
+                i >= 4
+                    && t[1..i].chars().all(|c| {
+                        c.is_ascii_uppercase()
+                            || c.is_ascii_digit()
+                            || matches!(c, '_' | ' ' | '-' | ':')
+                    })
+            })
+    }
+    // Group lines into blocks: [marker_line, body_lines...].
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    let mut cur: Option<Vec<&str>> = None;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if KEEP.iter().any(|p| t.starts_with(p)) {
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
+            cur = Some(vec![line]);
+        } else if is_marker(t) {
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
+        } else if let Some(b) = cur.as_mut() {
+            b.push(line);
+        }
+    }
+    if let Some(b) = cur.take() {
+        blocks.push(b);
+    }
+
+    const PER_BLOCK_CAP: usize = 30_000;
+    const AGGREGATE_CAP: usize = 240_000;
+
+    let mut result = String::new();
+    let mut stats = InheritStats { total_blocks: blocks.len(), ..Default::default() };
+
+    for block in &blocks {
+        if block.is_empty() {
+            continue;
+        }
+        let header = block[0];
+        if result.len() + header.len() + 300 > AGGREGATE_CAP {
+            result.push_str(header);
+            result.push('\n');
+            result.push_str(
+                "[INHERITED_EVIDENCE_BODY_OMITTED]\n\
+                 Body omitted (aggregate inheritance cap reached). \
+                 Re-read the file directly if its content is required.\n",
+            );
+            stats.dropped += 1;
+            continue;
+        }
+        result.push_str(header);
+        result.push('\n');
+        let mut used = 0usize;
+        let mut truncated = false;
+        for line in &block[1..] {
+            if used + line.len() + 1 > PER_BLOCK_CAP {
+                truncated = true;
+                break;
+            }
+            result.push_str(line);
+            result.push('\n');
+            used += line.len() + 1;
+        }
+        if truncated {
+            result.push_str(
+                "[INHERITED_EVIDENCE_BODY_CAPPED]\n\
+                 Body exceeded the per-file inheritance cap. \
+                 Re-read the file directly if its full content is required.\n",
+            );
+            stats.truncated += 1;
+        }
+    }
+
+    stats.total_chars = result.len();
+    (result, stats)
+}
+
+pub(crate) fn filter_claim_bound_lineage(
+    inherited: &str,
+    mission: &str,
+    conditions: &[crate::completion_engine::CompletionCondition],
+) -> (String, usize, usize) {
+    use crate::completion_engine::CompletionCondition as CC;
+
+    if inherited.trim().is_empty() {
+        return (String::new(), 0, 0);
+    }
+
+    // Scope strictly to the node-local portion (before ROOT DIRECTIVE CONTEXT / LINEAGE CONTEXT).
+    let local_mission = mission
+        .find("\nROOT DIRECTIVE CONTEXT:")
+        .or_else(|| mission.find("\nLINEAGE CONTEXT:"))
+        .map(|i| &mission[..i])
+        .unwrap_or(mission);
+    let local_lower = local_mission.to_ascii_lowercase();
+
+    let mut claimed_paths: Vec<String> = Vec::new();
+    let mut claimed_cmds: Vec<String> = Vec::new();
+    for cond in conditions {
+        match cond {
+            CC::ReadPathAcquired { path }
+            | CC::WritePathAcquired { path }
+            | CC::PatchPathAcquired { path, .. }
+            | CC::ReadFunctionMarkerAcquired { path, .. } => claimed_paths.push(path.clone()),
+            CC::CommandExecutionVerified { command }
+            | CC::MathematicalExecutionVerified { command } => {
+                claimed_cmds.push(crate::cmd_match::normalize_cmd(command));
+            }
+            CC::SearchTermAcquired { term } | CC::SearchCheckedAcquired { target: term } => {
+                let path_part = term.split(':').next().unwrap_or(term).trim();
+                if !path_part.is_empty() {
+                    claimed_paths.push(path_part.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Mine path-like tokens from the node-local objective for INHERIT_ONLY / prose nodes.
+    for tok in local_mission.split_whitespace() {
+        let cleaned =
+            tok.trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | ',' | '.' | ';' | ':'));
+        if !cleaned.is_empty() && (cleaned.contains('/') || cleaned.contains('.')) {
+            claimed_paths.push(cleaned.to_string());
+        }
+    }
+
+    const HEADERS: [&str; 10] = [
+        "[READ_OK]",
+        "[READ_CHUNK_OK]",
+        "[SEARCH_CODE_OK]",
+        "[CMD_OK]",
+        "[WRITE_OK]",
+        "[WRITE_NOOP]",
+        "[PATCH_FUNCTION_OK]",
+        "[PATCH_IDEMPOTENT_OK]",
+        "[DIFF_PATCH_OK]",
+        "[REPLACE_LINES_OK]",
+    ];
+
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    let mut cur: Option<Vec<&str>> = None;
+    for line in inherited.lines() {
+        let t = line.trim_start();
+        if HEADERS.iter().any(|h| t.starts_with(h)) {
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
+            cur = Some(vec![line]);
+        } else if let Some(b) = cur.as_mut() {
+            b.push(line);
+        }
+    }
+    if let Some(b) = cur.take() {
+        blocks.push(b);
+    }
+
+    let pure_synthesis_node = conditions
+        .iter()
+        .any(|c| matches!(c, CC::WritePathAcquired { .. } | CC::WriteMarkerAcquired))
+        && !conditions.iter().any(|c| {
+            matches!(
+                c,
+                CC::ReadPathAcquired { .. }
+                    | CC::ReadFunctionMarkerAcquired { .. }
+                    | CC::CommandExecutionVerified { .. }
+                    | CC::MathematicalExecutionVerified { .. }
+                    | CC::SearchTermAcquired { .. }
+                    | CC::SearchCheckedAcquired { .. }
+            )
+        });
+
+    let block_overlaps = |header: &str| -> bool {
+        let h = header.trim_start();
+        if let Some(rest) = h.strip_prefix("[CMD_OK]") {
+            let cmd = rest.trim().strip_prefix("Command:").unwrap_or(rest).trim();
+            let stripped_cd = crate::cmd_match::strip_workspace_cd_prefix(cmd);
+            let norm = crate::cmd_match::normalize_cmd(stripped_cd);
+            if norm.is_empty() {
+                return false;
+            }
+            if claimed_cmds.iter().any(|c| *c == norm || c.contains(&norm) || norm.contains(c)) {
+                return true;
+            }
+            let first_tok = norm.split_whitespace().next().unwrap_or("");
+            if !first_tok.is_empty() && local_lower.contains(first_tok) {
+                return true;
+            }
+            return pure_synthesis_node;
+        }
+        if let Some(rest) = h.strip_prefix("[SEARCH_CODE_OK]") {
+            if pure_synthesis_node {
+                return true;
+            }
+            let search_path = rest
+                .split("| Query:")
+                .next()
+                .and_then(|p| p.trim().strip_prefix("Path:"))
+                .map(str::trim)
+                .unwrap_or("");
+            if search_path.is_empty() {
+                return false;
+            }
+            return claimed_paths.iter().any(|cp| {
+                crate::evidence_paths::paths_equivalent(search_path, cp)
+                    || crate::evidence_paths::normalize_path(search_path)
+                        == crate::evidence_paths::normalize_path(cp)
+            }) || local_lower.contains(&search_path.to_ascii_lowercase());
+        }
+
+        let block_path = if let Some(r) = h.strip_prefix("[READ_OK]") {
+            r.trim()
+        } else if let Some(r) = h.strip_prefix("[READ_CHUNK_OK] File:") {
+            r.split(" | ").next().unwrap_or("").trim()
+        } else if let Some(r) = h.strip_prefix("[WRITE_OK]") {
+            let r = r.trim();
+            r.strip_prefix("Successfully synthesized and wrote report to")
+                .map(str::trim)
+                .unwrap_or(r)
+        } else if let Some(r) = h.strip_prefix("[WRITE_NOOP]") {
+            r.trim()
+                .strip_suffix("-- content identical to existing file")
+                .map(str::trim_end)
+                .unwrap_or(r.trim())
+        } else {
+            h.split(']')
+                .nth(1)
+                .unwrap_or("")
+                .split_whitespace()
+                .find(|t| t.contains('/') || t.contains('.'))
+                .unwrap_or("")
+        };
+
+        if block_path.is_empty() {
+            return false;
+        }
+        let basename_matches = std::path::Path::new(block_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(|fname| {
+                let fname_lower = fname.to_ascii_lowercase();
+                claimed_paths.iter().any(|cp| !cp.contains('/') && cp.eq_ignore_ascii_case(fname))
+                    || local_lower.contains(&fname_lower)
+            })
+            .unwrap_or(false);
+        let is_read_evidence = h.starts_with("[READ_OK]") || h.starts_with("[READ_CHUNK_OK]");
+        claimed_paths.iter().any(|cp| {
+            crate::evidence_paths::paths_equivalent(block_path, cp)
+                || crate::evidence_paths::normalize_path(block_path)
+                    == crate::evidence_paths::normalize_path(cp)
+        }) || local_lower.contains(&block_path.to_ascii_lowercase())
+            || basename_matches
+            || (pure_synthesis_node && is_read_evidence)
+    };
+
+    let mut out = String::new();
+    let mut kept = 0usize;
+    let mut pruned = 0usize;
+    for b in blocks {
+        if block_overlaps(b[0]) {
+            kept += 1;
+            for line in b {
+                out.push_str(line);
+                out.push('\n');
+            }
+        } else {
+            pruned += 1;
+        }
+    }
+    (out, kept, pruned)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct InheritStats {
+    pub total_blocks: usize,
+    pub truncated: usize,
+    pub dropped: usize,
+    pub total_chars: usize,
+}
+
+#[cfg(test)]
+mod claim_bound_lineage_tests {
+    use super::filter_claim_bound_lineage;
+    use crate::completion_engine::CompletionCondition as CC;
+
+    #[test]
+    fn prunes_unrelated_paths_and_commands_while_keeping_overlapping_claims() {
+        let inherited = "[READ_OK] src/unrelated.rs
+fn noop() {}
+[READ_OK] src/target.rs
+fn real() {}
+[CMD_OK] Command: cargo test
+Status: exit status: 0
+[CMD_OK] Command: git status
+Status: exit status: 0
+";
+        let mission = "OBJECTIVE: Inspect src/target.rs and run git status
+ROOT DIRECTIVE CONTEXT:
+Read src/unrelated.rs and run cargo test";
+        let conds = vec![
+            CC::ReadPathAcquired { path: "src/target.rs".into() },
+            CC::CommandExecutionVerified { command: "git status".into() },
+        ];
+        let (out, kept, pruned) = filter_claim_bound_lineage(inherited, mission, &conds);
+        assert_eq!(kept, 2);
+        assert_eq!(pruned, 2);
+        assert!(out.contains("src/target.rs"));
+        assert!(out.contains("git status"));
+        assert!(!out.contains("src/unrelated.rs"));
+        assert!(!out.contains("cargo test"));
+    }
+
+    #[test]
+    fn pure_synthesis_node_retains_predecessor_read_and_cd_cmd_evidence() {
+        let inherited = "[READ_OK] crates/runtime_core/src/podman.rs\nfn execute() {}\n[CMD_OK] Command: cd /root/AthenaFusionX && cargo tree --duplicates\nStatus: exit status: 0\n";
+        let mission =
+            "Write a concise report to build_hygiene_report.md summarizing the inspection outputs.";
+        let conds = vec![CC::WritePathAcquired { path: "build_hygiene_report.md".into() }];
+        let (out, kept, pruned) = filter_claim_bound_lineage(inherited, mission, &conds);
+        assert_eq!(kept, 2);
+        assert_eq!(pruned, 0);
+        assert!(out.contains("podman.rs"));
+        assert!(out.contains("cargo tree --duplicates"));
+    }
+}
+
+#[cfg(test)]
+mod inherit_evidence_tests {
+    use super::inherit_physical_evidence;
+
+    #[test]
+    fn keeps_read_body_and_drops_chatter() {
+        let ev = "[READ_OK] a.rs\nFULL FILE CONTENT:\nfn main() {}\n[dependencies]\n[CRITIC_VETO] no\nchatter\n[CMD_OK] Command: ls\nSTDOUT:\nx";
+        let out = inherit_physical_evidence(ev).0;
+        assert!(out.contains("fn main() {}"));
+        assert!(out.contains("[dependencies]"));
+        assert!(out.contains("STDOUT:"));
+        assert!(!out.contains("CRITIC_VETO"));
+        assert!(!out.contains("chatter"));
+    }
+
+    #[test]
+    fn lineage_hash_matches_filtered_payload_verified_by_consumer() {
+        use sha2::{Digest, Sha256};
+
+        let ancestor = "[READ_OK] src/main.rs\nFULL FILE CONTENT:\nfn main() {}\n[CRITIC_VETO] discarded chatter\nchatter";
+        let filtered = inherit_physical_evidence(ancestor.trim()).0;
+        let payload = filtered.trim();
+
+        // Reproduce the former producer behavior: hashing the unfiltered
+        // ancestor evidence must not validate the filtered envelope.
+        let old_digest = format!("{:x}", Sha256::digest(ancestor.trim().as_bytes()));
+        let old_envelope = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]",
+            old_digest, payload, old_digest
+        );
+        assert!(
+            !crate::outcome_verifier::verify_lineage_provenance(&old_envelope),
+            "unfiltered ancestor hash must not validate a filtered payload"
+        );
+
+        // The corrected producer hashes the exact payload placed in the
+        // envelope, matching the verifier's extraction and trim behavior.
+        let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+        let envelope = format!(
+            "[DAG LINEAGE INHERITED EVIDENCE sha256:{}]\n{}\n[DAG LINEAGE COMPLETE sha256:{}]",
+            digest, payload, digest
+        );
+
+        assert!(
+            crate::outcome_verifier::verify_lineage_provenance(&envelope),
+            "filtered payload and declared SHA-256 must agree"
+        );
+    }
+
+    #[test]
+    fn keeps_patch_markers_from_inherited_evidence() {
+        // Regression: the old KEEP list contained "[PATCH_OK]" (never
+        // emitted by the executor) and omitted the real patch markers,
+        // so [PATCH_FUNCTION_OK], [PATCH_IDEMPOTENT_OK], and
+        // [DIFF_PATCH_OK] were silently dropped from inherited lineage.
+        // A downstream node with a PATCH_FUNCTION_OK: criterion then
+        // failed closed on evidence its ancestor had physically produced.
+        let ev = concat!(
+            "[PATCH_FUNCTION_OK] src/math.rs:add\n",
+            "Updated function 'add' in src/math.rs\n",
+            "[DIFF_PATCH_OK] Applied changes to src/lib.rs\n",
+            "[PATCH_IDEMPOTENT_OK] src/other.rs:noop\n",
+            "PatchFunction already satisfied; source unchanged.\n",
+            "[WRITE_NOOP] out.md -- content identical to existing file\n",
+            "[CRITIC_VETO] filtered out\n",
+        );
+        let out = inherit_physical_evidence(ev).0;
+        assert!(out.contains("[PATCH_FUNCTION_OK] src/math.rs:add"));
+        assert!(out.contains("[DIFF_PATCH_OK] Applied changes to src/lib.rs"));
+        assert!(out.contains("[PATCH_IDEMPOTENT_OK] src/other.rs:noop"));
+        assert!(out.contains("[WRITE_NOOP] out.md"));
+        assert!(!out.contains("[CRITIC_VETO]"));
+    }
+
+    #[test]
+    fn all_blocks_present_under_per_block_cap() {
+        // Regression for the 2026-11-13 synthesis-node failure: four
+        // files, each ~2K, total well under any cap. Every header MUST
+        // appear. The pre-fix code capped the aggregate at 120K, silently
+        // dropping the fourth file from synthesis nodes' lineage and making
+        // every halt proposal citing it rejected by the pre-gate.
+        let mut ev = String::new();
+        for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            ev.push_str(&format!("[READ_OK] {}\nFULL FILE CONTENT:\n", name));
+            ev.push_str(&"x\n".repeat(1000));
+        }
+        let (out, stats) = inherit_physical_evidence(&ev);
+        for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            assert!(
+                out.contains(&format!("[READ_OK] {}", name)),
+                "block for {} was dropped from inheritance: stats={:?}",
+                name,
+                stats
+            );
+        }
+        assert_eq!(stats.dropped, 0);
+    }
+
+    #[test]
+    fn large_block_truncated_but_visible() {
+        // A block over PER_BLOCK_CAP must retain its header plus a visible
+        // truncation marker. Prior behavior silently dropped content past
+        // the aggregate cap, so downstream synthesis could cite a file it
+        // had no evidence for.
+        let mut ev = String::from("[READ_OK] big.rs\nFULL FILE CONTENT:\n");
+        ev.push_str(&"y\n".repeat(20_000));
+        let (out, stats) = inherit_physical_evidence(&ev);
+        assert!(out.contains("[READ_OK] big.rs"), "header must be present");
+        assert!(
+            out.contains("[INHERITED_EVIDENCE_BODY_CAPPED]"),
+            "truncation marker must be present"
+        );
+        assert_eq!(stats.truncated, 1);
+        assert_eq!(stats.dropped, 0);
+    }
+}

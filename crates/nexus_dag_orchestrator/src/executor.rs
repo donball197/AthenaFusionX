@@ -31,11 +31,12 @@ impl DagExecutor {
             if evidence_context.trim().is_empty() {
                 body
             } else {
-                let take = evidence_context.len().min(2048);
+                // char-safe: a byte slice at 2048 panics when it lands inside a multi-byte character
+                let head: String = evidence_context.chars().take(2048).collect();
                 format!(
                     "[PARENT_EVIDENCE len={}]\n{}\n[END_PARENT_EVIDENCE]\n{}",
                     evidence_context.len(),
-                    &evidence_context[..take],
+                    head,
                     body
                 )
             }

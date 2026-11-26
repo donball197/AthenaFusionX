@@ -8,6 +8,12 @@ tree_sitter_query: |
       field: (field_identifier) @method (#match? @method "^(Command|CommandContext)$")
     )
     arguments: (argument_list
-      (interpreted_string_literal) @danger.command_injection (#match? @danger.command_injection "^\"(sh|bash|cmd)\"$")
+      (interpreted_string_literal) @shell (#match? @shell "^\"(sh|bash|cmd)\"$")
     )
   ) @danger.command_injection
+  (call_expression
+    function: (selector_expression
+      field: (field_identifier) @method (#match? @method "^(Command|CommandContext)$")
+    )
+    arguments: (argument_list . (identifier) @danger.command_injection)
+  )

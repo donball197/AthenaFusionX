@@ -9,3 +9,10 @@ pub mod study;
 pub mod supervisor;
 
 pub mod evolution;
+pub mod hold;
+pub mod server;
+pub mod sarif;
+pub mod sandbox;
+pub mod tui;
+pub mod callgraph;
+pub mod taint;

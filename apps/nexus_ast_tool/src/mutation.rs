@@ -248,7 +248,6 @@ fn find_rust_function_body(source: &str, symbol: &str) -> MutationResult<(usize,
     }
 }
 
-
 /// If `payload` is a complete Python function (`def name(...):` + body),
 /// return only the body lines (dedented). Otherwise return the payload as-is.
 /// Mirrors extract_tree_sitter_payload_body for Rust so a full `def` is not
@@ -495,7 +494,7 @@ fn normalize_polyglot_payload(
     let trimmed = payload.trim();
 
     match language {
-                SupportedLanguage::Python => {
+        SupportedLanguage::Python => {
             // Python bodies require indentation but no enclosing braces.
             // Preserve relative indentation inside the payload; only shift
             // the whole block to the target body's base indent. Flattening
@@ -528,11 +527,7 @@ fn normalize_polyglot_payload(
                     } else {
                         let line_indent = line.chars().take_while(|c| c.is_whitespace()).count();
                         let relative = line_indent.saturating_sub(min_payload_indent);
-                        format!(
-                            "{base_indent}{}{}",
-                            " ".repeat(relative),
-                            line.trim()
-                        )
+                        format!("{base_indent}{}{}", " ".repeat(relative), line.trim())
                     }
                 })
                 .collect::<Vec<_>>()

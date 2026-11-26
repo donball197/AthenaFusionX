@@ -22,8 +22,10 @@ impl CorticalLoop {
         let mut executor = RoboticExecutor::new(self.api_key.clone(), self.tx.clone());
         executor.episode = session_episode;
         let mut latest_evidence = String::new();
+        let mut turn_typed_evidence: Vec<crate::evidence_adapter::TypedEvidenceRecord> = Vec::new();
         let mut executed_actions: Vec<String> = Vec::new();
         let mut mutation_paths: Vec<String> = Vec::new();
+        let pre_write_corpus = session.local_evidence.clone();
         let mut last_is_halt = false;
         let mut rust_files_mutated = false;
         let evidence_checkpoint = session.local_evidence.len();
@@ -69,7 +71,22 @@ impl CorticalLoop {
                     AgentAction::ExecuteCommand { _thought_process: None, command, .. }
                         if crate::cortical::read_only_gate::is_read_only_safe_command(command)
                 );
-                if !exec_is_provably_safe {
+                // FOREVER FIX: a required report write (non-.rs, in
+                // required_artifact_paths) is not a read-only violation.
+                // The read-only guard protects source; it does not forbid
+                // producing the audit deliverable the contract itself demands.
+                let is_required_report_write = match &action {
+                    AgentAction::WriteFile { _thought_process: None, path, .. }
+                    | AgentAction::SynthesizeReport { _thought_process: None, output_path: path, .. } => {
+                        let p = path.trim();
+                        !p.ends_with(".rs")
+                            && session.contract.required_artifact_paths.iter().any(|a| {
+                                crate::evidence_paths::paths_equivalent(&a.path, p)
+                            })
+                    }
+                    _ => false,
+                };
+                if !exec_is_provably_safe && !is_required_report_write {
                     self.log(format!(
                         "\x1b[1;31m>> [READ-ONLY VIOLATION]\x1b[0m Mission declares read-only intent; refusing mutation action: {:?}",
                         action
@@ -174,6 +191,7 @@ impl CorticalLoop {
 
             let executed_action_json = serde_json::to_string(&action)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize executed AgentAction: {}", e))?;
+            let action_snapshot = action.clone();
 
             // Build the canonical action key before MotorCortex::translate()
             // consumes the AgentAction.
@@ -200,12 +218,15 @@ impl CorticalLoop {
             };
 
             let motor_cmd =
-                MotorCortex::translate(&intent, None, action, capability, proposal.clone());
+                MotorCortex::translate(&intent, None, action.clone(), capability, proposal.clone());
 
-            if let Err(gate_err) = self.action_gate.approve(&motor_cmd) {
+            if let Err(gate_err) =
+                self.action_gate.approve_with_forced_search(&motor_cmd, &session.local_evidence)
+            {
                 mutation_paths.truncate(mutation_paths_checkpoint);
                 rust_files_mutated = rust_files_mutated_checkpoint;
                 self.log(format!("\x1b[1;31m>> [ACTION GATE REJECTED]: {}\x1b[0m", gate_err));
+                session.local_evidence.push_str(&format!("[ACTION_GATE_BLOCKED] {}\n", gate_err));
                 if let Some(h_id) = session.best_hypothesis_id {
                     let obs_id = session.graph.add_node(
                         NodeKind::Observation,
@@ -228,6 +249,11 @@ impl CorticalLoop {
             // execution. A blocked action is therefore never presented to the
             // evaluator as executed.
             session.record_global_action_attempt(&action_key);
+            // BUG-17: log the action itself so the code-shift listener
+            // can answer "did we touch path P?" without parsing a hash.
+            // Without this call, `executed_action_log` stays empty and
+            // every self-write is misclassified as an external shift.
+            session.record_action_attempt(&action);
             executed_actions.push(executed_action_json);
 
             self.log("\x1b[35m>> [MOTOR CORTEX] Emitting authorized MotorCommand to RoboticExecutor...\x1b[0m".to_string());
@@ -260,6 +286,11 @@ impl CorticalLoop {
                 }
             };
 
+            let typed_rec =
+                crate::evidence_adapter::from_executed_action(&action_snapshot, &evidence);
+            session.typed_evidence.push(typed_rec.clone());
+            turn_typed_evidence.push(typed_rec);
+
             latest_evidence.push_str(&evidence);
             latest_evidence.push('\n');
             session.local_evidence.push_str(&evidence);
@@ -291,14 +322,34 @@ impl CorticalLoop {
 
         if latest_evidence.contains("PATH_NOT_FOUND") && !starts_with_success_marker {
             if let Some(h_id) = session.best_hypothesis_id {
-                let obs_id = session.graph.add_node(
-                    NodeKind::Observation,
-                    "[PATH_DOES_NOT_EXIST] The requested path does not exist on disk. Do NOT attempt to read it again. Proceed directly to synthesis with the data you already have.",
-                    1.0,
-                    95,
-                );
-                session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.90);
-                session.graph.propagate_beliefs();
+                let obj_lower = session.contract.objective.to_lowercase();
+                let is_existence_check = obj_lower.contains("check for")
+                    || obj_lower.contains("check whether")
+                    || obj_lower.contains("legacy")
+                    || obj_lower.contains("exists")
+                    || obj_lower.contains("existence");
+
+                if is_existence_check {
+                    // Absence is the desired evidence for an existence-check objective.
+                    let obs_id = session.graph.add_node(
+                        NodeKind::Observation,
+                        "[PATH_DOES_NOT_EXIST] Confirmed absence — this satisfies an existence-check objective. Do not retry the path; proceed with remaining required actions.",
+                        1.0,
+                        95,
+                    );
+                    // Prefer Supports if available; otherwise the observation alone is enough.
+                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Supports, 0.60);
+                    session.graph.propagate_beliefs();
+                } else {
+                    let obs_id = session.graph.add_node(
+                        NodeKind::Observation,
+                        "[PATH_DOES_NOT_EXIST] The requested path does not exist on disk. Do NOT attempt to read it again. Proceed directly to synthesis with the data you already have.",
+                        1.0,
+                        95,
+                    );
+                    session.graph.add_edge(obs_id, h_id, EdgeRelation::Contradicts, 0.90);
+                    session.graph.propagate_beliefs();
+                }
             }
         }
 
@@ -310,7 +361,9 @@ impl CorticalLoop {
         // Requirements named in the objective are checked deterministically
         // against the file on disk; on failure the write evidence is discarded
         // so the contract stays unsatisfied (and reflection never sees it).
-        if !session.contract.read_only && latest_evidence.contains("[WRITE_OK]") {
+        if !session.contract.read_only
+        && (latest_evidence.contains("[WRITE_OK]") || latest_evidence.contains("[WRITE_NOOP]"))
+    {
             let objective = session.contract.objective.clone();
             let mut failures: Vec<String> = Vec::new();
             for p in mutation_paths.iter().filter(|p| p.ends_with(".py")) {
@@ -349,7 +402,9 @@ impl CorticalLoop {
                     }
                     let mut kept = String::new();
                     for line in session.local_evidence.lines() {
-                        let drop = line.contains("[WRITE_OK]") && line.contains(path_part);
+                        let drop = ((line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
+                              && line.contains(path_part))
+                          || line.trim() == format!("[WRITE_ACCEPTED] {}", path_part);
                         if !drop {
                             kept.push_str(line);
                             kept.push('\n');
@@ -359,11 +414,25 @@ impl CorticalLoop {
                 }
                 session.local_evidence.push_str(&message);
                 session.local_evidence.push('\n');
+                let conformance_fails = session
+                    .local_evidence
+                    .lines()
+                    .filter(|l| l.starts_with("[WRITE_CONFORMANCE_FAILED]"))
+                    .count();
+                if conformance_fails >= 5 {
+                    session.local_evidence.push_str(
+                        "[WRITE_CONFORMANCE_TERMINAL] Could not produce a conforming file after 5 attempts. No WRITE_OK or completion claim is authorized.\n",
+                    );
+                    return Ok(CortexState::Fail {
+                        belief: 0.0,
+                        evidence: "[WRITE_CONFORMANCE_TERMINAL]".to_string(),
+                    });
+                }
                 return Ok(CortexState::Strategize);
             }
 
             // All candidate Python paths passed conformance. Remove stale
-            // failure records only after this successful verification.
+// failure records only after this successful verification.
             if mutation_paths.iter().any(|p| p.ends_with(".py")) {
                 session.local_evidence = session
                     .local_evidence
@@ -372,6 +441,87 @@ impl CorticalLoop {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if !session.local_evidence.is_empty() {
+                    session.local_evidence.push('\n');
+                }
+            }
+
+            // PHASE 3: Content-consistency check for written report artifacts.
+            // Prevents fabricated reports from satisfying WritePathAcquired.
+            let allow_obj = !session.contract.conditions.iter().any(|c| {
+                use crate::completion_engine::CompletionCondition as CC;
+                matches!(
+                    c,
+                    CC::ReadMarkerAcquired
+                        | CC::ReadPathAcquired { .. }
+                        | CC::ReadFunctionMarkerAcquired { .. }
+                        | CC::SearchMarkerAcquired
+                        | CC::SearchTermAcquired { .. }
+                        | CC::SearchCheckedAcquired { .. }
+                        | CC::SourceCodeEvidenceRequired
+                        | CC::CommandMarkerAcquired
+                        | CC::CommandExecutionVerified { .. }
+                )
+            });
+            let mut report_failures: Vec<(String, Vec<String>)> = Vec::new();
+            for p in mutation_paths
+                .iter()
+                .filter(|p| crate::cortical::halt_claims::is_report_artifact(p))
+            {
+                if let Ok(content) = tokio::fs::read_to_string(p).await {
+                    let bad = crate::cortical::halt_claims::write_report_unverified_symbols(
+                        p,
+                        &content,
+                        &pre_write_corpus,
+                        &session.contract.objective,
+                        allow_obj,
+                    );
+                    if !bad.is_empty() {
+                        report_failures.push((p.clone(), bad));
+                    }
+                }
+            }
+            if !report_failures.is_empty() {
+                for (p, bad) in &report_failures {
+                    let msg = format!(
+                        "[WRITE_CONFORMANCE_FAILED] Report `{}` cites symbol(s) never observed in READ_OK/evidence: {}. Read the defining source file(s) before citing those symbols, or remove unverified claims.",
+                        p,
+                        bad.join(", ")
+                    );
+                    self.log(format!("\x1b[1;31m>> [REPORT CONSISTENCY] {}\x1b[0m", msg));
+                    let mut kept = String::new();
+                    for line in session.local_evidence.lines() {
+                        let drop = ((line.contains("[WRITE_OK]") || line.contains("[WRITE_NOOP]"))
+                              && line.contains(p.as_str()))
+                          || line.trim() == format!("[WRITE_ACCEPTED] {}", p);
+                        if !drop {
+                            kept.push_str(line);
+                            kept.push('\n');
+                        }
+                    }
+                    session.local_evidence = kept;
+                    session.local_evidence.push_str(&msg);
+                    session.local_evidence.push('\n');
+                    for rec in session.typed_evidence.iter_mut() {
+                        if rec.kind == crate::evidence_adapter::TypedEvidenceKind::Write
+                            && rec
+                                .evidence
+                                .target
+                                .as_ref()
+                                .is_some_and(|t| crate::evidence_paths::paths_equivalent(&t.0, p))
+                        {
+                            rec.evidence.success = false;
+                            rec.reliability = 0.0;
+                        }
+                    }
+                }
+                return Ok(CortexState::Strategize);
+            }
+
+            // P0-b: every gate above passed. Mark each written path ACCEPTED.
+            for p in mutation_paths.iter().filter(|p| !p.is_empty() && !p.contains(' ')) {
+                let tag = format!("[WRITE_ACCEPTED] {}", p);
+                if !session.local_evidence.lines().any(|l| l.trim() == tag) {
+                    session.local_evidence.push_str(&tag);
                     session.local_evidence.push('\n');
                 }
             }
@@ -416,6 +566,7 @@ impl CorticalLoop {
             belief,
             is_halt_action: last_is_halt,
             mutation_path: mutation_paths.last().cloned(),
+            typed_evidence: turn_typed_evidence,
         })
     }
 }

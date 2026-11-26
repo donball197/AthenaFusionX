@@ -211,3 +211,40 @@ pub(crate) fn fallback_action_type(raw: &str) -> Option<String> {
     }
     None
 }
+
+/// Drop `[READ_OK]`/`[READ_CHUNK_OK]` file bodies so literal marker text inside
+/// source files read this session cannot be mistaken for real evidence.
+pub fn strip_read_bodies_for_markers(evidence: &str) -> String {
+    let mut out = String::with_capacity(evidence.len());
+    let mut in_read_body = false;
+    for line in evidence.lines() {
+        let t = line.trim_start();
+        if in_read_body {
+            if t.starts_with("[PROPOSITION]")
+                || t.starts_with("[CONTENT TRUNCATED")
+                || t.starts_with("[READ_OK]")
+                || t.starts_with("[READ_CHUNK_OK]")
+                || t.starts_with("[WRITE_OK]")
+                || t.starts_with("[WRITE_NOOP]")
+                || t.starts_with("[WRITE_ACCEPTED]")
+                || t.starts_with("[CMD_OK]")
+                || t.starts_with("[HALT]")
+                || t.starts_with("[HALT_REJECTED")
+                || t.starts_with("[DAG LINEAGE")
+                || t.starts_with("[AUTO_VERIFY_READ]")
+                || t.starts_with("[NODE PHASE]")
+            {
+                in_read_body = false;
+            } else {
+                continue;
+            }
+        }
+        if t.starts_with("FULL FILE CONTENT:") || t == "CONTENT:" {
+            in_read_body = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}

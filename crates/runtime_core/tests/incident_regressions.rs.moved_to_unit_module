@@ -1,0 +1,356 @@
+//! Replayable regression tests for live-mission incidents (#1, #2, #3,
+//! PATH_TRAVERSAL_DENIED, relevance floors, anti-loop duplicates, and
+//! tamper-evident journal chains).
+
+use nexus_runtime_core::agent_protocol::AgentAction;
+use nexus_runtime_core::anti_loop::{
+    classify_duplicate, halt_action_key, halt_reasoning_fingerprint, score_search_relevance,
+    should_raise_belief, FilterOutcome,
+};
+use nexus_runtime_core::cognition::epistemic_session::EpistemicSession;
+use nexus_runtime_core::completion_engine::{ArtifactSpec, CompletionCondition, SubgoalContract};
+use nexus_runtime_core::evidence::{Evidence, EvidenceKind, ExecutionFailureKind, ProvenanceLevel};
+use nexus_runtime_core::evidence_adapter::{
+    assess_read_path_typed, from_executed_action, recompute_reliability, TypedEvidenceKind,
+};
+use nexus_runtime_core::incident_probes::{
+    filter_claim_bound_lineage, veto_mandated_pivot_ok, veto_pivot_strategy,
+    write_report_unverified_symbols,
+};
+use nexus_runtime_core::journal::{hash_bytes, Journal, TurnRecord};
+use nexus_runtime_core::orchestrator_v2::verifier::{VerificationResult, Verifier};
+use nexus_runtime_core::outcome_verifier::{verify_lineage_provenance, OutcomeVerifier};
+use sha2::{Digest, Sha256};
+
+fn act(v: serde_json::Value) -> AgentAction {
+    serde_json::from_value(v).expect("valid AgentAction json")
+}
+
+fn wrap_lineage(payload: &str) -> String {
+    let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+    format!(
+        "[DAG LINEAGE INHERITED EVIDENCE sha256:{d}]\n{p}\n[DAG LINEAGE COMPLETE sha256:{d}]\n",
+        d = digest,
+        p = payload
+    )
+}
+
+#[test]
+fn incident_path_traversal_denied_classifies_as_policy_denial() {
+    let raw = "[ACTION FAILED] path=/tmp/phase1_audit.md \
+               OS rejected action: PATH_TRAVERSAL_DENIED: \
+               /tmp/phase1_audit.md resolves outside the workspace root";
+
+    let (kind, err) = Evidence::classify(raw, false);
+
+    assert_eq!(kind, EvidenceKind::SecurityViolation);
+    match err {
+        Some(ExecutionFailureKind::PolicyDenial { reason, .. }) => {
+            assert_eq!(reason, "PATH_TRAVERSAL_DENIED");
+        }
+        other => panic!("expected ExecutionFailureKind::PolicyDenial, got {:?}", other),
+    }
+}
+
+#[test]
+fn incident_relevance_scoring_floors() {
+    let failed = score_search_relevance("(", "[ACTION FAILED] OS rejected action: bad regex");
+    assert!((failed - 0.10).abs() < 1e-6, "got {}", failed);
+
+    let no_match = score_search_relevance(
+        "missing",
+        "[SEARCH_CODE_OK] Path: crates | Query: 'missing'\n\
+         No code matches found in specified path.",
+    );
+    assert!((no_match - 0.40).abs() < 1e-6, "got {}", no_match);
+
+    let normal = score_search_relevance(
+        "score_search_relevance",
+        "[SEARCH_CODE_OK] Path: crates | Query: 'score_search_relevance'\n\
+         MATCHES:\n\
+         crates/runtime_core/src/anti_loop.rs:3: pub fn score_search_relevance",
+    );
+    assert!((0.45..=0.95).contains(&normal), "got {}", normal);
+}
+
+#[test]
+fn incident_should_raise_belief_floor_is_030() {
+    assert!(should_raise_belief(0.31, 0.45));
+    assert!(should_raise_belief(0.30, 0.45));
+    assert!(!should_raise_belief(0.29, 0.45));
+    assert!(should_raise_belief(0.80, 0.75));
+}
+
+#[test]
+fn incident_revised_halt_gets_distinct_key() {
+    let h1 = halt_action_key("Original reasoning with defect A.");
+    let h2 = halt_action_key("Revised reasoning that fixes defect A.");
+    let h3 = halt_action_key("Original reasoning with defect A.");
+
+    assert_ne!(h1, h2);
+    assert_eq!(h1, h3);
+    assert_ne!(halt_reasoning_fingerprint("a"), halt_reasoning_fingerprint("b"));
+}
+
+#[test]
+fn incident_failed_write_is_retry_not_duplicate() {
+    let contract = SubgoalContract {
+        node_id: "test_node".into(),
+        objective: "write /tmp/phase1_audit.md".into(),
+        read_only: false,
+        is_mutation_task: true,
+        required_artifact_paths: vec![ArtifactSpec {
+            path: "/tmp/phase1_audit.md".into(),
+            reason: "audit report".into(),
+        }],
+        conditions: vec![],
+    };
+    let action = AgentAction::WriteFile {
+        _thought_process: None,
+        path: "/tmp/phase1_audit.md".into(),
+        content: "x".into(),
+        reasoning: "retry".into(),
+        confidence: 0.9,
+    };
+    let evidence =
+        "[ACTION FAILED] path=/tmp/phase1_audit.md OS rejected action: PATH_TRAVERSAL_DENIED";
+
+    assert!(matches!(classify_duplicate(&action, &contract, evidence), FilterOutcome::AllowRetry));
+}
+
+#[test]
+fn incident_satisfied_read_is_filtered() {
+    let contract = SubgoalContract {
+        node_id: "test_node".into(),
+        objective: "read crates/runtime_core/src/anti_loop.rs".into(),
+        read_only: true,
+        is_mutation_task: false,
+        required_artifact_paths: vec![],
+        conditions: vec![CompletionCondition::ReadPathAcquired {
+            path: "crates/runtime_core/src/anti_loop.rs".into(),
+        }],
+    };
+    let action = AgentAction::ReadFile {
+        _thought_process: None,
+        path: "crates/runtime_core/src/anti_loop.rs".into(),
+        reasoning: "re-read".into(),
+    };
+    let evidence = "[READ_OK] crates/runtime_core/src/anti_loop.rs\nFULL FILE CONTENT:\n//! ...";
+
+    assert!(matches!(
+        classify_duplicate(&action, &contract, evidence),
+        FilterOutcome::FilterAndDecay
+    ));
+}
+
+#[test]
+fn incident_1_fabricated_write_report_is_rejected_and_provenance_recomputed() {
+    let read_evidence =
+        "[READ_OK] crates/runtime_core/src/real.rs\nFULL FILE CONTENT:\npub fn verified_fn() {}\n";
+
+    let fabricated_report =
+        "# Audit\nFound `verified_fn` and also `hallucinated_helper` in `PhantomStruct`.\n";
+    let bad = write_report_unverified_symbols(
+        "audit_report.md",
+        fabricated_report,
+        read_evidence,
+        "Read crates/runtime_core/src/real.rs and write audit_report.md",
+        false,
+    );
+    assert_eq!(bad, vec!["hallucinated_helper", "PhantomStruct"]);
+
+    let grounded_report =
+        "# Audit\nConfirmed `verified_fn` exists; `hallucinated_helper` was not found.\n";
+    assert!(write_report_unverified_symbols(
+        "audit_report.md",
+        grounded_report,
+        read_evidence,
+        "Read crates/runtime_core/src/real.rs and write audit_report.md",
+        false,
+    )
+    .is_empty());
+
+    let write_only = "[WRITE_OK] audit_report.md\n";
+    assert!(!OutcomeVerifier::mission_completion_authorized(
+        write_only,
+        0.99,
+        &[
+            CompletionCondition::ReadPathAcquired {
+                path: "crates/runtime_core/src/real.rs".into()
+            },
+            CompletionCondition::WritePathAcquired { path: "audit_report.md".into() },
+        ],
+    ));
+
+    for marker in [
+        "[READ_CHUNK_OK] File: src/lib.rs | Lines 1-10 of 20",
+        "[WRITE_OK] audit_report.md",
+        "[PATCH_FUNCTION_OK] src/lib.rs:foo",
+    ] {
+        let (kind, _) = Evidence::classify(marker, true);
+        let ev = Evidence::from_observation(
+            Observation {
+                raw: marker.into(),
+                source: "executor".into(),
+                success: true,
+                latency_ms: 1,
+                failure_kind: None,
+            },
+            kind,
+            Default::default(),
+            None,
+        );
+        assert!(matches!(ev.provenance, ProvenanceLevel::Observed { .. }));
+        assert_eq!(recompute_reliability(marker), 1.0);
+    }
+
+    let write_action = act(serde_json::json!({
+        "type": "write_file",
+        "path": "audit_report.md",
+        "content": "ok",
+        "reasoning": "test"
+    }));
+    let rec = from_executed_action(&write_action, write_only);
+    assert_eq!(rec.kind, TypedEvidenceKind::Write);
+    assert!(rec.evidence.success);
+    assert_eq!(rec.reliability, 1.0);
+    assert_eq!(
+        assess_read_path_typed(read_evidence, "crates/runtime_core/src/real.rs"),
+        nexus_evidence_requirements::assessment::Assessment::SC
+    );
+}
+
+#[test]
+fn incident_2_inherited_lineage_cannot_close_unrelated_downstream_nodes_with_zero_work() {
+    let ancestor_payload = "\
+[READ_OK] crates/runtime_core/src/ancestor.rs
+pub fn ancestor_only() {}
+[WRITE_OK] ancestor_report.md
+[PATCH_FUNCTION_OK] crates/runtime_core/src/ancestor.rs:ancestor_only
+[CMD_OK] Command: cargo check -p nexus_runtime_core
+Status: exit status: 0
+[HALT] Ancestor complete.
+";
+
+    let mission = "OBJECTIVE: Inspect crates/runtime_core/src/downstream.rs and run git status\n\
+                   ROOT DIRECTIVE CONTEXT:\nRead crates/runtime_core/src/ancestor.rs and run cargo check -p nexus_runtime_core";
+    let conds = vec![
+        CompletionCondition::ReadPathAcquired {
+            path: "crates/runtime_core/src/downstream.rs".into(),
+        },
+        CompletionCondition::CommandExecutionVerified { command: "git status".into() },
+    ];
+    let (filtered, kept, pruned) = filter_claim_bound_lineage(ancestor_payload, mission, &conds);
+    assert_eq!(kept, 0);
+    assert_eq!(pruned, 4);
+    assert!(filtered.trim().is_empty());
+
+    let wrapped = wrap_lineage(ancestor_payload);
+    for cond in [
+        CompletionCondition::ReadMarkerAcquired,
+        CompletionCondition::WriteMarkerAcquired,
+        CompletionCondition::PatchMarkerAcquired,
+        CompletionCondition::CommandMarkerAcquired,
+        CompletionCondition::SourceCodeEvidenceRequired,
+        CompletionCondition::HaltDelivered,
+    ] {
+        assert!(!OutcomeVerifier::mission_completion_authorized(&wrapped, 1.0, &[cond]));
+    }
+
+    assert!(!verify_lineage_provenance(&wrap_lineage("")));
+
+    for criterion in ["ANALYSIS_OK", "PATCH_FUNCTION_OK", "DIFF_PATCH_OK", "CMD_OK"] {
+        let res = Verifier::verify_contract("task_2", &wrapped, &[criterion.to_string()]);
+        assert!(matches!(res, VerificationResult::Retry(_)));
+    }
+}
+
+#[test]
+fn incident_3_critic_veto_mandated_pivot_escapes_strategy_violation_and_relevance_boosts() {
+    let mut session = EpistemicSession::new("Patch src/lib.rs and verify with cargo test");
+    session.contract.read_only = false;
+
+    let rejected_patch = act(serde_json::json!({
+        "type": "patch_function",
+        "path": "src/lib.rs",
+        "function_name": "calc",
+        "new_body": "fn calc() -> i32 { 1 }",
+        "reasoning": "initial patch"
+    }));
+    let rejected_key = from_executed_action(&rejected_patch, "").evidence.action_identity.0;
+    session.last_critic_rejected_actions = Some(vec![rejected_key]);
+    session.local_evidence.push_str(
+        "\n[CRITIC_VETO] Do not patch directly; run execute_command `cargo test` or use replace_lines on src/lib.rs.\n",
+    );
+
+    let prompt_strategy = veto_pivot_strategy("patch_function:src/lib.rs:calc", &session);
+    assert!(!prompt_strategy.starts_with("patch_function:"));
+
+    let cmd_pivot = act(serde_json::json!({
+        "type": "execute_command",
+        "command": "cargo test",
+        "reasoning": "follow critic veto",
+        "confidence": 0.9
+    }));
+    let replace_pivot = act(serde_json::json!({
+        "type": "replace_lines",
+        "path": "src/lib.rs",
+        "start_line": 1,
+        "end_line": 3,
+        "replacement": "fn calc() -> i32 { 2 }",
+        "reasoning": "follow critic veto"
+    }));
+    assert!(veto_mandated_pivot_ok(&cmd_pivot, &session));
+    assert!(veto_mandated_pivot_ok(&replace_pivot, &session));
+    assert!(!veto_mandated_pivot_ok(&rejected_patch, &session));
+
+    let good_search = "[SEARCH_CODE_OK] Path: crates/runtime_core | Query: 'veto_mandated_pivot_ok'\n\
+                       MATCHES:\n\
+                       crates/runtime_core/src/cortical_loop/strategize.rs:1010: veto_mandated_pivot_ok\n\
+                       crates/runtime_core/src/cortical_loop/strategize.rs:1110: fn veto_mandated_pivot_ok\n";
+    let score = score_search_relevance("veto_mandated_pivot_ok", good_search);
+    assert!(score >= 0.70, "got {}", score);
+    assert!(should_raise_belief(score, 0.45));
+}
+
+#[test]
+fn journal_seals_all_eval_and_terminal_branches_in_tamper_evident_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let jpath = dir.path().join("journal.jsonl");
+    let mut journal = Journal::open(&jpath).unwrap();
+
+    for (tag, mod_val, after) in [
+        ("strategy_violation:write_file", -0.20_f32, 0.31_f32),
+        ("parse_fault:write_file", -0.05, 0.26),
+        ("low_relevance:0.40", 0.0, 0.45),
+        ("halt_rejected:unverified_symbols", 0.10, 0.55),
+        ("eval_err_fallback:typed_verified", 0.20, 0.75),
+        ("terminal_gate", 0.0, 0.95),
+    ] {
+        journal
+            .append(TurnRecord {
+                node_id: "node_1".into(),
+                turn: 0,
+                strategy: "read_file:src/lib.rs".into(),
+                action_type: tag.into(),
+                evidence_hash: hash_bytes(tag.as_bytes()),
+                evidence_len: tag.len(),
+                belief_before: 0.50,
+                belief_after: after,
+                eval_modifier: mod_val,
+                unmet_before: vec![],
+                unmet_after: vec![],
+                provider: None,
+                latency_ms: None,
+                prev_hash: String::new(),
+                record_hash: String::new(),
+            })
+            .unwrap();
+    }
+
+    let body = std::fs::read_to_string(&jpath).unwrap();
+    assert_eq!(Journal::verify_chain(&body), Some(6));
+
+    let tampered = body.replacen("0.40", "0.99", 1);
+    assert_eq!(Journal::verify_chain(&tampered), None);
+}

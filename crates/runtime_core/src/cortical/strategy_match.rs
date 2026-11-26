@@ -58,6 +58,10 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
         return true;
     }
 
+    if strategy == "halt" {
+        return matches!(action, AgentAction::Halt { .. });
+    }
+
     if strategy.starts_with("halt:") {
         return matches!(
             action,
@@ -129,6 +133,8 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
                 let path_ok = |p: &str| -> bool {
                     let pt = p.trim();
                     pt == expected_path
+                        || (!expected_path_norm.is_empty()
+                            && pt.trim_end_matches('/') == expected_path_norm)
                         || (pt.starts_with(&prefix) && !pt.contains(".."))
                         || pt.ends_with(&format!("/{}", expected_path_norm))
                         || (pt.contains(&format!("/{}/", expected_path_norm)) && !pt.contains(".."))
@@ -228,10 +234,24 @@ pub fn action_matches_strategy(strategy: &str, action: &AgentAction) -> bool {
 /// Return true if `action_path` is still a mandatory unread target.
 /// Callers pass paths from the node contract that are not yet fully covered.
 pub fn is_mandatory_unread_path(action_path: &str, mandatory_unread: &[String]) -> bool {
-    mandatory_unread.iter().any(|m| {
-        let a = action_path.trim_start_matches("./");
-        let b = m.trim_start_matches("./");
-        a == b || a.ends_with(b) || b.ends_with(a)
+    // Compare whole path components so `lib.rs` never matches `other_lib.rs`,
+    // an empty entry never matches everything, and `..` is never accepted.
+    // Suffix matching is kept (absolute vs workspace-relative spellings), but
+    // only on a component boundary.
+    fn comps(p: &str) -> Option<Vec<&str>> {
+        let v: Vec<&str> = p.trim().split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+        if v.is_empty() || v.contains(&"..") {
+            None
+        } else {
+            Some(v)
+        }
+    }
+    let Some(a) = comps(action_path) else {
+        return false;
+    };
+    mandatory_unread.iter().any(|m| match comps(m) {
+        Some(b) => a == b || a.ends_with(&b) || b.ends_with(&a),
+        None => false,
     })
 }
 
@@ -246,6 +266,37 @@ pub fn allow_mandatory_pivot(
         return true;
     }
     is_mandatory_unread_path(action_path, mandatory_unread)
+}
+
+#[cfg(test)]
+mod mandatory_unread_path_tests {
+    use super::is_mandatory_unread_path;
+
+    fn m(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn exact_dot_slash_and_absolute_spellings_match() {
+        assert!(is_mandatory_unread_path("src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(is_mandatory_unread_path("./src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(is_mandatory_unread_path("/root/X/src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(is_mandatory_unread_path("src/lib.rs", &m(&["/root/X/src/lib.rs"])));
+    }
+
+    #[test]
+    fn partial_component_names_do_not_match() {
+        assert!(!is_mandatory_unread_path("other_lib.rs", &m(&["lib.rs"])));
+        assert!(!is_mandatory_unread_path("src/lib.rs", &m(&["b.rs"])));
+    }
+
+    #[test]
+    fn empty_and_dotdot_never_match() {
+        assert!(!is_mandatory_unread_path("src/lib.rs", &m(&[""])));
+        assert!(!is_mandatory_unread_path("", &m(&["src/lib.rs"])));
+        assert!(!is_mandatory_unread_path("../src/lib.rs", &m(&["src/lib.rs"])));
+        assert!(!is_mandatory_unread_path("src/lib.rs", &m(&["../src/lib.rs"])));
+    }
 }
 
 #[cfg(test)]
@@ -354,6 +405,32 @@ mod action_matches_strategy_tests {
         let action =
             act(r#"[{"type":"write_file","path":"out.md","content":"hello","reasoning":"test"}]"#);
         assert!(action_matches_strategy("write_file:out.md", &action));
+    }
+
+    #[test]
+    fn search_scope_with_trailing_slash_matches_bare_and_absolute_paths() {
+        let bare = act(r#"[{"type":"search_code","path":"bins","query":"main","reasoning":"t"}]"#);
+        let slash =
+            act(r#"[{"type":"search_code","path":"bins/","query":"main","reasoning":"t"}]"#);
+        let abs =
+            act(r#"[{"type":"search_code","path":"/root/X/bins","query":"main","reasoning":"t"}]"#);
+        assert!(action_matches_strategy("search_code:bins/:main", &bare));
+        assert!(action_matches_strategy("search_code:bins/:main", &slash));
+        assert!(action_matches_strategy("search_code:bins/:main", &abs));
+        assert!(action_matches_strategy("search_code:bins:main", &bare));
+    }
+
+    #[test]
+    fn search_scope_still_rejects_other_directories_and_queries() {
+        let other =
+            act(r#"[{"type":"search_code","path":"/root/X/apps","query":"main","reasoning":"t"}]"#);
+        let lookalike =
+            act(r#"[{"type":"search_code","path":"binsx","query":"main","reasoning":"t"}]"#);
+        let wrong_q =
+            act(r#"[{"type":"search_code","path":"bins","query":"unrelated","reasoning":"t"}]"#);
+        assert!(!action_matches_strategy("search_code:bins/:main", &other));
+        assert!(!action_matches_strategy("search_code:bins/:main", &lookalike));
+        assert!(!action_matches_strategy("search_code:bins/:main", &wrong_q));
     }
 
     #[test]

@@ -8,8 +8,20 @@ tree_sitter_query: |
       field: (field_identifier) @method (#match? @method "^(Query|Exec|QueryRow|Prepare)$")
     )
     arguments: (argument_list
-      (call_expression
-        function: (selector_expression field: (field_identifier) @func (#eq? @func "Sprintf"))
-      ) @danger.sql_injection
+      . (call_expression
+          function: (selector_expression field: (field_identifier) @func (#eq? @func "Sprintf"))
+        ) @danger.sql_injection
     )
+  )
+  (call_expression
+    function: (selector_expression
+      field: (field_identifier) @method (#match? @method "^(Query|Exec|QueryRow|Prepare)$")
+    )
+    arguments: (argument_list . (binary_expression) @danger.sql_injection)
+  )
+  (call_expression
+    function: (selector_expression
+      field: (field_identifier) @method (#match? @method "^(Query|Exec|QueryRow|Prepare)$")
+    )
+    arguments: (argument_list . (identifier) @danger.sql_injection)
   )

@@ -100,6 +100,28 @@ impl CorticalLoop {
         mission: &str,
         write_phase_ready: bool,
     ) {
+        // HALT GUARD: once the cortex has transitioned to halt synthesis,
+        // a mutation pivot must not override it. Observed on live runs:
+        // phase transition sets active_strategy=halt, then this function
+        // replaces it with patch_function:..., sending the strategist to
+        // propose an out-of-scope patch that the critic then vetoed.
+        // Same guard as apply_post_search_expansion.
+        if active_strategy == "halt" || active_strategy.starts_with("halt:") {
+            return;
+        }
+        // GUARD: Do not override a strategy whose target is the mission's
+        // required artifact. A mission that names an output file is a
+        // CREATE, not a mutation of the read files.
+        {
+            let names_required_artifact =
+                active_strategy.strip_prefix("write_file:").map(str::trim).is_some_and(|target| {
+                    session.contract.required_artifact_paths.iter().any(|a| a.path == target)
+                });
+            if names_required_artifact {
+                return;
+            }
+        }
+
         // After READ_OK on a mutation mission, inject patch_function / replace_lines
         // so strict action_matches_strategy does not reject mutation proposals
         // while active_strategy is still read_file.
@@ -107,24 +129,64 @@ impl CorticalLoop {
             let read_ok_done = session.local_evidence.contains("[READ_OK]")
                 || session.local_evidence.contains("[READ_FUNCTION_OK]")
                 || session.local_evidence.contains("[READ_CHUNK_OK]");
-            let patch_marker_needed = session.contract.is_mutation_task
-                || session.contract.conditions.iter().any(|c| {
-                    let s = format!("{:?}", c);
-                    s.contains("PatchMarker") || s.contains("MutationMarker")
-                })
-                || {
-                    let m = mission.to_lowercase();
-                    crate::cortical::read_only_gate::contains_word_start(&m, "patch")
-                        || m.contains("modify ")
-                        || m.contains("remove the unconditional")
-                };
+            // FOREVER FIX: only real source-patch conditions arm the pivot.
+            // Report-only WritePathAcquired must never inject replace_lines.
+            let has_source_patch_condition = session.contract.conditions.iter().any(|c| {
+                matches!(
+                    c,
+                    crate::completion_engine::CompletionCondition::PatchMarkerAcquired
+                        | crate::completion_engine::CompletionCondition::PatchPathAcquired { .. }
+                )
+            });
+            let mission_asks_source_mutation = {
+                let m = mission.to_lowercase();
+                crate::cortical::read_only_gate::contains_word_start(&m, "patch")
+                    || m.contains("modify ")
+                    || m.contains("remove the unconditional")
+            };
+            let patch_marker_needed = has_source_patch_condition
+                || (mission_asks_source_mutation && !session.contract.read_only);
             let already_mutated = session.local_evidence.contains("[PATCH_FUNCTION_OK]")
                 || session.local_evidence.contains("[DIFF_PATCH_OK]")
                 || session.local_evidence.contains("[REPLACE_LINES_OK]")
                 || session.local_evidence.contains("[WRITE_OK]");
 
+            // MULTI-TARGET PIVOT: `(has_unmet_patch_target || !already_mutated)` goes false forever once
+            // ANY mutation lands, so the pivot fires once per node and never
+            // re-fires for the remaining targets in the same contract. Drive
+            // the pivot off "how many declared PatchPathAcquired criteria are
+            // still UNMET and whose source we have already read" instead.
+            let unmet_patch_targets: Vec<String> = session
+                .contract
+                .conditions
+                .iter()
+                .filter_map(|c| match c {
+                    crate::completion_engine::CompletionCondition::PatchPathAcquired {
+                        path,
+                        ..
+                    } if !crate::cortical::contract_advance::condition_is_met(
+                        c,
+                        &session.local_evidence,
+                    ) =>
+                    {
+                        let has_read =
+                            session.local_evidence.contains(&format!("[READ_OK] {}", path))
+                                || session
+                                    .local_evidence
+                                    .contains(&format!("[READ_OK] /root/AthenaFusionX/{}", path));
+                        if has_read {
+                            Some(path.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
+            let _has_unmet_patch_target = !unmet_patch_targets.is_empty();
+
             let read_only_mission = session.contract.read_only
-                || crate::cortical::read_only_gate::mission_declares_read_only(mission);
+                || crate::cortical::read_only_gate::mission_read_only_intent(mission);
 
             if read_ok_done
                 && patch_marker_needed
@@ -132,8 +194,11 @@ impl CorticalLoop {
                 && !write_phase_ready
                 && !read_only_mission
             {
-                let mut target_path: Option<String> = None;
+                let mut target_path: Option<String> = unmet_patch_targets.first().cloned();
                 for line in session.local_evidence.lines().rev() {
+                    if target_path.is_some() {
+                        break;
+                    }
                     let t = line.trim();
                     if let Some(rest) = t.strip_prefix("[READ_OK]") {
                         let p = rest.split_whitespace().next().unwrap_or("").trim();
@@ -232,19 +297,68 @@ impl CorticalLoop {
                         })
                     };
 
-                    let mutation_strats: Vec<String> = match &fn_name {
-                        Some(fn_name) => vec![
-                            format!("patch_function:{}:{}", path_str, fn_name),
-                            format!("replace_lines:{}", path_str),
-                        ],
-                        None => {
-                            self.log(
-                                "\x1b[1;31m>> [CORTEX POST-READ MUTATION PIVOT]\x1b[0m \
-                                 No function name grounded in evidence or mission text; \
-                                 offering path-grounded replace_lines only."
-                                    .to_string(),
-                            );
-                            vec![format!("replace_lines:{}", path_str)]
+                    // KIND-AWARE: detect unmet typed-patch requirements from contract
+                    // and emit only strategies matching the required kind. Without this,
+                    // a `PatchPathAcquired { kind: "DIFF_PATCH_OK", .. }` contract would
+                    // be looped on `patch_function` forever (which produces
+                    // `[PATCH_FUNCTION_OK]`, not `[DIFF_PATCH_OK]`).
+                    let typed_patch_requirements: Vec<(String, String, Option<String>)> = session
+                        .contract
+                        .conditions
+                        .iter()
+                        .filter_map(|c| match c {
+                            crate::completion_engine::CompletionCondition::PatchPathAcquired {
+                                kind,
+                                path,
+                                function_name,
+                            } if !crate::cortical::contract_advance::condition_is_met(
+                                c,
+                                &session.local_evidence,
+                            ) =>
+                            {
+                                Some((kind.clone(), path.clone(), function_name.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+
+                    let mutation_strats: Vec<String> = if !typed_patch_requirements.is_empty() {
+                        let mut strats: Vec<String> = Vec::new();
+                        for (kind, _contract_path, fn_opt) in &typed_patch_requirements {
+                            let strat = match kind.as_str() {
+                                "DIFF_PATCH_OK" => format!("diff_patch:{}", path_str),
+                                "REPLACE_LINES_OK" => format!("replace_lines:{}", path_str),
+                                "PATCH_FUNCTION_OK" => match fn_opt.as_ref().or(fn_name.as_ref()) {
+                                    Some(f) => format!("patch_function:{}:{}", path_str, f),
+                                    None => format!("patch_function:{}", path_str),
+                                },
+                                _ => continue,
+                            };
+                            if !strats.contains(&strat) {
+                                strats.push(strat);
+                            }
+                        }
+                        self.log(format!(
+                            "\x1b[1;36m>> [CORTEX POST-READ MUTATION PIVOT]\x1b[0m \
+                             Kind-matched strategies: {}",
+                            strats.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                        ));
+                        strats
+                    } else {
+                        match &fn_name {
+                            Some(fn_name) => vec![
+                                format!("patch_function:{}:{}", path_str, fn_name),
+                                format!("replace_lines:{}", path_str),
+                            ],
+                            None => {
+                                self.log(
+                                    "\x1b[1;31m>> [CORTEX POST-READ MUTATION PIVOT]\x1b[0m \
+                                     No function name grounded in evidence or mission text; \
+                                     offering path-grounded replace_lines only."
+                                        .to_string(),
+                                );
+                                vec![format!("replace_lines:{}", path_str)]
+                            }
                         }
                     };
 
@@ -288,16 +402,26 @@ impl CorticalLoop {
                     }
 
                     if injected > 0 {
-                        session.graph.cap_matching(
-                            |c| c.starts_with("read_file:") && c.contains(path_str.as_str()),
-                            0.20,
-                        );
+                        // 0.10 is below the SELECT_FLOOR (0.15) so a stale
+                        // read_file hypothesis cannot be re-selected by the
+                        // strategy selector on subsequent turns after the
+                        // pivot has injected a mutation strategy. 0.20 was
+                        // above the floor and let read_file outrank the
+                        // mutation on turn boundaries.
+                        session.graph.cap_matching(|c| c.starts_with("read_file:"), 0.10);
                     }
                 }
             }
         }
     }
 }
+
+/// Reconnaissance strategy injected after a critic veto on a HaltDelivered-only
+/// contract. Must be `search_code:<path>:<query>` so `action_matches_strategy`
+/// can be satisfied by a real SearchCode action (the old space-separated
+/// "... OR ..." form parsed as a bare query and could never match).
+pub(crate) const HALT_VETO_RECON: &str =
+    "search_code:crates/runtime_core/src:mission_completion_authorized";
 
 impl CorticalLoop {
     /// HALT-VETO RECOVERY (HaltDelivered strategy-prefix lock fix).
@@ -343,7 +467,7 @@ impl CorticalLoop {
                         session.graph.demote_hypothesis(h_id, 0.05);
                     }
                 }
-                let recon = "search_code:crates/runtime_core/src evaluate_contract OR mission_completion_authorized OR HaltDelivered";
+                let recon = HALT_VETO_RECON;
                 let already = session.graph.find_by_content(recon).is_some();
                 if !already {
                     let hid = session.graph.add_node(
@@ -377,12 +501,59 @@ impl CorticalLoop {
         current_belief: f32,
         write_phase_ready: bool,
     ) {
+        // HALT GUARD: the cortex has already decided this node is done
+        // (mutation complete, reconnaissance complete, or an explicit halt
+        // strategy was forced). Post-search expansion must not override a
+        // terminal halt strategy by suggesting unrelated recon actions --
+        // doing so pushes evidence noise into a turn the strategist should
+        // only be synthesizing a halt for.
+        if active_strategy == "halt" || active_strategy.starts_with("halt:") {
+            return;
+        }
+
+        // GUARD: Do not override a strategy whose target is the mission's
+        // required artifact. A mission that names an output file is a
+        // CREATE, not a mutation of the read files.
+        {
+            let names_required_artifact = active_strategy
+                .strip_prefix("write_file:")
+                .or_else(|| active_strategy.strip_prefix("read_file:"))
+                .map(str::trim)
+                .is_some_and(|target| {
+                    session
+                        .contract
+                        .required_artifact_paths
+                        .iter()
+                        .any(|a| crate::evidence_paths::paths_equivalent(&a.path, target))
+                });
+            if names_required_artifact {
+                return;
+            }
+        }
+
         //
         // The deterministic parsing of SEARCH_CODE MATCHES evidence is
         // delegated to the independent reconnaissance algorithm.
         // Cortex remains the executive coordinator: it evaluates the
         // contract, creates hypotheses, assigns belief, and selects the
         // active strategy.
+        // Do not let post-search expansion pivot to read_file while a
+        // path-bound SearchTermAcquired/SearchMarkerAcquired condition is
+        // still unmet. Otherwise a `crates` search injects a read_file
+        // strategy that then blocks the required `bins` search with a
+        // STRATEGY VIOLATION.
+        let has_unmet_search = session.contract.conditions.iter().any(|c| {
+            matches!(
+                c,
+                crate::completion_engine::CompletionCondition::SearchTermAcquired { .. }
+                    | crate::completion_engine::CompletionCondition::SearchCheckedAcquired { .. }
+                    | crate::completion_engine::CompletionCondition::SearchMarkerAcquired
+            ) && !crate::cortical::contract_advance::condition_is_met(c, &session.local_evidence)
+        });
+        if has_unmet_search {
+            return;
+        }
+
         if !write_phase_ready
             && session.local_evidence.contains("[SEARCH_CODE_OK]")
             && session.local_evidence.contains("MATCHES:")
@@ -593,7 +764,12 @@ impl crate::cortical_loop::CorticalLoop {
         if m.contains("read-only") || m.contains("do not modify") || m.contains("don't modify") {
             return;
         }
-        if !session.contract.conditions.iter().any(|c| matches!(c, CC::PatchMarkerAcquired)) {
+        if !session
+            .contract
+            .conditions
+            .iter()
+            .any(|c| matches!(c, CC::PatchMarkerAcquired | CC::PatchPathAcquired { .. }))
+        {
             return;
         }
         let Some(command) = session.contract.conditions.iter().find_map(|c| match c {
@@ -763,6 +939,57 @@ pub(crate) fn next_unmet_read(
     })
 }
 
+/// If the newest `[CONTRACT_FIRST_FORCED] read_file:<P>` is still unmet and the
+/// proposal is a lone `read_file` of a different path, replace it with a read of
+/// `P`. Released once `P` is read, or after the same force line appears 3 times.
+pub(crate) fn substitute_forced_read(
+    evidence: &str,
+    actions: Vec<crate::agent_protocol::AgentAction>,
+) -> (Vec<crate::agent_protocol::AgentAction>, Option<String>) {
+    use crate::agent_protocol::AgentAction;
+    use crate::completion_engine::CompletionCondition as CC;
+
+    if actions.len() != 1 {
+        return (actions, None);
+    }
+    let proposed = match &actions[0] {
+        AgentAction::ReadFile { path, .. } => path.clone(),
+        _ => return (actions, None),
+    };
+    let Some(last) = evidence
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with("[CONTRACT_FIRST_FORCED]"))
+    else {
+        return (actions, None);
+    };
+    let last = last.trim();
+    let Some(expected) = last.strip_prefix("[CONTRACT_FIRST_FORCED] read_file:") else {
+        return (actions, None);
+    };
+    let expected = expected.trim();
+    if expected.is_empty() || crate::evidence_paths::paths_equivalent(expected, &proposed) {
+        return (actions, None);
+    }
+    if crate::cortical::contract_advance::condition_is_met(
+        &CC::ReadPathAcquired { path: expected.to_string() },
+        evidence,
+    ) || evidence.lines().filter(|l| l.trim() == last).count() >= 3
+    {
+        return (actions, None);
+    }
+    let replacement = AgentAction::ReadFile {
+        _thought_process: None,
+        path: expected.to_string(),
+        reasoning: "deterministic contract-first read of the mandated path".to_string(),
+    };
+    let note = format!(
+        ">> [CORTEX CONTRACT-FIRST RECON] Proposal read `{}` but `{}` is the mandated unmet read; substituting.",
+        proposed, expected
+    );
+    (vec![replacement], Some(note))
+}
+
 impl crate::cortical_loop::CorticalLoop {
     pub(crate) fn apply_contract_first_recon(
         &self,
@@ -776,7 +1003,11 @@ impl crate::cortical_loop::CorticalLoop {
         // compile remediation own the strategy when they are active.
         if write_phase_ready
             || session.compile_remediation.is_active()
-            || session.contract.conditions.iter().any(|c| matches!(c, CC::PatchMarkerAcquired))
+            || session
+                .contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CC::PatchMarkerAcquired | CC::PatchPathAcquired { .. }))
         {
             return;
         }
@@ -790,22 +1021,95 @@ impl crate::cortical_loop::CorticalLoop {
         {
             return;
         }
+        // FIX BUG-02: do not yank an in-flight read. If the active strategy
+        // targets a mandated read that is still unmet, let it complete before
+        // resuming contract-order forcing. Without this guard, next_unmet_read
+        // always returns the first unmet path in contract order and overrides
+        // the strategist's pivot to a sibling mandated read (observed as
+        // telemetry<->thermal thrash across turns 3-13 of the fc32b279 run).
+        if active_strategy.starts_with("search_code:") {
+            let has_unmet_search = session.contract.conditions.iter().any(|c| match c {
+                CC::SearchCheckedAcquired { target } => {
+                    !crate::evidence_markers::search_checked_satisfied(
+                        &session.local_evidence,
+                        target,
+                    )
+                }
+                CC::SearchTermAcquired { term } => {
+                    !crate::evidence_markers::search_term_satisfied(&session.local_evidence, term)
+                }
+                _ => false,
+            });
+            if has_unmet_search {
+                return;
+            }
+        }
+        if let Some(in_flight) = active_strategy.strip_prefix("read_file:") {
+            let mandated = session
+                .contract
+                .conditions
+                .iter()
+                .any(|c| matches!(c, CC::ReadPathAcquired { path } if path == in_flight));
+            if mandated {
+                return;
+            }
+        }
         let Some(path) = next_unmet_read(&session.contract.conditions, &session.local_evidence)
         else {
+            if let Some(target) = session.contract.conditions.iter().find_map(|c| match c {
+                CC::SearchCheckedAcquired { target }
+                    if !crate::evidence_markers::search_checked_satisfied(
+                        &session.local_evidence,
+                        target,
+                    ) =>
+                {
+                    Some(target.clone())
+                }
+                _ => None,
+            }) {
+                let strat = if target.contains(':') {
+                    format!("search_code:{}", target)
+                } else {
+                    format!("search_code:.:{}", target)
+                };
+                let forced = session
+                    .local_evidence
+                    .lines()
+                    .filter(|l| {
+                        l.starts_with("[CONTRACT_FIRST_FORCED]") && l.contains(strat.as_str())
+                    })
+                    .count();
+                if forced < 3 && *active_strategy != strat {
+                    self.log(format!(
+                        ">> [CORTEX CONTRACT-FIRST RECON] Mandatory search outstanding; forcing `{}`.",
+                        strat
+                    ));
+                    session
+                        .local_evidence
+                        .push_str(&format!("\n[CONTRACT_FIRST_FORCED] {}\n", strat));
+                    *active_strategy = strat;
+                }
+            }
             return;
         };
         let strat = format!("read_file:{}", path);
         // A read that keeps failing must not pin the node forever.
+        // Count the marker this branch actually writes. Anchoring on the
+        // " (strategy" suffix keeps read_file:a.rs from matching a.rs.bak.
         let forced = session
             .local_evidence
-            .lines()
-            .filter(|l| l.starts_with("[CONTRACT_FIRST_FORCED]") && l.contains(strat.as_str()))
+            .matches(&format!("[RECON_REQUESTED] {} (strategy", strat))
             .count();
         if forced >= 3 {
+            self.log(format!(
+                "\x1b[1;31m>> [CORTEX RECON STUCK]\x1b[0m Mandatory read `{}` issued 3x without completion; escalating.",
+                strat
+            ));
             return;
         }
         session.local_evidence.push_str(&format!(
-            "[CONTRACT_FIRST_FORCED] {} (issued by the cortex; satisfied once its [READ_OK] appears; do not re-read it)\n",
+            "[RECON_REQUESTED] {} (strategy forced; NOT read evidence)\n[CONTRACT_FIRST_FORCED] {}\n",
+            strat,
             strat
         ));
 
@@ -826,6 +1130,60 @@ impl crate::cortical_loop::CorticalLoop {
             "\x1b[1;36m>> [CORTEX CONTRACT-FIRST RECON]\x1b[0m Mandatory read outstanding; forcing `{}`.",
             active_strategy
         ));
+    }
+}
+
+#[cfg(test)]
+mod forced_read_substitution_tests {
+    use super::substitute_forced_read;
+    use crate::agent_protocol::AgentAction;
+
+    fn read(p: &str) -> AgentAction {
+        AgentAction::ReadFile { _thought_process: None, path: p.into(), reasoning: String::new() }
+    }
+    const FORCE: &str =
+        "[RECON_REQUESTED] read_file:b.rs (strategy forced; NOT read evidence)\n[CONTRACT_FIRST_FORCED] read_file:b.rs\n";
+
+    #[test]
+    fn wrong_path_read_is_replaced() {
+        let (out, note) = substitute_forced_read(FORCE, vec![read("a.rs")]);
+        assert!(note.is_some());
+        match &out[0] {
+            AgentAction::ReadFile { path, .. } => assert_eq!(path, "b.rs"),
+            _ => panic!("expected ReadFile"),
+        }
+    }
+
+    #[test]
+    fn matching_path_is_untouched() {
+        let (out, note) = substitute_forced_read(FORCE, vec![read("b.rs")]);
+        assert!(note.is_none());
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn satisfied_force_releases() {
+        let ev = format!("{FORCE}[READ_OK] b.rs\nFULL FILE CONTENT:\nfn x() {{}}\n");
+        let (out, note) = substitute_forced_read(&ev, vec![read("a.rs")]);
+        assert!(note.is_none());
+        match &out[0] {
+            AgentAction::ReadFile { path, .. } => assert_eq!(path, "a.rs"),
+            _ => panic!("expected ReadFile"),
+        }
+    }
+
+    #[test]
+    fn released_after_three_forcings() {
+        let ev = FORCE.to_string()
+            + "[CONTRACT_FIRST_FORCED] read_file:b.rs\n[CONTRACT_FIRST_FORCED] read_file:b.rs\n";
+        let (_, note) = substitute_forced_read(&ev, vec![read("a.rs")]);
+        assert!(note.is_none());
+    }
+
+    #[test]
+    fn no_force_marker_means_no_change() {
+        let (_, note) = substitute_forced_read("", vec![read("a.rs")]);
+        assert!(note.is_none());
     }
 }
 
@@ -863,5 +1221,38 @@ mod contract_first_recon_tests {
     fn nothing_is_returned_once_every_read_is_evidenced() {
         let both = format!("{}{}", FIRST, SECOND);
         assert_eq!(next_unmet_read(&reads(), &both), None);
+    }
+}
+
+#[cfg(test)]
+mod halt_veto_recon_tests {
+    use super::HALT_VETO_RECON;
+    use crate::cortical::strategy_match::action_matches_strategy;
+    use crate::json_parser::extract_actions;
+
+    #[test]
+    fn recon_strategy_is_satisfiable_by_a_matching_search() {
+        let rest = HALT_VETO_RECON.strip_prefix("search_code:").expect("search_code prefix");
+        let (path, query) = rest.split_once(':').expect("path:query form");
+        let json = format!(
+            r#"[{{"type":"search_code","path":"{}","query":"{}","reasoning":"t"}}]"#,
+            path, query
+        );
+        let action = extract_actions(&json).unwrap().into_iter().next().unwrap();
+        assert!(action_matches_strategy(HALT_VETO_RECON, &action));
+    }
+}
+
+#[cfg(test)]
+mod halt_guard_tests {
+    #[test]
+    fn post_search_expansion_has_halt_guard() {
+        let source = include_str!("recovery.rs");
+        assert!(
+            source.contains(
+                r#"if active_strategy == "halt" || active_strategy.starts_with("halt:") {"#
+            ),
+            "apply_post_search_expansion must short-circuit on a halt strategy"
+        );
     }
 }

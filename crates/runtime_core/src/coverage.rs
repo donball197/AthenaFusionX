@@ -22,10 +22,15 @@ pub struct CoverageLedger {
 }
 
 impl CoverageLedger {
+    /// The file this ledger currently describes, if a read has been ingested.
+    pub fn current_path(&self) -> Option<&str> {
+        self.current_path.as_deref()
+    }
+
     /// Idempotent: replayed evidence (reflection blocks repeat markers) is safe.
     pub fn ingest(&mut self, evidence: &str) {
         let lines: Vec<&str> = evidence.lines().collect();
-        
+
         // 1. Find the last path actively read in the evidence
         let mut target_path = None;
         for line in &lines {
@@ -38,15 +43,48 @@ impl CoverageLedger {
                 target_path = Some(p.to_string());
             }
         }
-        
-        let Some(target) = target_path else { return; };
-        
+
+        let Some(target) = target_path else {
+            return;
+        };
+        self.ingest_target(&lines, &target);
+    }
+
+    pub fn ingest_all_files(evidence: &str) -> Vec<Self> {
+        let lines: Vec<&str> = evidence.lines().collect();
+        let mut seen: Vec<String> = Vec::new();
+        for line in &lines {
+            let raw = if line.starts_with("[READ_CHUNK_OK]") {
+                chunk_line_path(line)
+            } else if line.starts_with("[READ_OK] ") {
+                Some(line.trim_start_matches("[READ_OK] ").trim().to_string())
+            } else {
+                None
+            };
+            if let Some(p) = raw {
+                let norm = normalize_workspace_path(&p);
+                if !norm.is_empty() && !seen.contains(&norm) {
+                    seen.push(norm);
+                }
+            }
+        }
+        seen.into_iter()
+            .map(|t| {
+                let mut l = Self::default();
+                l.ingest_target(&lines, &t);
+                l
+            })
+            .collect()
+    }
+
+    fn ingest_target(&mut self, lines: &[&str], target: &str) {
+        let target_norm = normalize_workspace_path(target);
         // 2. Process all events chronologically, accumulating coverage for the target path
         let mut i = 0;
         while i < lines.len() {
             if lines[i].starts_with("[READ_CHUNK_OK]") {
                 if let Some(p) = chunk_line_path(lines[i]) {
-                    if p == target {
+                    if normalize_workspace_path(&p) == target_norm {
                         if let Some((s, e, total)) = parse_chunk_line(lines[i]) {
                             self.switch_to(&p);
                             self.total_lines = Some(total);
@@ -60,12 +98,17 @@ impl CoverageLedger {
             } else if lines[i].starts_with("[READ_OK] ") {
                 let p = lines[i].trim_start_matches("[READ_OK] ").trim();
                 let mut j = i + 1;
-                while j < lines.len() && !lines[j].starts_with("[READ_CHUNK_OK]") && !lines[j].starts_with("[READ_OK]") {
+                while j < lines.len()
+                    && !lines[j].starts_with("[READ_CHUNK_OK]")
+                    && !lines[j].starts_with("[READ_OK]")
+                {
                     j += 1;
                 }
-                if p == target {
-                    let slice = lines[i..j].join("
-");
+                if normalize_workspace_path(p) == target_norm {
+                    let slice = lines[i..j].join(
+                        "
+",
+                    );
                     self.ingest_read_ok_blocks(&slice);
                 }
                 i = j;
@@ -108,9 +151,9 @@ impl CoverageLedger {
                     total = parse_total_lines(l);
                     break;
                 }
-                if l.starts_with('[') && l.contains("] ") {
+                if is_read_block_terminator(l) {
                     break;
-                } // next marker
+                } // next evidence marker
                 shown += 1;
                 k += 1;
             }
@@ -132,7 +175,37 @@ impl CoverageLedger {
             i = k;
         }
     }
+}
 
+fn is_read_block_terminator(line: &str) -> bool {
+    const RECORD_PREFIXES: &[&str] = &[
+        "[READ_OK]",
+        "[READ_CHUNK_OK]",
+        "[READ_FUNCTION_OK]",
+        "[WRITE_OK]",
+        "[WRITE_NOOP]",
+        "[CMD_OK]",
+        "[SEARCH_CODE_OK]",
+        "[SEARCH_CHECKED_OK]",
+        "[SEARCH_MEMORY_OK]",
+        "[PATCH_FUNCTION_OK]",
+        "[PATCH_IDEMPOTENT_OK]",
+        "[DIFF_PATCH_OK]",
+        "[REPLACE_LINES_OK]",
+        "[ACTION FAILED]",
+        "[HALT]",
+        "[HALT_REJECTED",
+        "[DAG LINEAGE",
+        "[PROPOSITION]",
+        "[CRITIC_VETO]",
+        "[AUTO_VERIFY_READ]",
+        "[NODE PHASE]",
+    ];
+    let t = line.trim_start();
+    RECORD_PREFIXES.iter().any(|p| t.starts_with(p))
+}
+
+impl CoverageLedger {
     pub fn coverage_pct(&self) -> f32 {
         match self.total_lines {
             Some(t) if t > 0 => 100.0 * self.covered.len() as f32 / t as f32,
@@ -314,10 +387,7 @@ fn normalize_workspace_path(p: &str) -> String {
     std::env::current_dir()
         .ok()
         .and_then(|cwd| {
-            std::path::Path::new(p)
-                .strip_prefix(&cwd)
-                .ok()
-                .map(|r| r.to_string_lossy().to_string())
+            std::path::Path::new(p).strip_prefix(&cwd).ok().map(|r| r.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| p.trim_start_matches("./").to_string())
 }
@@ -372,5 +442,31 @@ mod per_file_tests {
         l.ingest("[READ_CHUNK_OK] File: x/y.rs | Lines 1-50 of 100\nCONTENT:\nz\n");
         l.ingest(&format!("[READ_CHUNK_OK] File: {} | Lines 51-100 of 100\nCONTENT:\nz\n", abs));
         assert!((l.coverage_pct() - 100.0).abs() < 0.01, "{}", l.coverage_pct());
+    }
+}
+
+#[cfg(test)]
+mod embedded_tag_truncation_tests {
+    use super::CoverageLedger;
+
+    #[test]
+    fn truncated_read_with_embedded_bracket_tag_still_reports_gap() {
+        let mut ev =
+            String::from("[READ_OK] crates/runtime_core/src/strategize.rs\nFULL FILE CONTENT:\n");
+        for i in 1..=10 {
+            ev.push_str(&format!("// line {}\n", i));
+        }
+        ev.push_str("[PARSE_FAULT_ACTION] embedded string literal inside source file\n");
+        for i in 12..=50 {
+            ev.push_str(&format!("// line {}\n", i));
+        }
+        ev.push_str(
+            "[CONTENT TRUNCATED TO SAVE TOKENS. TOTAL LINES: 100. USE THE `read_file_chunk` TOOL]\n",
+        );
+        let mut ledger = CoverageLedger::default();
+        ledger.ingest(&ev);
+        assert_eq!(ledger.total_lines(), Some(100));
+        assert!(ledger.coverage_pct() < 100.0, "got {}", ledger.coverage_pct());
+        assert_eq!(ledger.largest_gap(), Some((51, 100)));
     }
 }

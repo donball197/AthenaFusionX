@@ -2,21 +2,9 @@ mod exporter;
 mod graph;
 mod loader;
 
+use nexus_cli_utils::parse_arg;
 use std::env;
 use std::path::{Path, PathBuf};
-
-fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
-    for flag in flags {
-        if let Some(i) = args.iter().position(|r| r == flag) {
-            if let Some(val) = args.get(i + 1) {
-                if !val.starts_with('-') {
-                    return Some(val.clone());
-                }
-            }
-        }
-    }
-    None
-}
 
 fn find_map_file() -> PathBuf {
     let candidates = [

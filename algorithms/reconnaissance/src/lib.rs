@@ -119,7 +119,10 @@ vendor/external_repo/src/main.rs:10:foo
 
         assert_eq!(
             actual,
-            vec!["read_file:vendor/external_repo/Cargo.toml", "read_file:vendor/external_repo/src/main.rs",]
+            vec![
+                "read_file:vendor/external_repo/Cargo.toml",
+                "read_file:vendor/external_repo/src/main.rs",
+            ]
         );
     }
 
@@ -181,7 +184,10 @@ vendor/external_repo/src/main.rs:10:foo
 
         assert_eq!(
             actual,
-            vec!["read_file:vendor/external_repo/Cargo.toml", "read_file:vendor/external_repo/src/main.rs",]
+            vec![
+                "read_file:vendor/external_repo/Cargo.toml",
+                "read_file:vendor/external_repo/src/main.rs",
+            ]
         );
     }
 

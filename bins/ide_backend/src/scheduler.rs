@@ -56,14 +56,6 @@ pub struct DeterministicScheduler {
 }
 
 impl DeterministicScheduler {
-    pub fn new() -> Self {
-        Self { queue: Vec::new() }
-    }
-
-    pub fn submit(&mut self, task: CognitiveTask) {
-        self.queue.push(task);
-    }
-
     #[allow(dead_code)]
     pub fn dispatch(&mut self) -> Option<CognitiveTask> {
         if self.queue.is_empty() {

@@ -79,9 +79,7 @@ impl DistributedScheduler {
         if reply.ok {
             match reply.b64.filter(|s| !s.is_empty()) {
                 Some(payload) => Ok(payload),
-                None => Err(anyhow!(
-                    "Remote forge returned ok=true without a synthesized payload"
-                )),
+                None => Err(anyhow!("Remote forge returned ok=true without a synthesized payload")),
             }
         } else {
             Err(anyhow!(reply.error.unwrap_or_else(|| "Remote forge error".into())))

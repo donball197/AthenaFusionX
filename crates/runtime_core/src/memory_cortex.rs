@@ -132,6 +132,30 @@ impl MemoryCortex {
         Ok(())
     }
 
+    /// Persist a graph checkpoint or terminal transition while the plan
+    /// remains Active. Returns false if the row is missing or no longer Active.
+    pub async fn update_plan_run_checkpoint(
+        &self,
+        id: &str,
+        graph: &str,
+        status: &str,
+        updated_at: i64,
+    ) -> anyhow::Result<bool> {
+        Ok(self.palace.update_plan_run_checkpoint(id, graph, status, updated_at).await?)
+    }
+
+    /// Delegate a heartbeat-only update to the palace. Called by the
+    /// Cortex cognitive_tick. Never modifies graph_json or status.
+    pub async fn heartbeat_plan_run(&self, id: &str) -> anyhow::Result<()> {
+        self.palace.heartbeat_plan_run(id).await?;
+        Ok(())
+    }
+
+    /// Guarded Active -> Aborted for one plan. Used by the send_task drop guard.
+    pub async fn abort_plan_if_active(&self, id: &str) -> anyhow::Result<bool> {
+        Ok(self.palace.abort_plan_if_active(id).await?)
+    }
+
     pub async fn consolidate_memory(
         &self,
         memory: crate::memory_types::CognitiveMemory,

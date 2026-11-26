@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use nexus_cli_utils::parse_arg;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -130,19 +131,6 @@ fn rank_mutation(
         rationale: rationale.join("; "),
         verified_inputs,
     }
-}
-
-fn parse_arg(args: &[String], flags: &[&str]) -> Option<String> {
-    for flag in flags {
-        if let Some(i) = args.iter().position(|r| r == flag) {
-            if let Some(val) = args.get(i + 1) {
-                if !val.starts_with('-') {
-                    return Some(val.clone());
-                }
-            }
-        }
-    }
-    None
 }
 
 fn parse_positional(args: &[String]) -> Option<String> {
@@ -289,11 +277,7 @@ fn main() -> Result<()> {
     let output_path_str = parse_arg(&args, &["--output", "-o"]);
     if let Some(out_str) = output_path_str {
         let out_path = PathBuf::from(&out_str);
-        if let Some(parent) = out_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        fs::write(&out_path, &json_output)
-            .with_context(|| format!("Failed to write output to {:?}", out_path))?;
+        nexus_cli_utils::write_text_output(&out_path, &json_output)?;
     }
 
     println!("{}", json_output);

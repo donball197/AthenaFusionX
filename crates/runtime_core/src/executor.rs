@@ -30,97 +30,152 @@ pub struct RoboticExecutor {
     pub episode: EpisodeContext,
 }
 
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component),
+        }
+    }
+    normalized
+}
+
+fn canonicalize_existing_ancestor(p: &Path) -> Result<PathBuf> {
+    let mut curr = p;
+    loop {
+        match std::fs::symlink_metadata(curr) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                curr = curr.parent().ok_or_else(|| {
+                    anyhow!("PATH_TRAVERSAL_DENIED: {} has no existing ancestor", p.display())
+                })?;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let ancestor_canon = std::fs::canonicalize(curr)?;
+    let suffix = p.strip_prefix(curr)?;
+    Ok(normalize_lexically(&ancestor_canon.join(suffix)))
+}
+
 fn canonicalize_or_parent(p: &Path) -> Result<PathBuf> {
     if let Ok(c) = std::fs::canonicalize(p) {
         return Ok(c);
     }
-    let mut curr = p.to_path_buf();
-    let mut components = Vec::new();
-    while !curr.exists() {
-        if let Some(file_name) = curr.file_name() {
-            components.push(file_name.to_os_string());
-        }
-        if let Some(parent) = curr.parent() {
-            curr = parent.to_path_buf();
-        } else {
-            break;
-        }
+    let first_pass = canonicalize_existing_ancestor(p)?;
+    canonicalize_existing_ancestor(&first_pass)
+}
+
+fn resolve_workspace_root() -> Result<PathBuf> {
+    std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))
+}
+
+pub(crate) fn resolve_write_path_in(workspace_root: &Path, path: &str) -> Result<PathBuf> {
+    if path.chars().any(|c| c.is_control()) {
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: control characters in path"));
     }
-    let ancestor_canon = std::fs::canonicalize(&curr)?;
-    let mut safe_path = ancestor_canon;
-    for part in components.into_iter().rev() {
-        safe_path.push(part);
+    let raw_path = Path::new(path);
+    let target =
+        if raw_path.is_absolute() { raw_path.to_path_buf() } else { workspace_root.join(raw_path) };
+    let safe_path =
+        canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+    if !safe_path.starts_with(workspace_root) {
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
     }
     Ok(safe_path)
 }
 
 pub fn sanitize(path: &str) -> Result<PathBuf> {
-    if path.starts_with("/tmp/") {
-        return Ok(Path::new(path).to_path_buf());
+    let workspace_root = resolve_workspace_root()?;
+    sanitize_in(&workspace_root, path)
+}
+
+pub(crate) fn sanitize_in(workspace_root: &Path, path: &str) -> Result<PathBuf> {
+    if path.chars().any(|c| c.is_control()) {
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: control characters in path"));
     }
+    let mut normalized_path = match Path::new(path).strip_prefix(workspace_root) {
+        Ok(rel) => rel.to_string_lossy().into_owned(),
+        Err(_) => path.to_string(),
+    };
 
-    let workspace_root = std::env::current_dir()
-        .and_then(std::fs::canonicalize)
-        .map_err(|e| anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e))?;
-
-    let mut normalized_path = path.to_string();
-
-    if let Some(ws_str) = workspace_root.to_str() {
-        if normalized_path.starts_with(ws_str) {
-            normalized_path =
-                normalized_path.trim_start_matches(ws_str).trim_start_matches('/').to_string();
+    if !Path::new(&normalized_path).is_absolute() {
+        if normalized_path.starts_with("src/") {
+            normalized_path = format!("crates/runtime_core/{}", normalized_path);
+        } else if normalized_path.starts_with("runtime_core/")
+            || normalized_path.starts_with("nexus_substrate/")
+            || normalized_path.starts_with("nexus_model_hub/")
+            || normalized_path.starts_with("nexus_search/")
+            || normalized_path.starts_with("memory_graph/")
+            || normalized_path.starts_with("protocol/")
+            || normalized_path.starts_with("executive_cortex/")
+        {
+            normalized_path = format!("crates/{}", normalized_path);
+        } else if normalized_path.starts_with("ide_backend/")
+            || normalized_path.starts_with("cli/")
+            || normalized_path.starts_with("node/")
+        {
+            normalized_path = format!("bins/{}", normalized_path);
         }
-    }
-
-    if normalized_path.starts_with("src/") {
-        normalized_path = format!("crates/runtime_core/{}", normalized_path);
-    } else if normalized_path.starts_with("runtime_core/")
-        || normalized_path.starts_with("nexus_substrate/")
-        || normalized_path.starts_with("nexus_model_hub/")
-        || normalized_path.starts_with("nexus_search/")
-        || normalized_path.starts_with("memory_graph/")
-        || normalized_path.starts_with("protocol/")
-        || normalized_path.starts_with("executive_cortex/")
-    {
-        normalized_path = format!("crates/{}", normalized_path);
-    } else if normalized_path.starts_with("ide_backend/")
-        || normalized_path.starts_with("cli/")
-        || normalized_path.starts_with("node/")
-    {
-        normalized_path = format!("bins/{}", normalized_path);
     }
 
     let p = Path::new(&normalized_path);
     let target = if p.is_absolute() { p.to_path_buf() } else { workspace_root.join(p) };
 
-    if !target.exists() {
+    let resolved_target =
+        canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+    if !resolved_target.starts_with(workspace_root) {
+        return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
+    }
+
+    let chosen = if target.exists() {
+        target
+    } else if !p.is_absolute() {
         let crate_fallback = workspace_root.join("crates/runtime_core/src").join(p);
         if crate_fallback.exists() {
-            return Ok(crate_fallback);
-        }
-
-        if let Some(filename) = p.file_name().and_then(|f| f.to_str()) {
+            crate_fallback
+        } else if let Some(filename) = p.file_name().and_then(|f| f.to_str()) {
             let lower = filename.to_lowercase();
-            if let Ok(entries) = std::fs::read_dir(&workspace_root) {
+            let mut matched = None;
+            if let Ok(entries) = std::fs::read_dir(workspace_root) {
                 for entry in entries.flatten() {
                     if entry.file_name().to_string_lossy().to_lowercase() == lower {
-                        return Ok(entry.path());
+                        matched = Some(entry.path());
+                        break;
                     }
                 }
             }
+            match matched {
+                Some(m) => m,
+                None => {
+                    return Err(anyhow!(
+                        "PATH_NOT_FOUND: {} does not exist in the workspace (tried {}, crate-relative, and filename search)",
+                        path,
+                        target.display()
+                    ));
+                }
+            }
+        } else {
+            return Err(anyhow!(
+                "PATH_NOT_FOUND: {} does not exist in the workspace (tried {})",
+                path,
+                target.display()
+            ));
         }
-
-        return Err(anyhow!(
-            "PATH_NOT_FOUND: {} does not exist in the workspace (tried {}, crate-relative, and filename search)",
-            path,
-            target.display()
-        ));
-    }
+    } else {
+        return Err(anyhow!("PATH_NOT_FOUND: {} does not exist in the workspace", path));
+    };
 
     let canonical =
-        canonicalize_or_parent(&target).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
+        std::fs::canonicalize(&chosen).map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
 
-    if !canonical.starts_with(&workspace_root) {
+    if !canonical.starts_with(workspace_root) {
         return Err(anyhow!("PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root", path));
     }
 
@@ -161,6 +216,22 @@ pub fn detect_shell_write_target(command: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// True when `target` (a workspace path named by a shell redirection) was modified at or after
+/// `since`. A redirection token in the command text proves nothing by itself (`echo "a > b.md"`),
+/// so [WRITE_OK] is only synthesized when the file's mtime actually moved. 2s slack covers
+/// coarse filesystem timestamps.
+pub(crate) fn write_target_is_fresh(target: &str, since: std::time::SystemTime) -> bool {
+    let floor = since
+        .checked_sub(std::time::Duration::from_secs(2))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    sanitize(target)
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .map(|mt| mt >= floor)
+        .unwrap_or(false)
 }
 
 /// Test-only fault-injection hooks for the iterative compile-remediation
@@ -273,6 +344,19 @@ fn try_one_shot_fault_injection(
     }
 }
 
+/// Rejects queries that cannot be searched safely or unambiguously.
+/// Extracted so executor tests can exercise the guard without
+/// constructing a full RoboticExecutor (which needs episode state,
+/// broadcast channel, and action cache).
+pub(crate) fn validate_search_query(query: &str) -> anyhow::Result<()> {
+    if query.trim().is_empty() || query.contains('\n') || query.contains('\r') {
+        return Err(anyhow::anyhow!(
+            "SEARCH_FAILED: query must be non-empty and contain no line breaks"
+        ));
+    }
+    Ok(())
+}
+
 impl RoboticExecutor {
     pub fn new(api_key: String, tx: tokio::sync::broadcast::Sender<String>) -> Self {
         Self {
@@ -314,6 +398,7 @@ impl RoboticExecutor {
                     }
                 }
 
+                let cmd_started = std::time::SystemTime::now();
                 let cmd_clone = command.clone();
                 let exec_res = tokio::time::timeout(
                     std::time::Duration::from_secs(60),
@@ -336,8 +421,8 @@ impl RoboticExecutor {
 
                 let mut stdout_trunc = stdout;
                 let mut stderr_trunc = stderr;
-                if stdout_trunc.chars().count() > 2500 {
-                    let safe_head: String = stdout_trunc.chars().take(2500).collect();
+                if stdout_trunc.chars().count() > 12000 {
+                    let safe_head: String = stdout_trunc.chars().take(12000).collect();
                     stdout_trunc =
                         format!("{}\n...[STDOUT TRUNCATED: OUTPUT TOO LARGE]", safe_head);
                 }
@@ -350,22 +435,24 @@ impl RoboticExecutor {
 
                 let mut res = format!(
                     "[CMD_OK] Command: {}\nStatus: {}\n{}\n",
-                    command.trim(),
+                    crate::evidence_markers::defang_markers(command.trim()),
                     out.status,
                     if format!("{}", out.status).contains("exit status: 0") {
-                        crate::cmd_match::cmd_hash_marker(command.trim())
+                        crate::cmd_match::cmd_hash_marker(
+                            crate::cmd_match::strip_workspace_cd_prefix(command.trim()),
+                        )
                     } else {
                         String::new()
                     }
                 );
                 if !stdout_trunc.trim().is_empty() {
                     res.push_str("STDOUT:\n");
-                    res.push_str(&stdout_trunc);
+                    res.push_str(&crate::evidence_markers::defang_markers(&stdout_trunc));
                     res.push('\n');
                 }
                 if !stderr_trunc.trim().is_empty() {
                     res.push_str("STDERR:\n");
-                    res.push_str(&stderr_trunc);
+                    res.push_str(&crate::evidence_markers::defang_markers(&stderr_trunc));
                     res.push('\n');
                 }
                 if stdout_trunc.trim().is_empty() && stderr_trunc.trim().is_empty() {
@@ -382,7 +469,9 @@ impl RoboticExecutor {
                 if out.status.success() {
                     if let Some(write_target) = crate::executor::detect_shell_write_target(&command)
                     {
-                        res.push_str(&format!("[WRITE_OK] {}\n", write_target));
+                        if crate::executor::write_target_is_fresh(&write_target, cmd_started) {
+                            res.push_str(&format!("[WRITE_OK] {}\n", write_target));
+                        }
                     }
                 }
 
@@ -394,28 +483,8 @@ impl RoboticExecutor {
                 Ok(res)
             }
             MotorAction::WriteFile { path, content } => {
-                let raw_path = Path::new(&path);
-
-                let workspace_root =
-                    std::env::current_dir().and_then(std::fs::canonicalize).map_err(|e| {
-                        anyhow!("PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})", e)
-                    })?;
-
-                let target = if raw_path.is_absolute() {
-                    raw_path.to_path_buf()
-                } else {
-                    workspace_root.join(raw_path)
-                };
-
-                let safe_path = canonicalize_or_parent(&target)
-                    .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", path))?;
-
-                if !safe_path.starts_with(&workspace_root) {
-                    return Err(anyhow!(
-                        "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
-                        path
-                    ));
-                }
+                let workspace_root = resolve_workspace_root()?;
+                let safe_path = resolve_write_path_in(&workspace_root, &path)?;
 
                 if let Ok(existing) = tokio::fs::read_to_string(&safe_path).await {
                     if existing == content {
@@ -426,7 +495,7 @@ impl RoboticExecutor {
                     }
                 }
                 if let Some(parent) = safe_path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
+                    tokio::fs::create_dir_all(parent).await?;
                 }
                 tokio::fs::write(&safe_path, &content).await?;
                 _dist.broadcast_file_shift(&path, "write_file");
@@ -521,7 +590,7 @@ impl RoboticExecutor {
 
                 let header =
                     if is_dir_listing { "DIRECTORY LISTING:" } else { "FULL FILE CONTENT:" };
-                Ok(format!("[READ_OK] {}\n{}\n{}", path, header, return_content))
+                Ok(format!("[READ_OK] {}\n{}\n{}", path, header, crate::evidence_markers::defang_markers(&return_content)))
             }
             MotorAction::ReadFunction { path, function_name } => {
                 let safe_path = sanitize(&path)?;
@@ -561,7 +630,7 @@ impl RoboticExecutor {
 
                 Ok(format!(
                     "[READ_FUNCTION_OK] {}:{}\nFile: {} | Function: {}\nEXACT AST SOURCE:\n{}",
-                    path, function_name, path, function_name, source
+                    path, function_name, path, function_name, crate::evidence_markers::defang_markers(&source)
                 ))
             }
 
@@ -587,7 +656,7 @@ impl RoboticExecutor {
                 }
 
                 let end_line = std::cmp::min(start_idx + max_lines, total_lines);
-                let chunk = lines[start_idx..end_line].join("\n");
+                let chunk = crate::evidence_markers::defang_markers(&lines[start_idx..end_line].join("\n")).into_owned();
 
                 Ok(format!(
                     "[READ_CHUNK_OK] File: {} | Lines {}-{} of {}\nCONTENT:\n{}",
@@ -599,54 +668,156 @@ impl RoboticExecutor {
                 ))
             }
             MotorAction::SearchCode { path, query } => {
-                if query.trim().is_empty() {
-                    return Ok("[SEARCH_FAILED] Empty search query is not permitted. Provide a specific search symbol or pattern.".to_string());
-                }
+                validate_search_query(&query)?;
 
                 let safe_path =
                     if path.trim().is_empty() { PathBuf::from("crates") } else { sanitize(&path)? };
-                let p_str = safe_path.to_str().unwrap_or(&path);
 
-                let cmd = format!(
-                    "(rg --type rust -n -C 2 -i '{}' {} || grep -rn -C 2 --include='*.rs' --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' {}) 2>/dev/null || true",
-                    query, p_str, query, p_str
-                );
-                let out = crate::podman::PodmanShield::execute(&cmd)?;
-                let mut stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let p_str = safe_path.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("SEARCH_FAILED: search path is not valid UTF-8")
+                })?;
 
-                if stdout.trim().is_empty()
-                    && (p_str.contains("executive_cortex") || query.contains("router"))
-                {
-                    let fallback_cmd = format!(
-                        "(rg -n -C 2 -i '{}' crates/runtime_core/src/ || grep -rn -C 2 --exclude-dir={{.git,target,.surgical_backup,.nexus,.lazarus,node_modules}} -iE '{}' crates/runtime_core/src/) 2>/dev/null || true",
-                        query, query
-                    );
-                    if let Ok(fb_out) = crate::podman::PodmanShield::execute(&fallback_cmd) {
-                        let fb_stdout = String::from_utf8_lossy(&fb_out.stdout);
-                        if !fb_stdout.trim().is_empty() {
-                            stdout = format!(
-                                "[FALLBACK MATCHES FROM crates/runtime_core/src/]:\n{}",
-                                fb_stdout
-                            );
+                // Shell-free search. rg is a fast path; grep is the
+                // authoritative fallback (present on every Unix host).
+                //
+                // --include=*.rs / --type rust are WORKSPACE-ONLY filters:
+                // documented non-Rust targets (e.g.
+                // SEARCH_CODE_OK:vendor/external_repo:Cargo.toml) exist but
+                // are not .rs files. Applying the filter to those roots
+                // makes the criterion unsatisfiable by construction.
+                let is_workspace_root = p_str == "crates"
+                    || p_str == "bins"
+                    || p_str.starts_with("crates/")
+                    || p_str.starts_with("bins/");
+
+                let run_argv = |program: &str, args: &[&str]| -> Result<String> {
+                    match crate::podman::PodmanShield::execute_argv(program, args) {
+                        Ok(o) => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+                        Err(e) => {
+                            let s = e.to_string();
+                            if s.contains("Command failed with status: exit status: 1\n") {
+                                return Ok(String::new());
+                            }
+                            Err(anyhow::anyhow!("{}", s))
                         }
                     }
-                }
+                };
 
-                let trunc = if stdout.chars().count() > 2500 {
-                    let prefix: String = stdout.chars().take(2500).collect();
+                let workspace_root =
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let searching_vendor = p_str == "vendor"
+                    || p_str.starts_with("vendor/")
+                    || p_str.contains("/vendor/")
+                    || p_str.ends_with("/vendor");
+                let searching_root =
+                    safe_path == workspace_root || path.trim() == "." || path.trim() == "./";
+
+                let mut rg_args: Vec<&str> = Vec::new();
+                if is_workspace_root {
+                    rg_args.extend_from_slice(&["--type", "rust"]);
+                }
+                rg_args.extend_from_slice(&[
+                    "--glob=!.git/**",
+                    "--glob=!.nexus_debug/**",
+                    "--glob=!**/target/**",
+                    "--glob=!.venv/**",
+                    "--glob=!.nexus_venv/**",
+                    "--glob=!.patch_backups/**",
+                    "--glob=!**/.zig-cache/**",
+                    "--glob=!.surgical_backup/**",
+                    "--glob=!.nexus/**",
+                    "--glob=!.lazarus/**",
+                    "--glob=!node_modules/**",
+                    "--glob=!.fastembed_cache/**",
+                    "--glob=!.nexus_ast/**",
+                    "--glob=!audit_out/**",
+                    "--glob=!repository_analysis/**",
+                    "--glob=!.nexus_snapshots.json",
+                    "--glob=!*.log",
+                    "--glob=!*.bak*",
+                ]);
+                if searching_root && !searching_vendor {
+                    rg_args.extend_from_slice(&[
+                        "--glob=!vendor/**",
+                        "--glob=!nexus_audit_target/**",
+                        "--glob=!**/tests/fixtures/**",
+                    ]);
+                }
+                rg_args.extend_from_slice(&["-n", "-H", "-C", "2", "-i", "-e", query.as_str(), p_str]);
+
+                let mut grep_args: Vec<&str> = vec!["-rnH", "-C", "2"];
+                if is_workspace_root {
+                    grep_args.push("--include=*.rs");
+                }
+                grep_args.extend_from_slice(&[
+                    "--exclude-dir=.git",
+                    "--exclude-dir=.nexus_debug",
+                    "--exclude-dir=target",
+                    "--exclude-dir=.venv",
+                    "--exclude-dir=.nexus_venv",
+                    "--exclude-dir=.patch_backups",
+                    "--exclude-dir=.zig-cache",
+                    "--exclude-dir=.surgical_backup",
+                    "--exclude-dir=.nexus",
+                    "--exclude-dir=.lazarus",
+                    "--exclude-dir=node_modules",
+                    "--exclude-dir=.fastembed_cache",
+                    "--exclude-dir=.nexus_ast",
+                    "--exclude-dir=audit_out",
+                    "--exclude-dir=repository_analysis",
+                    "--exclude=.nexus_snapshots.json",
+                    "--exclude=*.log",
+                    "--exclude=*.bak*",
+                ]);
+                if searching_root && !searching_vendor {
+                    grep_args.extend_from_slice(&[
+                        "--exclude-dir=vendor",
+                        "--exclude-dir=nexus_audit_target",
+                        "--exclude-dir=fixtures",
+                    ]);
+                }
+                grep_args.extend_from_slice(&["-iE", "-e", query.as_str(), p_str]);
+
+                // rg first. Any rg failure (binary missing, exit>=2) or
+                // empty output falls through to grep. grep's failure is
+                // authoritative: if rg was unavailable and grep also
+                // failed, the search genuinely failed.
+                let rg_out = run_argv("rg", &rg_args).unwrap_or_default();
+                let stdout = if !rg_out.is_empty() {
+                    rg_out
+                } else {
+                    // Err propagates; Ok("") from grep exit-1 is the
+                    // confirmed no-match outcome.
+                    match run_argv("grep", &grep_args) {
+                        Ok(s) if s.is_empty() => {
+                            return Ok(format!(
+                                "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.",
+                                p_str, query
+                            ));
+                        }
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "SEARCH_FAILED path={} query={:?}: {}",
+                                p_str,
+                                query,
+                                e
+                            ));
+                        }
+                    }
+                };
+
+                let trunc = if stdout.chars().count() > 8000 {
+                    let prefix: String = stdout.chars().take(8000).collect();
                     format!("{}...\n[MATCHES TRUNCATED: OUTPUT TOO LARGE]", prefix)
                 } else {
                     stdout
                 };
 
-                if trunc.trim().is_empty() {
-                    Ok(format!("[SEARCH_CODE_OK] Path: {} | Query: '{}'\nNo code matches found in specified path.", path, query))
-                } else {
-                    Ok(format!(
-                        "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}",
-                        path, query, trunc
-                    ))
-                }
+                Ok(format!(
+                    "[SEARCH_CODE_OK] Path: {} | Query: '{}'\nMATCHES:\n{}",
+                    p_str, query, trunc
+                ))
             }
             MotorAction::ReplaceLines { path, start_line, end_line, replacement } => {
                 let safe_path = sanitize(&path)?;
@@ -701,7 +872,11 @@ impl RoboticExecutor {
 
                 let output_str = String::from_utf8_lossy(&out.stdout);
                 let err_str = String::from_utf8_lossy(&out.stderr);
-                let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", output_str, err_str);
+                let combined = format!(
+                    "STDOUT:\n{}\nSTDERR:\n{}",
+                    crate::evidence_markers::defang_markers(&output_str),
+                    crate::evidence_markers::defang_markers(&err_str)
+                );
 
                 let char_count = combined.chars().count();
                 let trunc = if char_count > 3000 {
@@ -910,7 +1085,7 @@ impl RoboticExecutor {
                 let mut results_text = String::new();
 
                 for (_, _, r) in ranked_results.into_iter().take(3) {
-                    let snippet: String = r.result.chars().take(1500).collect();
+                    let snippet: String = crate::evidence_markers::defang_markers(&r.result.chars().take(1500).collect::<String>()).into_owned();
 
                     results_text
                         .push_str(&format!("Source: {}\nData: {}...\n---\n", r.directive, snippet));
@@ -1023,7 +1198,7 @@ impl RoboticExecutor {
                     .await
                     .map_err(|e| anyhow!("SCRAPE_MEMORY_STORE_FAILED: {}", e))?;
 
-                let evidence: String = persisted.chars().take(5000).collect();
+                let evidence: String = crate::evidence_markers::defang_markers(&persisted.chars().take(5000).collect::<String>()).into_owned();
 
                 Ok(format!(
                     "[SCRAPE_OK] URL: {}\n[SCRAPE_TAINT: Untrusted]\nEXTRACTION:\n{}",
@@ -1087,31 +1262,11 @@ impl RoboticExecutor {
                 .await
                 {
                     Ok(markdown) => {
-                        let raw_output_path = Path::new(&output_path);
-                        let workspace_root = std::env::current_dir()
-                            .and_then(std::fs::canonicalize)
-                            .map_err(|e| {
-                                anyhow!(
-                                    "PATH_TRAVERSAL_DENIED: could not resolve workspace root ({})",
-                                    e
-                                )
-                            })?;
-                        let output_target = if raw_output_path.is_absolute() {
-                            raw_output_path.to_path_buf()
-                        } else {
-                            workspace_root.join(raw_output_path)
-                        };
-                        let safe_path = canonicalize_or_parent(&output_target)
-                            .map_err(|_| anyhow!("PATH_TRAVERSAL_DENIED: {}", output_path))?;
-                        if !safe_path.starts_with(&workspace_root) {
-                            return Err(anyhow!(
-                                "PATH_TRAVERSAL_DENIED: {} resolves outside the workspace root",
-                                output_path
-                            ));
-                        }
+                        let workspace_root = resolve_workspace_root()?;
+                        let safe_path = resolve_write_path_in(&workspace_root, &output_path)?;
 
                         if let Some(parent) = safe_path.parent() {
-                            let _ = tokio::fs::create_dir_all(parent).await;
+                            tokio::fs::create_dir_all(parent).await?;
                         }
                         tokio::fs::write(&safe_path, markdown).await?;
                         _dist.broadcast_file_shift(&output_path, "synthesize_report");
@@ -1124,10 +1279,125 @@ impl RoboticExecutor {
                     Err(e) => Err(anyhow::anyhow!("Synthesis Failed: {}", e)),
                 }
             }
-            MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", reasoning)),
+            MotorAction::Halt { reasoning } => Ok(format!("[HALT] {}", crate::evidence_markers::defang_markers(&reasoning))),
             MotorAction::PolyglotAstPatch { .. } => {
                 Err(anyhow!("PolyglotAstPatch is defined but not yet implemented in the executor"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod search_query_validator_tests {
+    use super::validate_search_query;
+
+    #[test]
+    fn empty_query_is_err() {
+        assert!(validate_search_query("").is_err());
+    }
+
+    #[test]
+    fn whitespace_only_query_is_err() {
+        assert!(validate_search_query("   \t  ").is_err());
+    }
+
+    #[test]
+    fn newline_in_query_is_err() {
+        assert!(validate_search_query("foo\nbar").is_err());
+    }
+
+    #[test]
+    fn carriage_return_in_query_is_err() {
+        assert!(validate_search_query("foo\rbar").is_err());
+    }
+
+    #[test]
+    fn normal_query_is_ok() {
+        assert!(validate_search_query("unimplemented!").is_ok());
+        assert!(validate_search_query("fn main").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod path_containment_tests {
+    use super::{resolve_write_path_in, sanitize_in};
+
+    #[test]
+    fn sanitize_rejects_tmp_traversal_and_absolute_outside() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        let outside = tempfile::NamedTempFile::new().expect("outside file");
+
+        assert!(sanitize_in(&root, "/tmp/../etc/passwd").is_err());
+        assert!(sanitize_in(&root, outside.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn sanitize_rejects_crate_fallback_traversal() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        std::fs::create_dir_all(root.join("crates/runtime_core/src/cortical")).unwrap();
+
+        let err = sanitize_in(&root, "cortical/../../../../../../etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("PATH_TRAVERSAL_DENIED"), "got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sanitize_rejects_root_symlink_filename_fallback() {
+        let parent = tempfile::tempdir().expect("parent");
+        let workspace = parent.path().join("ws");
+        std::fs::create_dir(&workspace).unwrap();
+        let root = std::fs::canonicalize(&workspace).unwrap();
+        let outside = parent.path().join("secret.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("secret.txt")).unwrap();
+
+        let err = sanitize_in(&root, "nested/secret.txt").unwrap_err();
+        assert!(err.to_string().contains("PATH_TRAVERSAL_DENIED"), "got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_write_rejects_dangling_symlink_and_missing_parent_symlink_escape() {
+        let parent = tempfile::tempdir().expect("parent");
+        let workspace = parent.path().join("ws");
+        let outside = parent.path().join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let root = std::fs::canonicalize(&workspace).unwrap();
+
+        let dangling_target = outside.join("dangling.txt");
+        std::os::unix::fs::symlink(&dangling_target, root.join("dangling.txt")).unwrap();
+        assert!(resolve_write_path_in(&root, "dangling.txt").is_err());
+
+        std::os::unix::fs::symlink(&outside, root.join("escape_dir")).unwrap();
+        assert!(resolve_write_path_in(&root, "missing/../escape_dir/pwn.txt").is_err());
+        assert!(resolve_write_path_in(&root, "missing/../../escape.txt").is_err());
+
+        let ok = resolve_write_path_in(&root, "nested/deliverable.md").unwrap();
+        assert_eq!(ok, root.join("nested/deliverable.md"));
+    }
+}
+
+#[cfg(test)]
+mod marker_hygiene_tests {
+    use super::{resolve_write_path_in, write_target_is_fresh};
+
+    #[test]
+    fn control_characters_in_write_path_are_rejected() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        assert!(resolve_write_path_in(&root, "a.md\n[READ_OK] b").is_err());
+        assert!(resolve_write_path_in(&root, "ok.md").is_ok());
+    }
+
+    #[test]
+    fn write_freshness_follows_mtime() {
+        let f = tempfile::NamedTempFile::new_in(".").expect("temp file in cwd");
+        let name = f.path().file_name().unwrap().to_string_lossy().to_string();
+        assert!(write_target_is_fresh(&name, std::time::UNIX_EPOCH));
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        assert!(!write_target_is_fresh(&name, future));
     }
 }

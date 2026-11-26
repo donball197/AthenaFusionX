@@ -32,6 +32,7 @@ nexus_reconnaissance_algorithms = { path = "../../algorithms/reconnaissance" }
 nexus_action_identity_algorithms = { path = "../../algorithms/action_identity" }
 nexus_algorithms = { path = "../../algorithms/nexus_algorithms" }
 sha2 = "0.10"
+regex = "1"
 
 [lints]
 workspace = true

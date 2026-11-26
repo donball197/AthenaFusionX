@@ -1,0 +1,46 @@
+id: JS_XSS
+language: "typescript"
+severity: High
+description: Unsafe DOM injection via innerHTML, dangerouslySetInnerHTML, document.write, jQuery, or eval().
+tree_sitter_query: >
+  (call_expression function: (identifier) @func_name (#match? @func_name "^(eval|Function)$")) @danger.code_execution
+  (new_expression constructor: (identifier) @func_name (#eq? @func_name "Function")) @danger.code_execution
+  (pair key: (property_identifier) @prop (#eq? @prop "__html") value: (_) @danger.xss)
+  (assignment_expression
+    left: (member_expression property: (property_identifier) @prop (#eq? @prop "innerHTML"))
+    right: (_) @danger.xss
+  )
+  (assignment_expression
+    left: (member_expression property: (property_identifier) @prop (#eq? @prop "outerHTML"))
+    right: (_) @danger.xss
+  )
+  (call_expression
+    function: (member_expression
+      object: (identifier) @obj (#eq? @obj "document")
+      property: (property_identifier) @method (#eq? @method "write")
+    )
+    arguments: (arguments (_) @danger.xss)
+  )
+  (call_expression
+    function: (member_expression
+      object: (identifier) @obj (#eq? @obj "document")
+      property: (property_identifier) @method (#eq? @method "writeln")
+    )
+    arguments: (arguments (_) @danger.xss)
+  )
+  (call_expression
+    function: (member_expression property: (property_identifier) @method (#eq? @method "bypassSecurityTrustHtml"))
+    arguments: (arguments (_) @danger.xss)
+  )
+  (call_expression
+    function: (member_expression object: (_) @recv (#match? @recv "^(\\$|jQuery|\\$\\(.*\\))") property: (property_identifier) @method (#match? @method "^(html|append|prepend|replaceWith)$"))
+    arguments: (arguments (template_string (template_substitution)) @danger.xss)
+  )
+  (call_expression
+    function: (member_expression object: (_) @recv (#match? @recv "^(\\$|jQuery|\\$\\(.*\\))") property: (property_identifier) @method (#match? @method "^(html|append|prepend|replaceWith)$"))
+    arguments: (arguments (binary_expression) @danger.xss)
+  )
+  (call_expression
+    function: (member_expression object: (_) @recv (#match? @recv "^(\\$|jQuery|\\$\\(.*\\))") property: (property_identifier) @method (#match? @method "^(html|append|prepend|replaceWith)$"))
+    arguments: (arguments (identifier) @danger.xss)
+  )

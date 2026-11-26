@@ -1,0 +1,17 @@
+id: "PYTHON_INSECURE_DESERIALIZATION"
+language: "Python"
+severity: "Critical"
+description: "Unsafe deserialization via pickle, cPickle, marshal, or yaml.load on untrusted input."
+tree_sitter_query: |
+  (call
+    function: (attribute object: (identifier) @obj (#match? @obj "^(pickle|cPickle|marshal)$") attribute: (identifier) @method (#match? @method "^(load|loads)$"))
+    arguments: (argument_list) @danger.deserialization
+  )
+  (call
+    function: (attribute object: (identifier) @obj (#eq? @obj "yaml") attribute: (identifier) @method (#match? @method "^(load|unsafe_load)$"))
+    arguments: (argument_list) @danger.deserialization
+  )
+  (call
+    function: (identifier) @func (#match? @func "^(load|loads)$")
+    arguments: (argument_list) @danger.deserialization
+  )

@@ -1,0 +1,21 @@
+id: "PYTHON_SSTI"
+language: "Python"
+severity: "Critical"
+description: "Server-Side Template Injection via render_template_string with dynamic input."
+tree_sitter_query: |
+  (call
+    function: (identifier) @func (#eq? @func "render_template_string")
+    arguments: (argument_list (string (interpolation)))
+  ) @danger.ssti
+  (call
+    function: (identifier) @func (#eq? @func "render_template_string")
+    arguments: (argument_list (binary_operator))
+  ) @danger.ssti
+  (call
+    function: (identifier) @func (#eq? @func "render_template_string")
+    arguments: (argument_list (call function: (attribute attribute: (identifier) @fmt (#eq? @fmt "format"))))
+  ) @danger.ssti
+  (call
+    function: (identifier) @func (#eq? @func "render_template_string")
+    arguments: (argument_list (identifier))
+  ) @danger.ssti

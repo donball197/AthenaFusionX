@@ -148,10 +148,7 @@ impl PolyglotDiffEngine {
                     let prefix = &source[..start];
                     if let Some(nl) = prefix.rfind('\n') {
                         let line_start = nl + 1;
-                        if source[line_start..start]
-                            .chars()
-                            .all(|c| c == ' ' || c == '\t')
-                        {
+                        if source[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
                             start = line_start;
                         }
                     }

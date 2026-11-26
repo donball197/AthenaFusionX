@@ -17,22 +17,47 @@ pub struct CriticResponse {
 
 pub struct EpistemicEngine;
 
+fn find_json_start(text: &str) -> Option<usize> {
+    for (i, c) in text.char_indices() {
+        if c == '{' {
+            let rest = text[i + 1..].trim_start();
+            if rest.starts_with('"') || rest.starts_with('}') {
+                return Some(i);
+            }
+        } else if c == '[' {
+            let rest = text[i + 1..].trim_start();
+            if rest.starts_with('{') || rest.starts_with(']') {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
 fn extract_json_block<'a>(raw: &'a str) -> &'a str {
     let text = raw.trim();
-    let start_idx = text
-        .find("[{")
-        .or_else(|| text.find("[\n"))
-        .or_else(|| text.find("{\""))
-        .or_else(|| text.find("{\n"));
-
-    if let Some(s) = start_idx {
+    if let Some(s) = find_json_start(text) {
         let is_array = text[s..].starts_with('[');
         let open_char = if is_array { '[' } else { '{' };
         let close_char = if is_array { ']' } else { '}' };
 
-        let mut depth = 0;
+        let mut depth = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
         for (i, c) in text[s..].char_indices() {
-            if c == open_char {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            if c == '"' {
+                in_string = true;
+            } else if c == open_char {
                 depth += 1;
             } else if c == close_char {
                 depth -= 1;
@@ -122,14 +147,20 @@ impl EpistemicEngine {
                             .pointer("/generationConfig/maxOutputTokens")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(4096);
+                        let effective_max_tokens =
+                            if model_endpoint.contains("Beam") && retries >= 1 {
+                                requested_max_tokens.max(8192)
+                            } else {
+                                requested_max_tokens
+                            };
 
                         let mut p = serde_json::json!({
                             "model": model_endpoint,
                             "messages": [{"role": "user", "content": text}],
-                            "max_tokens": requested_max_tokens,
+                            "max_tokens": effective_max_tokens,
                             "temperature": (match retries { 0 => 0.0_f64, 1 => 0.3, 2 => 0.6, _ => 0.8 })
                         });
-                        if model_endpoint.contains("Beam") && retries >= 1 {
+                        if model_endpoint.contains("Beam") {
                             p["reasoning_effort"] = serde_json::json!("low");
                         }
 
@@ -409,13 +440,13 @@ impl EpistemicEngine {
                     );
                     retries += 1;
                     eprintln!(
-                        "[RETRY] {} truncated-response attempt {}/4: {}",
+                        "[RETRY] {} truncated-response attempt {}/2: {}",
                         model_endpoint, retries, last_err
                     );
-                    if retries > 4 {
+                    if retries >= 2 {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_secs(2_u64.pow(retries as u32) * 2)).await;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
 
@@ -502,15 +533,17 @@ impl EpistemicEngine {
             .unwrap_or(false)
     }
 
-    /// Remove `<thought>...</thought>` blocks that some models (gemma) leak into responses.
+    /// Remove `<thought>...</thought>` and `<think>...</think>` blocks that models leak into responses.
     pub(crate) fn strip_thought_tags(s: &str) -> String {
         let mut out = s.to_string();
-        while let Some(a) = out.find("<thought>") {
-            match out[a..].find("</thought>") {
-                Some(rel) => out.replace_range(a..a + rel + "</thought>".len(), ""),
-                None => {
-                    out.truncate(a);
-                    break;
+        for (open, close) in [("<thought>", "</thought>"), ("<think>", "</think>")] {
+            while let Some(a) = out.find(open) {
+                match out[a..].find(close) {
+                    Some(rel) => out.replace_range(a..a + rel + close.len(), ""),
+                    None => {
+                        out.truncate(a);
+                        break;
+                    }
                 }
             }
         }
@@ -527,16 +560,30 @@ impl EpistemicEngine {
         tail: usize,
         max_pinned_total: usize,
     ) -> String {
-        const MAX_PINNED_REGION: usize = 30_000;
+        Self::compress_preserving_reads_budget_cap(evidence, head, tail, max_pinned_total, 30_000)
+    }
+
+    /// Same as `compress_preserving_reads_budget` with an explicit per-read cap.
+    /// The final HALT verifier uses a larger cap so files of ~50-80 KB are
+    /// judged whole instead of being cut mid-function.
+    pub(crate) fn compress_preserving_reads_budget_cap(
+        evidence: &str,
+        head: usize,
+        tail: usize,
+        max_pinned_total: usize,
+        max_region: usize,
+    ) -> String {
         let n_read_regions = evidence
             .lines()
             .filter(|l| {
                 let t = l.trim_start();
                 t.starts_with("[READ_OK]") || t.starts_with("[READ_CHUNK_OK]")
             })
-            .count()
+            .map(|l| l.trim())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
             .max(1);
-        let per_region_cap = (max_pinned_total / n_read_regions).clamp(3_000, MAX_PINNED_REGION);
+        let per_region_cap = (max_pinned_total / n_read_regions).clamp(3_000, max_region);
 
         let starts_read_region = |line: &str| {
             let t = line.trim_start();
@@ -732,6 +779,7 @@ impl EpistemicEngine {
             || problem_lower.contains("diff_patch_ok:")
             || problem_lower.contains("replace_lines_ok:")
             || problem_lower.contains("cmd_ok")
+            || problem_lower.contains("search_checked_ok:")
             || problem_lower.contains("dag_lineage_ok")
             || problem_lower.contains("node_objective_executed_and_verified");
 
@@ -771,9 +819,58 @@ impl EpistemicEngine {
             host_observation,
         };
 
+        let mut search_checked_strategies: Vec<String> =
+            crate::completion_engine::extract_all_named_targets(
+                scoped_problem,
+                "SEARCH_CHECKED_OK:",
+            )
+            .into_iter()
+            .filter_map(|t| {
+                let t = t.trim();
+                if t.is_empty() {
+                    None
+                } else if t.contains(':') {
+                    Some(format!("search_code:{}", t))
+                } else {
+                    Some(format!("search_code:.:{}", t))
+                }
+            })
+            .collect();
+
         if let Some(strategies) = DirectiveStrategyCompiler::compile(&directive_inputs) {
+            if !search_checked_strategies.is_empty() {
+                for s in strategies {
+                    if !search_checked_strategies.contains(&s) {
+                        search_checked_strategies.push(s);
+                    }
+                }
+                return Ok(search_checked_strategies);
+            }
             return Ok(strategies);
         }
+
+        if !search_checked_strategies.is_empty() {
+            return Ok(search_checked_strategies);
+        }
+
+        // Episodic recall: strategies that succeeded on similar past objectives.
+        // No-op when the corpus is empty or the embedder is unreachable.
+        let episodic_priors: String = match crate::episodic::suggest(
+            client,
+            "http://127.0.0.1:9380/v1/embeddings",
+            scoped_problem,
+            "",
+            &[],
+            3,
+        )
+        .await
+        {
+            Ok(v) if !v.is_empty() => {
+                let hints: Vec<String> = v.into_iter().map(|(s, _)| format!("  - {s}")).collect();
+                format!("\nEPISODIC PRIORS:\n{}\n", hints.join("\n"))
+            }
+            _ => String::new(),
+        };
 
         // PROBABILISTIC-PROMPT SCOPING:
         //
@@ -822,7 +919,7 @@ impl EpistemicEngine {
         let prompt = format!(
             r#"You are AthenaFusionX. Analyze this directive.
 DIRECTIVE: {problem}
-WORLD CONTEXT: {world_context}{audit_guidance}{analysis_guidance}
+WORLD CONTEXT: {world_context}{audit_guidance}{analysis_guidance}{episodic_priors}
 CRITICAL RULE: If the directive explicitly tells you to execute a specific command, at least ONE of your strategies MUST be to simply execute that exact command.
 Generate 3 distinct, actionable strategies. OUTPUT ONLY A JSON ARRAY OF STRINGS. No markdown."#
         );
@@ -995,6 +1092,19 @@ PHYSICAL PROFILE & ABILITIES:
 - CONTEXT LIMIT: Large. Evidence history is provided in full. Never truncate your final report.
 - TOOL ABILITY: For large files use `read_file_chunk` (up to 250 lines per call) or `search_code`.
 
+CRITICAL RULE [NODE SCOPING]: Your deliverable is exactly what OBJECTIVE
+and MANDATORY NODE SUCCESS CRITERIA describe. Steps in ROOT DIRECTIVE
+CONTEXT belong to OTHER nodes, not to you. NEVER plan, propose, or
+reference an action to fulfill a root-directive step that is not in your
+own OBJECTIVE. If your objective is read/inspect/evaluate and the phase
+transition has forced you to `halt`, your ONLY job is to summarize what
+your own criteria have physically evidenced. Do NOT say "the next step
+is to write X" — that is another node's job. Do NOT mention or backtick-
+reference any deliverable that is not named in your own OBJECTIVE or
+MANDATORY NODE SUCCESS CRITERIA. If you are on `halt`, deliver the halt
+text for your own node now, with no reference to other nodes.
+
+
 CRITICAL MULTI-PASS RULES FOR LARGE FILES (MANDATORY):
 1. Never declare the analysis complete after reading only one chunk.
 2. Always track progress explicitly in your reasoning:
@@ -1024,16 +1134,16 @@ Examples:
 - search_code:<path>:<query> -> emit search_code with `path` EXACTLY equal to <path> and `query` EXACTLY equal to <query>.
   IMPORTANT: <path> is the search scope (directory or file) and <query> is the text/pattern to search for.
   NEVER append <query> to <path>. NEVER convert `search_code:<path>:<query>` into `<path>/<query>`.
-  Example: `search_code:vendor/external_repo:HAND.toml` MUST become
-  `[{{"type":"search_code","path":"vendor/external_repo","query":"HAND.toml","reasoning":"scope search for the criterion term"}}]`.
+  Example: `search_code:<target-path>:<term>` MUST become
+  `[{{"type":"search_code","path":"<target-path>","query":"<term>","reasoning":"scope search for the criterion term"}}]`.
   IMPORTANT: for a `search_code:<dir>:<query>` strategy, `path` MUST be
   exactly `<dir>` and MUST NOT be extended with a filename, subdirectory,
   or file extension. The `query` is the substring to search for and MAY
   itself look like a filename or path -- when it does, search the whole
   scope and let the pattern match any file recursively. Example: for the
-  strategy `search_code:vendor/external_repo:HAND.toml`, the correct action is
-  {{"type":"search_code","path":"vendor/external_repo","query":"HAND.toml"}}.
-  Wrong: {{"type":"search_code","path":"vendor/external_repo/HAND.toml","query":"HAND.toml"}}.
+  strategy `search_code:<target-path>:<term>`, the correct action is
+  {{"type":"search_code","path":"<target-path>","query":"<term>"}}.
+  Wrong: {{"type":"search_code","path":"<target-path>/<term>","query":"<term>"}}.
 - read_file_chunk:<path> -> emit read_file_chunk for that exact path.
 - read_file:<path> -> emit read_file for that exact path.
 - execute_command:<command> -> emit execute_command with that exact command.
@@ -1079,7 +1189,17 @@ authoritative action representation."#,
             mission, strategy, world_context, bounded_evidence
         );
 
-        let strategy_tools = crate::tools::schema::tool_declarations_for_strategy(phase, strategy);
+        let is_open_halt_strategy = strategy.starts_with("halt:");
+        let strategy_tools = if is_open_halt_strategy {
+            Vec::new()
+        } else if strategy == "halt" {
+            crate::tools::schema::tool_declarations_for_strategy(
+                crate::tools::schema::CognitivePhase::Verification,
+                "halt",
+            )
+        } else {
+            crate::tools::schema::tool_declarations_for_strategy(phase, strategy)
+        };
 
         let mut payload = serde_json::json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -1097,13 +1217,17 @@ authoritative action representation."#,
         // resolves to exactly one native tool, force that tool at the
         // OpenAI-compatible provider boundary. This prevents the model from
         // silently substituting another native action.
-        if let Some(expected_tool) = crate::tools::schema::native_tool_name_for_strategy(strategy) {
-            payload["forced_tool_choice"] = serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": expected_tool
-                }
-            });
+        if !is_open_halt_strategy {
+            if let Some(expected_tool) =
+                crate::tools::schema::native_tool_name_for_strategy(strategy)
+            {
+                payload["forced_tool_choice"] = serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": expected_tool
+                    }
+                });
+            }
         }
 
         let models = match nexus_algorithms::Router::select("action_planning") {
@@ -1124,6 +1248,10 @@ authoritative action representation."#,
         world_context: &str,
         evidence_history: &str,
     ) -> Result<CriticResponse> {
+        // Judge against THIS node's objective/criteria only. The root directive
+        // lists steps owned by other DAG nodes; showing it made the critic veto
+        // a correct node halt for "missing" steps that belong elsewhere.
+        let mission = Self::scope_to_node_instructions(mission);
         let m_armored = format!(
             r#"<MISSION_OBJECTIVE>
 
@@ -1170,7 +1298,7 @@ the XML tags above. Do NOT veto legitimate search/recon commands. When the missi
 
 You are the Adversarial Critic. ORIGINAL DIRECTIVE: {mission} STRATEGY:
 {strategy} PROPOSED ACTION: {proposed_action} WORLD CONTEXT: {world_context}
-EVIDENCE HISTORY: {grounded_evidence} Evaluate if this action is safe and
+CRITICAL RULE [NODE SCOPING]: Your deliverable is exactly what OBJECTIVE and MANDATORY NODE SUCCESS CRITERIA describe. Steps in ROOT DIRECTIVE CONTEXT belong to OTHER nodes. NEVER plan, propose, or reference an action to fulfill a root-directive step that is not in your own OBJECTIVE. If you are on a read/inspect/evaluate objective and the phase transition has forced you to `halt`, your ONLY job is to summarize what your own criteria have physically evidenced. Do not say 'the next step is to write X' — that is another node's job. Deliver the halt text now. EVIDENCE HISTORY: {grounded_evidence} Evaluate if this action is safe and
 logically sound. CRITICAL RULE 1 [AST-FIRST]: You must VETO any 'read_file' ONLY
 if the path is completely unrelated to the mission AND was not found by any
 previous tool call. Standard Rust filenames (e.g., executor.rs,
@@ -1205,13 +1333,15 @@ no-op when the proposed implementation is materially identical to the existing
 implementation and does not satisfy any remaining mutation requirement.
 CRITICAL RULE 4: CONSTRUCTIVE VETO.
 CRITICAL RULE 5 [ANTI-REDUNDANT-READ]: If EVIDENCE HISTORY already contains a successful [READ_OK] for a file, you MUST VETO any subsequent read_file on that exact same path with a negative modifier (-0.30) and instruct the Strategist to proceed immediately to writing or patching.
+
+EXCEPTION (measurement actions): an `execute_command` whose completion condition is `CommandExecutionVerified` is the mechanism that PRODUCES [Measured] evidence. Do not require [Measured] before permitting it. Gate the FINAL CLAIM on [Measured], not on the execution itself.
 CRITICAL RULE 5.5 [NEGATIVE RESULTS ARE VALID EVIDENCE]: A search_code, read_file, execute_command, or other inspection action that finds nothing (e.g. "No code matches found", a file that does not exist, an empty directory) is NOT a failed or invalid action -- it is successful evidence gathering that has physically confirmed an absence. Do NOT veto an inspection action merely because its result was negative. This is especially true when the mission or strategy is explicitly about checking whether something exists, is present, or has already been created: a "not found" result directly and correctly answers that question. Only veto an inspection action for reasons unrelated to the polarity of its result (e.g. wrong path entirely, malformed query, redundant with a prior identical attempt). If you issue a negative confidence_modifier, your critique
 MUST explicitly state the exact command or action the Strategist should take
 next to escape the failure. CRITICAL RULE 3: THE EVIDENCE VERIFICATION TAXONOMY.
 If the proposed action contains a quantitative claim, architectural assumption,
 or performance metric, you MUST check the EVIDENCE HISTORY. If there is no
 explicit [Measured] execution log proving the claim, you MUST VETO the proposal.
-CRITICAL RULE 6 [CLAIM CHECK]: When the PROPOSED ACTION is a halt on an analysis or audit objective, verify every claimed behavior against the actual source text in EVIDENCE HISTORY before approving. Quote the exact source lines that support or contradict each numbered claim in the critique. If a claim cannot be paired with source lines, or if the source shows different behavior than claimed, VETO with a negative confidence_modifier and name the contradicted claim.
+CRITICAL RULE 6 [CLAIM CHECK]: PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. When the PROPOSED ACTION is a halt on an analysis or audit objective, verify every claimed behavior against the actual source text in EVIDENCE HISTORY before approving. Quote the exact source lines that support or contradict each numbered claim in the critique. If a claim cannot be paired with source lines, or if the source shows different behavior than claimed, VETO with a negative confidence_modifier and name the contradicted claim.
 CRITICAL RULE 7 [NO-DEFECT HALTS]: When the PROPOSED ACTION is a halt that reports NO defect on an audit whose directive says a defect may be reported only if the source establishes a violated contract, you may veto it ONLY by supplying a concrete counterexample: specific argument values for the function, and the exact sequence of branches the code takes for them, ending in the incorrect result. Walk the early returns and guards in order, since an earlier return can make a later branch unreachable for those inputs. A code comment is not a contract and cannot by itself establish a violation. If you cannot supply such a counterexample, approve the halt.
 OUTPUT ONLY VALID JSON: {{"critique": "", "confidence_modifier": <float from
 -0.5 to 0.5>}}"#,
@@ -1408,12 +1538,16 @@ OUTPUT ONLY VALID JSON:
         evidence: &str,
     ) -> Result<crate::cognition_graph::VerificationReport> {
         let truncated_evidence: String =
-            Self::compress_preserving_reads_budget(evidence, 3000, 11000, 200_000);
+            Self::compress_preserving_reads_budget_cap(evidence, 3000, 11000, 300_000, 80_000);
         // The halt text IS the claim source for read-only analysis halts; the
         // claim-check below must see the full claims. The old 2000-char cap
         // silently truncated ROOT_CAUSE/TRACE/FIX answers mid-claim, leaving
         // the verifier to judge only their openings.
-        let truncated_action: String = action.chars().take(6000).collect();
+        // The halt IS the deliverable for read-only audit missions; truncating
+        // it to 6000 chars throws away the closing sections of a comprehensive
+        // report. The mission verifier serves from the heavy tier (below)
+        // whose context comfortably fits 40k chars of report.
+        let truncated_action: String = action.chars().take(40_000).collect();
         let prompt = format!(
             r#"You are the Epistemic Verifier.
 STRATEGY: {}
@@ -1421,7 +1555,25 @@ ACTION TAKEN: {}
 EVIDENCE:
 {}
 Does this evidence mathematically prove the stated strategy's objective was achieved? A successful action (like [WRITE_OK] or [CMD_OK]) is NOT proof of success on its own UNLESS the ACTION TAKEN itself contains the actual content that was written or patched (write_file/diff_patch/patch_function actions above include the real file content directly in ACTION TAKEN) — in that case, check whether that content satisfies the objective, and treat a confirmed match as proof. Do not reject a successful write or patch merely because the bare EVIDENCE line (e.g. [WRITE_OK]) doesn't repeat the content; the content to check is in ACTION TAKEN.
-For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) read markers ([READ_OK] or [READ_CHUNK_OK]) for the files it discusses appear anywhere in EVIDENCE, including the historical section. Reject a halt that only claims the work is done. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
+For a [HALT] action on a read-only analysis or audit objective, the halt text IS the deliverable. Accept it only if (1) it states the concrete findings the objective asks for, not merely that the analysis was completed, and (2) for every file it discusses, either a successful read marker ([READ_OK] or [READ_CHUNK_OK]) appears in EVIDENCE, or a clear physical absence marker appears ([ACTION FAILED] containing PATH_NOT_FOUND, [PATH_DOES_NOT_EXIST], or "No such file or directory") when the objective is an existence / "check for" / "check whether it exists" style question. A confirmed PATH_NOT_FOUND is sufficient evidence that the file does not exist; do not demand a [READ_OK] for a path that the filesystem has already proven absent. Reject a halt that only claims the work is done, or claims a report "has been synthesized" without presenting the full findings inline in ACTION TAKEN. Also check every claimed behavior against the actual source text in EVIDENCE: reject the halt if any claim contradicts the code (for example, saying a branch returns X when the source shows it returns Y), or if a claimed defect is documented as intentional in the code's own comments, and name the problem in the rationale.
+
+EXACT COUNTS, SPELLINGS, AND NEGATIVE-EXISTENCE CLAIMS:
+- Verify every claimed count (e.g. number of workspace members, crates, files) and exact identifier/config name against the [READ_OK] / [CMD_OK] / [SEARCH_CODE_OK] evidence. If a count or identifier mismatches the evidence (for example claiming 45 members when the read file lists 37, or misspelling a name), reject with goal_satisfied=false and name the mismatch.
+- A broad negative-existence claim (such as "no completion-evaluating function was found in the repository") is NOT supported if only an unrelated file was read or a zero-match search used a narrow multi-word phrase; reject with goal_satisfied=false unless relevant files were actually inspected.
+
+HONEST NON-DELIVERY IS NOT COMPLETION: If the objective asks for a comprehensive audit, report, or analysis, a halt that states "I only completed X of the required Y/Z" or "this audit is limited to search evidence" is NOT a successful audit -- it is a partial execution of the objective. Return goal_satisfied=false for such a halt and name the specific objectives the report admits it did not deliver. An honest admission of non-delivery is worth more than a fabricated success, but it is still a FAILED mission, not a completed one. Do not accept "the report states concrete findings" as sufficient when those findings are a subset of the requested deliverable.
+
+PAIRING-EVIDENCE-EXT: Pairing evidence also includes (a) the stdout/stderr text inside a successful [CMD_OK] block, such as grep/rg match lists, file listings and cargo warning text; (b) any [SEARCH_CODE_OK] or [SEARCH_CHECKED_OK] block, where the exact line `No code matches found in specified path.` proves that query is absent from that path; and (c) the content shown in ACTION TAKEN. A claim is verified when its quoted file, line number, symbol or count appears in one of these. A claim whose specifics appear nowhere in EVIDENCE is still unverified and must fail. Lines marked TRUNCATED mean output was cut: do not fail a claim only because the visible excerpt is incomplete when the visible part is consistent with it. Before deciding, quote the exact source lines from EVIDENCE that support or contradict each numbered claim; any claim that cannot be paired with source lines is unverified and must fail.
+
+EXCEPTION — HALT-ONLY SYNTHESIS: If ACTION TAKEN is a [HALT] and STRATEGY explicitly describes an inline-analysis mission (for example, it contains "the material to analyze is inline in the directive" or "no searches, reads, or commands"), then this is a synthesis task. In this case:
+- Condition (2) does NOT apply — no reads were expected or performed.
+- Accept the halt if and only if it states concrete findings the objective asks for, and those findings are internally consistent with the material shown in the directive.
+- For independent_check_passed, evaluate whether the findings are grounded in the directive material and internally coherent; do not require source-code quote verification.
+- For evidence_confidence, use >= 0.75 if the synthesis is grounded and complete, < 0.75 if partial or if it contains ungrounded claims.
+- For goal_satisfied, return true if the halt delivers substantive findings addressing the objective.
+- If the halt cites a symbol, file, or line that does not appear in the directive material it was given, reject it — that is fabrication, not synthesis.
+
+For a [HALT] action on a MUTATION contract (an objective requiring a specific named file to be written): treat a session [WRITE_OK] <path> marker as sufficient proof that the required artifact exists, provided <path> matches a required artifact in the contract (exact path, basename, or absolute-path suffix). Do NOT require the halt reasoning to re-embed the file content; the content was already validated at write time. Judge the halt's finding-level claims against session markers ([READ_OK], [SEARCH_*_OK], [CMD_OK], source quotes) as usual, and do NOT re-read files from disk. For absence claims ("no X exists", "no duplication found", "no orphaned files"), require a session [SEARCH_*_OK] or [CMD_OK] marker covering the relevant scope; without it the claim is unsupported, so reject the halt and name the missing search. Do not require the strategist to run the same search twice.
 Reply with a single JSON object and nothing else. The first character of your reply must be an opening curly brace.
 OUTPUT ONLY VALID JSON matching this schema:
 {{"rationale": "<reasoning and exact source quotes>", "goal_satisfied": true, "evidence_confidence": 0.9, "independent_check_passed": true}}"#,
@@ -1436,28 +1588,39 @@ OUTPUT ONLY VALID JSON matching this schema:
         // silently drops the cascade to its weakest member.
         // To restore Router routing, replace the line below with the former
         // `match nexus_algorithms::Router::select("verify") { ... }` block.
-        let models = crate::model_config::get_heavy_models();
+        let models: Vec<String> = match std::env::var("NEXUS_VERIFIER_MODEL") {
+            Ok(v) if !v.trim().is_empty() => {
+                v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+            }
+            _ => crate::model_config::get_heavy_models(),
+        };
         eprintln!("[VERIFIER] model cascade: {:?}", models);
         let mut text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+        let mut stripped = Self::strip_thought_tags(&text);
         if serde_json::from_str::<serde_json::Value>(extract_json_block(&sanitize_json_escapes(
-            &text,
+            &stripped,
         )))
         .is_err()
         {
             eprintln!("[VERIFIER] non-JSON reply; retrying once");
             text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+            stripped = Self::strip_thought_tags(&text);
         }
-        let clean_text = sanitize_json_escapes(&text);
+        let clean_text = sanitize_json_escapes(&stripped);
 
         let json_str = extract_json_block(&clean_text);
         let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(val) => val,
-            Err(_) => serde_json::json!({
-                "goal_satisfied": false,
-                "evidence_confidence": 0.0,
-                "independent_check_passed": false,
-                "rationale": clean_text.trim()
-            }),
+            Err(e) => {
+                let preview: String = clean_text.chars().take(300).collect();
+                eprintln!("[VERIFIER] JSON parse fallback after retry ({e}); preview={preview:?}");
+                serde_json::json!({
+                    "goal_satisfied": false,
+                    "evidence_confidence": 0.0,
+                    "independent_check_passed": false,
+                    "rationale": clean_text.trim()
+                })
+            }
         };
 
         Ok(crate::cognition_graph::VerificationReport {
@@ -1514,6 +1677,17 @@ You are the Adversarial Critic for the CURRENT mission only.
 - IGNORE any prior missions, calibration, video-recording, or buffer-size topics unless they appear in the current directive or evidence.
 - Do NOT invent quantitative claims. If the Strategist makes a quantitative claim that is not backed by a [Measured] line in EVIDENCE, veto it.
 - Prefer constructive vetoes that name the exact next tool call.
+
+ACTION IDENTITY (MANDATORY):
+- The PROPOSED ACTION is the JSON object supplied between <STRATEGIST_PROPOSAL> tags. Judge the `type` field of that object.
+- The `reasoning` field is narrative. It may describe what a PRIOR action did, what a NEXT action should do, or the rationale for the CURRENT action. It is not a restatement of the action type.
+- Do NOT infer action type from reasoning. A `read_file` whose reasoning starts "Write the corrected report..." is still a `read_file`, not a `write_file`.
+
+CITATION DISCIPLINE (MANDATORY):
+- Assert line numbers or symbol spans ONLY when those exact numbers are visible in one of: (a) a READ_OK / READ_CHUNK_OK body already in evidence; (b) a SEARCH_CODE_OK / SEARCH_CHECKED_OK match list naming the file and line; or (c) a [CMD_OK] stdout block from a `grep -n` or `rg -n` command that names the file and line.
+- READ_OK and READ_CHUNK_OK bodies carry a line-range header (for example "Lines 1130-1379 of 1975") but do NOT number individual body lines, so a specific line number cannot be obtained by counting inside the body. A `grep -n` block in [CMD_OK] IS the authoritative source for source-file line numbers, and its output IS valid pairing evidence. Do NOT reject a citation whose line number appears in a [CMD_OK] `grep -n` block; that is the only way to obtain a line number from an unnumbered READ_OK body.
+- If a span is not visible in any of the sources above, write unverified. Never invent lines N-M and never fill a replacement report with guessed ranges.
+- When rejecting a halt or report for bad citations, name the unsupported claim and demand re-derivation from an existing READ_OK/READ_CHUNK_OK body, a SEARCH_*_OK list, or a [CMD_OK] `grep -n` block. Do not hand the strategist a full replacement body unless every line number in it appears in one of those sources.
 "#;
 
 #[cfg(test)]
@@ -1636,9 +1810,22 @@ NODE COMPLETION RULE: Every mandatory criterion must be physically evidenced."#;
     #[test]
     fn verifier_claim_check_needs_full_claims_and_grounded_quotes() {
         let source = include_str!("epistemic_engine.rs");
+
+        // Both patterns are constructed at runtime from fragments so that
+        // `include_str!("epistemic_engine.rs")` does NOT capture them as
+        // contiguous strings. If the full pattern appeared in this test
+        // body, `source.contains(pattern)` would self-match and both the
+        // positive and negative assertions would pass or fail for the
+        // wrong reason. Fragmenting the literal prevents that.
+        let good_truncation = ["action.chars().take(4", "0_000)"].concat();
+        let bad_truncation = ["take(6", "000", ").collect"].concat();
         assert!(
-            source.contains("action.chars().take(6000)"),
-            "halt claims must not be truncated at 6000 chars"
+            source.contains(&good_truncation),
+            "halt claims must be truncated at 40,000 chars (raised from 6000); a comprehensive audit report exceeds 6000 chars before its findings section even begins"
+        );
+        assert!(
+            !source.contains(&bad_truncation),
+            "6000-char halt truncation is the bug this test guards against; it must not reappear"
         );
         assert!(
             source.contains("quote the exact source lines from EVIDENCE"),
@@ -1813,7 +2000,8 @@ fn strip_empty_tools(payload: &Value) -> Option<Value> {
         .pointer("/tools/0/functionDeclarations")
         .and_then(|v| v.as_array())
         .map_or(false, |a| a.is_empty());
-    let empty_tools = payload.get("tools").and_then(|v| v.as_array()).map_or(false, |a| a.is_empty());
+    let empty_tools =
+        payload.get("tools").and_then(|v| v.as_array()).map_or(false, |a| a.is_empty());
     if !(empty_decls || empty_tools) {
         return None;
     }
@@ -1852,3 +2040,21 @@ mod empty_tools_tests {
     }
 }
 
+#[cfg(test)]
+mod extract_json_block_tests {
+    use super::*;
+
+    #[test]
+    fn extract_json_block_handles_whitespace_and_braces_in_strings() {
+        let raw = "```json\n{ \"rationale\": \"fn f() { let x = 1; // unmatched } }\", \"goal_satisfied\": true, \"evidence_confidence\": 0.9, \"independent_check_passed\": true }\n```";
+        let extracted = extract_json_block(raw);
+        let v: serde_json::Value = serde_json::from_str(extracted).expect("valid json");
+        assert_eq!(v["goal_satisfied"], true);
+    }
+
+    #[test]
+    fn strip_thought_tags_handles_thought_and_think() {
+        let raw = "<think>reasoning {\"bad\": 1}</think>\n{\"goal_satisfied\": true}";
+        assert_eq!(EpistemicEngine::strip_thought_tags(raw), "{\"goal_satisfied\": true}");
+    }
+}
