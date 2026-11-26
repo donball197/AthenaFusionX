@@ -56,6 +56,11 @@ impl CorticalLoop {
             String::new()
         };
 
+        let (actions, substituted) =
+            crate::cortical::recovery::substitute_forced_read(&session.local_evidence, actions);
+        if let Some(note) = substituted {
+            self.log(format!("\x1b[1;36m{}\x1b[0m", note));
+        }
         let actions = match self.filter_anti_loop(session, actions) {
             AntiLoopOutcome::Proceed(acts) => acts,
             AntiLoopOutcome::NeedsStrategize => return Ok(CortexState::Strategize),
@@ -77,7 +82,11 @@ impl CorticalLoop {
                     AgentAction::ReadFileChunk { _thought_process: None, start_line, .. }
                         if (*start_line as u64) == (gap_start as u64)
                 );
-                if is_next_chunk {
+                // conformance_guard: never bypass critic after conformance failure
+                if session.local_evidence.contains("[WRITE_CONFORMANCE_FAILED]") {
+                    self.log("\x1b[1;33m>> [CRITIC FORCED] Previous write failed conformance; LLM critic review required.\x1b[0m".to_string());
+                    // fall through to LLM critic
+                } else if is_next_chunk {
                     self.log(
                         "\x1b[1;36m>> [CRITIC BYPASS] Ledger-authoritative pagination; critic skipped.\x1b[0m"
                             .to_string(),
@@ -406,16 +415,31 @@ impl CorticalLoop {
         if session.contract.read_only && actions.len() == 1 {
             if let Some(mut defects) = halt_check {
                 // Truncation guard: a report cut off mid-sentence (output token cap)
-                // must not pass on length alone.
+                // must not pass on length alone, but raw reasoning-tag fragments at
+                // the tail are normalized before checking sentence punctuation.
                 if let Some(AgentAction::Halt { reasoning, .. }) = actions.first() {
-                    let tail = reasoning.trim_end();
+                    let mut cleaned_reasoning = reasoning.clone();
+                    while let Some(start) = cleaned_reasoning.find("<think>") {
+                        if let Some(end_rel) = cleaned_reasoning[start..].find("</think>") {
+                            let end = start + end_rel + "</think>".len();
+                            cleaned_reasoning.replace_range(start..end, "");
+                        } else {
+                            cleaned_reasoning.truncate(start);
+                            break;
+                        }
+                    }
+                    let tail = cleaned_reasoning.trim_end();
+                    let tail = tail
+                        .trim_end_matches("{")
+                        .trim_end_matches("</think>")
+                        .trim_end();
                     // A trailing criterion token the report must carry is not prose.
                     let tail = tail
                         .strip_suffix("ANALYSIS_OK")
                         .map(str::trim_end)
                         .filter(|t| !t.is_empty())
                         .unwrap_or(tail);
-                    let unclosed_backtick = reasoning.matches('`').count() % 2 != 0;
+                    let unclosed_backtick = cleaned_reasoning.matches('`').count() % 2 != 0;
                     if unclosed_backtick || !tail.ends_with(['.', ')', '!', '`', '"']) {
                         defects.push(format!(
                             "report appears truncated (ends with {:?}); finish the final sentence",

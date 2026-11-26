@@ -1480,7 +1480,18 @@ impl SubgoalCompletionEngine {
     /// because prose artifact extraction was never reached.
     pub fn infer_contract(node_id: &str, objective: &str) -> SubgoalContract {
         let mut contract = Self::infer_contract_raw(node_id, objective);
-        Self::merge_prose_deliverables(&mut contract, objective);
+        let scopes = MissionScopes::parse(objective);
+        // Merge prose deliverables from the node's objective AND the root
+        // directive (the original user prompt), but NOT from the criteria
+        // block (marker strings are handled by declared_criteria_contract).
+        // Fix B's nearest-verb rule handles read/write attribution within
+        // each clause.
+        let merge_text = if scopes.root_directive.is_empty() {
+            scopes.objective.to_string()
+        } else {
+            format!("{}\n{}", scopes.objective, scopes.root_directive)
+        };
+        Self::merge_prose_deliverables(&mut contract, &merge_text);
         contract
     }
 
@@ -1492,16 +1503,18 @@ impl SubgoalCompletionEngine {
     fn merge_prose_deliverables(contract: &mut SubgoalContract, objective: &str) {
         let prose_targets = extract_required_artifact_paths(objective);
         for art in prose_targets {
-            let already = contract
-                .required_artifact_paths
-                .iter()
-                .any(|a| a.path == art.path)
-                || contract.conditions.iter().any(|c| {
-                    matches!(c,
-                        CompletionCondition::WritePathAcquired { path }
-                            if *path == art.path)
-                });
-            if already {
+            // Skip only when the WritePathAcquired condition is already
+            // present.  Command-path and halt-only contracts add the
+            // artifact to required_artifact_paths with a generic
+            // WriteMarkerAcquired but no path-bound WritePathAcquired;
+            // the old `already` check saw the artifact and skipped,
+            // leaving the prose deliverable ungated.
+            let has_condition = contract.conditions.iter().any(|c| {
+                matches!(c,
+                    CompletionCondition::WritePathAcquired { path }
+                        if *path == art.path)
+            });
+            if has_condition {
                 continue;
             }
             if contract.read_only && art.path.trim().ends_with(".rs") {
@@ -1512,7 +1525,9 @@ impl SubgoalCompletionEngine {
                 .push(CompletionCondition::WritePathAcquired {
                     path: art.path.clone(),
                 });
-            contract.required_artifact_paths.push(art);
+            if !contract.required_artifact_paths.iter().any(|a| a.path == art.path) {
+                contract.required_artifact_paths.push(art);
+            }
         }
     }
 
@@ -1576,6 +1591,7 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
     let tokens: Vec<&str> = objective.split_whitespace().collect();
     let write_words =
         ["write", "save", "export", "synthesize", "create", "implement", "integrate", "add"];
+    let read_words = ["read", "reading", "inspect", "inspecting"];
 
     for (i, tok) in tokens.iter().enumerate() {
         // Completion criteria such as `WRITE_OK:host_report.md` are
@@ -1607,22 +1623,42 @@ fn extract_required_artifact_paths(objective: &str) -> Vec<ArtifactSpec> {
             && (clean.contains('/') || clean.contains('.'))
         {
             // Scan back to the start of this file mention's clause (comma boundary,
-            // capped at 30 tokens) rather than a fixed 3-token window -- a "read ... in
-            // X" clause can run long enough that the verb falls outside a small window.
+            // capped at 30 tokens) and resolve the nearest verb in the clause so read-only
+            // or test-runner clauses do not inherit write targets from earlier clauses.
             let min_start = i.saturating_sub(30);
             let mut start = i;
             while start > min_start && !tokens[start - 1].ends_with(',') {
                 start -= 1;
             }
+            let clause_tokens = &tokens[start..=i];
+            let nearest_is_read = clause_tokens.iter().rev().any(|t| {
+                let norm = t.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_lowercase();
+                read_words.contains(&norm.as_str())
+            });
+            let has_write_verb = clause_tokens.iter().any(|t| {
+                let norm = t.trim_matches(|c: char| !c.is_ascii_alphanumeric()).to_ascii_lowercase();
+                write_words.contains(&norm.as_str())
+            });
+            let _ = (nearest_is_read, has_write_verb, was_criterion_marked);
 
             // Match write-verbs as whole words, not substrings: a bare "to" is too
             // generic (it's the infinitive/preposition in "read ... to understand"),
             // and naive substring matching lets words like "tools" falsely match "to".
             let is_write_tgt = was_criterion_marked
-                || tokens[start..i].iter().any(|w| {
-                    let wl = w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
-                    write_words.contains(&wl.as_str())
-                });
+                || tokens[start..i]
+                    .iter()
+                    .rev()
+                    .find_map(|w| {
+                        let wl = w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+                        if write_words.contains(&wl.as_str()) {
+                            Some(true)
+                        } else if read_words.contains(&wl.as_str()) {
+                            Some(false)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(false);
 
             // Only register a required write target on an explicit write-verb match in
             // this clause. An ambiguous mention with no write signal must NOT default to

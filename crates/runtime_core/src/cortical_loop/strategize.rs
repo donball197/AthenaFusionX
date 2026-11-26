@@ -69,6 +69,68 @@ impl CorticalLoop {
         mission: &str,
         world_context: &str,
     ) -> Result<CortexState> {
+        if let Some(req_line) = session
+            .local_evidence
+            .lines()
+            .rev()
+            .find(|l| l.starts_with("[MIRROR_DELEGATION_REQUESTED] "))
+        {
+            let target_path = req_line
+                .trim_start_matches("[MIRROR_DELEGATION_REQUESTED] ")
+                .trim()
+                .to_string();
+            session.local_evidence.push_str(&format!(
+                "[MIRROR_DELEGATION_CONSUMED] {}\n",
+                target_path
+            ));
+            if !target_path.is_empty()
+                && std::env::var("NEXUS_MIRROR_DELEGATION").as_deref() == Ok("1")
+            {
+                if artifact_denied_by_policy(&session.local_evidence, &target_path) {
+                    self.log(format!(
+                        "\x1b[1;31m>> [MIRROR POLICY]\x1b[0m Refusing Mirror delegation for policy-denied path `{}`.",
+                        target_path
+                    ));
+                } else {
+                    let bridge_res = std::env::current_dir()
+                        .map_err(anyhow::Error::from)
+                        .and_then(|cwd| {
+                            crate::mirror_bridge::MirrorBridge::new("http://127.0.0.1:8081")
+                                .with_workspace_root(cwd)
+                        });
+                    match bridge_res {
+                        Ok(bridge) => {
+                            match bridge
+                                .delegate_write(&target_path, mission, &session.local_evidence)
+                                .await
+                            {
+                                Ok(()) => {
+                                    self.log(format!(
+                                        "\x1b[1;36m>> [MIRROR] Delegated write succeeded for `{}`.\x1b[0m",
+                                        target_path
+                                    ));
+                                    session.local_evidence.push_str(&format!(
+                                        "\n[WRITE_OK] {}\n",
+                                        target_path
+                                    ));
+                                    return Ok(CortexState::Strategize);
+                                }
+                                Err(e) => {
+                                    self.log(format!(
+                                        "\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}",
+                                        e
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.log(format!("\x1b[1;31m>> [MIRROR FAULT]\x1b[0m {}", e));
+                        }
+                    }
+                }
+            }
+        }
+
         let best_node = match session.graph.select_best_hypothesis().cloned() {
             Some(node) => node,
             None => {

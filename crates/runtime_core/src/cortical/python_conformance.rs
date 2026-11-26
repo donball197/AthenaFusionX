@@ -63,6 +63,13 @@ pub(crate) fn python_conformance_defects(
     // 2. snake_case identifiers named in the objective must appear in the file
     let path_stem =
         std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let path_segments: Vec<String> = std::path::Path::new(path)
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(os) => os.to_str().map(|s| s.to_string()),
+            _ => None,
+        })
+        .collect();
     let mut idents: Vec<String> = Vec::new();
     for tok in objective.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         let tok = tok.trim_matches('_');
@@ -73,7 +80,10 @@ pub(crate) fn python_conformance_defects(
         if tok.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
             continue;
         }
-        if tok == path_stem || required_fns.iter().any(|f| f == tok) {
+        if tok == path_stem
+            || path_segments.iter().any(|seg| seg == tok || seg.starts_with(&format!("{tok}.")))
+            || required_fns.iter().any(|f| f == tok)
+        {
             continue;
         }
         if TOOL_NAMES.contains(&tok) {

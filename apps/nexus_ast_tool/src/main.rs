@@ -432,7 +432,7 @@ fn main() -> Result<()> {
                         a.path.cmp(&b.path).then(a.sink_start_line.cmp(&b.sink_start_line))
                     });
 
-                    let mut rejected_with_reason: Vec<(String, String)> = Vec::new();
+                    let _rejected_with_reason: Vec<(String, String)> = Vec::new();
                     for finding in findings {
                         let file_source = match fs::read_to_string(&finding.path) {
                             Ok(s) => s,

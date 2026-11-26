@@ -1063,6 +1063,9 @@ impl PolyglotScanner {
         }
         match lang {
             SupportedLanguage::PHP => {
+                if patch.contains("->get_result()") && !patch.contains("->prepare(") && !patch.contains("->bind_param(") {
+                    return Err("INCOMPLETE PATCH REJECTED: get_result() without preceding prepare()/bind_param()".into());
+                }
                 let has_var_prepare =
                     patch.contains("->prepare($") || patch.contains("mysqli_prepare($con, $");
                 if has_var_prepare && !patch.contains('?') {

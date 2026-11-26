@@ -209,3 +209,63 @@ mod confined_tests {
         assert!(!leak_confined_to_reasoning(&h));
     }
 }
+
+/// Expand single-line Python with semicolons into proper multi-line Python.
+/// LLMs sometimes collapse Python into one line using semicolons, which is
+/// invalid for compound statements (def, class, if, etc.) and breaks syntax.
+pub fn expand_python_semicolons(content: &str, path: &str) -> String {
+    if !path.ends_with(".py") || !content.contains(';') {
+        return content.to_string();
+    }
+    let segments: Vec<&str> = content.split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.len() <= 1 {
+        return content.to_string();
+    }
+    let mut result: Vec<String> = Vec::new();
+    for seg in &segments {
+        let is_compound = [
+            "def ", "async def ", "class ", "if ", "elif ",
+            "for ", "while ", "try:", "else:", "except", "finally:",
+        ].iter().any(|p| seg.starts_with(p));
+        if is_compound {
+            if let Some(cp) = find_header_colon(seg) {
+                result.push(seg[..=cp].to_string());
+                let body = seg[cp + 1..].trim();
+                if !body.is_empty() {
+                    result.push(format!("    {}", body));
+                }
+            } else {
+                result.push(seg.to_string());
+            }
+        } else {
+            result.push(seg.to_string());
+        }
+    }
+    let mut out = result.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn find_header_colon(s: &str) -> Option<usize> {
+    let mut depth: i32 = 0;
+    let mut in_str: Option<char> = None;
+    for (i, ch) in s.char_indices() {
+        if let Some(q) = in_str {
+            if ch == q { in_str = None; }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => in_str = Some(ch),
+            '[' | '{' | '(' => depth += 1,
+            ']' | '}' | ')' => depth -= 1,
+            ':' if depth <= 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}

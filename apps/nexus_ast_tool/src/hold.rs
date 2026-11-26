@@ -194,6 +194,7 @@ pub fn load(dir: &Path, id: &str) -> Result<Hold> {
     Ok(serde_json::from_str(&data)?)
 }
 
+#[allow(dead_code)]
 fn target(h: &Hold, rel: &Path) -> PathBuf {
     if h.single_file { h.authoritative_root.clone() } else { h.authoritative_root.join(rel) }
 }

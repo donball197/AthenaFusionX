@@ -939,6 +939,57 @@ pub(crate) fn next_unmet_read(
     })
 }
 
+/// If the newest `[CONTRACT_FIRST_FORCED] read_file:<P>` is still unmet and the
+/// proposal is a lone `read_file` of a different path, replace it with a read of
+/// `P`. Released once `P` is read, or after the same force line appears 3 times.
+pub(crate) fn substitute_forced_read(
+    evidence: &str,
+    actions: Vec<crate::agent_protocol::AgentAction>,
+) -> (Vec<crate::agent_protocol::AgentAction>, Option<String>) {
+    use crate::agent_protocol::AgentAction;
+    use crate::completion_engine::CompletionCondition as CC;
+
+    if actions.len() != 1 {
+        return (actions, None);
+    }
+    let proposed = match &actions[0] {
+        AgentAction::ReadFile { path, .. } => path.clone(),
+        _ => return (actions, None),
+    };
+    let Some(last) = evidence
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with("[CONTRACT_FIRST_FORCED]"))
+    else {
+        return (actions, None);
+    };
+    let last = last.trim();
+    let Some(expected) = last.strip_prefix("[CONTRACT_FIRST_FORCED] read_file:") else {
+        return (actions, None);
+    };
+    let expected = expected.trim();
+    if expected.is_empty() || crate::evidence_paths::paths_equivalent(expected, &proposed) {
+        return (actions, None);
+    }
+    if crate::cortical::contract_advance::condition_is_met(
+        &CC::ReadPathAcquired { path: expected.to_string() },
+        evidence,
+    ) || evidence.lines().filter(|l| l.trim() == last).count() >= 3
+    {
+        return (actions, None);
+    }
+    let replacement = AgentAction::ReadFile {
+        _thought_process: None,
+        path: expected.to_string(),
+        reasoning: "deterministic contract-first read of the mandated path".to_string(),
+    };
+    let note = format!(
+        ">> [CORTEX CONTRACT-FIRST RECON] Proposal read `{}` but `{}` is the mandated unmet read; substituting.",
+        proposed, expected
+    );
+    (vec![replacement], Some(note))
+}
+
 impl crate::cortical_loop::CorticalLoop {
     pub(crate) fn apply_contract_first_recon(
         &self,
@@ -1079,6 +1130,60 @@ impl crate::cortical_loop::CorticalLoop {
             "\x1b[1;36m>> [CORTEX CONTRACT-FIRST RECON]\x1b[0m Mandatory read outstanding; forcing `{}`.",
             active_strategy
         ));
+    }
+}
+
+#[cfg(test)]
+mod forced_read_substitution_tests {
+    use super::substitute_forced_read;
+    use crate::agent_protocol::AgentAction;
+
+    fn read(p: &str) -> AgentAction {
+        AgentAction::ReadFile { _thought_process: None, path: p.into(), reasoning: String::new() }
+    }
+    const FORCE: &str =
+        "[RECON_REQUESTED] read_file:b.rs (strategy forced; NOT read evidence)\n[CONTRACT_FIRST_FORCED] read_file:b.rs\n";
+
+    #[test]
+    fn wrong_path_read_is_replaced() {
+        let (out, note) = substitute_forced_read(FORCE, vec![read("a.rs")]);
+        assert!(note.is_some());
+        match &out[0] {
+            AgentAction::ReadFile { path, .. } => assert_eq!(path, "b.rs"),
+            _ => panic!("expected ReadFile"),
+        }
+    }
+
+    #[test]
+    fn matching_path_is_untouched() {
+        let (out, note) = substitute_forced_read(FORCE, vec![read("b.rs")]);
+        assert!(note.is_none());
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn satisfied_force_releases() {
+        let ev = format!("{FORCE}[READ_OK] b.rs\nFULL FILE CONTENT:\nfn x() {{}}\n");
+        let (out, note) = substitute_forced_read(&ev, vec![read("a.rs")]);
+        assert!(note.is_none());
+        match &out[0] {
+            AgentAction::ReadFile { path, .. } => assert_eq!(path, "a.rs"),
+            _ => panic!("expected ReadFile"),
+        }
+    }
+
+    #[test]
+    fn released_after_three_forcings() {
+        let ev = FORCE.to_string()
+            + "[CONTRACT_FIRST_FORCED] read_file:b.rs\n[CONTRACT_FIRST_FORCED] read_file:b.rs\n";
+        let (_, note) = substitute_forced_read(&ev, vec![read("a.rs")]);
+        assert!(note.is_none());
+    }
+
+    #[test]
+    fn no_force_marker_means_no_change() {
+        let (_, note) = substitute_forced_read("", vec![read("a.rs")]);
+        assert!(note.is_none());
     }
 }
 

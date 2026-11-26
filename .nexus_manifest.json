@@ -31,12 +31,6 @@
   },
   {
     "provider": "Google",
-    "name": "deep-research-pro-preview-12-2025",
-    "context": "1.0M in / 65.5K out",
-    "category": "PRO"
-  },
-  {
-    "provider": "Google",
     "name": "gemini-2.5-computer-use-preview-10-2025",
     "context": "131.1K in / 65.5K out",
     "category": "GENERAL"
@@ -211,6 +205,12 @@
   },
   {
     "provider": "Google",
+    "name": "gemini-4-neon",
+    "context": "1.0M in / 65.5K out",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Google",
     "name": "gemini-flash-latest",
     "context": "1.0M in / 65.5K out",
     "category": "FLASH"
@@ -301,6 +301,12 @@
   },
   {
     "provider": "Nvidia",
+    "name": "fastino/gliner2-pii",
+    "context": "Unknown",
+    "category": "GENERAL"
+  },
+  {
+    "provider": "Nvidia",
     "name": "google/gemma-3-12b-it",
     "context": "8K in / 4K out",
     "category": "GEMMA"
@@ -313,18 +319,6 @@
   },
   {
     "provider": "Nvidia",
-    "name": "google/gemma-4-31b-it",
-    "context": "8K in / 4K out",
-    "category": "GEMMA"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "meta/muse-glimmer-30b",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
     "name": "minimaxai/minimax-m3.1-flash",
     "context": "Unknown",
     "category": "FLASH"
@@ -334,6 +328,12 @@
     "name": "mistralai/mistral-large-4-1t-a52b",
     "context": "128K in / 4K out",
     "category": "MISTRAL"
+  },
+  {
+    "provider": "Nvidia",
+    "name": "moonshotai/kimi-k3.1-pro",
+    "context": "Unknown",
+    "category": "PRO"
   },
   {
     "provider": "Nvidia",
@@ -381,12 +381,6 @@
     "provider": "Nvidia",
     "name": "nvidia/llama-3.2-nv-embedqa-1b-v1",
     "context": "128K in / 4K out",
-    "category": "EMBEDDING"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "nvidia/nemotron-3-embed-1b",
-    "context": "4K in / 4K out",
     "category": "EMBEDDING"
   },
   {
@@ -452,12 +446,6 @@
   {
     "provider": "Nvidia",
     "name": "nvidia/riva-translate-4b-instruct-v2",
-    "context": "Unknown",
-    "category": "GENERAL"
-  },
-  {
-    "provider": "Nvidia",
-    "name": "openai/gpt-oss-20b",
     "context": "Unknown",
     "category": "GENERAL"
   },

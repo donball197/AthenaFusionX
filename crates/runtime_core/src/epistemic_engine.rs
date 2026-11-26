@@ -17,22 +17,47 @@ pub struct CriticResponse {
 
 pub struct EpistemicEngine;
 
+fn find_json_start(text: &str) -> Option<usize> {
+    for (i, c) in text.char_indices() {
+        if c == '{' {
+            let rest = text[i + 1..].trim_start();
+            if rest.starts_with('"') || rest.starts_with('}') {
+                return Some(i);
+            }
+        } else if c == '[' {
+            let rest = text[i + 1..].trim_start();
+            if rest.starts_with('{') || rest.starts_with(']') {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
 fn extract_json_block<'a>(raw: &'a str) -> &'a str {
     let text = raw.trim();
-    let start_idx = text
-        .find("[{")
-        .or_else(|| text.find("[\n"))
-        .or_else(|| text.find("{\""))
-        .or_else(|| text.find("{\n"));
-
-    if let Some(s) = start_idx {
+    if let Some(s) = find_json_start(text) {
         let is_array = text[s..].starts_with('[');
         let open_char = if is_array { '[' } else { '{' };
         let close_char = if is_array { ']' } else { '}' };
 
-        let mut depth = 0;
+        let mut depth = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
         for (i, c) in text[s..].char_indices() {
-            if c == open_char {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            if c == '"' {
+                in_string = true;
+            } else if c == open_char {
                 depth += 1;
             } else if c == close_char {
                 depth -= 1;
@@ -508,15 +533,17 @@ impl EpistemicEngine {
             .unwrap_or(false)
     }
 
-    /// Remove `<thought>...</thought>` blocks that some models (gemma) leak into responses.
+    /// Remove `<thought>...</thought>` and `<think>...</think>` blocks that models leak into responses.
     pub(crate) fn strip_thought_tags(s: &str) -> String {
         let mut out = s.to_string();
-        while let Some(a) = out.find("<thought>") {
-            match out[a..].find("</thought>") {
-                Some(rel) => out.replace_range(a..a + rel + "</thought>".len(), ""),
-                None => {
-                    out.truncate(a);
-                    break;
+        for (open, close) in [("<thought>", "</thought>"), ("<think>", "</think>")] {
+            while let Some(a) = out.find(open) {
+                match out[a..].find(close) {
+                    Some(rel) => out.replace_range(a..a + rel + close.len(), ""),
+                    None => {
+                        out.truncate(a);
+                        break;
+                    }
                 }
             }
         }
@@ -1569,25 +1596,31 @@ OUTPUT ONLY VALID JSON matching this schema:
         };
         eprintln!("[VERIFIER] model cascade: {:?}", models);
         let mut text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+        let mut stripped = Self::strip_thought_tags(&text);
         if serde_json::from_str::<serde_json::Value>(extract_json_block(&sanitize_json_escapes(
-            &text,
+            &stripped,
         )))
         .is_err()
         {
             eprintln!("[VERIFIER] non-JSON reply; retrying once");
             text = Self::safe_api_call(client, api_key, &models, &payload).await?;
+            stripped = Self::strip_thought_tags(&text);
         }
-        let clean_text = sanitize_json_escapes(&text);
+        let clean_text = sanitize_json_escapes(&stripped);
 
         let json_str = extract_json_block(&clean_text);
         let parsed_val: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(val) => val,
-            Err(_) => serde_json::json!({
-                "goal_satisfied": false,
-                "evidence_confidence": 0.0,
-                "independent_check_passed": false,
-                "rationale": clean_text.trim()
-            }),
+            Err(e) => {
+                let preview: String = clean_text.chars().take(300).collect();
+                eprintln!("[VERIFIER] JSON parse fallback after retry ({e}); preview={preview:?}");
+                serde_json::json!({
+                    "goal_satisfied": false,
+                    "evidence_confidence": 0.0,
+                    "independent_check_passed": false,
+                    "rationale": clean_text.trim()
+                })
+            }
         };
 
         Ok(crate::cognition_graph::VerificationReport {
@@ -2004,5 +2037,24 @@ mod empty_tools_tests {
         let real = json!({"tools": [{"functionDeclarations": [{"name": "read_file"}]}], "forced_tool_choice": "read_file"});
         assert!(strip_empty_tools(&real).is_none());
         assert!(strip_empty_tools(&json!({"contents": []})).is_none());
+    }
+}
+
+#[cfg(test)]
+mod extract_json_block_tests {
+    use super::*;
+
+    #[test]
+    fn extract_json_block_handles_whitespace_and_braces_in_strings() {
+        let raw = "```json\n{ \"rationale\": \"fn f() { let x = 1; // unmatched } }\", \"goal_satisfied\": true, \"evidence_confidence\": 0.9, \"independent_check_passed\": true }\n```";
+        let extracted = extract_json_block(raw);
+        let v: serde_json::Value = serde_json::from_str(extracted).expect("valid json");
+        assert_eq!(v["goal_satisfied"], true);
+    }
+
+    #[test]
+    fn strip_thought_tags_handles_thought_and_think() {
+        let raw = "<think>reasoning {\"bad\": 1}</think>\n{\"goal_satisfied\": true}";
+        assert_eq!(EpistemicEngine::strip_thought_tags(raw), "{\"goal_satisfied\": true}");
     }
 }

@@ -337,12 +337,15 @@ impl CorticalLoop {
                 // Unconditional flooring here kept belief pinned near 0.15 despite
                 // positive confidence modifiers in live runs.
 
-                let has_unwritten_artifacts =
-                    session.contract.required_artifact_paths.iter().any(|a| {
+                let has_unwritten_artifacts = !session.contract.read_only
+                    && session.contract.required_artifact_paths.iter().any(|a| {
+                        let marker_ok = format!("[WRITE_OK] {}", a.path);
+                        let accepted_ok = format!("[WRITE_ACCEPTED] {}", a.path);
                         !crate::evidence_markers::has_artifact_write(
                             &session.local_evidence,
                             &a.path,
-                        )
+                        ) && !session.local_evidence.contains(&marker_ok)
+                            && !session.local_evidence.contains(&accepted_ok)
                     });
 
                 if is_halt_action && has_unwritten_artifacts {

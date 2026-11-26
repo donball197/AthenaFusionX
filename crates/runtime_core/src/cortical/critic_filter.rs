@@ -95,7 +95,7 @@ impl CorticalLoop {
                         // retried until the turn budget is gone, so stop
                         // re-admitting the same command after 3 attempts.
                         if attempt_count >= 3
-                            && matches!(&action, AgentAction::ExecuteCommand { .. })
+                            && matches!(&action, AgentAction::ExecuteCommand { .. } | AgentAction::WriteFile { .. })
                         {
                             self.log(format!(
                                 "\x1b[1;31m>> [ANTI-LOOP] Command [{}] already attempted {} times without satisfying its contract; vetoing further retries.\x1b[0m",
@@ -189,7 +189,25 @@ impl CorticalLoop {
             session.local_evidence.push('\n');
 
             const LOOP_VETO_BUDGET: usize = 6;
+            const MIRROR_DELEGATION_TRIGGER: usize = 3;
             let stuck_count = consecutive_loop_vetoes(&session.local_evidence);
+
+            if stuck_count >= MIRROR_DELEGATION_TRIGGER
+                && std::env::var("NEXUS_MIRROR_DELEGATION").as_deref() == Ok("1")
+                && !session.local_evidence.contains("[MIRROR_DELEGATION_REQUESTED]")
+            {
+                if let Some(target_art) = session.contract.required_artifact_paths.first() {
+                    self.log(format!(
+                        "\x1b[1;36m>> [MIRROR] {} consecutive loop vetoes; requesting mirror delegation for `{}`.\x1b[0m",
+                        stuck_count, target_art.path
+                    ));
+                    session.local_evidence.push_str(&format!(
+                        "[MIRROR_DELEGATION_REQUESTED] {}\n",
+                        target_art.path
+                    ));
+                    return AntiLoopOutcome::NeedsStrategize;
+                }
+            }
 
             if stuck_count >= LOOP_VETO_BUDGET {
                 self.log(format!(
